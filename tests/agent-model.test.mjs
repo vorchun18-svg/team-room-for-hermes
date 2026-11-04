@@ -530,8 +530,11 @@ test('диалог редактора: заголовок, «Применить�
 test('CSS: список моделей прокручивается сам и не вылезает за экран', () => {
   const css = readFileSync(new URL('../web/css/agent-model.css', import.meta.url), 'utf8');
   assert.match(css, /\.agent-model__models\s*{[^}]*max-height:[^}]*overflow-y:\s*auto/s);
-  assert.match(css, /\.agent-model__search\s*{[^}]*padding-right:\s*40px/s,
-    'кнопке микрофона нужно место справа');
+  // Справа в поле — стрелка списка; микрофона здесь нет (жалоба 04.11).
+  assert.match(css, /\.agent-model__search\s*{[^}]*padding-right:\s*34px/s,
+    'место под стрелку списка');
+  assert.equal(/\.agent-model__search\s*{[^}]*padding-right:\s*40px/s.test(css), false,
+    'место под микрофон больше не резервируется');
   assert.match(css, /\.agent-model \.segmented\s*{[^}]*flex-wrap:\s*wrap/s,
     'семь уровней переносятся, а не уезжают за край');
 });

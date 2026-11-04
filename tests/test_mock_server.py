@@ -1460,8 +1460,13 @@ class MockServerTest(unittest.TestCase):
         path = "/api/rooms/cafe/agents/biz-cfo/model"
         status, _, res = self.json(path, "PUT", {"provider": "oblako-b", "model": "vektor-2", "reasoning": "low"})
         self.assertEqual(status, 200, res)
-        self.assertEqual(sorted(res), ["agent_models", "applied", "member", "ok", "profile", "room", "warnings"])
-        self.assertEqual(sorted(res["applied"]), ["cards_failed", "cards_updated", "pending_running"])
+        self.assertEqual(sorted(res), ["agent_models", "applied", "cleared", "member", "ok",
+                                       "profile", "room", "warnings"])
+        self.assertEqual(sorted(res["applied"]), ["cards_failed", "cards_updated", "cleared",
+                                                  "pending_running", "saved", "settings"])
+        self.assertEqual(res["applied"]["saved"]["model"], "vektor-2",
+                         "applied.saved — ровно запись реестра (без «ближайших» моделей)")
+        self.assertEqual(res["applied"]["settings"]["source"], "room")
         self.assertEqual({k: res["member"]["model_settings"][k]
                           for k in ("provider", "model", "reasoning", "source")},
                          {"provider": "oblako-b", "model": "vektor-2", "reasoning": "low", "source": "room"})

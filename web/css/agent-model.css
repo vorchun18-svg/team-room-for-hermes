@@ -66,17 +66,44 @@
 .agent-model__warn.hidden { display: none; }
 
 .agent-model__model-field { min-width: 0; }
-.agent-model__search-wrap { min-width: 0; }
+.agent-model__search-wrap { position: relative; min-width: 0; }
 
-/* Микрофон встаёт справа внутри поля — место под него оставляем. */
+/* Справа в поле — только стрелка списка: модель выбирают из списка, а не диктуют. */
 .agent-model__search {
   width: 100%;
   min-width: 0;
-  padding-right: 40px;
+  padding-right: 34px;
   height: var(--control-lg);
   font: inherit;
 }
+/* Подсказка в пустом поле показывает текущую модель — как значение у списка. */
+.agent-model__search::placeholder { color: var(--ui-text-secondary); opacity: 1; }
 .agent-model__search:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.agent-model__toggle {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: calc(var(--control-lg) - 6px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+.agent-model__toggle:hover {
+  background: var(--ui-control-hover-background);
+  color: var(--foreground);
+}
+.agent-model__toggle:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.agent-model__toggle .codicon { transition: transform 120ms ease; }
+.agent-model__toggle[aria-expanded="true"] .codicon { transform: rotate(180deg); }
 
 .agent-model__models {
   display: flex;

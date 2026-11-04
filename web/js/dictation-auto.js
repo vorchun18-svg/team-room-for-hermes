@@ -24,6 +24,9 @@
  *   data-mic="off"    — не ставить никогда (ставим сами по общему правилу);
  *   data-mic="manual" — место занято явной кнопкой (композер);
  *   data-mic="auto"   — кнопку поставили мы (повторно не ставим).
+ *
+ * Поля-списки (combobox: поиск модели, провайдера, любые select) микрофона
+ * не получают по смыслу: там выбирают из готового списка — см. isCombobox().
  */
 
 import { createMic } from './dictation.js';
@@ -72,9 +75,25 @@ function isTextField(el) {
   return tag === 'input' && INPUT_TYPES.has(inputType(el));
 }
 
+/**
+ * Поле-список: значение выбирают из готового списка, а не диктуют.
+ * Поиск модели и провайдера (`role="combobox"`), поля с `aria-autocomplete`
+ * и `select` микрофона не заслуживают никогда.
+ */
+export function isCombobox(el) {
+  if (!el || el.nodeType !== 1 || !el.getAttribute) return false;
+  if (tagOf(el) === 'select') return true;
+  const role = String(el.getAttribute('role') || '').trim().toLowerCase();
+  if (role === 'combobox' || role === 'listbox') return true;
+  if (el.getAttribute('aria-autocomplete')) return true;
+  if (el.getAttribute('aria-controls') && el.getAttribute('aria-expanded') !== null) return true;
+  return false;
+}
+
 /** Служебное поле: путь, дата, поиск в шапке — микрофону тут не место. */
 export function noMicPlace(el) {
   if (!el || el.nodeType !== 1) return false;
+  if (isCombobox(el)) return true;
   if (el.closest) {
     try { if (el.closest(NO_MIC_PLACE)) return true; } catch { /* нет DOM-API */ }
   }
@@ -334,5 +353,5 @@ export function stopAutoEnhance() {
 
 export default {
   enhanceAll, startAutoEnhance, stopAutoEnhance, attachMic, eligible,
-  actionSibling, placement, wantLabel, noMicPlace,
+  actionSibling, placement, wantLabel, noMicPlace, isCombobox,
 };

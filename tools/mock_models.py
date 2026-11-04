@@ -293,13 +293,15 @@ class MockModels:
         warnings = []
         if clean is None:
             room.setdefault("agent_models", {}).pop(profile, None)
+            saved = {}
             label = self.settings_label(self.agent_default(profile))
             self.journal_add(room_id, "Модель участника «%s» возвращена к настройкам агента: %s"
                              % (profile, label), {"profile": profile, "cleared": True,
                                                   "label": label, "source": "agent"})
             self.pin_labels(room_id, profile, label)
         else:
-            room.setdefault("agent_models", {})[profile] = {**clean, "updated_at": now()}
+            saved = {**clean, "updated_at": now()}
+            room.setdefault("agent_models", {})[profile] = saved
             label = self.settings_label(clean)
             self.journal_add(room_id, "Модель участника «%s» изменена: %s" % (profile, label),
                              {"profile": profile, "cleared": False, "label": label, "source": "room",
@@ -308,10 +310,17 @@ class MockModels:
         if counts["pending_running"]:
             warnings.append("У участника есть карточка в работе — новая модель применится после "
                             "«Перезапустить на новой модели»")
+        settings = {**self.effective(room, profile),
+                    "updated_at": int(saved.get("updated_at") or 0)}
+        # `settings`/`saved`/`cleared` — эхо применённого выбора, как у боевого сервера:
+        # фронтенд сверяет по ним отправленное, не подставляя «ближайшую» модель.
         return {"ok": True, "room": room_id, "profile": profile,
                 "member": self.member_row(room, profile),
                 "agent_models": public_map(room.get("agent_models")),
-                "applied": {**counts, "cards_failed": []}, "warnings": warnings}
+                "cleared": clean is None,
+                "applied": {**counts, "cards_failed": [], "settings": settings,
+                            "saved": dict(saved), "cleared": clean is None},
+                "warnings": warnings}
 
     def restart_agent(self, room_id: str, profile: str) -> dict:
         """`POST /api/rooms/{id}/agents/{profile}/restart` — имитация перезапуска карточек."""

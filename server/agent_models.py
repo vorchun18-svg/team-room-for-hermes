@@ -305,8 +305,14 @@ def provider_label(cfg, provider: str) -> str:
 # ---------------------------------------------------------------- дефолты профиля
 
 def _scalar(text: str, section: str, key: str) -> str:
-    """`section:` → `key: value` второго уровня без PyYAML (разделитель `:` или `=`)."""
+    """`section:` → `key: value` первого уровня вложенности без PyYAML (`:` или `=`).
+
+    Уровень вложенности ключей секции определяется по её первому дочернему ключу, а не
+    жёстко «два пробела»: конфиги Hermes пишут и 2, и 4 пробела, а ключи вложенных
+    словарей (`model.aliases.deepseek: …`) при этом не должны подменять значение.
+    """
     inside = False
+    level: int | None = None
     for raw in (text or "").splitlines():
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
@@ -314,8 +320,13 @@ def _scalar(text: str, section: str, key: str) -> str:
         line = raw.strip()
         if indent == 0:
             inside = line.split(":", 1)[0].strip() == section
+            level = None
             continue
-        if not inside or indent != 2:
+        if not inside or line.startswith("-"):
+            continue
+        if level is None:
+            level = indent              # ключи этой секции — на её собственном уровне
+        if indent != level:
             continue
         name = line.split(":", 1)[0]
         if name != key:
@@ -333,15 +344,17 @@ def _scalar(text: str, section: str, key: str) -> str:
 def agent_default(cfg, profile) -> dict:
     """Настройки самого агента: `model.provider`, `model.default`, `agent.reasoning_effort`.
 
-    Запасной источник уровня мышления — `delegation.reasoning_effort` (так настроены
-    делегаты вроде `coder`/`realtor`). Файл открывается только на чтение.
+    Только собственный блок профиля: `delegation.reasoning_effort` — уровень для
+    делегированных детей, а не для карточек комнаты (их берёт сам профиль), поэтому
+    за «по умолчанию» он не выдаётся. Пустая строка = «как в Hermes по умолчанию».
+    Файл открывается только на чтение.
     """
     path = config_path(cfg, profile)
     try:
         text = path.read_text("utf-8", "replace")
     except OSError:
         return {"provider": "", "model": "", "reasoning": ""}
-    reasoning = _scalar(text, "agent", "reasoning_effort") or _scalar(text, "delegation", "reasoning_effort")
+    reasoning = _scalar(text, "agent", "reasoning_effort")
     if reasoning.lower() in ("false", "none", "disabled"):
         reasoning = "none"
     return {"provider": _scalar(text, "model", "provider"),
@@ -363,11 +376,17 @@ def _check_reasoning(value) -> str:
 
 
 def validate(cfg, provider=None, model=None, reasoning=None, *, data=None) -> tuple[dict, list[str]]:
-    """Проверить выбор: провайдер только настроенный, модель — из его каталога.
+    """Проверить выбор: провайдер только настроенный, модель — строго из его каталога.
 
     Пара «провайдер+модель» неполная — ошибка (`400`); `reasoning` независим и может быть
     пустым («как у агента»). Если каталог провайдера пуст, разрешена «своя модель» —
     с предупреждением. Возвращает `(clean, warnings)`.
+
+    Идентификатор модели не подменяется НИКОГДА: только точное совпадение с элементом
+    каталога. Регистр, префикс и подстрока не угадываются (`deepseek-v4-pro:0813` ≠
+    `deepseek-v4-pro`, `Model-A` ≠ `model-a`): у провайдеров это разные модели, и
+    «ближайшая» вместо выбранной — это та самая подмена. Похожие id возвращаются в
+    `detail.suggestions`, но применяются только после явного выбора пользователя.
     """
     warnings: list[str] = []
     provider = str(provider or "").strip()
@@ -385,29 +404,54 @@ def validate(cfg, provider=None, model=None, reasoning=None, *, data=None) -> tu
         raise ModelError("Слишком длинное имя модели — до %d знаков." % MAX_MODEL, "bad_request",
                          {"field": "model", "length": len(model)})
     rows = _providers(data if data is not None else catalog(cfg))
-    row = rows.get(provider) or rows.get(provider.lower())
+    row = rows.get(provider)
+    if row is None:
+        # Провайдер-слаг регистронезависим, но двух «близнецов», отличающихся регистром,
+        # угадывать нельзя: неоднозначность — это ошибка, а не выбор первого попавшегося.
+        twins = [rows[pid] for pid in rows if pid.lower() == provider.lower()]
+        if len(twins) > 1:
+            raise ModelError("Провайдер «%s» указан неоднозначно — выберите точное имя."
+                             % provider, "bad_request",
+                             {"field": "provider", "value": provider,
+                              "candidates": sorted(pid for pid in rows
+                                                   if pid.lower() == provider.lower())})
+        row = twins[0] if twins else None
     if row is None or not row.get("configured"):
         raise ModelError("Провайдер «%s» не настроен в Hermes — выберите другого." % provider,
                          "bad_request", {"field": "provider", "value": provider,
                                          "configured": sorted(rows)})
     known = {m["id"]: m["id"] for m in row.get("models") or []}
-    lower = {k.lower(): k for k in known}
-    canonical = known.get(model) or lower.get(model.lower())
-    if canonical:
-        model = canonical
-    elif row.get("models"):
-        raise ModelError("У провайдера «%s» нет модели «%s» — выберите из списка."
-                         % (row.get("label") or provider, model), "bad_request",
-                         {"field": "model", "value": model, "provider": provider})
-    else:
+    if model in known:
+        model = known[model]            # точный id из каталога — как есть
+        clean.update({"provider": row["id"], "model": model})
+        return clean, warnings
+    if not known:
         warnings.append("Каталог провайдера «%s» пуст — модель «%s» задана вручную."
                          % (row.get("label") or provider, model))
-    clean.update({"provider": row["id"], "model": model})
-    return clean, warnings
+        clean.update({"provider": row["id"], "model": model})
+        return clean, warnings
+    elsewhere = sorted(pid for pid, prow in rows.items()
+                       if any(m["id"] == model for m in prow.get("models") or []))
+    detail = {"field": "model", "value": model, "provider": row["id"],
+              "suggestions": [mid for mid in known if mid.lower() == model.lower()][:5],
+              "models": sorted(known)[:50]}
+    if elsewhere:
+        detail["other_providers"] = elsewhere
+    message = "У провайдера «%s» нет модели «%s» — выберите из списка." \
+              % (row.get("label") or provider, model)
+    if elsewhere:
+        message += " Она есть у: %s." % ", ".join(elsewhere)
+    raise ModelError(message, "bad_request", detail)
 
 
 def normalize(value) -> dict:
-    """Мягкое чтение реестра: мусор и чужие записи не роняют список комнат."""
+    """Мягкое чтение реестра: мусор и чужие записи не роняют список комнат.
+
+    Неполная пара (`provider` без `model` или наоборот) не применяется и наружу не
+    отдаётся: движку уходят только `provider`+`model` из одного источника, иначе
+    получается чужая модель у чужого провайдера. Уровень мышления при этом сохраняется —
+    он независим.
+    """
     if not isinstance(value, dict):
         return {}
     out: dict[str, dict] = {}
@@ -419,6 +463,8 @@ def normalize(value) -> dict:
         item = {"provider": str(raw.get("provider") or "").strip(),
                 "model": str(raw.get("model") or "").strip(),
                 "reasoning": reasoning if reasoning in EFFORTS else ""}
+        if not (item["provider"] and item["model"]):
+            item["provider"], item["model"] = "", ""   # неполная пара не действует
         try:
             item["updated_at"] = int(raw.get("updated_at") or 0)
         except (TypeError, ValueError):
@@ -504,14 +550,23 @@ def role_ru(room, profile) -> str:
 
 
 def effective(cfg, room, profile) -> dict:
-    """Что применится к следующей карточке участника: замена комнаты поверх дефолта агента."""
+    """Что применится к следующей карточке участника: замена комнаты поверх дефолта агента.
+
+    Провайдер и модель — всегда одной парой из ОДНОГО источника. Смешать провайдера
+    комнаты с моделью агента нельзя: именно так на карточку попадала чужая модель
+    (`--model=glm-5.3-flash --provider=anthropic`). Неполная запись комнаты уже
+    отброшена `normalize`, здесь страхуемся ещё раз.
+    """
     name = _profile(profile)
     settings = settings_of(room).get(name) or {}
     default = agent_default(cfg, name)
-    provider = settings.get("provider") or default["provider"]
-    model = settings.get("model") or default["model"]
+    room_pair = bool(settings.get("provider") and settings.get("model"))
+    if room_pair:
+        provider, model = settings["provider"], settings["model"]
+    else:
+        provider, model = default["provider"], default["model"]
     reasoning = settings.get("reasoning") or ("" if settings else default["reasoning"])
-    source = "room" if (settings.get("provider") or settings.get("reasoning")) else "agent"
+    source = "room" if (room_pair or settings.get("reasoning")) else "agent"
     return {"provider": provider, "model": model, "reasoning": reasoning or "",
             "source": source, "updated_at": _int(settings.get("updated_at"))}
 
@@ -712,9 +767,17 @@ def _roots(cfg, room_id) -> list[str]:
 
 
 def _wanted(cfg, room, profile) -> dict:
-    value = effective(cfg, room, profile)
-    return {"provider": value["provider"], "model": value["model"],
-            "reasoning": value["reasoning"]}
+    """Что закрепить на карточках: ТОЛЬКО замена комнаты, а не дефолт агента.
+
+    Дефолт агента на карточку не переносится: во-первых, это подмена выбора (карточка
+    выглядит как «выбрано в комнате»), во-вторых, пин навсегда перекрыл бы будущую смену
+    конфига профиля. Уровень мышления едет отдельно от пары — так же, как в `PUT`.
+    """
+    settings = settings_of(room).get(_profile(profile)) or {}
+    if not (settings.get("provider") and settings.get("model")):
+        return {"provider": "", "model": "", "reasoning": settings.get("reasoning") or ""}
+    return {"provider": settings["provider"], "model": settings["model"],
+            "reasoning": settings.get("reasoning") or ""}
 
 
 def _needs_update(card: dict, want: dict) -> bool:
@@ -882,7 +945,14 @@ def apply_profile(cfg, room_id, profile, *, limit: int = MAX_CARDS) -> dict:
 
 
 def restart_running(cfg, room_id, profile) -> dict:
-    """«Перезапустить на новой модели»: снять с работы только running-карточки участника."""
+    """«Перезапустить на новой модели»: закрепить выбор и снять с работы running-карточки.
+
+    Порядок важен: сначала на карточку ставится модель/провайдер/мышление комнаты
+    (движок разрешает менять переопределение у `running` — оно применится к следующему
+    запуску), и только потом `reassign --reclaim`. Иначе диспетчер подхватил бы карточку
+    со старым переопределением или с моделью профиля — то есть «перезапуск на новой
+    модели» запускал бы старую.
+    """
     result = {"restarted": 0, "cards": [], "warnings": []}
     room = _modules().get_room(cfg, str(room_id)) or {}
     if not room:
@@ -898,6 +968,10 @@ def restart_running(cfg, room_id, profile) -> dict:
         from . import engine_write as ew
     except ImportError:  # pragma: no cover
         import engine_write as ew  # type: ignore
+    # «По умолчанию» (замены комнаты нет) перезапуск не выдумывает модель: пин снимается,
+    # и карточка идёт на настройках профиля.
+    want = _wanted(cfg, room, name) if effective(cfg, room, name)["source"] == "room" \
+        else {"provider": "", "model": "", "reasoning": ""}
     con = _connect(cfg, board)
     if con is None:
         return result
@@ -912,6 +986,11 @@ def restart_running(cfg, room_id, profile) -> dict:
         con.close()
     for card_id, card in sorted(rows.items()):
         if card["assignee"] != name or card["status"] != "running":
+            continue
+        _done, failed = _push(cfg, board, [card], want)
+        if failed:
+            result["warnings"].append("%s: %s" % (card_id, failed[0].get("reason") or
+                                                  "модель не закреплена"))
             continue
         try:
             ew.act(cfg, board, cards.get(card_id) or card_id, "reassign",

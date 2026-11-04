@@ -131,13 +131,21 @@ class ModelRoutes:
         except ApiError:
             pass                    # журнал вторичен — модель уже изменена
         fresh = self._models_room(room_id)          # свежая комната: новая замена уже в ней
+        member = self._models_call("member_of", (fresh, self.cfg, profile), {})
+        settings = dict((member or {}).get("model_settings") or {})
         payload = {"ok": True, "profile": profile,
-                   "member": self._models_call("member_of", (fresh, self.cfg, profile), {}),
+                   "member": member,
                    "agent_models": res.get("agent_models") or {},
                    "cleared": cleared,
+                   # `applied.settings` — эхо того, что сохранено и пойдёт в следующую карточку:
+                   # фронтенд сверяет выбор с ответом, не переспрашивая комнату. Значения —
+                   # ровно из реестра (`provider`/`model` — как выбрано, без «ближайших»).
                    "applied": {"cards_updated": int(applied.get("cards_updated") or 0),
                                "pending_running": int(applied.get("pending_running") or 0),
-                               "cards_failed": applied.get("cards_failed") or []},
+                               "cards_failed": applied.get("cards_failed") or [],
+                               "settings": settings,
+                               "saved": dict(res.get("room_setting") or {}),
+                               "cleared": cleared},
                    "warnings": warnings}
         return 200, payload, {}
 

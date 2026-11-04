@@ -72,7 +72,9 @@ export function buildRow(person, env) {
     dirty: String(initial.source || 'agent') === 'room',
     query: '',
     active: -1,
-    listOpen: false,
+    // Список моделей — обычный блок под полем, а не всплывающая панель:
+    // он открыт СРАЗУ, при любом провайдере, в том числе уже выбранном.
+    listOpen: true,
     panelOpen: mode === 'live',
     busy: false,
     saved: '',
@@ -125,9 +127,12 @@ export function buildRow(person, env) {
     autocomplete: 'off',
     spellcheck: 'false',
     placeholder: 'Найти модель — например, sonnet',
-    'aria-label': 'Поиск модели для ' + nameText,
+    'aria-label': 'Модель для ' + nameText,
     role: 'combobox',
     'aria-autocomplete': 'list',
+    'aria-expanded': 'true',
+    // Модель выбирают из списка, а не диктуют: авто-микрофон сюда не ставим.
+    dataset: { mic: 'off' },
   });
   const listId = uid('am-models');
   search.setAttribute('aria-controls', listId);
@@ -135,13 +140,47 @@ export function buildRow(person, env) {
   const listEmpty = h('div', { class: 'agent-model__models-empty hidden' });
   const current = h('div', { class: 'agent-model__current small muted' });
 
-  search.addEventListener('input', () => {
+  // Стрелка-раскрывашка: то же, что у обычного выпадающего списка.
+  const toggleBtn = h('button', {
+    class: 'agent-model__toggle',
+    type: 'button',
+    'aria-controls': listId,
+    'aria-expanded': 'true',
+    'aria-label': 'Скрыть список моделей для ' + nameText,
+    title: 'Показать или скрыть список моделей',
+  }, icon('chevron-down', { size: 14 }));
+
+  const openList = () => {
+    if (st.listOpen) { paintList(); return; }
+    st.listOpen = true;
+    paintList();
+  };
+
+  toggleBtn.addEventListener('click', (ev) => {
+    if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+    st.listOpen = !st.listOpen;
+    paintList();
+    if (st.listOpen && typeof search.focus === 'function') {
+      try { search.focus(); } catch { /* нет фокуса */ }
+    }
+  });
+
+  // Нажатие в поле тоже раскрывает список: он не должен «просыпаться» только
+  // после смены провайдера.
+  search.addEventListener('focus', openList);
+  search.addEventListener('click', openList);
+
+  function readQuery(open) {
     st.query = String(search.value || '');
     st.active = -1;
-    st.listOpen = true;
+    if (open) st.listOpen = true;
     paintModels();
     paint();
-  });
+  }
+
+  search.addEventListener('input', () => { readQuery(true); });
+  // Родная «×» у поля type=search чистит значение событием `search`, а не `input`.
+  search.addEventListener('search', () => { readQuery(true); });
   search.addEventListener('keydown', (ev) => {
     const key = ev && ev.key;
     if (key === 'ArrowDown' || key === 'ArrowUp') {
@@ -153,14 +192,21 @@ export function buildRow(person, env) {
     if (key === 'Enter') {
       if (typeof ev.preventDefault === 'function') ev.preventDefault();
       if (st.listOpen) chooseActive();
-      else st.listOpen = true;
-      paintList();
+      else { st.listOpen = true; paintList(); }
       return;
     }
     if (key === 'Escape') {
       if (typeof ev.preventDefault === 'function') ev.preventDefault();
       if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
-      if (st.listOpen) { st.listOpen = false; paintList(); return; }
+      if (st.listOpen) {
+        // Свернуть список и заодно сбросить фильтр: браузер сам очищает
+        // type=search по Esc, и список не должен остаться «отфильтрованным» впустую.
+        st.listOpen = false;
+        st.query = '';
+        search.value = '';
+        paintModels();
+        return;
+      }
       if (mode !== 'live') setOpen(false);
     }
   });
@@ -201,7 +247,7 @@ export function buildRow(person, env) {
   panel.appendChild(providerWarn);
   panel.appendChild(h('div', { class: 'field agent-model__model-field' },
     h('span', { class: 'field__label' }, 'Модель'),
-    h('div', { class: 'agent-model__search-wrap' }, search),
+    h('div', { class: 'agent-model__search-wrap' }, search, toggleBtn),
     list,
     listEmpty,
     current));
@@ -266,8 +312,7 @@ export function buildRow(person, env) {
     list.replaceChildren();
     if (!flat.length) {
       const provider = providersOf(catalog).find((p) => p.id === st.provider);
-      st.listOpen = false;
-      listOpenPaint(false);
+      // Список остаётся «открытым» по состоянию: очистят поиск — он вернётся сам.
       if (st.query && String(st.query).trim()) {
         listEmpty.textContent = 'Ничего не нашлось. Проверьте написание или выберите провайдера.';
         listEmpty.classList.remove('hidden');
@@ -280,6 +325,7 @@ export function buildRow(person, env) {
       } else {
         listEmpty.classList.add('hidden');
       }
+      paintList();
       return;
     }
     listEmpty.classList.add('hidden');
@@ -299,11 +345,23 @@ export function buildRow(person, env) {
           title: 'Модель: ' + m.id,
         }, h('span', { class: 'agent-model__option-label' }, m.label),
         chosen ? icon('check', { size: 11 }) : null);
-        opt.addEventListener('click', () => { chooseIndex(index); });
+        // Клик выбирает ИМЕННО эту строку: провайдер и id берём у самого узла,
+        // а не общий счётчик цикла (иначе все обработчики видели последний индекс
+        // и в комнату уходила последняя модель списка).
+        opt.addEventListener('click', () => { setModel(g.id, m.id); });
         list.appendChild(opt);
       }
     }
     paintList();
+    // Список раскрыт — подкручиваем к действующей модели: у Ollama Cloud их 26,
+    // иначе выбранная строка остаётся за пределами видимой части блока.
+    if (st.listOpen && !String(st.query || '').trim()) {
+      const nodes = optionNodes();
+      const at = nodes.findIndex((n) => hasClass(n, 'agent-model__option--chosen'));
+      if (at >= 0 && typeof nodes[at].scrollIntoView === 'function') {
+        try { nodes[at].scrollIntoView({ block: 'nearest' }); } catch { /* нет раскладки */ }
+      }
+    }
   }
 
   function listOpenPaint(open) {
@@ -312,14 +370,17 @@ export function buildRow(person, env) {
 
   function paintList() {
     const nodes = optionNodes();
-    listOpenPaint(st.listOpen);
+    const open = Boolean(st.listOpen) && nodes.length > 0;
+    listOpenPaint(open);
     nodes.forEach((node, i) => {
       node.classList.toggle('agent-model__option--active', i === st.active);
     });
-    if (st.active >= 0 && nodes[st.active] && typeof nodes[st.active].scrollIntoView === 'function') {
+    if (open && st.active >= 0 && nodes[st.active] && typeof nodes[st.active].scrollIntoView === 'function') {
       try { nodes[st.active].scrollIntoView({ block: 'nearest' }); } catch { /* нет раскладки */ }
     }
-    search.setAttribute('aria-expanded', st.listOpen ? 'true' : 'false');
+    search.setAttribute('aria-expanded', open ? 'true' : 'false');
+    toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    toggleBtn.setAttribute('aria-label', (open ? 'Скрыть' : 'Показать') + ' список моделей для ' + nameText);
   }
 
   function moveActive(delta) {
@@ -356,7 +417,9 @@ export function buildRow(person, env) {
     st.query = '';
     search.value = '';
     st.active = -1;
-    st.listOpen = false;
+    // Список — блок под полем: после выбора оставляем его открытым, чтобы было
+    // видно галочку и можно было сразу выбрать другую модель.
+    st.listOpen = true;
     st.dirty = true;
     st.saved = '';
     st.error = '';
@@ -394,8 +457,14 @@ export function buildRow(person, env) {
   }
 
   function paintCurrent() {
+    const label = st.model ? modelLabelOf(catalog, st.provider, st.model) : '';
     current.textContent = 'Выбрано: ' + shortModelText(catalog, st);
     current.setAttribute('title', settingsLabel(catalog, st));
+    // В самом поле видно текущую модель — как у обычного выпадающего списка.
+    // Свой ввод остаётся фильтром: он заменяет подсказку, а не выбор.
+    search.setAttribute('placeholder', label || 'Найти модель — например, sonnet');
+    search.setAttribute('aria-label', 'Модель для ' + nameText
+      + (label ? ': сейчас ' + label : '') + '. Начните вводить название, чтобы отфильтровать список.');
   }
 
   function paint() {
@@ -442,7 +511,8 @@ export function buildRow(person, env) {
   function setOpen(open) {
     st.panelOpen = Boolean(open);
     if (st.panelOpen) {
-      st.listOpen = false;
+      // Список моделей открыт сразу — ждать смены провайдера не нужно.
+      st.listOpen = true;
       paintProvider();
       paintModels();
       paintEfforts();
@@ -461,7 +531,7 @@ export function buildRow(person, env) {
     st.query = '';
     search.value = '';
     st.active = -1;
-    st.listOpen = false;
+    st.listOpen = true;
     st.dirty = false;
     st.saved = '';
     st.error = '';
@@ -585,6 +655,10 @@ export function buildRow(person, env) {
     open() { setOpen(true); },
     setOpen,
     isOpen() { return st.panelOpen; },
+    /** Открыт ли список моделей (это блок под полем, а не всплывающая панель). */
+    listOpen() { return st.listOpen; },
+    /** Поле выбора модели — для проверок диктовки и подсказки с текущей моделью. */
+    searchInput() { return search; },
     state() {
       return {
         provider: st.provider,

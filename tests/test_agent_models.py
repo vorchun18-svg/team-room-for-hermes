@@ -14,6 +14,13 @@
     закрепляются на модели комнаты идемпотентно, ``running``/``done`` не трогаются;
   * ``POST …/restart`` снимает с работы только running-карточки участника;
   * под-запрос направления проектного режима получает модель своего владельца;
+  * **точность выбора** (FIX-MODEL-BE): перебор всех моделей всех провайдеров тестового
+    каталога (id-близнецы с общим префиксом, ':' и '/' в id, регистровые двойники) —
+    что выбрано, то и сохранено, и то ушло в `--model/--provider` и в карточку; регистр,
+    префикс и подстрока не угадываются; неполная пара в реестре не смешивается с дефолтом
+    агента; `restart` закрепляет выбор до reclaim;
+  * дефолты агента — на копиях РЕАЛЬНЫХ конфигов профилей (сверка с `yaml.safe_load`)
+    и на синтетических граблях (любой отступ, нет `model.default`, `delegation` ≠ agent);
   * файлы профилей не тронуты (хэши config.yaml/SOUL.md до/после), реальная доска тоже;
   * в ответах и каталоге нет ключей/секретов.
 
@@ -29,9 +36,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess as real_subprocess
 import sys
+import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 
@@ -573,6 +583,382 @@ class SafetyTests(_Base):
         text = json.dumps(body, ensure_ascii=False)
         for marker in ("sk-", "ghp_", "Bearer ", "api_key"):
             self.assertNotIn(marker, text)
+
+
+# ---------------------------------------------------------------- точность выбора
+#: каталог «как настоящий»: id-близнецы с общим префиксом, ':' и '/' внутри id и одинаковые
+#: короткие имена моделей у разных провайдеров (openrouter/nous отдают `anthropic/…`).
+BIG_CATALOG = {"providers": [
+    {"id": "ollama-cloud", "label": "Ollama Cloud", "configured": True, "models": [
+        {"id": "glm-5.3-flash"}, {"id": "glm-5.3"}, {"id": "glm-5.2"},
+        {"id": "deepseek-v4.1-flash"}, {"id": "deepseek-v4.1-flash:1017"},
+        {"id": "deepseek-v4-pro"}, {"id": "deepseek-v4-pro:0813"},
+        {"id": "gpt-oss:20b"}]},
+    {"id": "anthropic", "label": "Anthropic", "configured": True, "models": [
+        {"id": "claude-sonnet-5-5"}, {"id": "claude-fable-5-1"},
+        {"id": "claude-sonnet-5-5:1m"}]},
+    {"id": "openrouter", "label": "OpenRouter", "configured": True, "models": [
+        {"id": "anthropic/claude-sonnet-5.5"}, {"id": "anthropic/claude-fable-5.1"},
+        {"id": "deepseek/deepseek-v4-pro"},
+        {"id": "deepseek/deepseek-v4.1-flash-1017"}]},
+    {"id": "nous", "label": "Nous", "configured": True, "models": [
+        {"id": "anthropic/claude-sonnet-5.5"},
+        {"id": "deepseek/deepseek-v4.1-flash-1017"}]},
+    {"id": "llamacpp", "label": "LlamaCPP", "configured": True, "models": [
+        {"id": "qwen36"}, {"id": "gemma4"}]},
+    {"id": "custom:local", "label": "Custom", "configured": True, "models": [
+        {"id": "Model-A"}, {"id": "model-a"}]},
+]}
+
+#: все пары каталога: перебор «что выбрано = что ушло» без исключений
+EXACT_PAIRS = [(row["id"], model["id"]) for row in BIG_CATALOG["providers"] for model in row["models"]]
+#: пары для путей с деревом/перезапуском/картой (':' и '/' в id — самые «ломающиеся»)
+TRICKY_PAIRS = [("ollama-cloud", "deepseek-v4.1-flash:1017"),
+                ("openrouter", "anthropic/claude-sonnet-5.5"),
+                ("custom:local", "Model-A")]
+
+
+class ExactnessTests(_Base):
+    """«Что выбрано = что сохранено = что ушло движку» — для всех моделей всех провайдеров."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg.model_catalog_override = BIG_CATALOG
+        models_mod.catalog(self.cfg, force=True)
+
+    def tearDown(self):
+        self.cfg.model_catalog_override = CATALOG
+        models_mod.catalog(self.cfg, force=True)
+
+    def _created_flags(self) -> list:
+        """Флаги `--model/--provider` последнего `hermes kanban create`."""
+        calls = [argv for argv in self.shim.calls if "create" in argv]
+        return calls[-1] if calls else []
+
+    def test_every_model_roundtrip_is_exact(self):
+        """PUT → ответ/реестр/комната/команда → карточка запроса: ни одного «ближайшего»."""
+        for index, (provider, model) in enumerate(EXACT_PAIRS):
+            with self.subTest(provider=provider, model=model):
+                # 1) участник комнаты: что сохранено и что показывает комната
+                status, body, _h = self.put("biz-cfo",
+                                            {"provider": provider, "model": model,
+                                             "reasoning": "high"})
+                self.assertEqual(status, 200, body)
+                self.assertEqual(body["agent_models"]["biz-cfo"]["provider"], provider)
+                self.assertEqual(body["agent_models"]["biz-cfo"]["model"], model)
+                self.assertEqual(body["applied"]["saved"]["provider"], provider)
+                self.assertEqual(body["applied"]["saved"]["model"], model)
+                self.assertEqual(body["applied"]["settings"]["provider"], provider)
+                self.assertEqual(body["applied"]["settings"]["model"], model)
+                self.assertEqual(body["member"]["model_settings"]["provider"], provider)
+                self.assertEqual(body["member"]["model_settings"]["model"], model)
+
+                detail = self.room_of_api()
+                self.assertEqual(detail["agent_models"]["biz-cfo"]["model"], model)
+                meta = detail["agent_models_meta"]["biz-cfo"]["model_settings"]
+                self.assertEqual((meta["provider"], meta["model"]), (provider, model),
+                                 "agent_models_meta — то же, что сохранено")
+                member = next(m for m in detail["members"] if m["profile"] == "biz-cfo")
+                self.assertEqual((member["model_settings"]["provider"],
+                                  member["model_settings"]["model"]), (provider, model))
+
+                # 2) руководитель: карточка нового запроса и флаги CLI
+                self.set_model("biz-director", provider, model, "high")
+                status, created, _h = self.app.dispatch(
+                    "POST", "/api/rooms/%s/requests" % ROOM, {},
+                    {"text": "Проверка точности модели %d." % index})
+                self.assertEqual(status, 201, created)
+                card = self.card(created["root_id"])
+                self.assertEqual((card["provider_override"], card["model_override"]),
+                                 (provider, model), "карточка получила не ту модель")
+                argv = self._created_flags()
+                self.assertIn("--model=%s" % model, argv)
+                self.assertIn("--provider=%s" % provider, argv)
+                self.assertEqual([a for a in argv if a.startswith("--model=")],
+                                 ["--model=%s" % model])
+                self.assertEqual([a for a in argv if a.startswith("--provider=")],
+                                 ["--provider=%s" % provider])
+
+    def test_tricky_ids_through_tree_plan_and_restart(self):
+        """Дерево сторожа, под-запрос направления и перезапуск — те же точные id."""
+        for provider, model in TRICKY_PAIRS:
+            with self.subTest(provider=provider, model=model):
+                self.set_model("biz-cfo", provider, model, "low")
+                root_id = self.new_root("Точная модель %s" % model)
+                kids = self.sa.decompose(root_id, [
+                    {"title": "В очереди", "assignee": "biz-cfo", "status": "todo"},
+                    {"title": "Идёт", "assignee": "biz-cfo", "status": "running"},
+                ])
+                res = models_mod.apply_to_tree(self.cfg, ROOM, root_id)
+                self.assertIn(kids[0], res["updated"], res)
+                card = self.card(kids[0])
+                self.assertEqual((card["provider_override"], card["model_override"],
+                                  card["reasoning_effort"]), (provider, model, "low"))
+
+                self.set_model("biz-ops", provider, model, "medium")
+                room = self.room()
+                stream = {"id": "s-" + model.replace("/", "_").replace(":", "_"),
+                          "title": "Направление %s" % model, "goal": "Проверить",
+                          "owner": "biz-ops", "members": [], "depends_on": [], "due": None,
+                          "status": "proposed", "created_by": "manager"}
+                plan = {"streams": [stream], "brief_root_id": root_id}
+                made = self.app.call("plan", "_create_request", ((self.cfg, room, stream, plan), {}))
+                sub = self.card((made or {}).get("root_id") or "")
+                self.assertEqual((sub["provider_override"], sub["model_override"]),
+                                 (provider, model), made)
+
+                status, body, _h = self.restart("biz-cfo")
+                self.assertEqual(status, 200, body)
+                self.assertIn(kids[1], body["cards"])
+                after = self.card(kids[1])
+                self.assertEqual((after["provider_override"], after["model_override"]),
+                                 (provider, model), "перезапуск не должен менять выбор")
+                self.assertEqual(after["status"], "ready")
+
+    def test_put_echo_after_clear_is_agent_default(self):
+        """Ответ PUT после «по умолчанию»: applied.settings = настройки агента, saved пуст."""
+        self.set_model("biz-cfo", "anthropic", "claude-sonnet-5-5", "medium")
+        status, body, _h = self.put("biz-cfo", {})
+        self.assertEqual(status, 200, body)
+        self.assertTrue(body["cleared"])
+        self.assertEqual(body["applied"]["saved"], {})
+        self.assertTrue(body["applied"]["cleared"])
+        default = models_mod.agent_default(self.cfg, "biz-cfo")
+        self.assertEqual(body["applied"]["settings"]["provider"], default["provider"])
+        self.assertEqual(body["applied"]["settings"]["model"], default["model"])
+        self.assertEqual(body["applied"]["settings"]["source"], "agent")
+
+    def test_case_only_twins_are_not_collapsed(self):
+        """`Model-A` и `model-a` — разные модели: регистр не «нормализуется»."""
+        status, body, _h = self.put("biz-cfo", {"provider": "custom:local", "model": "Model-A"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["agent_models"]["biz-cfo"]["model"], "Model-A")
+        status, body, _h = self.put("biz-cfo", {"provider": "custom:local", "model": "model-a"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["agent_models"]["biz-cfo"]["model"], "model-a")
+
+        status, body, _h = self.put("biz-cfo", {"provider": "custom:local", "model": "MODEL-A"})
+        self.assertEqual(status, 400, body)
+        detail = json.dumps(body, ensure_ascii=False)
+        self.assertIn("нет модели", detail)
+        self.assertIn("suggestions", detail, "похожие id — только подсказка, не выбор")
+        self.assertEqual(self.room()["agent_models"]["biz-cfo"]["model"], "model-a",
+                         "неудачный PUT не должен менять сохранённое")
+
+    def test_prefix_and_substring_are_not_guessed(self):
+        """`deepseek-v4-pro:081` и `v4-pro` не превращаются в `deepseek-v4-pro`."""
+        for wrong in ("deepseek-v4-pro:081", "deepseek-v4-pro:08131", "v4-pro",
+                      "deepseek-v4.1-flash:101"):
+            with self.subTest(model=wrong):
+                status, body, _h = self.put("biz-cfo", {"provider": "ollama-cloud",
+                                                        "model": wrong})
+                self.assertEqual(status, 400, body)
+        self.assertEqual(self.room()["agent_models"], {})
+
+    def test_model_of_another_provider_points_to_it(self):
+        """Модель чужого провайдера → 400 с подсказкой, где она есть, и без записи."""
+        status, body, _h = self.put("biz-cfo", {"provider": "anthropic",
+                                                "model": "deepseek-v4-pro"})
+        self.assertEqual(status, 400, body)
+        self.assertIn("ollama-cloud", json.dumps(body, ensure_ascii=False))
+        self.assertEqual(self.room()["agent_models"], {})
+
+    def test_provider_case_twins_are_ambiguous(self):
+        """Два провайдера, отличающихся только регистром, не угадываются."""
+        catalog = {"providers": BIG_CATALOG["providers"] + [
+            {"id": "Ollama-Cloud", "label": "Двойник", "configured": True,
+             "models": [{"id": "twin-model"}]}]}
+        self.cfg.model_catalog_override = catalog
+        models_mod.catalog(self.cfg, force=True)
+        status, body, _h = self.put("biz-cfo", {"provider": "OLLAMA-CLOUD",
+                                                "model": "deepseek-v4-pro"})
+        self.assertEqual(status, 400, body)
+        self.assertIn("неоднозначно", json.dumps(body, ensure_ascii=False))
+        status, body, _h = self.put("biz-cfo", {"provider": "Ollama-Cloud",
+                                                "model": "twin-model"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["agent_models"]["biz-cfo"]["provider"], "Ollama-Cloud")
+
+    def test_reasoning_only_does_not_pin_agent_model(self):
+        """Смена только «мышления» не закрепляет на карточке модель агента."""
+        root_id = self.new_root("Только мышление")
+        kids = self.sa.decompose(root_id, [{"title": "В очереди", "assignee": "biz-cfo",
+                                            "status": "todo"}])
+        status, body, _h = self.put("biz-cfo", {"reasoning": "low"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["applied"]["settings"]["source"], "room")
+        card = self.card(kids[0])
+        self.assertEqual(card["reasoning_effort"], "low")
+        self.assertIsNone(card["model_override"], "модель агента — не выбор комнаты")
+        self.assertIsNone(card["provider_override"])
+
+
+class PartialRegistryTests(_Base):
+    """Неполная пара в реестре комнаты не смешивается с дефолтом агента."""
+
+    def _write_models(self, value: dict) -> None:
+        path = Path(self.cfg.data_dir) / "rooms.json"
+        data = json.loads(path.read_text("utf-8"))
+        for room in data["rooms"]:
+            if room.get("id") == ROOM:
+                room["agent_models"] = value
+        path.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
+
+    def test_provider_without_model_uses_agent_pair(self):
+        self._write_models({"biz-cfo": {"provider": "anthropic", "model": "",
+                                       "reasoning": "", "updated_at": 1}})
+        room = self.room()
+        self.assertEqual(room["agent_models"], {}, "неполная пара не отдаётся наружу")
+        value = models_mod.effective(self.cfg, room, "biz-cfo")
+        default = models_mod.agent_default(self.cfg, "biz-cfo")
+        self.assertEqual((value["provider"], value["model"]),
+                         (default["provider"], default["model"]))
+        self.assertEqual(value["source"], "agent")
+        args, settings = ew._model_args(self.cfg, room, "biz-cfo")
+        self.assertEqual(settings["provider"], default["provider"])
+        self.assertNotEqual(settings["provider"], "anthropic",
+                            "провайдер комнаты не должен тащить модель агента")
+
+    def test_model_without_provider_uses_agent_pair(self):
+        self._write_models({"biz-cfo": {"provider": "", "model": "claude-sonnet-5-5",
+                                       "reasoning": "", "updated_at": 1}})
+        room = self.room()
+        self.assertEqual(room["agent_models"], {})
+        value = models_mod.effective(self.cfg, room, "biz-cfo")
+        default = models_mod.agent_default(self.cfg, "biz-cfo")
+        self.assertEqual((value["provider"], value["model"]),
+                         (default["provider"], default["model"]))
+        self.assertNotEqual(value["model"], "claude-sonnet-5-5",
+                            "модель комнаты не должна тащить провайдера агента")
+
+
+# ---------------------------------------------------------------- «по умолчанию»
+class DefaultsTest(unittest.TestCase):
+    """`agent_default` на копиях РЕАЛЬНЫХ конфигов (read-only) и на синтетических граблях."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="teamroom-defaults--")
+        self.home = Path(self.tmp.name) / "hermes"
+        self.home.mkdir(parents=True)
+        self.cfg = types.SimpleNamespace(hermes_home=str(self.home), app_dir=str(ROOT))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _profile_dir(self, name: str) -> Path:
+        if name == "default":
+            return self.home
+        folder = self.home / "profiles" / name
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+
+    def _write(self, profile: str, text: str) -> None:
+        (self._profile_dir(profile) / "config.yaml").write_text(text, "utf-8")
+
+    def test_real_configs_match_yaml(self):
+        """Каждый профиль — ровно свои `model.provider/model.default/agent.reasoning_effort`."""
+        real = _real_hermes_home()
+        if real is None:
+            self.skipTest("нет реального Hermes — нечего копировать")
+        try:
+            import yaml                      # независимый разбор: эталон для сравнения
+        except ImportError:                  # pragma: no cover - стенд без PyYAML
+            self.skipTest("нет PyYAML — нечем перепроверить конфиги")
+        sources = [real / "config.yaml"] + sorted((real / "profiles").glob("*/config.yaml"))
+        if len(sources) < 5:
+            self.skipTest("мало конфигов Hermes — на чистом раннере нечего сравнивать")
+
+        checked = 0
+        for source in sources:
+            name = "default" if source.parent == real else source.parent.name
+            text = source.read_text("utf-8", "replace")
+            data = yaml.safe_load(text) or {}
+            model = data.get("model") or {}
+            agent = data.get("agent") or {}
+            effort = str(agent.get("reasoning_effort") or "").strip()
+            if effort.lower() in ("false", "none", "disabled"):
+                effort = "none"
+            expected = {"provider": str(model.get("provider") or ""),
+                        "model": str(model.get("default") or model.get("name") or ""),
+                        "reasoning": effort}
+            (self._profile_dir(name) / "config.yaml").write_text(text, "utf-8")
+            self.assertEqual(models_mod.agent_default(self.cfg, name), expected,
+                             "дефолт профиля «%s» разошёлся с его config.yaml" % name)
+            checked += 1
+        self.assertGreaterEqual(checked, 5)
+
+        for name, expected in (("biz-cfo", ("ollama-cloud", "glm-5.3-flash", "ultra")),
+                               ("biz-director", ("ollama-cloud", "glm-5.3-flash", "ultra")),
+                               ("biz-critic", ("ollama-cloud", "glm-5.3-flash", "ultra"))):
+            with self.subTest(profile=name):
+                value = models_mod.agent_default(self.cfg, name)
+                self.assertEqual((value["provider"], value["model"], value["reasoning"]),
+                                 expected)
+        root = models_mod.agent_default(self.cfg, "default")
+        self.assertEqual((root["provider"], root["model"]), ("anthropic", "claude-sonnet-5-5"),
+                         "корневой config: provider и default вместе, а не по отдельности")
+
+    def test_four_space_indent(self):
+        self._write("deep", "model:\n    provider: ollama-cloud\n"
+                            "    default: deepseek-v4.1-flash:1017\n"
+                            "agent:\n    reasoning_effort: ultra\n")
+        self.assertEqual(models_mod.agent_default(self.cfg, "deep"),
+                         {"provider": "ollama-cloud", "model": "deepseek-v4.1-flash:1017",
+                          "reasoning": "ultra"})
+
+    def test_no_model_default_and_keys_without_section(self):
+        """Профиль без `model.default` — пустая модель, а не чужая; без `model` — пусто."""
+        self._write("bare", "agent:\n  max_turns: 20\n  reasoning_effort: high\n")
+        self.assertEqual(models_mod.agent_default(self.cfg, "bare"),
+                         {"provider": "", "model": "", "reasoning": "high"})
+        self._write("nomodel", "model:\n  provider: anthropic\n")
+        self.assertEqual(models_mod.agent_default(self.cfg, "nomodel"),
+                         {"provider": "anthropic", "model": "", "reasoning": ""})
+        self.assertEqual(models_mod.agent_default(self.cfg, "нет-такого"),
+                         {"provider": "", "model": "", "reasoning": ""})
+
+    def test_delegation_effort_is_not_the_agent_effort(self):
+        """`delegation.reasoning_effort` — уровень детей, а не «по умолчанию» агента."""
+        self._write("coder-like", "model:\n  provider: anthropic\n  default: claude-sonnet-5-5\n"
+                                  "agent:\n  max_turns: 150\n"
+                                  "delegation:\n  provider: ollama-cloud\n"
+                                  "  model: deepseek-v4.1-flash:1017\n"
+                                  "  reasoning_effort: max\n")
+        value = models_mod.agent_default(self.cfg, "coder-like")
+        self.assertEqual(value["reasoning"], "", "это уровень делегатов, не агента")
+        self.assertEqual((value["provider"], value["model"]),
+                         ("anthropic", "claude-sonnet-5-5"))
+
+    def test_nested_keys_do_not_leak(self):
+        """`model.aliases.deepseek` не становится `model.default`."""
+        self._write("nested", "model:\n  provider: ollama-cloud\n"
+                              "  aliases:\n    deepseek: deepseek-v4-pro\n"
+                              "  default: glm-5.3-flash\n"
+                              "agent:\n  reasoning_effort: \u00aboff\u00bb\n")
+        value = models_mod.agent_default(self.cfg, "nested")
+        self.assertEqual(value["model"], "glm-5.3-flash")
+
+    def test_false_reasoning_means_off(self):
+        self._write("off", "model:\n  provider: llamacpp\n  default: qwen36\n"
+                           "agent:\n  reasoning_effort: false\n")
+        self.assertEqual(models_mod.agent_default(self.cfg, "off")["reasoning"], "none")
+
+    def test_quoted_and_equals_values(self):
+        self._write("quoted", "model:\n  provider: 'ollama-cloud'\n"
+                              "  default: \"gpt-oss:20b\"\n")
+        self.assertEqual(models_mod.agent_default(self.cfg, "quoted"),
+                         {"provider": "ollama-cloud", "model": "gpt-oss:20b",
+                          "reasoning": ""})
+
+
+def _real_hermes_home() -> Path | None:
+    """Реальный `%HERMES_HOME%` — только чтение (копии для теста)."""
+    try:
+        from tests.helpers import real_hermes_home
+        home = Path(real_hermes_home())
+    except Exception:  # noqa: BLE001 - на чистом раннере helpers может не найти путь
+        return None
+    return home if (home / "config.yaml").exists() else None
 
 
 if __name__ == "__main__":
