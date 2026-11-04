@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="ru" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Компоненты · Комната команды</title>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <style>
+    body { overflow: auto; }
+    .kit { max-width: 1240px; margin: 0 auto; padding: var(--space-6) var(--space-5) var(--space-12); }
+    .kit-head { display: flex; align-items: flex-end; gap: var(--space-4); padding-bottom: var(--space-4); border-bottom: 1px solid var(--border); }
+    .kit-head h1 { font-size: var(--text-xl); }
+    .kit-head p { color: var(--muted-foreground); font-size: var(--text-sm); margin-top: 2px; }
+    .kit-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); margin-top: var(--space-5); }
+    .kit-sec { padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); min-width: 0; }
+    .kit-sec--wide { grid-column: span 3; }
+    .kit-sec--half { grid-column: span 2; }
+    .kit-sec h2 { font-size: var(--text-sm); font-weight: 600; color: var(--ui-text-secondary); margin-bottom: var(--space-3); }
+    .kit-sec h2 .codicon { margin-right: 6px; color: var(--ui-text-quaternary); }
+    .kit-frame { height: 430px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--background); }
+    .kit-frame .app { height: 100%; }
+    .kit-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+    .kit-row + .kit-row { margin-top: var(--space-2); }
+    .swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); }
+    .swatch { font-size: var(--text-2xs); color: var(--muted-foreground); }
+    .swatch i { display: block; height: 26px; border-radius: var(--radius-sm); margin-bottom: 3px; border: 1px solid var(--border-soft); }
+    .icons { display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; color: var(--ui-text-tertiary); }
+    .icons span { display: grid; place-items: center; height: 26px; border-radius: var(--radius-sm); background: var(--ui-bg-quinary); }
+    @media (max-width: 1000px) { .kit-grid { grid-template-columns: 1fr; } .kit-sec--wide, .kit-sec--half { grid-column: auto; } }
+  </style>
+</head>
+<body>
+<div class="kit">
+
+  <header class="kit-head">
+    <div class="grow">
+      <h1>Компоненты «Комнаты команды»</h1>
+      <p>Демонстрация дизайн-системы: токены, каркас, все элементы. Тема переключается кнопками или <span class="mono">?theme=dark</span>.</p>
+    </div>
+    <div class="kit-row" role="group" aria-label="Тема">
+      <button class="btn btn--secondary btn--sm" data-set-theme="auto"><i class="codicon codicon-color-mode"></i> Авто</button>
+      <button class="btn btn--secondary btn--sm" data-set-theme="light">Светлая</button>
+      <button class="btn btn--secondary btn--sm" data-set-theme="dark">Тёмная</button>
+    </div>
+  </header>
+
+  <!-- ── Каркас ─────────────────────────────────────────────────────────── -->
+  <section class="kit-sec kit-sec--wide" style="margin-top:var(--space-5)">
+    <h2><i class="codicon codicon-layout"></i>Каркас приложения (статика; в приложении собирается js/app.js)</h2>
+    <div class="kit-frame">
+      <div class="app" style="height:100%">
+        <aside class="sidebar">
+          <div class="brand">
+            <div class="brand__mark">К</div>
+            <div class="brand__text">
+              <div class="brand__name">Комната команды</div>
+              <div class="brand__sub">127.0.0.1 · только локально</div>
+            </div>
+          </div>
+          <div class="sidebar__label">Комнаты
+            <button class="btn btn--ghost btn--icon btn--sm" aria-label="Новая комната"><i class="codicon codicon-add"></i></button>
+          </div>
+          <nav class="nav" aria-label="Комнаты">
+            <a class="nav-item nav-item--active" href="#"><i class="codicon codicon-briefcase"></i><span class="nav-item__text">Лето</span>
+              <span class="nav-item__badges"><span class="nav-badge nav-badge--you">2</span><span class="nav-badge nav-badge--live"><span class="nav-badge__dot"></span>3</span></span>
+            </a>
+            <a class="nav-item" href="#"><i class="codicon codicon-law"></i><span class="nav-item__text">Рабочее пространство</span>
+              <span class="nav-item__badges"><span class="nav-badge nav-badge--live"><span class="nav-badge__dot"></span>1</span></span>
+            </a>
+            <a class="nav-item" href="#"><i class="codicon codicon-beaker"></i><span class="nav-item__text">Исследования</span></a>
+          </nav>
+          <div class="sidebar__foot">
+            <div class="health">
+              <div class="health__row health__row--ok"><i class="codicon codicon-pass-filled"></i><span>Диспетчер работает</span></div>
+              <div class="health__row health__row--ok"><i class="codicon codicon-pass-filled"></i><span>Канбан на связи</span></div>
+            </div>
+            <a class="nav-item" href="#"><i class="codicon codicon-settings-gear"></i><span class="nav-item__text">Настройки</span></a>
+            <button class="nav-item" type="button"><i class="codicon codicon-color-mode"></i><span class="nav-item__text">Тема</span><span class="small muted">как в системе</span></button>
+          </div>
+        </aside>
+        <div class="app__main">
+          <header class="topbar">
+            <div class="topbar__row">
+              <div class="topbar__title">
+                <span class="topbar__name">Лето</span>
+                <span class="chip chip--outline">Запуск</span>
+                <span class="topbar__sub">локально · 127.0.0.1:8777</span>
+              </div>
+              <div class="topbar__actions">
+                <div class="topbar__team">
+                  <span class="avatar avatar--sm avatar--stacked" style="--h:14">АП</span>
+                  <span class="avatar avatar--sm avatar--stacked" style="--h:198">МК</span>
+                  <span class="avatar avatar--sm avatar--stacked" style="--h:268">БЛ</span>
+                  <span class="avatar avatar--sm avatar--stacked" style="--h:220">+3</span>
+                </div>
+                <span class="chip chip--muted">Авто</span>
+                <span class="chip chip--ok"><span class="chip__dot chip__dot--pulse"></span>Диспетчер</span>
+                <button class="btn btn--ghost btn--sm" type="button"><i class="codicon codicon-search"></i><span class="kbd">Ctrl K</span></button>
+              </div>
+            </div>
+            <nav class="tabs" aria-label="Разделы комнаты">
+              <a class="tab tab--active" href="#"><i class="codicon codicon-comment-discussion"></i>Запрос</a>
+              <a class="tab" href="#"><i class="codicon codicon-organization"></i>Команда</a>
+              <a class="tab" href="#"><i class="codicon codicon-map"></i>Карта проекта</a>
+              <a class="tab" href="#"><i class="codicon codicon-arrow-circle-right"></i>Дальше<span class="tab__count">2</span></a>
+              <a class="tab" href="#"><i class="codicon codicon-report"></i>Отчёты</a>
+              <a class="tab" href="#"><i class="codicon codicon-history"></i>Журнал</a>
+            </nav>
+          </header>
+          <main class="view">
+            <div class="view__inner">
+              <div class="card">
+                <div class="card__head">
+                  <div class="card__title">Новый запрос</div>
+                  <div class="card__actions"><span class="chip chip--muted">Авто</span><span class="chip chip--outline">С критиком</span></div>
+                </div>
+                <textarea class="textarea textarea--composer" placeholder="Скажите задачу — директор комнаты сам раздаст её команде…"></textarea>
+                <div class="card__foot">
+                  <button class="btn btn--primary"><i class="codicon codicon-send"></i>Отправить</button>
+                  <button class="btn btn--ghost btn--sm"><i class="codicon codicon-attach"></i>Файл</button>
+                  <span class="spacer"></span>
+                  <span class="small muted">Ctrl + Enter</span>
+                </div>
+              </div>
+              <div class="card card--quiet">
+                <div class="row row--between">
+                  <span class="card__title">Свежий хлеб для Лето: смета и упаковка</span>
+                  <span class="chip chip--info"><span class="chip__dot chip__dot--pulse"></span>идёт · 3 работы</span>
+                </div>
+                <div class="small muted" style="margin-top:6px">biz-director раздал задачу · 12 минут</div>
+                <div class="progress" style="margin-top:10px"><div class="progress__bar" style="width:45%"></div></div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="kit-grid">
+
+    <!-- ── Кнопки ──────────────────────────────────────────────────────── -->
+    <section class="kit-sec">
+      <h2><i class="codicon codicon-play"></i>Кнопки</h2>
+      <div class="kit-row">
+        <button class="btn btn--primary">Основная</button>
+        <button class="btn btn--secondary">Вторичная</button>
+        <button class="btn btn--ghost">Тихая</button>
+        <button class="btn btn--danger">Опасная</button>
+        <button class="btn btn--link">Ссылка</button>
+      </div>
+      <div class="kit-row">
+        <button class="btn btn--primary btn--sm">sm</button>
+        <button class="btn btn--primary">md</button>
+        <button class="btn btn--primary btn--lg">lg</button>
+        <button class="btn btn--secondary btn--icon" aria-label="Настройки"><i class="codicon codicon-gear"></i></button>
+        <button class="btn btn--danger btn--sm">Отменить запрос</button>
+      </div>
+      <div class="kit-row">
+        <button class="btn btn--secondary" disabled>Недоступно</button>
+        <button class="btn btn--primary"><i class="codicon codicon-sync codicon-modifier-spin"></i>Идёт</button>
+        <button class="btn btn--secondary btn--pill">Пилюля</button>
+      </div>
+    </section>
+
+    <!-- ── Поля ────────────────────────────────────────────────────────── -->
+    <section class="kit-sec">
+      <h2><i class="codicon codicon-edit"></i>Поля</h2>
+      <div class="stack stack--tight">
+        <div class="field">
+          <label class="field__label" for="k1">Название комнаты</label>
+          <input class="input" id="k1" value="Лето">
+        </div>
+        <div class="search-field"><i class="codicon codicon-search"></i><input class="input" placeholder="Поиск по журналу…"></div>
+        <div class="field">
+          <label class="field__label" for="k2">Режим</label>
+          <select class="select" id="k2"><option>Авто — директор раздаёт сам</option><option>Рой — параллельно</option></select>
+        </div>
+        <label class="checkbox"><input type="checkbox" checked>С критиком</label>
+        <div class="field">
+          <label class="field__label" for="k3">Срок</label>
+          <input class="input" id="k3" placeholder="2026-11-01">
+          <span class="field__error">Дата раньше сегодняшней</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Чипы и аватары ──────────────────────────────────────────────── -->
+    <section class="kit-sec">
+      <h2><i class="codicon codicon-issues"></i>Чипы, аватары, kbd</h2>
+      <div class="kit-row">
+        <span class="chip">черновик</span>
+        <span class="chip chip--info"><span class="chip__dot chip__dot--pulse"></span>идёт</span>
+        <span class="chip chip--warn">ждёт тебя</span>
+        <span class="chip chip--ok">готово</span>
+        <span class="chip chip--danger">сбой</span>
+        <span class="chip chip--muted">архив</span>
+        <span class="chip chip--outline">этап</span>
+        <span class="chip chip--accent">авто</span>
+      </div>
+      <div class="kit-row" style="margin-top:12px">
+        <span class="avatar">АП</span>
+        <span class="avatar" style="--h:14">МК</span>
+        <span class="avatar" style="--h:198">БЛ</span>
+        <span class="avatar" style="--h:268">СК</span>
+        <span class="avatar" style="--h:320">ДР</span>
+        <span class="avatar avatar--sm" style="--h:84">Ю</span>
+        <span class="avatar avatar--lg" style="--h:150">ЛВ</span>
+      </div>
+      <div class="kit-row" style="margin-top:12px">
+        <span class="kbd">Ctrl</span><span class="kbd">K</span>
+        <span class="kbd">↵</span>
+        <span class="kbd">Esc</span>
+        <span class="small muted">— клавиши</span>
+      </div>
+    </section>
+
+    <!-- ── Баннеры ─────────────────────────────────────────────────────── -->
+    <section class="kit-sec kit-sec--half">
+      <h2><i class="codicon codicon-warning"></i>Баннеры</h2>
+      <div class="stack stack--tight">
+        <div class="banner banner--warn"><i class="codicon codicon-warning"></i><div class="banner__text">Диспетчер не запущен — новые запросы не начнут работу.</div><button class="btn btn--ghost btn--sm">Проверить</button></div>
+        <div class="banner banner--error"><i class="codicon codicon-error"></i><div class="banner__text">Локальный сервер не отвечает. Запустите python server/app.py</div><button class="btn btn--ghost btn--sm">Повторить</button></div>
+        <div class="banner banner--info"><i class="codicon codicon-info"></i><div class="banner__text">Ответ собран, но критик ещё не отчитался.</div></div>
+        <div class="banner banner--ok"><i class="codicon codicon-pass"></i><div class="banner__text">Все работы завершены, ответ готов.</div></div>
+        <div class="banner"><i class="codicon codicon-bell"></i><div class="banner__text">Нейтральное уведомление.</div></div>
+      </div>
+    </section>
+
+    <!-- ── Тосты ───────────────────────────────────────────────────────── -->
+    <section class="kit-sec">
+      <h2><i class="codicon codicon-bell"></i>Тосты</h2>
+      <div class="stack stack--tight">
+        <div class="toast toast--ok"><i class="codicon codicon-pass"></i><div class="toast__text">Запрос создан</div></div>
+        <div class="toast toast--warn"><i class="codicon codicon-warning"></i><div class="toast__text">Диспетчер спит — запрос в очереди</div></div>
+        <div class="toast toast--danger"><i class="codicon codicon-error"></i><div class="toast__text">Не удалось записать отчёт</div></div>
+        <div class="toast toast--info"><i class="codicon codicon-info"></i><div class="toast__text">Обновлено 2 минуты назад</div></div>
+      </div>
+    </section>
+
+    <!-- ── Прогресс, скелетон, пустое ──────────────────────────────────── -->
+    <section class="kit-sec">
+      <h2><i class="codicon codicon-pulse"></i>Прогресс, ожидание, пусто</h2>
+      <div class="stack stack--tight">
+        <div class="progress"><div class="progress__bar" style="width:62%"></div></div>
+        <div class="progress progress--warn"><div class="progress__bar" style="width:30%"></div></div>
+        <div class="progress progress--indeterminate"><div class="progress__bar"></div></div>
+        <div class="skeleton skeleton--title"></div>
+        <div class="skeleton skeleton--line"></div>
+        <div class="skeleton skeleton--short"></div>
+      </div>
+      <div class="empty" style="padding:var(--space-4) 0 0">
+        <i class="codicon codicon-inbox"></i>
+        <div class="empty__title">Пока пусто</div>
+        <p class="empty__text">Запросов ещё не было — напишите первый.</p>
+      </div>
+    </section>
+
+    <!-- ── Меню и диалог ───────────────────────────────────────────────── -->
+    <section class="kit-sec kit-sec--wide">
+      <h2><i class="codicon codicon-ellipsis"></i>Меню, поповер, диалог</h2>
+      <div style="display:grid;grid-template-columns:240px minmax(0,1fr);gap:var(--space-4);align-items:start">
+        <div style="position:relative">
+          <div class="popover" style="position:static">
+            <div class="menu">
+              <div class="menu__label">Комната</div>
+              <button class="menu__item"><i class="codicon codicon-comment-discussion"></i>Открыть запрос<span class="menu__hint">↵</span></button>
+              <button class="menu__item"><i class="codicon codicon-copy"></i>Клонировать</button>
+              <button class="menu__item"><i class="codicon codicon-debug-restart"></i>Перезапустить</button>
+              <div class="menu__sep"></div>
+              <button class="menu__item menu__item--danger"><i class="codicon codicon-trash"></i>Удалить</button>
+            </div>
+          </div>
+        </div>
+        <div class="dialog" style="position:static;width:100%;max-width:520px">
+          <div class="dialog__head">
+            <div class="dialog__title">Отправить на доработку?</div>
+            <button class="btn btn--ghost btn--icon btn--sm" aria-label="Закрыть"><i class="codicon codicon-close"></i></button>
+          </div>
+          <div class="dialog__body">
+            <div class="field">
+              <label class="field__label" for="k4">Что исправить</label>
+              <textarea class="textarea" id="k4" placeholder="Коротко и по делу: что не так и что ждём."></textarea>
+            </div>
+          </div>
+          <div class="dialog__foot">
+            <button class="btn btn--ghost">Отмена</button>
+            <button class="btn btn--primary">На доработку</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Таблица ─────────────────────────────────────────────────────── -->
+    <section class="kit-sec kit-sec--half">
+      <h2><i class="codicon codicon-table"></i>Таблица (плотная, липкая шапка)</h2>
+      <div class="table-wrap" style="max-height:236px">
+        <table class="table table--dense">
+          <thead><tr><th>Исполнитель</th><th>Работа</th><th>Статус</th><th class="num">Время</th></tr></thead>
+          <tbody>
+            <tr><td>biz-lawyer</td><td>Договор с поставщиком</td><td><span class="chip chip--ok">готово</span></td><td class="num">18 мин</td></tr>
+            <tr><td>biz-cfo</td><td>Смета на упаковку</td><td><span class="chip chip--info">идёт</span></td><td class="num">7 мин</td></tr>
+            <tr><td>biz-marketing</td><td>Тексты для витрины</td><td><span class="chip chip--warn">ждёт</span></td><td class="num">—</td></tr>
+            <tr><td>biz-critic</td><td>Проверка сводки</td><td><span class="chip chip--muted">в очереди</span></td><td class="num">—</td></tr>
+            <tr><td>coder</td><td>Правка шаблона отчёта</td><td><span class="chip chip--danger">сбой</span></td><td class="num">2 мин</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Markdown ────────────────────────────────────────────────────── -->
+    <section class="kit-sec">
+      <h2><i class="codicon codicon-markdown"></i>Markdown ответа</h2>
+      <div class="markdown">
+        <h3>Что решили</h3>
+        <p>Комната собрала ответ: <strong>упаковку</strong> берём у местного подрядчика, срок — <em>до 5 ноября</em>.</p>
+        <ul><li>Смета — 84 000 ₽</li><li>Договор — на проверке</li></ul>
+        <blockquote>Критик: цифры сходятся, но нет резерва на доставку.</blockquote>
+        <p>Команда: <code>biz-cfo</code> → <a href="#">карточка</a></p>
+        <pre><code>hermes kanban show t_605613e0</code></pre>
+      </div>
+    </section>
+
+    <!-- ── Токены ──────────────────────────────────────────────────────── -->
+    <section class="kit-sec">
+      <h2><i class="codicon codicon-symbol-class"></i>Токены поверхностей</h2>
+      <div class="swatches">
+        <div class="swatch"><i style="background:var(--background)"></i>background</div>
+        <div class="swatch"><i style="background:var(--sidebar)"></i>sidebar</div>
+        <div class="swatch"><i style="background:var(--card)"></i>card</div>
+        <div class="swatch"><i style="background:var(--popover)"></i>popover</div>
+        <div class="swatch"><i style="background:var(--muted)"></i>muted</div>
+        <div class="swatch"><i style="background:var(--primary)"></i>primary</div>
+        <div class="swatch"><i style="background:var(--ok)"></i>ok</div>
+        <div class="swatch"><i style="background:var(--warn)"></i>warn</div>
+        <div class="swatch"><i style="background:var(--danger)"></i>danger</div>
+        <div class="swatch"><i style="background:var(--info)"></i>info</div>
+        <div class="swatch"><i style="background:var(--accent)"></i>accent</div>
+        <div class="swatch"><i style="background:var(--border)"></i>border</div>
+      </div>
+    </section>
+
+    <!-- ── Графики ─────────────────────────────────────────────────────── -->
+    <section class="kit-sec">
+      <h2><i class="codicon codicon-graph"></i>Палитра графиков</h2>
+      <div class="kit-row">
+        <span class="swatch" style="flex:1"><i style="background:var(--chart-1)"></i>1</span>
+        <span class="swatch" style="flex:1"><i style="background:var(--chart-2)"></i>2</span>
+        <span class="swatch" style="flex:1"><i style="background:var(--chart-3)"></i>3</span>
+        <span class="swatch" style="flex:1"><i style="background:var(--chart-4)"></i>4</span>
+      </div>
+      <div class="kit-row">
+        <span class="swatch" style="flex:1"><i style="background:var(--chart-5)"></i>5</span>
+        <span class="swatch" style="flex:1"><i style="background:var(--chart-6)"></i>6</span>
+        <span class="swatch" style="flex:1"><i style="background:var(--chart-7)"></i>7</span>
+        <span class="swatch" style="flex:1"><i style="background:var(--chart-8)"></i>8</span>
+      </div>
+    </section>
+
+    <!-- ── Иконки ──────────────────────────────────────────────────────── -->
+    <section class="kit-sec kit-sec--wide">
+      <h2><i class="codicon codicon-extensions"></i>Codicons (локальный шрифт)</h2>
+      <div class="icons">
+        <span title="add"><i class="codicon codicon-add"></i></span>
+        <span title="search"><i class="codicon codicon-search"></i></span>
+        <span title="home"><i class="codicon codicon-home"></i></span>
+        <span title="comment-discussion"><i class="codicon codicon-comment-discussion"></i></span>
+        <span title="organization"><i class="codicon codicon-organization"></i></span>
+        <span title="map"><i class="codicon codicon-map"></i></span>
+        <span title="report"><i class="codicon codicon-report"></i></span>
+        <span title="history"><i class="codicon codicon-history"></i></span>
+        <span title="settings-gear"><i class="codicon codicon-settings-gear"></i></span>
+        <span title="check"><i class="codicon codicon-check"></i></span>
+        <span title="close"><i class="codicon codicon-close"></i></span>
+        <span title="warning"><i class="codicon codicon-warning"></i></span>
+        <span title="error"><i class="codicon codicon-error"></i></span>
+        <span title="info"><i class="codicon codicon-info"></i></span>
+        <span title="bell"><i class="codicon codicon-bell"></i></span>
+        <span title="calendar"><i class="codicon codicon-calendar"></i></span>
+        <span title="attach"><i class="codicon codicon-attach"></i></span>
+        <span title="send"><i class="codicon codicon-send"></i></span>
+        <span title="pin"><i class="codicon codicon-pin"></i></span>
+        <span title="trash"><i class="codicon codicon-trash"></i></span>
+        <span title="edit"><i class="codicon codicon-edit"></i></span>
+        <span title="copy"><i class="codicon codicon-copy"></i></span>
+        <span title="check-all"><i class="codicon codicon-check-all"></i></span>
+        <span title="pulse"><i class="codicon codicon-pulse"></i></span>
+        <span title="database"><i class="codicon codicon-database"></i></span>
+        <span title="terminal"><i class="codicon codicon-terminal"></i></span>
+        <span title="robot"><i class="codicon codicon-robot"></i></span>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script>
+  (function () {
+    var fromUrl = new URLSearchParams(location.search).get('theme');
+    var pref = fromUrl || 'auto';
+    var root = document.documentElement;
+    root.dataset.theme = pref;
+
+    function paint(active) {
+      document.querySelectorAll('[data-set-theme]').forEach(function (btn) {
+        btn.classList.toggle('btn--primary', btn.dataset.setTheme === active);
+        btn.classList.toggle('btn--secondary', btn.dataset.setTheme !== active);
+      });
+    }
+    paint(pref);
+    document.querySelectorAll('[data-set-theme]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        root.dataset.theme = btn.dataset.setTheme;
+        paint(btn.dataset.setTheme);
+        try { localStorage.setItem('teamroom.theme', btn.dataset.setTheme); } catch (e) {}
+      });
+    });
+  })();
+</script>
+</body>
+</html>

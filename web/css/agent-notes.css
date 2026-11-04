@@ -1,0 +1,140 @@
+/* agent-notes.css — «Особые указания для этой комнаты» (WAVE9 §9).
+   Только токены tokens.css: светлая и тёмная темы получаются сами.
+   Поле с микрофоном: справа оставляем 40px, чтобы кнопка не наезжала на текст. */
+
+.agent-notes { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.agent-notes__intro {
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.agent-notes__examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+.agent-notes__examples-label { flex: none; }
+.agent-notes__example {
+  border: 1px solid var(--border-soft);
+  background: var(--ui-bg-tertiary);
+  color: var(--ui-base);
+  border-radius: var(--radius-full);
+  padding: 2px var(--space-2);
+  font: inherit;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-notes__example:hover { background: var(--ui-bg-secondary); border-color: var(--border); }
+.agent-notes__example:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+
+.agent-notes__list { display: flex; flex-direction: column; gap: var(--space-1); }
+.agent-notes__empty { font-size: var(--text-sm); color: var(--muted-foreground); }
+
+/* ── один участник: раскрывающаяся строка ─────────────────────────────── */
+.agent-note {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-editor);
+  padding: 0 var(--space-2);
+}
+.agent-note[open] { border-color: var(--border); background: var(--ui-bg-elevated); }
+.agent-note--has { border-color: color-mix(in srgb, var(--link) 34%, var(--border)); }
+
+.agent-note__summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2) 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+.agent-note__summary::-webkit-details-marker { display: none; }
+.agent-note__summary:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+
+.agent-note__name { font-weight: 600; color: var(--ui-base); }
+.agent-note__role { color: var(--muted-foreground); }
+.agent-note__toggle {
+  margin-left: auto;
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+.agent-note[open] .agent-note__toggle { color: var(--muted-foreground); text-decoration: none; }
+
+.agent-note__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-05);
+  font-size: var(--text-sm);
+  color: var(--link);
+  background: var(--ui-bg-primary);
+  border-radius: var(--radius-full);
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+}
+.agent-note__badge.hidden { display: none; }
+
+.agent-note__box { padding: 0 0 var(--space-2); }
+
+/* поле: микрокнопка диктовки встаёт справа — место под неё оставлено */
+.agent-note__area {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  padding-right: 40px;
+  line-height: 1.5;
+  font: inherit;
+}
+
+.agent-note__foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+.agent-note__count--over { color: var(--danger-ink); font-weight: 600; }
+.agent-note__warn { color: var(--danger-ink); }
+.agent-note__warn.hidden { display: none; }
+
+/* ── строка на вкладке «Команда» ──────────────────────────────────────── */
+.agent-notes-line { align-items: flex-start; }
+.agent-notes-line .tm-fact__value {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.agent-notes-line__list {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-tertiary);
+}
+.agent-notes-line__list.hidden { display: none; }
+.agent-notes-line__item { display: flex; gap: var(--space-2); font-size: var(--text-sm); }
+.agent-notes-line__who { flex: none; font-weight: 600; color: var(--ui-base); }
+.agent-notes-line__text { color: var(--muted-foreground); min-width: 0; }
+
+@media (max-width: 720px) {
+  .agent-note__toggle { margin-left: 0; }
+  .agent-notes-line__item { flex-direction: column; gap: 0; }
+}

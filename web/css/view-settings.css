@@ -1,0 +1,139 @@
+/* ============================================================================
+   view-settings.css — экран «Настройки»: здоровье, тема, уведомления,
+   вопросы-ответы, горячие клавиши, новая комната.
+   ========================================================================== */
+
+/* Временный обход бага каркаса: у .app__main нет min-height:0, поэтому
+   grid-строка растёт под контент и длинная страница обрезается без скролла.
+   Правильное место правки — components.css (.app__main { min-height: 0 }),
+   но это чужой файл; здесь правило включается только для «Настроек». */
+.app:has(#view .set) { grid-template-rows: minmax(0, 1fr); }
+
+.set { gap: var(--space-5); max-width: 980px; }
+
+.set__lead { font-size: var(--text-sm); line-height: var(--leading-relaxed); max-width: 78ch; }
+
+.set-section {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-soft);
+}
+.set-section:first-of-type { border-top: 0; padding-top: 0; }
+.set-section__body { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* ── Здоровье: чипы и таблица-карточка ───────────────────────────────────── */
+
+.set-chips { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.set-chips .chip { gap: 5px; }
+
+.set-card {
+  display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden;
+}
+
+.set-row {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  min-height: 34px; font-size: var(--text-sm);
+  border-bottom: 1px solid var(--border-soft);
+}
+.set-row:last-child { border-bottom: 0; }
+.set-row__label {
+  flex: 0 0 132px;
+  font-size: var(--text-sm); color: var(--muted-foreground);
+}
+.set-row__value {
+  display: flex; align-items: center; gap: var(--space-2);
+  flex-wrap: wrap; flex: 1 1 auto; min-width: 0;
+}
+.set-row--path .set-row__path { flex: 1 1 auto; min-width: 0; font-size: var(--text-sm); }
+.set-row__actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+
+.set-card__sep { height: 1px; background: var(--border-soft); }
+
+.set-banner { margin: 0; align-items: flex-start; }
+
+/* ── Тема, уведомления ───────────────────────────────────────────────────── */
+
+.set-hint { line-height: var(--leading-relaxed); max-width: 76ch; }
+.set-field { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.set-switch { align-items: flex-start; font-size: var(--text-sm); }
+.set-switch input { margin-top: 2px; flex: 0 0 auto; }
+
+.set-notify__actions { gap: var(--space-3); }
+
+/* ── Вопросы и ответы ────────────────────────────────────────────────────── */
+
+.set-faq {
+  display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden;
+}
+.set-faq__item { border-bottom: 1px solid var(--border-soft); }
+.set-faq__item:last-child { border-bottom: 0; }
+
+.set-faq__q {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm); color: var(--foreground);
+  cursor: pointer; list-style-position: outside;
+}
+.set-faq__q:hover { background: var(--ui-row-hover-background); }
+.set-faq__q::marker { color: var(--ui-text-quaternary); }
+.set-faq__item[open] .set-faq__q { font-weight: 500; }
+
+.set-faq__a {
+  padding: 0 var(--space-4) var(--space-3) var(--space-6);
+  color: var(--ui-text-secondary);
+  font-size: var(--text-sm); line-height: var(--leading-relaxed);
+}
+.set-faq__a p { max-width: 84ch; }
+.set-faq__links { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-2); }
+.set-faq__link { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-sm); }
+
+/* ── Горячие клавиши ─────────────────────────────────────────────────────── */
+
+.set-keys {
+  display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden;
+}
+.set-key {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-soft);
+}
+.set-key:last-child { border-bottom: 0; }
+.set-key__keys { display: flex; align-items: center; gap: 4px; flex: 0 0 140px; }
+.set-key__text { font-size: var(--text-sm); color: var(--ui-text-secondary); }
+
+/* ── Новая комната ──────────────────────────────────────────────────────── */
+
+.set-form { display: flex; flex-direction: column; gap: var(--space-3); max-width: 720px; }
+.set-form__row--two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.set-form__foot { gap: var(--space-3); }
+.set-form__error { color: var(--danger-ink); }
+
+/* ── Узкий экран ─────────────────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .set { max-width: none; }
+  .set-faq__a { padding-left: var(--space-5); }
+}
+
+@media (max-width: 720px) {
+  .set-row { flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
+  .set-row__label { flex-basis: 100%; }
+  .set-row__value { flex-basis: calc(100% - 40px); }
+  .set-form__row--two { grid-template-columns: 1fr; }
+  .set-key { align-items: flex-start; }
+  .set-key__keys { flex-basis: 118px; flex-wrap: wrap; }
+}
+
+@media (max-width: 640px) {
+  .set-faq__a { padding-left: var(--space-4); }
+  .set-key { flex-direction: column; gap: var(--space-1); }
+  .set-key__keys { flex-basis: auto; }
+}

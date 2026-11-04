@@ -1,0 +1,56 @@
+{
+  "rooms": [
+    {
+      "id": "cafe",
+      "title": "Лето",
+      "icon": "cake",
+      "archived": false,
+      "orchestrator": "biz-director",
+      "critic": "biz-critic",
+      "members_count": 7,
+      "mode_default": "auto",
+      "critic_pass": true,
+      "counters": {
+        "working": 3,
+        "needs_you": 3,
+        "done_today": 2
+      },
+      "phase": {
+        "id": "legal",
+        "title": "Легализация",
+        "status": "active"
+      },
+      "updated_at": 1793171850,
+      "max_rounds": 1
+    },
+    {
+      "id": "fn",
+      "title": "Рабочее пространство",
+      "icon": "law",
+      "archived": false,
+      "orchestrator": "default",
+      "critic": null,
+      "members_count": 3,
+      "mode_default": "auto",
+      "critic_pass": false,
+      "counters": {
+        "working": 1,
+        "needs_you": 0,
+        "done_today": 1
+      },
+      "phase": {
+        "id": "legal",
+        "title": "Легализация",
+        "status": "active"
+      },
+      "updated_at": 1793171850,
+      "max_rounds": 1
+    }
+  ],
+  "engine": {
+    "ok": true,
+    "board": "team",
+    "warning": null
+  },
+  "updated_at": 1793171850
+}

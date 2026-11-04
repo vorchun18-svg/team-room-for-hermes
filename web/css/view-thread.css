@@ -1,0 +1,205 @@
+/* view-thread.css — блок «Диалог по запросу» на странице запроса.
+   Только токены tokens.css и классы components.css; свои имена — с префиксом .thr-. */
+
+.thr {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  min-width: 0;
+}
+
+.thr__head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.thr__title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--ui-text-secondary);
+  letter-spacing: 0;
+}
+.thr__count { flex: none; }
+
+/* ── Лента ───────────────────────────────────────────────────────────────── */
+
+.thr__feed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 84px;
+  max-height: 46vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: var(--space-1) var(--space-1) var(--space-1) 0;
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.thr__feed:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.thr__empty {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.thr__empty .codicon { flex: none; color: var(--ui-text-quaternary); font-size: 18px; }
+.thr__empty-text { min-width: 0; max-width: 60ch; overflow-wrap: anywhere; }
+
+/* Дата-разделитель: тихая подпись с hairline справа. */
+.thr__day {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-1);
+  color: var(--muted-foreground);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.thr__day::after { content: ''; flex: 1 1 auto; height: 1px; background: var(--border-soft); }
+
+/* Сообщение команды — слева, с аватаром. */
+.thr-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-width: 86%;
+  min-width: 0;
+}
+.thr-msg .avatar { flex: none; margin-top: 1px; }
+.thr-msg__body {
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: transparent;
+}
+.thr-msg__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px var(--space-2);
+  margin-bottom: 3px;
+  color: var(--muted-foreground);
+  font-size: var(--text-2xs);
+}
+.thr-msg__who { font-size: var(--text-xs); font-weight: 600; color: var(--ui-text-secondary); }
+.thr-msg__role { color: var(--muted-foreground); }
+.thr-msg__time { margin-left: auto; color: var(--muted-foreground); }
+.thr-msg__text {
+  color: var(--foreground);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Сообщение Михаила — справа и выделено. */
+.thr-msg--mine { flex-direction: row-reverse; margin-left: auto; }
+.thr-msg--mine .thr-msg__body {
+  background: var(--accent);
+  border-color: color-mix(in srgb, var(--primary) 24%, transparent);
+}
+.thr-msg--mine .thr-msg__head { justify-content: flex-end; }
+.thr-msg--mine .thr-msg__who { color: var(--foreground); }
+.thr-msg--pending { opacity: 0.72; }
+
+/* Системное событие — тонкая серая строка. */
+.thr-ev {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 2px 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  min-width: 0;
+}
+.thr-ev::before {
+  content: '';
+  flex: none;
+  width: 3px;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--ui-text-quaternary);
+}
+.thr-ev__text { min-width: 0; overflow-wrap: anywhere; }
+
+/* ── Поле ввода ──────────────────────────────────────────────────────────── */
+
+.thr__form { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.thr__field { position: relative; display: block; min-width: 0; }
+/* Справа оставлено место под кнопку микрофона (её ставит dictation-auto). */
+.thr__input {
+  width: 100%;
+  min-height: 66px;
+  max-height: 34vh;
+  resize: none;
+  padding-right: 40px;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.thr__bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.thr__bar .spacer { flex: 1 1 auto; }
+.thr__urgent { max-width: 100%; }
+.thr__urgent span { font-size: var(--text-sm); color: var(--ui-text-secondary); line-height: var(--leading-normal); }
+
+.thr__files { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); min-width: 0; }
+.thr__file { display: inline-flex; align-items: center; gap: 2px; min-width: 0; max-width: 100%; }
+.thr__file .path-chip { min-width: 0; }
+.thr__unclip { flex: none; color: var(--muted-foreground); }
+.thr__unclip:hover { color: var(--foreground); }
+
+.thr__hint {
+  color: var(--muted-foreground);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
+.thr__err {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.thr__err .codicon { flex: none; margin-top: 2px; font-size: 12px; }
+.thr__err.hidden { display: none; }
+
+/* ── Адаптив ─────────────────────────────────────────────────────────────── */
+
+@media (max-width: 899px) {
+  .thr { padding: var(--space-3); }
+  .thr__feed { max-height: 40vh; }
+  .thr-msg { max-width: 94%; }
+}
+
+@media (max-width: 560px) {
+  .thr-msg { max-width: 100%; }
+  .thr__bar .spacer { display: none; }
+  .thr__send, .thr__second { flex: 1 1 auto; justify-content: center; }
+  .thr__urgent { flex: 1 1 100%; }
+}
+
+/* ── Печать ─────────────────────────────────────────────────────────────── */
+
+@media print {
+  .thr__form { display: none !important; } /* в бумаге нужна лента, не поле ввода */
+  .thr__feed { max-height: none; overflow: visible; }
+  .thr { border: 0; padding: 0; background: none; }
+  .thr-msg__body { break-inside: avoid; }
+}

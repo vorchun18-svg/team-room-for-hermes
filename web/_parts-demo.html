@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ru" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Блоки страницы запроса — стенд</title>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/view-ui.css">
+  <link rel="stylesheet" href="css/view-request-parts.css">
+  <link rel="stylesheet" href="css/report.css">
+  <link rel="stylesheet" href="css/report-charts.css">
+  <style>
+    /* Только каркас стенда — сами блоки живут на токенах и components.css. */
+    body { background: var(--background); color: var(--foreground); }
+    .demo-bar {
+      position: sticky; top: 0; z-index: var(--z-sticky); display: flex; align-items: center;
+      gap: var(--space-3); flex-wrap: wrap; padding: var(--space-2) var(--space-4);
+      border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--background) 92%, transparent);
+      backdrop-filter: blur(6px);
+    }
+    .demo-bar__title { font-size: var(--text-sm); font-weight: 600; margin-right: auto; }
+    .demo-bar__title small { font-weight: 400; color: var(--muted-foreground); margin-left: var(--space-2); }
+    .demo-states { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+    .demo-state { height: var(--control-sm); padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--ui-text-secondary); background: transparent; }
+    .demo-state:hover { background: var(--ui-control-hover-background); color: var(--foreground); }
+    .demo-state.is-active { background: var(--accent); border-color: color-mix(in srgb, var(--primary) 30%, transparent); color: var(--accent-strong); font-weight: 600; }
+    .demo-main { padding: var(--space-5) var(--space-6) var(--space-12); }
+    .demo-inner { display: flex; flex-direction: column; gap: var(--space-5); max-width: var(--content-max); margin: 0 auto; }
+    .demo-head { display: flex; flex-direction: column; gap: var(--space-1); }
+    .demo-head__title { font-size: var(--text-xl); font-weight: 600; }
+    .demo-head__row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+    .demo-error { margin: 0; }
+    /* #bare — этот же файл как «HTML-отчёт агента» внутри sandbox-iframe. */
+    .bare-report { display: none; }
+    body:has(#bare:target) > .demo-bar,
+    body:has(#bare:target) > .demo-main,
+    body:has(#bare:target) > .toasts { display: none; }
+    body:has(#bare:target) > .bare-report { display: block; }
+    @media (max-width: 720px) { .demo-main { padding: var(--space-4); } }
+  </style>
+</head>
+<body>
+  <header class="demo-bar" id="bar" hidden>
+    <div class="demo-bar__title">Стенд блоков запроса <small>mock_server · фикстуры</small></div>
+    <div class="demo-states" id="states"></div>
+    <div class="row row--tight" id="themes"></div>
+  </header>
+  <main class="demo-main" id="main" tabindex="-1">
+    <div class="demo-inner" id="root"></div>
+  </main>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <!-- Заглушка «HTML-отчёта агента» для стенда: показывается только при #bare
+       (этот же файл открывается в sandbox-iframe через /api/file). -->
+  <div class="bare-report" id="bare">
+    <div style="font: 13px/1.55 'Segoe UI', system-ui, sans-serif; color: #17171a; padding: 16px 18px; max-width: 760px">
+      <h1 style="font-size: 17px; margin: 0 0 4px">Котировки упаковки: 10 поставщиков в городе</h1>
+      <p style="margin: 0 0 14px; color: #5a5a63">Демонстрационный HTML-отчёт агента — открыт в sandbox-iframe.</p>
+      <table style="border-collapse: collapse; width: 100%; font-size: 12px">
+        <thead>
+          <tr style="background: #f4f6fa">
+            <th style="border: 1px solid #e2e5ea; padding: 6px 8px; text-align: left">Поставщик</th>
+            <th style="border: 1px solid #e2e5ea; padding: 6px 8px; text-align: left">Город</th>
+            <th style="border: 1px solid #e2e5ea; padding: 6px 8px; text-align: right">MOQ</th>
+            <th style="border: 1px solid #e2e5ea; padding: 6px 8px; text-align: right">Цена, R$</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px">Короб-Мастер</td>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px">Заозёрье</td>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px; text-align: right">100</td>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px; text-align: right">4,80</td>
+          </tr>
+          <tr>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px">Тара-Юг</td>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px">Сосновка</td>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px; text-align: right">100</td>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px; text-align: right">5,20</td>
+          </tr>
+          <tr>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px">Пак-Сервис</td>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px">Ольховка</td>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px; text-align: right">500</td>
+            <td style="border: 1px solid #e2e5ea; padding: 6px 8px; text-align: right">4,35</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin: 12px 0 0; color: #5a5a63">Этот файл — заглушка HTML-отчёта для стенда, не данные проекта.</p>
+    </div>
+  </div>
+
+  <script type="module">
+    import { api } from './js/api.js';
+    import { h } from './js/util.js';
+    import { icon } from './js/icons.js';
+    import { statusChip } from './js/ui.js';
+    import {
+      renderPipeline, renderWarnings, renderCritic, renderTree, renderArtifacts, renderTimeline,
+    } from './js/views/request-parts.js';
+    import { renderReportEmbed } from './js/views/report-embed.js';
+
+    /* ── Состояния: id фикстур из mock_server ── */
+    const STATES = [
+      { key: 'done', rid: 't_a1b2c3d4', label: 'готово · критик' },
+      { key: 'approved', rid: 't_c4d2e118', label: 'критик принял' },
+      { key: 'reviewing', rid: 't_7d21b8c4', label: 'проверка' },
+      { key: 'working', rid: 't_9f3c2a10', label: 'в работе' },
+      { key: 'queued', rid: 't_2a6f5c93', label: 'в очереди' },
+      { key: 'needs_you', rid: 't_5c8e4a02', label: 'нужен ответ' },
+      { key: 'failed', rid: 't_3b7e9d11', label: 'ошибка' },
+      { key: 'outside', rid: 't_4e91c7b2', label: 'вне состава' },
+      { key: 'legacy', rid: 't_605613e0', label: 'legacy' },
+      { key: 'html-report', rid: 't_a1b2c3d4', label: 'HTML-отчёт' },
+    ];
+
+    const root = document.getElementById('root');
+    const statesBox = document.getElementById('states');
+    const themesBox = document.getElementById('themes');
+    const toasts = document.getElementById('toasts');
+
+    function toast(msg, kind = 'info') {
+      const el = h('div', { class: ['toast', 'toast--' + kind] },
+        icon(kind === 'danger' ? 'error' : kind === 'ok' ? 'check' : 'info', { size: 14 }),
+        h('div', { class: 'toast__text' }, String(msg)));
+      toasts.appendChild(el);
+      setTimeout(() => el.remove(), 4200);
+    }
+
+    /* ── Тема ── */
+    for (const [value, label] of [['light', 'Светлая'], ['dark', 'Тёмная'], ['auto', 'Авто']]) {
+      const b = h('button', { class: 'demo-state', type: 'button' }, label);
+      b.addEventListener('click', () => {
+        document.documentElement.dataset.theme = value;
+        for (const x of themesBox.children) x.classList.toggle('is-active', x === b);
+      });
+      themesBox.appendChild(b);
+      if (value === 'auto') b.classList.add('is-active');
+    }
+
+    /* ── Фейковый API только для HTML-отчёта: настоящий мок его не отдаёт ── */
+    function apiFor(state) {
+      if (state !== 'html-report') return api;
+      return Object.assign({}, api, {
+        get(path, opts) {
+          if (String(path).startsWith('/api/reports/')) {
+            return Promise.resolve({
+              kind: 'html',
+              title: 'Котировки упаковки: 10 поставщиков в городе',
+              // Тот же файл стенда через /api/file: проверяем настоящий путь
+              // «HTML-отчёт в sandbox-iframe» (без JS — только CSS :target).
+              url: '/api/file?path=' + encodeURIComponent('web/_parts-demo.html') + '#bare',
+            });
+          }
+          return api.get(path, opts);
+        },
+      });
+    }
+
+    function currentState() {
+      const m = /state=([a-z-]+)/.exec(location.hash || '');
+      const key = m ? m[1] : 'done';
+      return STATES.find((s) => s.key === key) || STATES[0];
+    }
+
+    function renderBar(active) {
+      statesBox.textContent = '';
+      for (const st of STATES) {
+        const b = h('button', {
+          class: ['demo-state', st.key === active.key ? 'is-active' : ''],
+          type: 'button',
+          onclick: () => { location.hash = 'state=' + st.key; },
+        }, st.label);
+        statesBox.appendChild(b);
+      }
+    }
+
+    async function render() {
+      const state = currentState();
+      renderBar(state);
+      root.textContent = '';
+      root.appendChild(h('div', { class: 'empty' }, h('div', { class: 'empty__text' }, 'Загрузка…')));
+
+      let detail;
+      try {
+        detail = await api.get('/api/requests/' + state.rid);
+      } catch (err) {
+        root.textContent = '';
+        root.appendChild(h('div', { class: 'banner banner--error demo-error' },
+          icon('error', { size: 14 }), h('div', { class: 'banner__text' }, 'Не удалось прочитать фикстуру: ' + (err.message || err))));
+        return;
+      }
+
+      let room = null;
+      try { room = await api.get('/api/rooms/' + detail.room); } catch { room = { id: detail.room, members: [] }; }
+
+      const ctx = {
+        route: { name: 'request', roomId: detail.room, tab: 'request', id: detail.id },
+        params: { id: detail.id },
+        api: apiFor(state.key),
+        store: null,
+        navigate: (hash) => { location.hash = hash; },
+        toast,
+        room,
+        refresh: () => render(),
+      };
+
+      const view = h('div', { class: 'demo-inner' });
+      view.appendChild(h('div', { class: 'demo-head' },
+        h('div', { class: 'demo-head__row' },
+          h('span', { class: 'demo-head__title' }, String(detail.title)),
+          statusChip(detail.status)),
+        h('div', { class: 'demo-head__row small muted' },
+          h('span', { class: 'mono' }, detail.id),
+          h('span', {}, '·'),
+          h('span', {}, 'комната ' + detail.room),
+          h('span', {}, '·'),
+          h('span', {}, 'фикстура: ' + state.label))));
+
+      const blocks = [
+        renderPipeline(detail),
+        renderWarnings(detail),
+        renderCritic(detail, ctx),
+        renderTree(detail, ctx, { onChanged: () => render() }),
+        renderArtifacts(detail, ctx),
+        renderReportEmbed(detail, ctx),
+        renderTimeline(detail),
+      ].filter(Boolean);
+      for (const b of blocks) view.appendChild(b);
+
+      root.textContent = '';
+      root.appendChild(view);
+    }
+
+    window.addEventListener('hashchange', render);
+    render();
+  </script>
+</body>
+</html>

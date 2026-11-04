@@ -1,0 +1,193 @@
+/* view-backlog.css — вкладка «Дальше». Только токены tokens.css. */
+
+.backlog { gap: var(--space-4); }
+
+.backlog__toolbar { gap: var(--space-3); }
+.backlog__closed-toggle { font-size: var(--text-sm); color: var(--muted-foreground); white-space: nowrap; }
+.backlog__error:empty { display: none; }
+
+/* ── карточки секций ─────────────────────────────────────────────────────── */
+.backlog__card { overflow: hidden; }
+.backlog__card-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-soft);
+}
+/* Заголовок «Ждут вашего решения»: число дел и его расшифровка рядом (D4). */
+.backlog__card-head--inbox { flex-wrap: wrap; align-items: baseline; }
+.inbox__breakdown { flex: 1 1 100%; margin-top: -2px; }
+.backlog__card-body { min-width: 0; }
+
+/* ── «Ждёт тебя» ─────────────────────────────────────────────────────────── */
+.inbox-groups { display: flex; flex-direction: column; }
+.inbox-group + .inbox-group { border-top: 1px solid var(--border); }
+.inbox-group__title {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-4) var(--space-1);
+  font-size: var(--text-sm); font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--ui-text-tertiary);
+}
+.inbox-group__title .tnum { color: var(--ui-text-tertiary); }
+.inbox-list { display: flex; flex-direction: column; }
+.inbox-row {
+  display: grid; grid-template-columns: 26px minmax(0, 1fr) auto;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  align-items: start; min-width: 0;
+}
+.inbox-row + .inbox-row { border-top: 1px solid var(--border-soft); }
+.inbox-row:hover { background: var(--ui-row-hover-background); }
+.inbox-row__icon {
+  width: 26px; height: 26px; display: grid; place-items: center;
+  border-radius: var(--radius-full); background: var(--ui-bg-quaternary);
+  color: var(--ui-text-secondary);
+}
+.inbox-row--blocked .inbox-row__icon { background: var(--warn-soft); color: var(--warn-ink); }
+.inbox-row--question .inbox-row__icon { background: var(--info-soft); color: var(--info-ink); }
+.inbox-row--decision .inbox-row__icon { background: var(--ui-bg-quaternary); color: var(--link); }
+.inbox-row__main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.inbox-row__top { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); min-width: 0; }
+.inbox-row__kind { font-size: var(--text-sm); font-weight: 600; color: var(--ui-text-secondary); }
+.inbox-row__text { font-size: var(--text-base); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.inbox-row__hint {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+.inbox-row__actions { display: flex; align-items: center; gap: var(--space-1); padding-top: 1px; align-self: center; }
+
+.backlog__answer { display: flex; align-items: flex-start; gap: var(--space-2); margin-top: var(--space-1); }
+.backlog__answer-input { flex: 1 1 auto; min-width: 0; height: var(--control-md); }
+.backlog__answer .textarea { height: auto; min-height: 54px; }
+.backlog__answer .btn { flex: none; }
+
+.backlog__source {
+  display: inline-flex; align-items: flex-start; gap: 3px; min-width: 0; max-width: 46ch;
+  font-size: var(--text-sm); color: var(--muted-foreground); text-decoration: none;
+}
+/* Источник — до двух строк: полный текст в title, короткое имя на экране (D13). */
+.backlog__source-text {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere; line-height: 1.3;
+}
+.backlog__source:hover { color: var(--link); text-decoration: underline; }
+.backlog__source .codicon { flex: none; }
+
+/* ── шаги ────────────────────────────────────────────────────────────────── */
+.step-groups { display: flex; flex-direction: column; }
+.step-group + .step-group { border-top: 1px solid var(--border); }
+.step-group__head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: color-mix(in srgb, var(--ui-bg-quaternary) 62%, transparent);
+}
+.step-group__title {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  min-width: 0; max-width: 58ch; font-size: var(--text-sm); font-weight: 600;
+  color: var(--ui-text-secondary); text-decoration: none;
+}
+a.step-group__title:hover { color: var(--link); text-decoration: underline; }
+.step-group__head .chip { height: 18px; }
+.step-list { display: flex; flex-direction: column; }
+.step-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-3); padding: var(--space-3) var(--space-4);
+  align-items: start; min-width: 0;
+}
+.step-row + .step-row { border-top: 1px solid var(--border-soft); }
+.step-row--busy { opacity: 0.55; }
+.step-row__check { padding-top: 1px; }
+.step-row__check input { width: 15px; height: 15px; accent-color: var(--primary); cursor: pointer; }
+.step-row__body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.step-row__text { font-size: var(--text-base); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.step-row__meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px var(--space-2); min-width: 0; }
+.step-row__actions { display: flex; align-items: center; gap: var(--space-1); }
+.owner-chip { gap: 4px; height: 20px; max-width: 15ch; }
+.owner-chip__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.backlog__date {
+  width: 132px; height: var(--control-sm); padding: 0 var(--space-1);
+  font-size: var(--text-sm); font-variant-numeric: tabular-nums;
+}
+.backlog__ics { flex: none; }
+
+/* ── будущие вопросы ─────────────────────────────────────────────────────── */
+.future-list { display: flex; flex-direction: column; padding: 0 var(--space-4); }
+.future-card {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  padding: var(--space-3) 0; min-width: 0;
+}
+.future-card + .future-card { border-top: 1px solid var(--border-soft); }
+.future-card__main { flex: 1 1 auto; min-width: 0; }
+.future-card__text { font-size: var(--text-base); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.future-card__meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); margin-top: 4px; }
+.future-card__actions { display: flex; align-items: center; gap: var(--space-1); flex: none; }
+
+/* ── повестка ───────────────────────────────────────────────────────────── */
+.agenda { display: flex; flex-direction: column; }
+.agenda-day { padding: var(--space-2) var(--space-4) var(--space-3); }
+.agenda-day + .agenda-day { border-top: 1px solid var(--border-soft); }
+.agenda-day__head { display: flex; align-items: center; gap: var(--space-2); }
+.agenda-day__date {
+  font-size: var(--text-sm); font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--ui-text-tertiary);
+}
+.agenda-day--overdue .agenda-day__date { color: var(--danger-ink); }
+.agenda-day__head .chip { height: 17px; }
+.agenda-day__items { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; }
+.agenda-item { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.agenda-item__dot { width: 4px; height: 4px; border-radius: var(--radius-full); background: var(--ui-text-quaternary); flex: none; }
+.agenda-day--overdue .agenda-item__dot { background: var(--danger); }
+.agenda-item__text {
+  min-width: 0; max-width: 100%; font-size: var(--text-sm); color: var(--foreground);
+  text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.agenda-item__text:hover { color: var(--link); text-decoration: underline; }
+.agenda-item__text--overdue { color: var(--danger-ink); }
+.agenda-item__owner { margin-left: auto; max-width: 14ch; flex: none; }
+
+/* На узком экране повестка не режется в одну строку: две строки + перенос (D13). */
+@media (max-width: 899px) {
+  .agenda-item { flex-wrap: wrap; }
+  .agenda-item__text {
+    white-space: normal; overflow: visible; text-overflow: clip;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    flex: 1 1 auto; overflow-wrap: anywhere;
+  }
+  .agenda-item__owner { margin-left: 0; max-width: 100%; }
+}
+
+/* ── закрытые ───────────────────────────────────────────────────────────── */
+.closed-list { display: flex; flex-direction: column; }
+.closed-row {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: var(--space-2); padding: var(--space-2) var(--space-4);
+  align-items: start; min-width: 0;
+}
+.closed-row + .closed-row { border-top: 1px solid var(--border-soft); }
+.closed-row__icon { color: var(--ui-text-tertiary); padding-top: 1px; }
+.closed-row__body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.closed-row__text { font-size: var(--text-sm); overflow-wrap: anywhere; }
+.closed-row__meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
+
+/* ── адаптив ─────────────────────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .step-row { grid-template-columns: auto minmax(0, 1fr); }
+  .step-row__actions { grid-column: 2; justify-content: flex-start; padding-top: 2px; }
+}
+
+@media (max-width: 900px) {
+  .backlog__card-head { padding: var(--space-3); }
+  .inbox-row { grid-template-columns: 24px minmax(0, 1fr); padding: var(--space-3); }
+  .inbox-row__actions { grid-column: 2; padding-top: var(--space-1); }
+  .inbox-row__icon { width: 24px; height: 24px; }
+  .step-row { padding: var(--space-3); }
+  .step-group__head { padding: var(--space-2) var(--space-3); }
+  .future-list { padding: 0 var(--space-3); }
+  .future-card { flex-direction: column; gap: var(--space-2); }
+  .future-card__actions { margin-left: 0; }
+  .agenda-day { padding: var(--space-2) var(--space-3) var(--space-3); }
+  .agenda-item__owner { display: none; }
+  .closed-row { padding: var(--space-2) var(--space-3); }
+  .backlog__answer { flex-direction: column; align-items: stretch; }
+  .backlog__answer .btn { align-self: flex-start; }
+  .backlog__source { max-width: 100%; }
+}

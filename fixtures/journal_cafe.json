@@ -1,0 +1,164 @@
+{
+  "room": "cafe",
+  "next_cursor": null,
+  "has_more": false,
+  "items": [
+    {
+      "id": "j_0012",
+      "at": 1793171300,
+      "kind": "request_created",
+      "room": "cafe",
+      "request_id": "t_2a6f5c93",
+      "task_id": "t_2a6f5c93",
+      "actor": "mikhail",
+      "text": "Новый запрос: «Каналы продаж: Едок или Развоз»",
+      "detail": {
+        "mode": "auto"
+      }
+    },
+    {
+      "id": "j_0011",
+      "at": 1793169850,
+      "kind": "request_status",
+      "room": "cafe",
+      "request_id": "t_9f3c2a10",
+      "task_id": "t_9f3c2a13",
+      "actor": "biz-ops",
+      "text": "Упаковка: разосланы 10 запросов котировок",
+      "detail": {
+        "status": "working"
+      }
+    },
+    {
+      "id": "j_0010",
+      "at": 1793168960,
+      "kind": "request_status",
+      "room": "cafe",
+      "request_id": "t_9f3c2a10",
+      "task_id": "t_9f3c2a10",
+      "actor": "biz-director",
+      "text": "Запрос по упаковке разложен на 4 карточки",
+      "detail": {
+        "status": "working"
+      }
+    },
+    {
+      "id": "j_0009",
+      "at": 1793166900,
+      "kind": "request_status",
+      "room": "cafe",
+      "request_id": "t_7d21b8c4",
+      "task_id": "t_7d21b8c8",
+      "actor": "biz-critic",
+      "text": "Критик проверяет юридический свод",
+      "detail": {
+        "status": "reviewing"
+      }
+    },
+    {
+      "id": "j_0008",
+      "at": 1793164590,
+      "kind": "step_added",
+      "room": "cafe",
+      "request_id": "t_a1b2c3d4",
+      "task_id": "t_a1b2c3d4",
+      "actor": "biz-director",
+      "text": "В «Дальше» добавлено 5 шагов",
+      "detail": {
+        "count": 5
+      }
+    },
+    {
+      "id": "j_0007",
+      "at": 1793164590,
+      "kind": "report_added",
+      "room": "cafe",
+      "request_id": "t_a1b2c3d4",
+      "task_id": "t_a1b2c3d4",
+      "actor": "biz-director",
+      "text": "Добавлен отчёт «Юнит-экономика набора Лето 6»",
+      "detail": {
+        "key": "unit-economics"
+      }
+    },
+    {
+      "id": "j_0006",
+      "at": 1793164590,
+      "kind": "request_done",
+      "room": "cafe",
+      "request_id": "t_a1b2c3d4",
+      "task_id": "t_a1b2c3d4",
+      "actor": "biz-director",
+      "text": "Ответ по дорожной карте готов: 5 шагов, 2 вопроса",
+      "detail": {
+        "steps": 5,
+        "questions": 2
+      }
+    },
+    {
+      "id": "j_0005",
+      "at": 1793163720,
+      "kind": "question_open",
+      "room": "cafe",
+      "request_id": "t_5c8e4a02",
+      "task_id": "t_5c8e4a03",
+      "actor": "biz-marketing",
+      "text": "Вопрос Михаилу: класс Роспатент 30 или 30+43",
+      "detail": {
+        "question_id": "q_1"
+      }
+    },
+    {
+      "id": "j_0004",
+      "at": 1793163200,
+      "kind": "decision_proposed",
+      "room": "cafe",
+      "request_id": "t_5c8e4a02",
+      "task_id": "t_5c8e4a02",
+      "actor": "biz-lawyer",
+      "text": "Предложено подавать в Роспатент в классах 30 и 43",
+      "detail": {
+        "decision_id": "d_1"
+      }
+    },
+    {
+      "id": "j_0003",
+      "at": 1793148391,
+      "kind": "request_done",
+      "room": "cafe",
+      "request_id": "t_605613e0",
+      "task_id": "t_605613e0",
+      "actor": "biz-director",
+      "text": "Карточка t_605613e0: свод по «Лету» (legacy-формат)",
+      "detail": {
+        "legacy": true
+      }
+    },
+    {
+      "id": "j_0002",
+      "at": 1793060200,
+      "kind": "member_added",
+      "room": "cafe",
+      "request_id": null,
+      "task_id": null,
+      "actor": "mikhail",
+      "text": "В комнату добавлен критик biz-critic",
+      "detail": {
+        "profile": "biz-critic"
+      }
+    },
+    {
+      "id": "j_0001",
+      "at": 1793059000,
+      "kind": "room_created",
+      "room": "cafe",
+      "request_id": null,
+      "task_id": null,
+      "actor": "mikhail",
+      "text": "Комната «Лето» создана на доске team",
+      "detail": {
+        "board": "team"
+      }
+    }
+  ]
+}

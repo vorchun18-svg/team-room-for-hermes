@@ -1,0 +1,205 @@
+{
+  "room": "cafe",
+  "generated_at": 1793171860,
+  "dispatcher": {
+    "ok": true,
+    "state": "running",
+    "pid": 9608,
+    "warning": null
+  },
+  "members": [
+    {
+      "profile": "biz-director",
+      "title": "Руководитель комнаты",
+      "role": "orchestrator",
+      "note": "Разбирает запрос, раздаёт работу, сводит ответ",
+      "pinned": true,
+      "state": "working",
+      "current": {
+        "task_id": "t_9f3c2a10",
+        "title": "Упаковка: котировки у поставщиков в городе",
+        "status": "running",
+        "started_at": 1793168930
+      },
+      "last": {
+        "task_id": "t_a1b2c3d4",
+        "title": "Дорожная карта проекта: где мы сейчас и что дальше",
+        "status": "done",
+        "finished_at": 1793164590,
+        "summary": "Свод по «Лету» собран из четырёх срезов и проверки критика."
+      },
+      "counts": {
+        "done": 3,
+        "blocked": 0,
+        "active": 1
+      }
+    },
+    {
+      "profile": "biz-lawyer",
+      "title": "Юрист",
+      "role": "worker",
+      "note": "ИП, СЭС, Роспатент, договоры",
+      "pinned": true,
+      "state": "idle",
+      "current": null,
+      "last": {
+        "task_id": "t_1000a001",
+        "title": "Юр-блок: ИП, ОКВЭД и СЭС",
+        "status": "done",
+        "finished_at": 1793165100,
+        "summary": "Чек-лист для ИП и 4 запроса в СЭС готовы."
+      },
+      "counts": {
+        "done": 11,
+        "blocked": 0,
+        "active": 0
+      }
+    },
+    {
+      "profile": "biz-ops",
+      "title": "Операции",
+      "role": "worker",
+      "note": "Поставщики, упаковка, доставка",
+      "pinned": true,
+      "state": "working",
+      "current": {
+        "task_id": "t_9f3c2a13",
+        "title": "Запросить котировки у 10 поставщиков",
+        "status": "running",
+        "started_at": 1793169850
+      },
+      "last": {
+        "task_id": "t_9f3c2a11",
+        "title": "Собрать шорт-лист поставщиков упаковки в городе",
+        "status": "done",
+        "finished_at": 1793169800,
+        "summary": "10 поставщиков, 3 готовы от 100 упаковок."
+      },
+      "counts": {
+        "done": 12,
+        "blocked": 0,
+        "active": 1
+      }
+    },
+    {
+      "profile": "biz-strategy",
+      "title": "Стратег",
+      "role": "worker",
+      "note": "Бренд и план 90 дней",
+      "pinned": false,
+      "state": "idle",
+      "current": null,
+      "last": {
+        "task_id": "t_1000a003",
+        "title": "Бренд и товарный знак: статус и риски",
+        "status": "done",
+        "finished_at": 1793164980,
+        "summary": "Статус бренда и развилка по товарному знаку."
+      },
+      "counts": {
+        "done": 5,
+        "blocked": 0,
+        "active": 0
+      }
+    },
+    {
+      "profile": "biz-marketing",
+      "title": "Маркетинг",
+      "role": "worker",
+      "note": "Каналы, контент, D19",
+      "pinned": false,
+      "state": "waiting",
+      "current": {
+        "task_id": "t_5c8e4a03",
+        "title": "Подготовить подачу в Роспатент",
+        "status": "blocked",
+        "started_at": 1793162960
+      },
+      "last": {
+        "task_id": "t_1000a004",
+        "title": "Каналы: где продавать первые наборы",
+        "status": "done",
+        "finished_at": 1793165040,
+        "summary": "Первые 100 наборов — Telegram и две кофейни."
+      },
+      "counts": {
+        "done": 6,
+        "blocked": 1,
+        "active": 1
+      }
+    },
+    {
+      "profile": "biz-cfo",
+      "title": "Экономист",
+      "role": "worker",
+      "note": "Экономика, налоги, сметы",
+      "pinned": false,
+      "state": "waiting",
+      "current": {
+        "task_id": "t_3b7e9d13",
+        "title": "Посчитать маржу по каналам",
+        "status": "blocked",
+        "started_at": 1793160510
+      },
+      "last": {
+        "task_id": "t_3b7e9d13",
+        "title": "Посчитать маржу по каналам",
+        "status": "blocked",
+        "finished_at": 1793160800,
+        "summary": "Две попытки упали: KeyError custo_embalagem."
+      },
+      "counts": {
+        "done": 8,
+        "blocked": 1,
+        "active": 1
+      }
+    },
+    {
+      "profile": "biz-runner",
+      "title": "Раннер",
+      "role": "worker",
+      "note": "Сбор фактов по Vault и доске",
+      "pinned": false,
+      "state": "idle",
+      "current": null,
+      "last": {
+        "task_id": "t_e8823716",
+        "title": "Срез Decisions.md и доски team",
+        "status": "done",
+        "finished_at": 1793148089,
+        "summary": "11 решений, 61 карточка, blocked 2."
+      },
+      "counts": {
+        "done": 4,
+        "blocked": 0,
+        "active": 0
+      }
+    },
+    {
+      "profile": "biz-critic",
+      "title": "Критик",
+      "role": "critic",
+      "note": "Проверяет свод перед ответом",
+      "pinned": true,
+      "state": "working",
+      "current": {
+        "task_id": "t_7d21b8c8",
+        "title": "Критик: проверить юридический свод",
+        "status": "running",
+        "started_at": 1793166900
+      },
+      "last": {
+        "task_id": "t_1000a005",
+        "title": "Критик: проверка свода",
+        "status": "done",
+        "finished_at": 1793165350,
+        "summary": "Принять с одной правкой."
+      },
+      "counts": {
+        "done": 7,
+        "blocked": 0,
+        "active": 1
+      }
+    }
+  ]
+}

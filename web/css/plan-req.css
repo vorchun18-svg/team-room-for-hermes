@@ -1,0 +1,119 @@
+/* plan-req.css — «Проектный режим» на страницах брифа и направления (волна 9).
+   Только токены tokens.css и классы components.css. Свои имена:
+   .plan-card / .plan-stream (плашка карты), .plan-badge, .plan-sum (лента),
+   .cmp-brief (флажок брифа), .req-scope-crumbs (крошка «Комната › Бриф › Направление»). */
+
+/* ── Флажок «Это бриф проекта» в композере ──────────────────────────────── */
+.cmp-brief { display: flex; flex-direction: column; gap: 2px; padding: 0 var(--space-1); }
+.cmp-brief.hidden { display: none; }
+.cmp-brief__check { color: var(--foreground); font-size: var(--text-sm); }
+.cmp-brief__hint {
+  margin-left: 24px;
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  max-width: 62ch;
+}
+.cmp-brief__hint.hidden { display: none; }
+
+/* ── Бейдж «бриф» и мини-счётчик в ленте ────────────────────────────────── */
+.plan-badge { gap: 4px; }
+.plan-badge__text { text-transform: lowercase; letter-spacing: 0.01em; }
+.plan-sum {
+  display: inline-flex; align-items: center; gap: 4px;
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+
+/* ── Плашка «Предложенная карта» ─────────────────────────────────────────── */
+.plan-card {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4);
+  min-width: 0;
+}
+.plan-card__head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
+.plan-card__title {
+  margin: 0;
+  font-size: var(--text-md, var(--text-sm));
+  font-weight: 600;
+  color: var(--foreground);
+}
+.plan-card__grow { flex: 1 1 auto; min-width: 0; }
+.plan-card__count { flex: none; }
+.plan-card__link { text-decoration: none; }
+.plan-card__empty { margin: 0; color: var(--muted-foreground); font-size: var(--text-sm); }
+.plan-card__error { margin: 0; }
+
+.plan-card__list {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  margin: 0; padding: 0; list-style: none; min-width: 0;
+}
+.plan-stream {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  min-width: 0;
+}
+.plan-stream__num {
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+.plan-stream__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.plan-stream__row { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.plan-stream__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--foreground);
+  font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.plan-stream__chip { flex: none; }
+.plan-stream__goal {
+  color: var(--ui-text-secondary, var(--muted-foreground));
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.plan-stream__meta {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  min-width: 0;
+}
+.plan-stream__sep { color: var(--border); }
+
+.plan-card__actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.plan-card__note { white-space: nowrap; }
+
+/* ── Крошка «Комната › Бриф › Направление» у под-запроса ─────────────────── */
+.req-scope-crumbs {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+.req-scope-crumbs a {
+  color: var(--muted-foreground);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-1);
+}
+.req-scope-crumbs a:hover { color: var(--foreground); background: var(--ui-row-hover-background); }
+.req-scope-crumbs a:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.req-scope-crumbs__sep { color: var(--border); }
+.req-scope-crumbs [aria-current='page'] { color: var(--foreground); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Строка инструментов над картой: «Открыть папку проекта». */
+.req-plan-tools { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; min-width: 0; }
+.req-plan-tools:empty { display: none; }
+
+@media (max-width: 720px) {
+  .plan-stream { grid-template-columns: minmax(0, 1fr); }
+  .plan-stream__num { display: none; }
+  .plan-stream__row { flex-wrap: wrap; }
+  .plan-stream__title { white-space: normal; }
+  .plan-stream__goal { white-space: normal; }
+}

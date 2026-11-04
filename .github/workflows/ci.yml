@@ -1,0 +1,88 @@
+name: CI
+
+# Проверки на каждый push в main и на каждый pull request.
+# Матрица: Windows + Ubuntu × Python 3.11 / 3.13 — продукт обязан собираться
+# и проходить тесты не только на машине автора.
+# Секретов не требуется: всё локально, ни одного сетевого вызова из тестов.
+
+on:
+  push:
+    branches: [main]
+    tags-ignore: ['v*']   # теги собирает release.yml
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} · Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ['3.11', '3.13']
+    defaults:
+      run:
+        shell: bash
+    env:
+      # тесты читают этот флаг: то, что требует живой Hermes Desktop, GPU,
+      # сеть или Windows-плагин, само себя пропускает (см. tests/ci_marks.py)
+      TEAMROOM_CI: '1'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Окружение
+        run: |
+          python -c "import sys; print(sys.version)"
+          node --version
+          python -c "print(open('VERSION', encoding='utf-8').read().strip())"
+
+      - name: Python-тесты
+        run: python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Node-тесты
+        run: node --test tests/
+
+      - name: Контракт API
+        run: python tools/check_conformance.py
+
+      - name: Фикстуры
+        run: python tools/check_fixtures.py
+
+      - name: Сборка релиза
+        run: python tools/build_release.py --no-git
+
+      - name: Скан релиза (секреты и личные данные)
+        run: |
+          pkg="$(python tools/build_release.py --print-package)"
+          echo "релиз: $pkg"
+          python tools/release_scan.py "$pkg"
+
+      - name: Архивы собраны
+        if: runner.os == 'Linux'
+        run: |
+          pkg="$(python tools/build_release.py --print-package)"
+          ls -l "$(dirname "$pkg")"/team-room*.zip "$(dirname "$pkg")"/team-room*.tar.gz

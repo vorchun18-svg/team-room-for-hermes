@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230053fd'/%3E%3C/svg%3E">
+<title>Демо графиков и графа — Лето</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/report-charts.css">
+<link rel="stylesheet" href="css/report-graph.css">
+<style>
+  :root { color-scheme: light; }
+  /* Семена тёмной темы задаёт tokens.css (:root[data-theme='dark'] и auto-ветка),
+     поэтому локальных переопределений здесь больше нет — демо живёт на дизайн-системе. */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 24px 60px;
+    background: var(--background, #f7f8fa);
+    color: var(--foreground, #1f2328);
+    font-family: var(--font-sans, "Segoe UI", system-ui, sans-serif);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .page { max-width: 1240px; margin: 0 auto; }
+  .page-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 22px;
+  }
+  h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: -0.02em; }
+  .lead { margin: 0; color: var(--muted-foreground, #6b7280); font-size: 12.5px; max-width: 720px; }
+  .theme-switch { display: inline-flex; border: 1px solid var(--border, #e3e6ea); border-radius: 8px; overflow: hidden; background: var(--card, #fff); }
+  .theme-switch button {
+    padding: 5px 11px; border: 0; background: none; color: var(--muted-foreground, #6b7280);
+    font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .theme-switch button[aria-pressed="true"] { background: var(--muted, #eceef1); color: var(--foreground, #1f2328); font-weight: 600; }
+  section.demo-section { margin-top: 28px; }
+  section.demo-section > h2 { margin: 0 0 12px; font-size: 15px; letter-spacing: -0.01em; }
+  .demo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 18px; align-items: start; }
+  .demo-card {
+    min-width: 0;
+    padding: 16px 18px 14px;
+    border: 1px solid var(--border, #e3e6ea);
+    border-radius: 14px;
+    background: var(--card, #fff);
+  }
+  .demo-card--wide { grid-column: 1 / -1; }
+  .demo-hint { margin: 10px 0 0; color: var(--muted-foreground, #6b7280); font-size: 11.5px; }
+  @media (max-width: 760px) {
+    body { padding: 18px 12px 40px; }
+    .demo-grid { grid-template-columns: 1fr; }
+    .demo-card--wide { grid-column: auto; }
+  }
+</style>
+</head>
+<body>
+<script>
+  // Тема из query (?theme=dark|light) — для скриншотов; иначе как в системе.
+  (() => {
+    try {
+      const p = new URLSearchParams(location.search);
+      const t = p.get("theme");
+      if (t === "dark" || t === "light") document.documentElement.dataset.theme = t;
+      else if (matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.dataset.theme = "dark";
+      if (p.get("only") === "graphs") document.documentElement.dataset.only = "graphs";
+      if (p.get("only") === "charts") document.documentElement.dataset.only = "charts";
+    } catch (e) { /* ignore */ }
+  })();
+</script>
+
+<div class="page">
+  <header class="page-head">
+    <div>
+      <h1>Лето: моти, легализация, деньги</h1>
+      <p class="lead">
+        Демонстрация reportkit: графики и граф связей на чистом SVG. Наведите на столбец, точку или
+        сектор — появится подсказка; клик по легенде скрывает серию; граф двигается перетаскиванием,
+        масштабируется колесом и кнопками, узел открывает панель со связями.
+      </p>
+    </div>
+    <div class="theme-switch" role="group" aria-label="Тема оформления">
+      <button type="button" data-theme-set="light">Светлая</button>
+      <button type="button" data-theme-set="dark">Тёмная</button>
+    </div>
+  </header>
+
+  <section class="demo-section" id="section-charts">
+    <h2>Графики</h2>
+    <div class="demo-grid" id="charts-grid"></div>
+    <p class="demo-hint">Данные вымышлены для демонстрации; суммы — в реалах (R$), сроки — в днях.</p>
+  </section>
+
+  <section class="demo-section" id="section-graphs">
+    <h2>Граф связей: легализация Лето</h2>
+    <div class="demo-grid" id="graphs-grid"></div>
+  </section>
+</div>
+
+<script type="module">
+import { renderChart } from "./js/report/charts.js";
+import { renderGraph } from "./js/report/graph.js";
+
+const charts = [
+  {
+    wide: false,
+    spec: {
+      kind: "bar",
+      title: "Выручка Лето по месяцам",
+      unit: "R$",
+      x: ["Май", "Июнь", "Июль", "Авг", "Сен", "Окт"],
+      series: [
+        { name: "Моти", data: [18200, 21400, 19800, 24600, 27100, 30400] },
+        { name: "Легализация", data: [9000, 9500, 12000, 8000, 15000, 16500] },
+      ],
+      note: "Рост моти держится на доставке; легализация — разовые проекты.",
+    },
+  },
+  {
+    wide: false,
+    spec: {
+      kind: "hbar",
+      title: "Каналы продаж моти",
+      unit: "шт",
+      x: ["Магазины", "Доставка", "Маркетплейс", "Кафе", "Опт"],
+      series: [{ name: "Продажи за октябрь", data: [420, 260, 180, 140, 90] }],
+    },
+  },
+  {
+    wide: false,
+    spec: {
+      kind: "line",
+      title: "Продажи моти по неделям",
+      unit: "шт",
+      x: ["1 нед", "2 нед", "3 нед", "4 нед", "5 нед", "6 нед", "7 нед", "8 нед"],
+      series: [
+        { name: "Сан-Паулу", data: [180, 210, 195, 240, 265, 250, 290, 310] },
+        { name: "Кампинас", data: [90, 95, 120, 110, 130, 150, 145, 170] },
+      ],
+    },
+  },
+  {
+    wide: false,
+    spec: {
+      kind: "area",
+      title: "Выручка от легализации",
+      unit: "R$",
+      x: ["Май", "Июнь", "Июль", "Авг", "Сен", "Окт"],
+      series: [{ name: "Оплаты клиентов", data: [9000, 9500, 12000, 8000, 15000, 16500] }],
+      note: "Провал в августе — отпуск команды и перенос двух договоров.",
+    },
+  },
+  {
+    wide: false,
+    spec: {
+      kind: "pie",
+      title: "Расходы на легализацию",
+      unit: "R$",
+      x: ["Юрист", "Переводы", "Пошлины", "Нотариус", "Прочее"],
+      series: [{ name: "Расходы", data: [24000, 8000, 6500, 4200, 3000] }],
+    },
+  },
+  {
+    wide: false,
+    spec: {
+      kind: "donut",
+      title: "Доли каналов моти",
+      unit: "%",
+      x: ["Магазины", "Доставка", "Маркетплейс", "Кафе", "Опт"],
+      series: [{ name: "Доля", data: [38, 24, 16, 13, 9] }],
+      note: "Кольцо: сумма долей = 100 %.",
+    },
+  },
+  {
+    wide: true,
+    spec: {
+      kind: "stacked",
+      title: "Структура выручки Лето",
+      unit: "R$",
+      x: ["Июнь", "Июль", "Авг", "Сен", "Окт"],
+      series: [
+        { name: "Моти", data: [21400, 19800, 24600, 27100, 30400] },
+        { name: "Наборы", data: [6200, 5800, 7400, 8100, 9300] },
+        { name: "Легализация", data: [9500, 12000, 8000, 15000, 16500] },
+      ],
+    },
+  },
+  {
+    wide: false,
+    spec: {
+      kind: "scatter",
+      title: "Цена и спрос на моти",
+      x: ["Цена, R$"],
+      series: [
+        {
+          name: "Сан-Паулу",
+          data: [
+            { x: 16, y: 520, label: "Классика" },
+            { x: 19, y: 470, label: "Матча" },
+            { x: 22, y: 380, label: "Манго" },
+            { x: 25, y: 300, label: "Набор 6 шт" },
+            { x: 28, y: 210, label: "Премиум" },
+          ],
+        },
+        {
+          name: "Кампинас",
+          data: [
+            { x: 15, y: 240, label: "Классика" },
+            { x: 18, y: 205, label: "Матча" },
+            { x: 21, y: 160, label: "Манго" },
+            { x: 26, y: 120, label: "Набор 6 шт" },
+          ],
+        },
+      ],
+      note: "x — цена за штуку (R$), y — продажи за месяц (шт).",
+    },
+  },
+  {
+    wide: false,
+    spec: {
+      kind: "bar",
+      title: "Прибыль Лето: были и минусы",
+      unit: "R$",
+      x: ["Май", "Июнь", "Июль", "Авг", "Сен", "Окт"],
+      series: [{ name: "Прибыль", data: [-8200, 4100, 2600, -3100, 9800, 12400] }],
+      note: "Отрицательные значения — месяцы с закупкой оборудования.",
+    },
+  },
+  {
+    wide: true,
+    spec: {
+      kind: "hbar",
+      title: "Сроки легализационных шагов",
+      unit: "дн",
+      x: [
+        "Сертификация Роспотребнадзор для импорта моти",
+        "Открытие банковского счёта Conta PJ",
+        "Регистрация ИНН в Receita Federal",
+        "Получение RNE для основателя",
+        "Договор аренды производственного помещения",
+      ],
+      series: [{ name: "Фактический срок", data: [45, 21, 14, 60, 30] }],
+      note: "На узком экране длинные подписи усекаются с «…», полный текст — в title и в таблице данных.",
+    },
+  },
+  {
+    wide: false,
+    spec: {
+      kind: "line",
+      title: "Доля легальных поставок",
+      unit: "%",
+      x: ["Июнь", "Июль", "Авг", "Сен", "Окт"],
+      series: [{ name: "Доля", data: [42, 55, 61, 74, 82] }],
+      note: "Проценты приходят числом (82 = 82 %), не долей.",
+    },
+  },
+  {
+    wide: false,
+    spec: {
+      kind: "bar",
+      title: "Динамика не собрана",
+      unit: "шт",
+      x: ["Ноя", "Дек"],
+      series: [],
+      note: "Пустой набор данных: график показывает аккуратное «нет данных».",
+    },
+  },
+];
+
+const graphNodes = [
+  { id: "cafe", label: "Лето: десерты и легализация", group: "Компания", size: 1.35, note: "Головная компания: моти, наборы, юридические услуги." },
+  { id: "ustav", label: "Устав и учредительные документы", group: "Документы", note: "Проверен юристом, копии — в папке Legais." },
+  { id: "cnpj", label: "ИНН", group: "Документы", note: "Номер компании в Receita Federal." },
+  { id: "tax", label: "Налоговый режим", group: "Налоги", note: "Simples Nacional для малого оборота." },
+  { id: "contab", label: "Бухгалтерия", group: "Налоги", note: "Ежемесячные отчёты и DAS." },
+  { id: "visa", label: "Виза основателя", group: "Виза", note: "Заявка подана, ждём собеседование." },
+  { id: "rne", label: "RNE", group: "Виза", size: 1.1, note: "Регистрация иностранца в Polícia Federal." },
+  { id: "lease", label: "Договор аренды", group: "Помещение", note: "Гарантия — 3 месяца, срок 24 месяца." },
+  { id: "place", label: "Производственное помещение", group: "Помещение", note: "Кухня 60 м², вентиляция, холодильники." },
+  { id: "supplier", label: "Поставщик моти", group: "Поставки", note: "Рисовая мука и паста матча из Сан-Паулу." },
+  { id: "import", label: "Импорт ингредиентов", group: "Поставки", note: "Таможенный брокер, срок 3–5 недель." },
+  { id: "anvisa", label: "Сертификация Роспотребнадзор", group: "Поставки", note: "Обязательна для импорта пищевой продукции." },
+  { id: "bank", label: "Банковский счёт", group: "Финансы", note: "Conta PJ в Banco do Brasil." },
+  { id: "contapj", label: "Conta PJ", group: "Финансы", note: "Оплата поставщиков и зарплат." },
+  { id: "investor", label: "Инвестор", group: "Финансы", size: 1.1, note: "Готов войти после первого квартала продаж." },
+];
+
+const graphEdges = [
+  { from: "cafe", to: "ustav", label: "учредить" },
+  { from: "ustav", to: "cnpj", label: "основа" },
+  { from: "cnpj", to: "tax", label: "режим" },
+  { from: "tax", to: "contab", label: "отчётность" },
+  { from: "contab", to: "cafe", label: "сверка", kind: "dashed" },
+  { from: "cafe", to: "visa", label: "заявка" },
+  { from: "visa", to: "rne", label: "после одобрения" },
+  { from: "rne", to: "cnpj", label: "подтверждение", kind: "dashed" },
+  { from: "cafe", to: "lease", label: "аренда" },
+  { from: "lease", to: "place", label: "доступ" },
+  { from: "place", to: "cafe", label: "производство", kind: "dashed" },
+  { from: "supplier", to: "import", label: "заказ" },
+  { from: "import", to: "anvisa", label: "проверка" },
+  { from: "anvisa", to: "cafe", label: "разрешение" },
+  { from: "cnpj", to: "bank", label: "счёт" },
+  { from: "bank", to: "contapj", label: "PJ" },
+  { from: "contapj", to: "investor", label: "отчёт", weight: 2 },
+  { from: "investor", to: "cafe", label: "инвестиции", kind: "dashed" },
+  { from: "supplier", to: "cafe", label: "поставки" },
+];
+
+const graphSpecs = [
+  { title: "Слои: слева направо", layout: "layered", direction: "LR" },
+  { title: "Слои: сверху вниз", layout: "layered", direction: "TB" },
+  { title: "Силовая раскладка (детерминированная)", layout: "force" },
+  { title: "Радиальная: кольца от Лето", layout: "radial" },
+];
+
+const grid = document.getElementById("charts-grid");
+for (const item of charts) {
+  const card = document.createElement("article");
+  card.className = `demo-card${item.wide ? " demo-card--wide" : ""}`;
+  card.append(renderChart(item.spec, { fileUrl: "demo/charts" }));
+  grid.append(card);
+}
+
+const ggrid = document.getElementById("graphs-grid");
+for (const g of graphSpecs) {
+  const card = document.createElement("article");
+  card.className = "demo-card demo-card--wide";
+  card.append(
+    renderGraph(
+      {
+        title: g.title,
+        layout: g.layout,
+        direction: g.direction,
+        nodes: graphNodes,
+        edges: graphEdges,
+        note: "В схеме есть цикл (бухгалтерия → Лето → … → бухгалтерия): слоистая раскладка не зависает, обратные связи показаны пунктиром.",
+      },
+      { fileUrl: "demo/graph" },
+    ),
+  );
+  ggrid.append(card);
+}
+
+// Тема: переключатель + query.
+const setTheme = (t) => {
+  document.documentElement.dataset.theme = t;
+  document.querySelectorAll("[data-theme-set]").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === t));
+  });
+};
+const initialTheme = document.documentElement.dataset.theme || "light";
+setTheme(initialTheme);
+document.querySelectorAll("[data-theme-set]").forEach((btn) => {
+  btn.addEventListener("click", () => setTheme(btn.dataset.themeSet));
+});
+
+// Для скриншотов: показать только одну секцию.
+const only = document.documentElement.dataset.only;
+if (only === "graphs") document.getElementById("section-charts").hidden = true;
+if (only === "charts") document.getElementById("section-graphs").hidden = true;
+</script>
+</body>
+</html>

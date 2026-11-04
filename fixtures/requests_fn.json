@@ -1,0 +1,33 @@
+{
+  "items": [
+    {
+      "id": "t_4e91c7b2",
+      "room": "fn",
+      "title": "Участок под базу: зона, обременения, доступ к воде",
+      "status": "done",
+      "status_reason": null,
+      "mode": "auto",
+      "critic": {
+        "enabled": false,
+        "state": "off",
+        "verdict": null,
+        "round": 0
+      },
+      "created_at": 1793160000,
+      "started_at": 1793160030,
+      "finished_at": 1793161200,
+      "duration_s": 1170,
+      "progress": {
+        "done": 4,
+        "total": 4,
+        "percent": 100
+      },
+      "assignee": "default",
+      "needs_you": false,
+      "preview": "Проверь участок 12 га под производственную базу: категория земли, обременения, доступ к воде и ЛЭП.",
+      "archived": false
+    }
+  ],
+  "next_cursor": null,
+  "has_more": false
+}

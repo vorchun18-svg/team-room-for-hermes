@@ -1,0 +1,389 @@
+{
+  "id": "t_9f3c2a10",
+  "room": "cafe",
+  "title": "Упаковка: котировки у поставщиков в городе",
+  "status": "working",
+  "status_reason": null,
+  "mode": "auto",
+  "critic": {
+    "enabled": true,
+    "round": 0,
+    "max_rounds": 1,
+    "state": "waiting",
+    "verdict": null,
+    "task_id": null,
+    "issues": []
+  },
+  "created_at": 1793168900,
+  "started_at": 1793168930,
+  "finished_at": null,
+  "duration_s": null,
+  "progress": {
+    "done": 2,
+    "total": 4,
+    "percent": 50
+  },
+  "assignee": "biz-director",
+  "needs_you": false,
+  "preview": "Собери котировки упаковки по 10 поставщикам городе и проверь MOQ под тираж 100.",
+  "archived": false,
+  "brief": false,
+  "streams_summary": null,
+  "plan_link": {
+    "stream_id": "s2",
+    "title": "Упаковка и бренд",
+    "status": "running"
+  },
+  "text": "Собери котировки упаковки по 10 поставщикам Заозёрья и проверь MOQ под первый тираж 100 наборов. Срок — до пятницы.",
+  "dispatcher": {
+    "ok": true,
+    "warning": null
+  },
+  "synthesis": {
+    "state": "pending",
+    "text_md": "",
+    "author": null,
+    "at": null,
+    "source_task": null,
+    "legacy": false,
+    "version": 0,
+    "history": []
+  },
+  "next_steps": [
+    {
+      "id": "ns_1",
+      "text": "Свести три котировки в таблицу и выбрать поставщика под тираж 100",
+      "owner": "biz-ops",
+      "due": "2026-10-30",
+      "state": "open"
+    },
+    {
+      "id": "ns_2",
+      "text": "Проверить слой PE у поставщика A на образце (моти в холоде)",
+      "owner": "biz-cfo",
+      "due": "2026-11-02",
+      "state": "open"
+    },
+    {
+      "id": "ns_3",
+      "text": "Заложить 42 ₽ за короб в себестоимость набора",
+      "owner": "biz-cfo",
+      "due": "2026-11-03",
+      "state": "open"
+    }
+  ],
+  "open_questions": [],
+  "decisions": [],
+  "stage": {
+    "current": "legal",
+    "phases": [
+      {
+        "id": "idea",
+        "title": "Идея и стратегия",
+        "status": "done",
+        "note": "VISION, экономика и план 90 дней утверждены 14–16.09"
+      },
+      {
+        "id": "legal",
+        "title": "Легализация",
+        "status": "active",
+        "note": "Заявление на ИП подано 27.10, ждём свидетельство; 4 вопроса в СЭС открыты"
+      },
+      {
+        "id": "brand",
+        "title": "Бренд и товарный знак",
+        "status": "blocked",
+        "note": "Проверка в Роспатенте: свободно по кл. 30/43/35; подача ждёт go/no-go Михаила"
+      },
+      {
+        "id": "packaging",
+        "title": "Упаковка",
+        "status": "active",
+        "note": "Шорт-лист 10 поставщиков в городе, котировки не отправлены"
+      },
+      {
+        "id": "production",
+        "title": "Производство",
+        "status": "next",
+        "note": "Кухня есть, тестовой партии нет"
+      },
+      {
+        "id": "sales",
+        "title": "Продажи",
+        "status": "next",
+        "note": "0 продаж, 0 разговоров D19"
+      }
+    ]
+  },
+  "future_questions": [],
+  "artifacts": [],
+  "report": {
+    "available": false,
+    "kind": null,
+    "path": null,
+    "title": null
+  },
+  "tree": [
+    {
+      "id": "t_9f3c2a10",
+      "parent_ids": [],
+      "title": "Упаковка: котировки у поставщиков в городе",
+      "assignee": "biz-director",
+      "role": "root",
+      "status": "running",
+      "started_at": 1793168930,
+      "finished_at": null,
+      "summary_md": "",
+      "metadata": {
+        "mode": "auto"
+      },
+      "comments": [
+        {
+          "author": "biz-director",
+          "text": "Запускаю срез по упаковке: котировки и MOQ.",
+          "at": 1793168940
+        }
+      ],
+      "runs": [
+        {
+          "id": 81,
+          "profile": "biz-director",
+          "status": "running",
+          "outcome": null,
+          "started_at": 1793168930,
+          "ended_at": null,
+          "summary": "",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    },
+    {
+      "id": "t_9f3c2a11",
+      "parent_ids": [
+        "t_9f3c2a10"
+      ],
+      "title": "Собрать шорт-лист поставщиков упаковки в городе",
+      "assignee": "biz-ops",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793168960,
+      "finished_at": 1793169800,
+      "summary_md": "10 поставщиков в городе, 3 готовы работать от 100 упаковок. Средняя цена 19 ₽/уп без печати.",
+      "metadata": {},
+      "comments": [
+        {
+          "author": "biz-ops",
+          "text": "Добавила контакты в таблицу.",
+          "at": 1793169780
+        }
+      ],
+      "runs": [
+        {
+          "id": 82,
+          "profile": "biz-ops",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793168960,
+          "ended_at": 1793169800,
+          "summary": "Шорт-лист готов.",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false,
+      "model_label": "Облако-А · Дилижанс ультра · высокие"
+    },
+    {
+      "id": "t_9f3c2a12",
+      "parent_ids": [
+        "t_9f3c2a10"
+      ],
+      "title": "Спека SKU: размеры и материалы упаковки",
+      "assignee": "biz-marketing",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793168970,
+      "finished_at": 1793169680,
+      "summary_md": "Спека рев.2: крафт-бокс 160×120×60, вкладыш под 6 моти, стикер с логотипом. Себестоимость комплекта 24 ₽ при тираже 100.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 83,
+          "profile": "biz-marketing",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793168970,
+          "ended_at": 1793169680,
+          "summary": "Спека SKU.",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    },
+    {
+      "id": "t_9f3c2a13",
+      "parent_ids": [
+        "t_9f3c2a10"
+      ],
+      "title": "Запросить котировки у 10 поставщиков",
+      "assignee": "biz-ops",
+      "role": "worker",
+      "status": "running",
+      "started_at": 1793169850,
+      "finished_at": null,
+      "summary_md": "",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 84,
+          "profile": "biz-ops",
+          "status": "running",
+          "outcome": null,
+          "started_at": 1793169850,
+          "ended_at": null,
+          "summary": "",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false,
+      "model_label": "Облако-А · Дилижанс ультра · высокие"
+    },
+    {
+      "id": "t_9f3c2a14",
+      "parent_ids": [
+        "t_9f3c2a10"
+      ],
+      "title": "Проверить котировки и MOQ",
+      "assignee": "biz-cfo",
+      "role": "worker",
+      "status": "ready",
+      "started_at": null,
+      "finished_at": null,
+      "summary_md": "",
+      "metadata": {},
+      "comments": [],
+      "runs": [],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false,
+      "model_label": "Облако-А · Дилижанс ультра · очень высокие"
+    }
+  ],
+  "timeline": [
+    {
+      "at": 1793168900,
+      "kind": "created",
+      "task_id": "t_9f3c2a10",
+      "actor": "mikhail",
+      "text": "Запрос создан"
+    },
+    {
+      "at": 1793168930,
+      "kind": "claimed",
+      "task_id": "t_9f3c2a10",
+      "actor": "biz-director",
+      "text": "Руководитель комнаты взял запрос"
+    },
+    {
+      "at": 1793168960,
+      "kind": "claimed",
+      "task_id": "t_9f3c2a11",
+      "actor": "biz-ops",
+      "text": "Сергей собирает шорт-лист"
+    },
+    {
+      "at": 1793169680,
+      "kind": "completed",
+      "task_id": "t_9f3c2a12",
+      "actor": "biz-marketing",
+      "text": "Спека SKU готова"
+    },
+    {
+      "at": 1793169800,
+      "kind": "completed",
+      "task_id": "t_9f3c2a11",
+      "actor": "biz-ops",
+      "text": "Шорт-лист поставщиков готов"
+    },
+    {
+      "at": 1793169850,
+      "kind": "claimed",
+      "task_id": "t_9f3c2a13",
+      "actor": "biz-ops",
+      "text": "Разослала 10 запросов котировок"
+    }
+  ],
+  "warnings": [],
+  "thread": [
+    {
+      "id": "c1",
+      "at": 1793168900,
+      "author_kind": "mikhail",
+      "author": "mikhail",
+      "author_label": "Михаил",
+      "text": "Собери котировки упаковки по 10 поставщикам Заозёрья и проверь MOQ под первый тираж 100 наборов.",
+      "task_id": "t_9f3c2a10",
+      "kind": "message"
+    },
+    {
+      "id": "c2",
+      "at": 1793168930,
+      "author_kind": "agent",
+      "author": "biz-director",
+      "author_label": "Глеб · руководитель комнаты",
+      "text": "Принял; передал Марине — спеку SKU и материалы, Сергею — шорт-лист поставщиков и котировки, Вере — сверку цены с себестоимостью набора. Свод соберу сам.",
+      "task_id": "t_9f3c2a10",
+      "kind": "comment"
+    },
+    {
+      "id": "e1",
+      "at": 1793168960,
+      "author_kind": "system",
+      "author": "system",
+      "author_label": "Комната команды",
+      "text": "Руководитель комнаты разложил запрос на четыре ветки",
+      "task_id": "t_9f3c2a10",
+      "kind": "event"
+    },
+    {
+      "id": "c3",
+      "at": 1793169780,
+      "author_kind": "agent",
+      "author": "biz-ops",
+      "author_label": "Сергей · исполнитель",
+      "text": "Шорт-лист готов: 10 поставщиков в Заозёрье, трое берут заказ от 100 упаковок. Средняя цена 19 ₽ за упаковку без печати.",
+      "task_id": "t_9f3c2a11",
+      "kind": "comment"
+    },
+    {
+      "id": "c4",
+      "at": 1793169800,
+      "author_kind": "agent",
+      "author": "biz-marketing",
+      "author_label": "Марина · исполнитель",
+      "text": "Спека рев.2: крафт-бокс 160×120×60, вкладыш на 6 моти, стикер с логотипом. Комплект — 24 ₽ при тираже 100.",
+      "task_id": "t_9f3c2a12",
+      "kind": "comment"
+    },
+    {
+      "id": "c5",
+      "at": 1793169850,
+      "author_kind": "agent",
+      "author": "biz-ops",
+      "author_label": "Сергей · исполнитель",
+      "text": "Разослала 10 запросов котировок, ответы жду до 30.10. По трём уже есть цена короба: 42 / 34 / 31 ₽ — MOQ 100 / 300 / 500.",
+      "task_id": "t_9f3c2a13",
+      "kind": "comment"
+    }
+  ]
+}

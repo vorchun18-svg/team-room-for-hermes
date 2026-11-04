@@ -1,0 +1,119 @@
+name: Release
+
+# Публикация релиза: push тега v<version> (например v1.0.0).
+# Собирает team-room-<version>.zip и .tar.gz, проверяет версию и тег,
+# загружает файлы в GitHub Release — установщики качают их по адресу
+# .../releases/latest/download/team-room-<version>.zip
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Собрать архивы, но не публиковать Release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Сборка архивов
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      TEAMROOM_CI: '1'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Версия из VERSION и сверка с тегом
+        id: version
+        run: |
+          version="$(python -c "print(open('VERSION', encoding='utf-8').read().strip())")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Версия: $version"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$version" ]; then
+            echo "::error::тег ${GITHUB_REF_NAME} не совпадает с VERSION=$version"
+            exit 1
+          fi
+
+      - name: Тесты, сборка и архивы
+        run: python tools/build_release.py --no-git --run-tests --out-dir dist
+
+      - name: Скан релиза
+        run: |
+          pkg="$(python tools/build_release.py --print-package)"
+          python tools/release_scan.py "$pkg"
+
+      - name: Контрольные суммы
+        run: |
+          cd dist
+          sha256sum team-room*.zip team-room*.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Артефакты
+        uses: actions/upload-artifact@v4
+        with:
+          name: team-room-${{ steps.version.outputs.version }}
+          path: |
+            dist/team-room*.zip
+            dist/team-room*.tar.gz
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Публикация Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Скачать артефакты
+        uses: actions/download-artifact@v4
+        with:
+          name: team-room-${{ needs.build.outputs.version }}
+          path: dist
+
+      - name: Показать файлы
+        run: ls -l dist
+
+      - name: Загрузить в Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.build.outputs.version }}
+          name: Комната команды ${{ needs.build.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/team-room-${{ needs.build.outputs.version }}.zip
+            dist/team-room-${{ needs.build.outputs.version }}.tar.gz
+            dist/team-room.zip
+            dist/team-room.tar.gz
+            dist/SHA256SUMS.txt

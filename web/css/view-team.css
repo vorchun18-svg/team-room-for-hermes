@@ -1,0 +1,207 @@
+/* view-team.css — вкладка «Команда». Только токены tokens.css + классы components.css. */
+
+.team { gap: var(--space-4); }
+.team__head { min-width: 0; }
+.team__error:empty,
+.team__outside:empty,
+.team__settings:empty { display: none; }
+.team__summary { white-space: nowrap; }
+.team__updated { color: var(--ui-text-tertiary); }
+@media (max-width: 1180px) {
+  .team__summary { display: none; }
+}
+
+/* ── сетка карточек ───────────────────────────────────────────────────────── */
+
+.team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: var(--space-3);
+  align-items: stretch;
+  min-width: 0;
+}
+.team-grid--empty { display: block; }
+.team-grid--empty .empty { padding: var(--space-8) var(--space-4); }
+
+.tm-card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  min-width: 0; height: 100%;
+}
+.tm-card--live { box-shadow: inset 2px 0 0 var(--ok); }
+
+.tm-card__head {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: var(--space-2);
+}
+.tm-card__who { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tm-card__name {
+  font-size: var(--text-md); font-weight: 600; line-height: 1.25; color: var(--foreground);
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.tm-card__id { font-size: var(--text-sm); line-height: 1.3; }
+
+.tm-badge { height: 18px; padding: 0 6px; font-size: var(--text-sm); color: var(--ui-text-tertiary); }
+.tm-badge .codicon { font-size: 11px; }
+
+.tm-card__flags { gap: 4px; }
+.tm-card__flags:empty { display: none; }
+.tm-flag { height: 18px; padding: 0 6px; font-size: var(--text-sm); letter-spacing: 0.01em; }
+
+/* ── живой статус ────────────────────────────────────────────────────────── */
+
+.tm-state {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  font-size: var(--text-sm); color: var(--ui-text-secondary);
+}
+.tm-dot { width: 7px; height: 7px; flex: none; border-radius: var(--radius-full); background: var(--ui-text-quaternary); }
+.tm-state--working .tm-dot { background: var(--ok); animation: tm-pulse 2s var(--ease) infinite; }
+.tm-state--waiting .tm-dot { background: var(--warn); }
+.tm-state--working .tm-state__label { color: var(--ok-ink); font-weight: 500; }
+.tm-state--waiting .tm-state__label { color: var(--warn-ink); font-weight: 500; }
+.tm-state__label { white-space: nowrap; }
+.tm-since { color: var(--ui-text-tertiary); white-space: nowrap; }
+
+@keyframes tm-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 45%, transparent); }
+  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tm-state--working .tm-dot { animation: none; }
+}
+
+.tm-card__desc {
+  margin: 0; font-size: var(--text-sm); line-height: var(--leading-normal);
+  color: var(--ui-text-secondary); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* ── строки «сейчас» / «последняя» / мета ─────────────────────────────────── */
+
+/* Подпись колонки — 78 px: «ПОСЛЕДНЯЯ» (75 px при 12 px + разрядке) больше
+   не наезжает на текст задачи в 62 px-колонке (дефект при 780 px). Колонка
+   фиксированная, чтобы значения в строках «сейчас» и «последняя» стояли
+   на одной вертикали; слишком длинная подпись режется «…», а не лезет поверх. */
+.tm-card__line {
+  display: grid; grid-template-columns: 78px minmax(0, 1fr);
+  gap: var(--space-2); align-items: baseline; min-width: 0;
+  font-size: var(--text-sm);
+}
+.tm-card__label {
+  font-size: var(--text-sm); letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--ui-text-tertiary); white-space: nowrap;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.tm-card__now-body { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
+.tm-card__last-body { display: inline; min-width: 0; }
+.tm-task {
+  color: var(--foreground); text-decoration: none; min-width: 0; max-width: 100%;
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.tm-task:hover { color: var(--link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--link) 40%, transparent); }
+.tm-card__line--now .tm-task { font-weight: 500; }
+
+.tm-card__meta {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  min-width: 0; padding-top: 2px;
+}
+.tm-model {
+  display: inline-flex; align-items: center; height: 18px; padding: 0 5px;
+  border-radius: var(--radius-xs); border: 1px solid var(--border-soft);
+  font-size: var(--text-sm); color: var(--ui-text-tertiary);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tm-card__counts { font-size: var(--text-sm); color: var(--ui-text-tertiary); }
+
+/* ── подвал карточки: роль + убрать ───────────────────────────────────────── */
+
+.tm-card__foot {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  margin-top: auto; padding-top: var(--space-2); border-top: 1px solid var(--border-soft);
+  min-width: 0;
+}
+.tm-role-btn {
+  gap: 5px; padding: 0 6px; height: 22px; font-size: var(--text-sm);
+  color: var(--ui-text-secondary); border-radius: var(--radius-sm);
+}
+.tm-role-btn .codicon { font-size: 11px; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+.tm-role-btn:hover .codicon,
+.tm-role-btn:focus-visible .codicon { opacity: 1; }
+.tm-role-label { white-space: nowrap; }
+.tm-role-static { font-size: var(--text-sm); }
+.tm-role-select { width: auto; min-width: 132px; height: 22px; min-height: 22px; padding: 0 4px; font-size: var(--text-sm); }
+.tm-remove { color: var(--ui-text-tertiary); }
+.tm-remove:hover { color: var(--danger-ink); }
+.tm-card__hint { font-size: var(--text-sm); }
+
+/* ── «вне состава» ───────────────────────────────────────────────────────── */
+
+.tm-outside__body { gap: 0; }
+.tm-outside-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: var(--space-2);
+  padding: var(--space-2) 0; min-width: 0;
+}
+.tm-outside-row + .tm-outside-row { border-top: 1px solid var(--border-soft); }
+.tm-outside-row__main { min-width: 0; }
+.tm-outside-row__name { font-size: var(--text-sm); font-weight: 500; }
+
+/* ── «Как работает комната» ─────────────────────────────────────────────── */
+
+.tm-settings { background: var(--card); }
+.tm-settings .card__body { gap: var(--space-2); }
+.tm-settings__intro { margin: 0 0 var(--space-1); max-width: 78ch; }
+.tm-fact {
+  display: grid; grid-template-columns: 132px minmax(0, 1fr);
+  gap: var(--space-3); align-items: center; min-width: 0;
+}
+.tm-fact__label { font-size: var(--text-sm); color: var(--ui-text-tertiary); }
+.tm-fact__value { min-width: 0; font-size: var(--text-sm); }
+.tm-fact__pair { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.tm-filelist { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+
+/* ── диалог «Добавить агента» ────────────────────────────────────────────── */
+
+.tm-add-body { gap: var(--space-3); }
+.tm-pick-list {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 320px; overflow-y: auto; overscroll-behavior: contain;
+  border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+  padding: var(--space-1); background: var(--ui-bg-tertiary);
+}
+.tm-pick {
+  display: grid; grid-template-columns: 14px auto minmax(0, 1fr) auto;
+  align-items: center; gap: var(--space-2);
+  padding: var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
+  border: 1px solid transparent;
+}
+.tm-pick:hover { background: var(--ui-row-hover-background); }
+.tm-pick:has(input:checked) {
+  background: var(--ui-row-active-background);
+  border-color: color-mix(in srgb, var(--primary) 26%, transparent);
+}
+.tm-pick input { margin: 0; accent-color: var(--primary); }
+.tm-pick__main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tm-pick__name { font-size: var(--text-sm); font-weight: 500; color: var(--foreground); }
+.tm-pick__id { font-size: var(--text-sm); }
+.tm-pick__desc {
+  font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* ── узкий экран ────────────────────────────────────────────────────────── */
+
+@media (max-width: 899px) {
+  .team-grid { grid-template-columns: minmax(0, 1fr); }
+  .tm-card { padding: var(--space-3); }
+  .tm-fact { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .tm-fact__label { font-size: var(--text-sm); }
+}
+@media (max-width: 560px) {
+  .tm-card__line { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .tm-card__label { display: none; }
+  .tm-pick { grid-template-columns: 14px auto minmax(0, 1fr); }
+  .tm-pick .tm-model { display: none; }
+}

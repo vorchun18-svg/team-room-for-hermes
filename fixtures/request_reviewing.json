@@ -1,0 +1,413 @@
+{
+  "id": "t_7d21b8c4",
+  "room": "cafe",
+  "title": "Юр-проверка: ИП и ОКВЭД 10.71 для моти",
+  "status": "reviewing",
+  "status_reason": "Критик проверяет свод (раунд 1 из 1)",
+  "mode": "auto",
+  "critic": {
+    "enabled": true,
+    "round": 1,
+    "max_rounds": 1,
+    "state": "reviewing",
+    "verdict": null,
+    "task_id": "t_7d21b8c8",
+    "issues": []
+  },
+  "created_at": 1793165900,
+  "started_at": 1793165930,
+  "finished_at": null,
+  "duration_s": null,
+  "progress": {
+    "done": 3,
+    "total": 4,
+    "percent": 75
+  },
+  "assignee": "biz-director",
+  "needs_you": false,
+  "preview": "Проверь, подходит ли ОКВЭД 10.71 для производства моти и что требует СЭС.",
+  "archived": false,
+  "brief": false,
+  "streams_summary": null,
+  "plan_link": {
+    "stream_id": "s5",
+    "title": "Налоги и ИП",
+    "status": "waiting_quota"
+  },
+  "text": "Проверь, подходит ли ОКВЭД 10.71 для производства моти на ИП (Заозёрье) и что требует СЭС до открытия. Нужны ссылки на нормы и список документов. Срок — до пятницы.",
+  "dispatcher": {
+    "ok": true,
+    "warning": null
+  },
+  "synthesis": {
+    "state": "ready",
+    "version": 1,
+    "text_md": "## Ответ (версия 1, у критика)\n\nПо ОКВЭД производство моти попадает в 10.71 (производство хлеба и мучных кондитерских изделий), а не в 56.10 ( общепит ). Для ИП это критично: 56.10 в список разрешённых видов не входит.\n\n**Что подтверждено:**\n* ОКВЭД 10.71 разрешён для ИП.\n* СЭС требует заключение о размещении до открытия и лицензию помещения после.\n* Для продажи в интернете нужен ИНН и регистрация в муниципалитет.\n\n**Что не подтверждено:** срок выдачи свидетельства о регистрации — в двух источниках разные цифры (7 и 20 дней).\n\nЭто проект ответа, его ещё проверяет критик.",
+    "author": "biz-director",
+    "at": 1793166300,
+    "source_task": "t_7d21b8c4",
+    "legacy": false,
+    "history": [
+      {
+        "version": 1,
+        "kind": "initial",
+        "task_id": "t_7d21b8c4",
+        "author": "biz-director",
+        "at": 1793166300,
+        "verdict": null,
+        "note": "Версия 1 отправлена критику, вердикта ещё нет."
+      }
+    ]
+  },
+  "next_steps": [
+    {
+      "id": "ns_1",
+      "text": "Подать заявление на ИП с ОКВЭД 10.71",
+      "owner": "mikhail",
+      "due": "2026-11-01",
+      "state": "open"
+    },
+    {
+      "id": "ns_2",
+      "text": "Запросить заключение о размещении в СЭС",
+      "owner": "biz-lawyer",
+      "due": "2026-11-05",
+      "state": "open"
+    },
+    {
+      "id": "ns_3",
+      "text": "Собрать пакет документов на лицензию помещения",
+      "owner": "biz-ops",
+      "due": null,
+      "state": "open"
+    }
+  ],
+  "open_questions": [],
+  "decisions": [
+    {
+      "id": "d_1",
+      "text": "ОКВЭД для ИП — 10.71",
+      "why": "56.10 не входит в список ИП",
+      "status": "proposed",
+      "at": 1793166200,
+      "source_request": "t_7d21b8c4"
+    }
+  ],
+  "stage": {
+    "current": "legal",
+    "phases": [
+      {
+        "id": "idea",
+        "title": "Идея и стратегия",
+        "status": "done",
+        "note": "Стратегия утверждена"
+      },
+      {
+        "id": "legal",
+        "title": "Легализация",
+        "status": "active",
+        "note": "ОКВЭД определён, ИП не подан"
+      },
+      {
+        "id": "brand",
+        "title": "Бренд и товарный знак",
+        "status": "blocked",
+        "note": "ждёт решения по классу Роспатент"
+      },
+      {
+        "id": "packaging",
+        "title": "Упаковка",
+        "status": "active",
+        "note": "котировки в работе"
+      },
+      {
+        "id": "production",
+        "title": "Производство",
+        "status": "next",
+        "note": ""
+      },
+      {
+        "id": "sales",
+        "title": "Продажи",
+        "status": "next",
+        "note": ""
+      }
+    ]
+  },
+  "future_questions": [
+    "Нужен ли разрешение на торговлю отдельно от лицензии СЭС?"
+  ],
+  "artifacts": [
+    {
+      "path": "D:/Проекты/Vault/Projects/Rooms/cafe/legal/mei-cnae-2026-10-28.md",
+      "title": "Справка по ОКВЭД и СЭС",
+      "kind": "md",
+      "exists": false,
+      "size": null
+    }
+  ],
+  "report": {
+    "available": false,
+    "kind": null,
+    "path": null,
+    "title": null
+  },
+  "tree": [
+    {
+      "id": "t_7d21b8c4",
+      "parent_ids": [],
+      "title": "Юр-проверка: ИП и ОКВЭД 10.71",
+      "assignee": "biz-director",
+      "role": "root",
+      "status": "done",
+      "started_at": 1793165930,
+      "finished_at": 1793166300,
+      "summary_md": "Свод по ОКВЭД готов, отправлен критику.",
+      "metadata": {
+        "version": 1
+      },
+      "comments": [],
+      "runs": [
+        {
+          "id": 90,
+          "profile": "biz-director",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793165930,
+          "ended_at": 1793166300,
+          "summary": "Свод собран.",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "outside_room": false,
+      "error": null
+    },
+    {
+      "id": "t_7d21b8c5",
+      "parent_ids": [
+        "t_7d21b8c4"
+      ],
+      "title": "ОКВЭД и ИП: что разрешено",
+      "assignee": "biz-lawyer",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793165960,
+      "finished_at": 1793166150,
+      "summary_md": "10.71 разрешён, 56.10 — нет.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 91,
+          "profile": "biz-lawyer",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793165960,
+          "ended_at": 1793166150,
+          "summary": "Справка готова.",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "outside_room": false,
+      "error": null
+    },
+    {
+      "id": "t_7d21b8c6",
+      "parent_ids": [
+        "t_7d21b8c4"
+      ],
+      "title": "СЭС: документы и сроки",
+      "assignee": "biz-ops",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793165980,
+      "finished_at": 1793166200,
+      "summary_md": "заключение о размещении до открытия, лицензия — после.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 92,
+          "profile": "biz-ops",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793165980,
+          "ended_at": 1793166200,
+          "summary": "Список документов собран.",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "outside_room": false,
+      "error": null,
+      "model_label": "Облако-А · Дилижанс ультра · высокие"
+    },
+    {
+      "id": "t_7d21b8c7",
+      "parent_ids": [
+        "t_7d21b8c4"
+      ],
+      "title": "Сверить нормы по региону",
+      "assignee": "biz-strategy",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793166000,
+      "finished_at": 1793166180,
+      "summary_md": "Муниципальные требования Заозёрья добавлены.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 93,
+          "profile": "biz-strategy",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793166000,
+          "ended_at": 1793166180,
+          "summary": "Сверка готова.",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "outside_room": false,
+      "error": null
+    },
+    {
+      "id": "t_7d21b8c8",
+      "parent_ids": [
+        "t_7d21b8c4"
+      ],
+      "title": "Критик: проверка юр-свода (раунд 1)",
+      "assignee": "biz-critic",
+      "role": "critic",
+      "status": "running",
+      "started_at": 1793166310,
+      "finished_at": null,
+      "summary_md": "",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 94,
+          "profile": "biz-critic",
+          "status": "running",
+          "outcome": null,
+          "started_at": 1793166310,
+          "ended_at": null,
+          "summary": "",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "outside_room": false,
+      "error": null,
+      "model_label": "Облако-Б · Вектор 4 · высокие"
+    }
+  ],
+  "timeline": [
+    {
+      "at": 1793165900,
+      "kind": "created",
+      "task_id": "t_7d21b8c4",
+      "actor": "mikhail",
+      "text": "Запрос создан в комнате «Лето»"
+    },
+    {
+      "at": 1793165940,
+      "kind": "decomposed",
+      "task_id": "t_7d21b8c4",
+      "actor": "system",
+      "text": "Руководитель комнаты разложил запрос на три среза"
+    },
+    {
+      "at": 1793166150,
+      "kind": "completed",
+      "task_id": "t_7d21b8c5",
+      "actor": "biz-lawyer",
+      "text": "ОКВЭД проверен"
+    },
+    {
+      "at": 1793166180,
+      "kind": "completed",
+      "task_id": "t_7d21b8c7",
+      "actor": "biz-strategy",
+      "text": "Нормы городе сверены"
+    },
+    {
+      "at": 1793166200,
+      "kind": "completed",
+      "task_id": "t_7d21b8c6",
+      "actor": "biz-ops",
+      "text": "Документы СЭС собраны"
+    },
+    {
+      "at": 1793166300,
+      "kind": "completed",
+      "task_id": "t_7d21b8c4",
+      "actor": "biz-director",
+      "text": "Свод готов (версия 1), отправлен критику"
+    },
+    {
+      "at": 1793166310,
+      "kind": "claimed",
+      "task_id": "t_7d21b8c8",
+      "actor": "biz-critic",
+      "text": "Критик взял свод на проверку (раунд 1)"
+    }
+  ],
+  "warnings": [],
+  "thread": [
+    {
+      "id": "c1",
+      "at": 1793163000,
+      "author_kind": "mikhail",
+      "author": "mikhail",
+      "author_label": "Михаил",
+      "text": "Проверь: ИП с ОКВЭД 10.71 подойдёт для моти или нужен другой код? И что с лицензией помещения.",
+      "task_id": "t_7d21b8c4",
+      "kind": "message"
+    },
+    {
+      "id": "c2",
+      "at": 1793163060,
+      "author_kind": "agent",
+      "author": "biz-director",
+      "author_label": "Глеб · руководитель комнаты",
+      "text": "Принял; передал Антону — код ОКВЭД и ИП, Марине — заключение о размещении в СЭС. Свод отдам критику.",
+      "task_id": "t_7d21b8c4",
+      "kind": "comment"
+    },
+    {
+      "id": "c3",
+      "at": 1793163300,
+      "author_kind": "agent",
+      "author": "biz-lawyer",
+      "author_label": "Антон · исполнитель",
+      "text": "ОКВЭД 10.71 верный: 56.10 — это общепит, для наборов моти не подходит. Заявление на ИП подано 27.10, ждём свидетельство.",
+      "task_id": "t_7d21b8c4",
+      "kind": "comment"
+    },
+    {
+      "id": "e1",
+      "at": 1793163500,
+      "author_kind": "system",
+      "author": "system",
+      "author_label": "Комната команды",
+      "text": "Руководитель комнаты отправил свод критику на проверку (раунд 1)",
+      "task_id": "t_7d21b8c4",
+      "kind": "event"
+    },
+    {
+      "id": "c4",
+      "at": 1793163600,
+      "author_kind": "agent",
+      "author": "biz-critic",
+      "author_label": "Ольга · критик",
+      "text": "Смотрю свод: нужен срок подачи в Роспатент и ссылка на СанПиН — без них ответ неполный.",
+      "task_id": "t_7d21b8c4",
+      "kind": "comment"
+    }
+  ]
+}

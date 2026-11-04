@@ -1,0 +1,97 @@
+/* project-dir.css — папка проекта комнаты (Д2 WAVE8-RULES).
+   Только токены tokens.css; светлая и тёмная темы получаются сами.
+   Здесь: подсказка, поле пути с живой проверкой и статус проверки. */
+
+/* ── тихая подсказка вместо кнопки ───────────────────────────────────────── */
+.pd-hint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+.pd-hint .codicon { color: var(--ui-text-tertiary); flex: none; }
+.pd-hint__text { min-width: 0; }
+.pd-hint__link {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  border-radius: var(--radius-xs);
+}
+.pd-hint__link:hover { color: var(--accent-strong); }
+
+/* ── кнопка «Открыть папку проекта» / «Задать папку» ─────────────────────── */
+.pd-btn { white-space: nowrap; }
+.pd-btn .codicon { font-size: 14px; }
+.pd-btn__label { min-width: 0; }
+
+/* ── постоянная кнопка «Настройки комнаты» в шапке (W10) ─────────────────── */
+.room-settings { white-space: nowrap; gap: var(--space-1); }
+.room-settings .codicon { font-size: 15px; flex: none; }
+.room-settings__label { font-size: var(--text-sm); }
+
+/* ── поле «Папка проекта» в диалоге комнаты ─────────────────────────────── */
+.pd-field { display: flex; flex-direction: column; gap: var(--space-1); }
+.pd-field__row { display: flex; align-items: center; gap: var(--space-2); }
+.pd-field__row .input { flex: 1 1 auto; min-width: 0; }
+.pd-field__row .btn { flex: none; }
+
+/* живая проверка: «Папка существует» / «Будет создана» / «Нельзя: …» */
+.pd-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+  min-height: 1.35em;
+}
+.pd-check .codicon { font-size: 12px; margin-top: 2px; flex: none; }
+.pd-check--ok .codicon { color: var(--ok); }
+.pd-check--bad { color: var(--danger-ink); }
+.pd-check--bad .codicon { color: var(--danger-ink); }
+.pd-check--warn { color: var(--warn-ink); }
+.pd-check__warn { display: block; color: var(--muted-foreground); font-size: var(--text-xs); }
+
+@media (max-width: 520px) {
+  .pd-field__row { flex-wrap: wrap; }
+  .pd-field__row .btn { width: 100%; justify-content: center; }
+}
+
+/* ── окно «Не удалось открыть папку» (W10) ──────────────────────────────── */
+.pd-help { display: flex; flex-direction: column; gap: var(--space-2); }
+.pd-help__text { margin: 0; font-size: var(--text-sm); color: var(--foreground); }
+.pd-help__hint { margin: 0; }
+.pd-help__path {
+  display: flex; align-items: flex-start; gap: var(--space-1);
+  margin: 0; padding: var(--space-2);
+  background: var(--ui-bg-tertiary);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+.pd-help__path .codicon { color: var(--ui-text-tertiary); flex: none; margin-top: 2px; }
+.pd-help__path code {
+  min-width: 0; font-family: var(--font-mono, monospace);
+  overflow-wrap: anywhere;
+}
+
+/* ── адаптив шапки: подпись «Настройки комнаты» — только на широком экране ─ */
+@media (max-width: 1099px) {
+  .room-settings__label { display: none; }
+  .room-settings { padding: 0 var(--space-1); }
+}
+@media (max-width: 559px) {
+  /* На телефоне остаются короткие подписи: место в шапке дороже слов. */
+  .pd-btn__label { display: none; }
+  .pd-btn { padding: 0 var(--space-1); }
+}
+
+/* ── предупреждение при смене папки (W10) ───────────────────────────────── */
+.pd-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--warn-ink);
+  overflow-wrap: anywhere;
+}

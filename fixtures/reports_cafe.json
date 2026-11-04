@@ -1,0 +1,41 @@
+{
+  "room": "cafe",
+  "items": [
+    {
+      "key": "unit-economics",
+      "title": "Юнит-экономика набора «Лето 6»",
+      "subtitle": "Каналы, маржа, точка безубыточности",
+      "kind": "spec",
+      "path": "D:/Проекты/Комната/data/reports/cafe/r-20261028-0210-a1b2/report.json",
+      "request_id": "t_a1b2c3d4",
+      "blocks": 10,
+      "created_at": 1793164590,
+      "updated_at": 1793164590,
+      "exists": true
+    },
+    {
+      "key": "packaging-quotes",
+      "title": "Котировки упаковки: 10 поставщиков в городе",
+      "subtitle": "Сравнение цен и MOQ",
+      "kind": "html",
+      "path": "D:/Проекты/Комната/data/reports/cafe/r-20261028-0328-b2c3/packaging.html",
+      "request_id": "t_9f3c2a10",
+      "blocks": 0,
+      "created_at": 1793169800,
+      "updated_at": 1793169800,
+      "exists": true
+    },
+    {
+      "key": "legal-checklist",
+      "title": "Чек-лист легализации Лето",
+      "subtitle": "ИП → свидетельство → разрешение → онлайн-касса",
+      "kind": "spec",
+      "path": "D:/Проекты/Комната/data/reports/cafe/r-20261027-2133-legacy/legal.json",
+      "request_id": "t_605613e0",
+      "blocks": 14,
+      "created_at": 1793148391,
+      "updated_at": 1793148391,
+      "exists": true
+    }
+  ]
+}

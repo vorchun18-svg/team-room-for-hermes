@@ -1,0 +1,105 @@
+{
+  "room": "cafe",
+  "updated_at": 1793171200,
+  "current": {
+    "id": "legal",
+    "title": "Легализация",
+    "status": "active"
+  },
+  "phases": [
+    {
+      "id": "idea",
+      "title": "Идея и стратегия",
+      "status": "done",
+      "note": "VISION, экономика и план 90 дней утверждены 14–16.09",
+      "updated_at": 1793059200
+    },
+    {
+      "id": "legal",
+      "title": "Легализация",
+      "status": "active",
+      "note": "Заявление на ИП подано 27.10, ждём свидетельство; 4 вопроса в СЭС открыты",
+      "updated_at": 1793141200
+    },
+    {
+      "id": "brand",
+      "title": "Бренд и товарный знак",
+      "status": "blocked",
+      "note": "Проверка в Роспатенте: свободно по кл. 30/43/35; подача ждёт go/no-go Михаила",
+      "updated_at": 1793123400
+    },
+    {
+      "id": "packaging",
+      "title": "Упаковка",
+      "status": "active",
+      "note": "Шорт-лист 10 поставщиков в городе, котировки не отправлены",
+      "updated_at": 1793167800
+    },
+    {
+      "id": "production",
+      "title": "Производство",
+      "status": "next",
+      "note": "Кухня есть, тестовой партии нет",
+      "updated_at": null
+    },
+    {
+      "id": "sales",
+      "title": "Продажи",
+      "status": "next",
+      "note": "0 продаж, 0 разговоров D19",
+      "updated_at": null
+    }
+  ],
+  "decisions": [
+    {
+      "id": "d_cafe_1",
+      "text": "Проект живёт в отдельной папке Vault и на доске team",
+      "why": "Одна комната — один проект, ничего не теряется",
+      "status": "accepted",
+      "owner": "mikhail",
+      "at": 1793059200,
+      "updated_at": 1793059200,
+      "source_request": "t_605613e0"
+    },
+    {
+      "id": "d_cafe_2",
+      "text": "Название бренда — «Лето»",
+      "why": "Проверка в Роспатенте: свободно, домен свободен",
+      "status": "accepted",
+      "owner": "mikhail",
+      "at": 1793088000,
+      "updated_at": 1793088000,
+      "source_request": "t_a1b2c3d4"
+    },
+    {
+      "id": "d_cafe_3",
+      "text": "Подавать в Роспатент после подтверждения ИП",
+      "why": "Скидка около 50% на таксу",
+      "status": "accepted",
+      "owner": "mikhail",
+      "at": 1793090000,
+      "updated_at": 1793090000,
+      "source_request": "t_a1b2c3d4"
+    },
+    {
+      "id": "d_cafe_4",
+      "text": "Старт с набора из 6 моти",
+      "why": "Себестоимость упаковки ниже на 18%",
+      "status": "proposed",
+      "owner": "mikhail",
+      "at": 1793164800,
+      "updated_at": 1793164800,
+      "source_request": "t_a1b2c3d4"
+    },
+    {
+      "id": "d_cafe_5",
+      "text": "Первые продажи — Telegram + две кофейни, без агрегатора",
+      "why": "Комиссия 23% съедает маржу набора",
+      "status": "proposed",
+      "owner": "biz-marketing",
+      "at": 1793166200,
+      "updated_at": 1793166200,
+      "source_request": "t_7d21b8c4"
+    }
+  ]
+}

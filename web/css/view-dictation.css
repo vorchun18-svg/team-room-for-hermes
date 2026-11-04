@@ -1,0 +1,198 @@
+/* ============================================================================
+   view-dictation.css — «Диктовка и словарь» на странице настроек и плашка
+   «Запомнить исправление?» над полем. Только токены tokens.css.
+   ========================================================================== */
+
+/* ── Корень раздела ──────────────────────────────────────────────────────── */
+
+.dict {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  min-width: 0;
+}
+/* В «Настройках» раздел живёт внутри .set-section — его hairline и отступ уже есть. */
+.set-section > .dict { padding-top: 0; border-top: 0; }
+
+.dict__lead {
+  margin: 0; max-width: 78ch;
+  font-size: var(--text-sm); line-height: var(--leading-relaxed);
+  color: var(--muted-foreground);
+}
+.dict__alerts:empty { display: none; }
+.dict__loading { padding: var(--space-2) 0; }
+.dict__count { margin-left: auto; }
+
+/* ── Состояние распознавания ─────────────────────────────────────────────── */
+
+.dict-status {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.dict-status__head {
+  display: flex; align-items: center; gap: var(--space-2);
+  justify-content: space-between;
+}
+.dict-status__rows { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); margin: 0; }
+.dict-status__row { display: flex; align-items: baseline; gap: var(--space-2); font-size: var(--text-sm); }
+.dict-status__row dt { color: var(--muted-foreground); font-size: var(--text-sm); }
+.dict-status__row dd { margin: 0; font-variant-numeric: tabular-nums; }
+.dict-status__hint { margin: 0; color: var(--muted-foreground); line-height: var(--leading-relaxed); max-width: 76ch; }
+
+/* ── Блоки ──────────────────────────────────────────────────────────────── */
+
+.dict-block { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.dict-block__head { display: flex; align-items: baseline; gap: var(--space-2); }
+.dict-block__title {
+  margin: 0; font-size: var(--text-base); font-weight: 600; line-height: var(--leading-tight);
+}
+.dict-block__count { font-variant-numeric: tabular-nums; margin-left: auto; }
+.dict-block__hint { margin: 0 0 var(--space-1); max-width: 76ch; line-height: var(--leading-relaxed); }
+
+/* ── Добавление: поле + кнопка ───────────────────────────────────────────── */
+
+.dict-add { display: flex; flex-direction: column; gap: var(--space-2); }
+.dict-add__row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.dict-add__field { flex: 1 1 200px; min-width: 0; max-width: 420px; }
+.dict-add__label { flex: 0 0 auto; }
+.dict-add__arrow { color: var(--muted-foreground); }
+.dict-add__hint { line-height: var(--leading-normal); }
+.dict-add__error { color: var(--danger); line-height: var(--leading-normal); }
+.dict-add__error[hidden] { display: none; }
+
+/* ── Слова и имена ───────────────────────────────────────────────────────── */
+
+.dict-terms__inner { display: flex; flex-direction: column; gap: var(--space-3); }
+.dict-terms__tools { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.dict-terms__counter { font-variant-numeric: tabular-nums; }
+.dict-search__input { flex: 0 1 240px; min-width: 140px; }
+
+.dict-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.dict-chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  min-height: var(--control-sm); padding: 0 var(--space-1) 0 var(--space-2);
+  border: 1px solid var(--border); border-radius: var(--radius-full);
+  background: var(--muted); color: var(--foreground);
+  font-size: var(--text-sm);
+}
+.dict-chip__text { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dict-chip__x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0;
+  border: 0; border-radius: var(--radius-full);
+  background: transparent; color: var(--muted-foreground);
+  font-size: var(--text-base); line-height: 1; cursor: pointer;
+}
+.dict-chip__x:hover { background: var(--ui-control-hover-background); color: var(--foreground); }
+.dict-chip__x:focus-visible { box-shadow: var(--focus-ring); }
+.dict-chips__none { padding: var(--space-1) 0; }
+
+/* ── Таблица автозамен ──────────────────────────────────────────────────── */
+
+.dict-table-wrap { max-height: none; }
+.dict-table { width: 100%; }
+.dict-table th { white-space: nowrap; }
+.dict-cell-from, .dict-cell-to { vertical-align: middle; }
+.dict-cell-from { color: var(--muted-foreground); }
+.dict-cell-to { font-weight: 500; }
+.dict-cell-arrow, .dict-th-arrow { width: 1%; color: var(--muted-foreground); text-align: center; }
+.dict-th-actions, .dict-cell-actions { width: 1%; white-space: nowrap; }
+.dict-cell-actions { min-width: 64px; }
+.dict-cell-actions__box { display: flex; align-items: center; gap: 2px; justify-content: flex-end; flex-wrap: nowrap; }
+.dict-cell-input { min-width: 120px; width: 100%; }
+.dict-row--editing { background: var(--ui-row-hover-background); }
+.dict-row-error { color: var(--danger); flex: 1 1 100%; }
+
+.dict-repl-box { min-width: 0; }
+
+/* ── Проверка на фразе ───────────────────────────────────────────────────── */
+
+.dict-preview { display: flex; flex-direction: column; gap: var(--space-2); }
+.dict-preview__input { min-height: 72px; resize: vertical; }
+.dict-preview__actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.dict-preview__out:empty { display: none; }
+.dict-preview__out {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft); border-left: 3px solid var(--primary);
+  border-radius: var(--radius-md); background: var(--muted);
+}
+.dict-preview__text { font-size: var(--text-sm); line-height: var(--leading-relaxed); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dict-preview__stat { color: var(--muted-foreground); }
+
+/* ── Файл словаря ───────────────────────────────────────────────────────── */
+
+.dict-files__inner { display: flex; flex-direction: column; gap: var(--space-2); }
+.dict-files__row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.dict-files__hint { margin: 0; max-width: 76ch; line-height: var(--leading-normal); }
+.dict-export-fallback { margin-top: var(--space-2); width: 100%; }
+
+.dict-import {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3); border: 1px solid var(--border);
+  border-radius: var(--radius-md); background: var(--card);
+}
+.dict-import[hidden] { display: none; }
+.dict-import__title { font-weight: 600; font-size: var(--text-sm); }
+.dict-import__text { line-height: var(--leading-normal); }
+.dict-import__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.dict-import__error { margin: 0; }
+
+/* ── Плашка «Запомнить исправление?» ─────────────────────────────────────── */
+
+.dl-plate {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  margin-top: var(--space-2); padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-left: 3px solid var(--accent-strong);
+  border-radius: var(--radius-md);
+  background: var(--popover); color: var(--popover-foreground);
+  font-size: var(--text-sm); line-height: var(--leading-normal);
+  max-width: 640px;
+}
+.dl-plate--floating { box-shadow: var(--shadow-sm); }
+/* Якоря нет (поле уже перерисовано) — плашка живёт внизу экрана, как тост. */
+.dl-plate--fixed {
+  position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: var(--z-toast);
+  margin: 0; max-width: min(640px, calc(100vw - var(--space-8)));
+  box-shadow: var(--shadow-nous);
+}
+.dl-plate__head { display: flex; align-items: center; gap: var(--space-2); }
+.dl-plate__title { font-weight: 600; }
+.dl-plate__close { margin-left: auto; }
+.dl-plate__items { display: flex; flex-direction: column; gap: var(--space-1); }
+.dl-plate__item {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 2px var(--space-1); border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.dl-plate__item:hover { background: var(--ui-row-hover-background); }
+.dl-plate__check { accent-color: var(--primary); margin: 0; }
+.dl-plate__pair { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
+.dl-plate__from { color: var(--muted-foreground); text-decoration: line-through; text-decoration-color: var(--border); }
+.dl-plate__arrow { color: var(--muted-foreground); }
+.dl-plate__to { font-weight: 600; }
+.dl-plate__foot { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.dl-plate__note { color: var(--muted-foreground); font-size: var(--text-xs); }
+.dl-plate__error {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft); color: var(--danger-ink);
+}
+.dl-plate__error[hidden] { display: none; }
+
+/* ── Узкий экран (от 900 px приложение живёт в одну колонку) ─────────────── */
+
+@media (max-width: 899px) {
+  .dict-status { padding: var(--space-2) var(--space-3); }
+  .dict-status__rows { flex-direction: column; gap: var(--space-1); }
+  .dict-add__field { max-width: none; flex-basis: 100%; }
+  .dict-search__input { flex-basis: 100%; }
+  .dict-table { font-size: var(--text-xs); }
+  .dict-table th, .dict-table td { padding-left: var(--space-2); padding-right: var(--space-2); }
+  .dl-plate { max-width: none; }
+}
+
+/* Тёмная тема: граница плашки чуть заметнее, заливка ошибки не «кричит». */
+html[data-theme="dark"] .dl-plate { border-color: var(--border); }
+html[data-theme="dark"] .dict-preview__out { background: var(--ui-bg-elevated); }

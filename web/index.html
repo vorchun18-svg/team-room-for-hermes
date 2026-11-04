@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-src 'self'; form-action 'self'; base-uri 'none'">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Комната команды — локальная точка входа: один запрос, команда агентов, один ответ.">
+  <title>Комната команды</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230053fd'/%3E%3Ctext x='16' y='22' font-family='Segoe UI,Arial' font-size='18' font-weight='700' fill='%23fff' text-anchor='middle'%3E%D0%9A%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/dictation.css">
+  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/dictation-ui.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#view">Перейти к содержимому</a>
+
+  <div class="app" id="app">
+    <!-- Сайдбар собирает js/app.js: марка, список комнат, здоровье, тема -->
+    <aside class="sidebar" id="sidebar" aria-label="Комнаты"></aside>
+
+    <div class="app__main">
+      <!-- Шапка и вкладки комнаты -->
+      <header class="topbar" id="topbar"></header>
+
+      <!-- Подсказка страницы («Задайте папку проекта…»): тело, не шапка -->
+      <div class="page-hint" id="page-hint" hidden></div>
+
+      <!-- Сюда router.js монтирует вьюху: mount(el, ctx) → { unmount() } -->
+      <main class="view" id="view" tabindex="-1">
+        <div class="view__inner" aria-busy="true">
+          <div class="skeleton skeleton--title"></div>
+          <div class="skeleton skeleton--line"></div>
+          <div class="skeleton skeleton--short"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+  <noscript>
+    <div class="banner banner--error" style="margin:24px">
+      Для «Комнаты команды» нужен JavaScript: страница работает без сборки, но с модулями.
+    </div>
+  </noscript>
+</body>
+</html>

@@ -1,0 +1,144 @@
+{
+  "count": 12,
+  "dispatcher": {
+    "ok": true,
+    "warning": null
+  },
+  "items": [
+    {
+      "profile": "default",
+      "title": "Базовый профиль Hermes",
+      "kind": "utility",
+      "description": "Корневой профиль HERMES_HOME: общие задачи, когда специализированный профиль не нужен.",
+      "tags": [
+        "base",
+        "general"
+      ],
+      "available": true
+    },
+    {
+      "profile": "biz-director",
+      "title": "Руководитель проекта",
+      "kind": "director",
+      "description": "Разбирает запрос Михаила, раздаёт работу команде исполнителей, сводит один ответ и проверяет его с критиком.",
+      "tags": [
+        "декомпозиция",
+        "синтез",
+        "приоритеты"
+      ],
+      "available": true
+    },
+    {
+      "profile": "biz-lawyer",
+      "title": "Юрист проекта",
+      "kind": "worker",
+      "description": "ИП, ОКВЭД, СЭС, СанПиН, Роспатент, договоры. Работает по действующему праву, ссылается на источники.",
+      "tags": [
+        "legal",
+        "ИП",
+        "Роспатент"
+      ],
+      "available": true
+    },
+    {
+      "profile": "biz-ops",
+      "title": "Операции",
+      "kind": "worker",
+      "description": "Поставщики, упаковка, производство, доставка, закупки. Считает себестоимость и MOQ.",
+      "tags": [
+        "ops",
+        "упаковка",
+        "поставщики"
+      ],
+      "available": true
+    },
+    {
+      "profile": "biz-strategy",
+      "title": "Стратег",
+      "kind": "worker",
+      "description": "План 90 дней, бренд-платформа, позиционирование, развилки и kill-критерии.",
+      "tags": [
+        "стратегия",
+        "бренд"
+      ],
+      "available": true
+    },
+    {
+      "profile": "biz-marketing",
+      "title": "Маркетолог",
+      "kind": "worker",
+      "description": "Каналы, контент, Mom Test D19, Telegram-каналы, B2B-кофейни.",
+      "tags": [
+        "каналы",
+        "D19",
+        "контент"
+      ],
+      "available": true
+    },
+    {
+      "profile": "biz-cfo",
+      "title": "Финансист",
+      "kind": "worker",
+      "description": "Юнит-экономика, налоги ИП, сметы, точка безубыточности.",
+      "tags": [
+        "финансы",
+        "ИП",
+        "маржа"
+      ],
+      "available": true
+    },
+    {
+      "profile": "biz-runner",
+      "title": "Помощник",
+      "kind": "utility",
+      "description": "Собирает и проверяет факты по Vault и доске, готовит срезы для руководителя комнаты.",
+      "tags": [
+        "факты",
+        "vault"
+      ],
+      "available": true
+    },
+    {
+      "profile": "biz-critic",
+      "title": "Критик",
+      "kind": "critic",
+      "description": "Проверяет цифры, ссылки и противоречия в своде. Даёт вердикт: принять / принять с правками / на доработку.",
+      "tags": [
+        "проверка",
+        "источники"
+      ],
+      "available": true
+    },
+    {
+      "profile": "coder",
+      "title": "Программист",
+      "kind": "worker",
+      "description": "Пишет и проверяет код, автоматизирует локальные задачи.",
+      "tags": [
+        "python",
+        "js"
+      ],
+      "available": true
+    },
+    {
+      "profile": "lawyer",
+      "title": "Юрист",
+      "kind": "worker",
+      "description": "Общие юридические вопросы вне проекта.",
+      "tags": [
+        "legal"
+      ],
+      "available": true
+    },
+    {
+      "profile": "surveyor",
+      "title": "Исследователь",
+      "kind": "worker",
+      "description": "Проверяет факты и источники, сводит противоречия.",
+      "tags": [
+        "research"
+      ],
+      "available": true
+    }
+  ]
+}

@@ -1,0 +1,427 @@
+{
+  "id": "t_4e91c7b2",
+  "room": "fn",
+  "title": "Участок под базу: зона, обременения, доступ к воде",
+  "status": "done",
+  "status_reason": null,
+  "mode": "auto",
+  "critic": {
+    "enabled": false,
+    "round": 0,
+    "max_rounds": 1,
+    "state": "off",
+    "verdict": null,
+    "task_id": null,
+    "issues": []
+  },
+  "created_at": 1793160000,
+  "started_at": 1793160030,
+  "finished_at": 1793161200,
+  "duration_s": 1170,
+  "progress": {
+    "done": 4,
+    "total": 4,
+    "percent": 100
+  },
+  "assignee": "default",
+  "needs_you": false,
+  "preview": "Проверь участок 12 га под производственную базу: категория земли, обременения, доступ к воде и ЛЭП.",
+  "archived": false,
+  "text": "Проверь участок 12 га под производственную базу в Заозёрский район: категория земли, обременения, доступ к воде и ЛЭП. Нужен список рисков и что запросить в администрации и Росреестр. Срок — до пятницы.",
+  "dispatcher": {
+    "ok": true,
+    "warning": null
+  },
+  "synthesis": {
+    "state": "ready",
+    "version": 1,
+    "text_md": "## Участок 12 га, Заозёрский район\n\nКатегория земли — сельхозземли, но участок попадает в зону расширения границы посёлка по генплану 2024. Это меняет и налог (земельный налог → налог на имущество), и порядок согласований.\n\n| Риск | Что значит | Что делать |\n|---|---|---|\n| Обременение водоохранная зона ручья | 30 м прибрежной полосы нельзя застраивать | запросить геодезию и карту водоохранной зоны |\n| Нет прямого доступа к ЛЭП | подключение 380 В только через соседний участок | запросить точку подключения в Энергосбыте |\n| Кадастр Росреестр расходится | площадь по документам 11,4 га против 12 га | сверка в Росреестр до сделки |\n\n**Дальше:** геодезия, запрос в Энергосбыте, сверка Росреестр, проверка сервитутов в администрации.\n\nРаздел про кадастр Росреестра готовил профиль analyst — он вне состава комнаты, цифры требуют подтверждения surveyor-ом. Это проект ответа.",
+    "author": "default",
+    "at": 1793161200,
+    "source_task": "t_4e91c7b2",
+    "legacy": false,
+    "history": [
+      {
+        "version": 1,
+        "kind": "initial",
+        "task_id": "t_4e91c7b2",
+        "author": "default",
+        "at": 1793161200,
+        "verdict": null,
+        "note": "Критик для комнаты FN не настроен."
+      }
+    ]
+  },
+  "next_steps": [
+    {
+      "id": "ns_1",
+      "text": "Заказать геодезию участка с картой водоохранной зоны",
+      "owner": "surveyor",
+      "due": "2026-11-05",
+      "state": "open"
+    },
+    {
+      "id": "ns_2",
+      "text": "Запросить точку подключения 380 В в Энергосбыте",
+      "owner": "coder",
+      "due": "2026-11-07",
+      "state": "open"
+    },
+    {
+      "id": "ns_3",
+      "text": "Сверить площадь с кадастром Росреестр до сделки",
+      "owner": "lawyer",
+      "due": "2026-11-02",
+      "state": "open"
+    }
+  ],
+  "open_questions": [],
+  "decisions": [
+    {
+      "id": "d_1",
+      "text": "Не подписывать сделку до сверки Росреестр",
+      "why": "расхождение 0,6 га",
+      "status": "accepted",
+      "at": 1793161100,
+      "source_request": "t_4e91c7b2"
+    },
+    {
+      "id": "d_2",
+      "text": "Считать участок сельхозземли до подтверждения зоны администрацией",
+      "why": "генплан 2024",
+      "status": "proposed",
+      "at": 1793161150,
+      "source_request": "t_4e91c7b2"
+    }
+  ],
+  "stage": {
+    "current": "legal",
+    "phases": [
+      {
+        "id": "idea",
+        "title": "Идея и стратегия",
+        "status": "done",
+        "note": "площадка выбрана"
+      },
+      {
+        "id": "legal",
+        "title": "Легализация",
+        "status": "active",
+        "note": "проверка участка и обременений"
+      },
+      {
+        "id": "brand",
+        "title": "Бренд и товарный знак",
+        "status": "next",
+        "note": ""
+      },
+      {
+        "id": "packaging",
+        "title": "Упаковка",
+        "status": "next",
+        "note": ""
+      },
+      {
+        "id": "production",
+        "title": "Производство",
+        "status": "blocked",
+        "note": "нет подтверждённого подключения к ЛЭП"
+      },
+      {
+        "id": "sales",
+        "title": "Продажи",
+        "status": "next",
+        "note": ""
+      }
+    ]
+  },
+  "future_questions": [
+    "Хватит ли 12 га под расширение до 30 га через выкуп соседнего участка?"
+  ],
+  "artifacts": [
+    {
+      "path": "D:/Проекты/Vault/Projects/Team/FN/участок-12га-риски-2026-10-28.md",
+      "title": "Риски по участку",
+      "kind": "md",
+      "exists": false,
+      "size": null
+    }
+  ],
+  "report": {
+    "available": false,
+    "kind": null,
+    "path": null,
+    "title": null
+  },
+  "tree": [
+    {
+      "id": "t_4e91c7b2",
+      "parent_ids": [],
+      "title": "Участок под базу: зона, обременения, доступ к воде",
+      "assignee": "default",
+      "role": "root",
+      "status": "done",
+      "started_at": 1793160030,
+      "finished_at": 1793161200,
+      "summary_md": "Свод по участку: три риска и четыре запроса.",
+      "metadata": {
+        "version": 1
+      },
+      "comments": [],
+      "runs": [
+        {
+          "id": 100,
+          "profile": "default",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793160030,
+          "ended_at": 1793161200,
+          "summary": "Свод собран.",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "outside_room": false,
+      "error": null
+    },
+    {
+      "id": "t_4e91c7b3",
+      "parent_ids": [
+        "t_4e91c7b2"
+      ],
+      "title": "Зона и категория земли",
+      "assignee": "lawyer",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793160100,
+      "finished_at": 1793160900,
+      "summary_md": "Участок сельхозземли, но в зоне расширения посёлка.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 101,
+          "profile": "lawyer",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793160100,
+          "ended_at": 1793160900,
+          "summary": "Справка по зоне готова.",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "outside_room": false,
+      "error": null
+    },
+    {
+      "id": "t_4e91c7b4",
+      "parent_ids": [
+        "t_4e91c7b2"
+      ],
+      "title": "Сверка с кадастром Росреестр",
+      "assignee": "analyst",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793160200,
+      "finished_at": 1793160800,
+      "summary_md": "Площадь по кадастру 11,4 га против 12 га в договоре.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 102,
+          "profile": "analyst",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793160200,
+          "ended_at": 1793160800,
+          "summary": "Расхождение найдено.",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "outside_room": true,
+      "error": null
+    },
+    {
+      "id": "t_4e91c7b5",
+      "parent_ids": [
+        "t_4e91c7b2"
+      ],
+      "title": "Доступ к воде и ЛЭП",
+      "assignee": "surveyor",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793160300,
+      "finished_at": 1793161000,
+      "summary_md": "водоохранная зона ручья 30 м; подключение 380 В только через соседа.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 103,
+          "profile": "surveyor",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793160300,
+          "ended_at": 1793161000,
+          "summary": "Точки подключения описаны.",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "outside_room": false,
+      "error": null
+    },
+    {
+      "id": "t_4e91c7b6",
+      "parent_ids": [
+        "t_4e91c7b2"
+      ],
+      "title": "Карта участка и схема коммуникаций",
+      "assignee": "coder",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793160400,
+      "finished_at": 1793160700,
+      "summary_md": "SVG-схема участка и точек подключения.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 104,
+          "profile": "coder",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793160400,
+          "ended_at": 1793160700,
+          "summary": "Схема нарисована.",
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "outside_room": false,
+      "error": null
+    }
+  ],
+  "timeline": [
+    {
+      "at": 1793160000,
+      "kind": "created",
+      "task_id": "t_4e91c7b2",
+      "actor": "mikhail",
+      "text": "Запрос создан в комнате FN"
+    },
+    {
+      "at": 1793160040,
+      "kind": "decomposed",
+      "task_id": "t_4e91c7b2",
+      "actor": "system",
+      "text": "Оркестратор разложил запрос на четыре среза"
+    },
+    {
+      "at": 1793160700,
+      "kind": "completed",
+      "task_id": "t_4e91c7b6",
+      "actor": "coder",
+      "text": "Схема участка готова"
+    },
+    {
+      "at": 1793160800,
+      "kind": "completed",
+      "task_id": "t_4e91c7b4",
+      "actor": "analyst",
+      "text": "Расхождение кадастра найдено"
+    },
+    {
+      "at": 1793160900,
+      "kind": "completed",
+      "task_id": "t_4e91c7b3",
+      "actor": "lawyer",
+      "text": "Зона и категория подтверждены"
+    },
+    {
+      "at": 1793161000,
+      "kind": "completed",
+      "task_id": "t_4e91c7b5",
+      "actor": "surveyor",
+      "text": "APP и ЛЭП описаны"
+    },
+    {
+      "at": 1793161200,
+      "kind": "completed",
+      "task_id": "t_4e91c7b2",
+      "actor": "default",
+      "text": "Сводный ответ готов"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "outside_room",
+      "message": "Карточку «Сверка с кадастром Росреестр» выполнил профиль analyst — он не входит в состав комнаты «Рабочее пространство». Переназначьте карточку или добавьте профиль в команду.",
+      "detail": {
+        "task_id": "t_4e91c7b4",
+        "assignee": "analyst",
+        "members": [
+          "lawyer",
+          "coder",
+          "surveyor"
+        ]
+      }
+    }
+  ],
+  "thread": [
+    {
+      "id": "c1",
+      "at": 1793155000,
+      "author_kind": "mikhail",
+      "author": "mikhail",
+      "author_label": "Михаил",
+      "text": "Проверь участок под базу: зона, обременения, доступ к воде и 380 В.",
+      "task_id": "t_4e91c7b2",
+      "kind": "message"
+    },
+    {
+      "id": "c2",
+      "at": 1793155100,
+      "author_kind": "agent",
+      "author": "default",
+      "author_label": "Руководитель комнаты",
+      "text": "Принял; передал юристу — обременения и кадастр, проверке фактов — зона и подключение. Свод соберу сам.",
+      "task_id": "t_4e91c7b2",
+      "kind": "comment"
+    },
+    {
+      "id": "c3",
+      "at": 1793155400,
+      "author_kind": "agent",
+      "author": "lawyer",
+      "author_label": "Юрист · исполнитель",
+      "text": "Кадастр Росреестр показывает 11,4 га вместо 12; обременений нет, но сервитут ЛЭП не отражён в выписке.",
+      "task_id": "t_4e91c7b2",
+      "kind": "comment"
+    },
+    {
+      "id": "c4",
+      "at": 1793155600,
+      "author_kind": "agent",
+      "author": "surveyor",
+      "author_label": "Исследователь · исполнитель",
+      "text": "Зона допускает склад класса II. Точка 380 В — в 1,8 км, Энергосбыт подтверждает техвозможность.",
+      "task_id": "t_4e91c7b2",
+      "kind": "comment"
+    },
+    {
+      "id": "v1",
+      "at": 1793155800,
+      "author_kind": "system",
+      "author": "system",
+      "author_label": "Комната команды",
+      "text": "Версия 1 готова: свод по участку собран",
+      "task_id": "t_4e91c7b2",
+      "kind": "event"
+    }
+  ]
+}
+

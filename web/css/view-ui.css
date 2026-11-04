@@ -1,0 +1,95 @@
+/* ============================================================================
+   view-ui.css — добавки к components.css для элементов web/js/ui.js.
+   Только токены: ни одного литерального цвета. Подключается самим ui.js
+   (ensureCss('css/view-ui.css')) при первом вызове любого элемента.
+   ========================================================================== */
+
+/* ── Скелетон-стопка ─────────────────────────────────────────────────────── */
+.skeleton-stack { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.skeleton-stack .skeleton--title { margin-bottom: var(--space-1); }
+
+/* ── Заголовок секции ────────────────────────────────────────────────────── */
+.section-header { gap: var(--space-3); margin: 0; }
+.section-header__main { flex: 1 1 auto; min-width: 0; }
+.section-header__title {
+  font-size: var(--text-lg); font-weight: 600; letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.section-header__count { height: 18px; padding: 0 6px; font-variant-numeric: tabular-nums; }
+.section-header__actions { flex: none; }
+
+/* ── Профиль ─────────────────────────────────────────────────────────────── */
+.profile-label { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; vertical-align: middle; }
+.profile-label__name { font-size: var(--text-sm); color: var(--foreground); min-width: 0; }
+
+/* ── Чипы статуса/роли ───────────────────────────────────────────────────── */
+.status-chip__text, .role-chip__text { display: inline-block; }
+.status-chip--live { padding-left: 6px; }
+
+/* ── Путь к файлу ────────────────────────────────────────────────────────── */
+.path-chip {
+  max-width: 100%; min-width: 0; height: 22px; padding: 0 var(--space-2); gap: 5px;
+  font-weight: 400; color: var(--ui-text-secondary);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.path-chip .codicon { color: var(--ui-text-tertiary); }
+.path-chip__text {
+  display: block; min-width: 0; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--text-sm); line-height: 1;
+}
+.path-chip:hover { background: var(--ui-control-hover-background); border-color: var(--border); color: var(--foreground); }
+.path-chip:hover .codicon { color: var(--ui-text-secondary); }
+.path-chip:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* ── Срок ────────────────────────────────────────────────────────────────── */
+.due-badge { height: 20px; gap: 4px; font-weight: 500; }
+.due-badge .codicon { opacity: 0.85; }
+.due-badge__text { font-variant-numeric: tabular-nums; }
+
+/* ── Сегментированный переключатель ──────────────────────────────────────── */
+.segmented {
+  display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+  max-width: 100%; overflow-x: auto; scrollbar-width: none;
+  border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+  background: var(--ui-bg-quaternary);
+}
+.segmented::-webkit-scrollbar { display: none; }
+.segmented__btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 24px; padding: 0 var(--space-3); border-radius: var(--radius-sm);
+  color: var(--ui-text-tertiary); font-size: var(--text-sm); font-weight: 500; line-height: 1;
+  white-space: nowrap; transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.segmented__btn:hover { color: var(--foreground); background: var(--ui-control-hover-background); }
+.segmented__btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.segmented__btn--active {
+  background: var(--card); color: var(--foreground); box-shadow: var(--shadow-xs);
+}
+
+/* ── Ошибка ──────────────────────────────────────────────────────────────── */
+.error-banner { align-items: flex-start; }
+.error-banner > .codicon { margin-top: 1px; }
+.error-banner__message { font-weight: 500; }
+.error-banner__hint { margin-top: 2px; color: color-mix(in srgb, var(--danger-ink) 78%, transparent); }
+.error-banner__retry { flex: none; align-self: center; }
+
+/* ── Диалоги ─────────────────────────────────────────────────────────────── */
+.dialog__body > .field { gap: var(--space-2); }
+.dialog__body > .field + .field { margin-top: var(--space-3); }
+.dialog__body .textarea { min-height: 112px; }
+.dialog__body .input, .dialog__body .textarea { font-size: var(--text-md); }
+.dialog__text { font-size: var(--text-sm); line-height: var(--leading-relaxed); color: var(--ui-text-secondary); }
+.dialog__hint { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--ui-text-secondary); }
+.dialog__foot .btn { min-width: 88px; }
+.dialog__foot .btn--secondary { color: var(--ui-text-primary); }
+
+/* ── Узкие экраны ────────────────────────────────────────────────────────── */
+@media (max-width: 899px) {
+  .section-header { flex-wrap: wrap; }
+  .section-header__title { font-size: var(--text-md); }
+  .dialog-backdrop { padding: var(--space-3); }
+  .dialog { max-height: calc(100dvh - 2 * var(--space-3)); }
+  .segmented { display: flex; }
+  .segmented__btn { padding: 0 var(--space-2); }
+}

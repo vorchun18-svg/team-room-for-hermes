@@ -1,0 +1,192 @@
+{
+  "providers": [
+    {
+      "id": "oblako-a",
+      "label": "Облако-А",
+      "configured": true,
+      "models": [
+        {
+          "id": "dilizhans-mini",
+          "label": "Дилижанс мини"
+        },
+        {
+          "id": "dilizhans-midi",
+          "label": "Дилижанс миди"
+        },
+        {
+          "id": "dilizhans-pro",
+          "label": "Дилижанс про"
+        },
+        {
+          "id": "dilizhans-ultra",
+          "label": "Дилижанс ультра"
+        }
+      ]
+    },
+    {
+      "id": "lokal",
+      "label": "Локальный сервер",
+      "configured": true,
+      "models": [
+        {
+          "id": "dilizhans-home",
+          "label": "Дилижанс домашний"
+        },
+        {
+          "id": "dilizhans-home-2",
+          "label": "Дилижанс домашний 2"
+        },
+        {
+          "id": "dilizhans-kompakt",
+          "label": "Дилижанс компакт"
+        }
+      ]
+    },
+    {
+      "id": "oblako-b",
+      "label": "Облако-Б",
+      "configured": true,
+      "models": [
+        {
+          "id": "vektor-1",
+          "label": "Вектор 1"
+        },
+        {
+          "id": "vektor-2",
+          "label": "Вектор 2"
+        },
+        {
+          "id": "vektor-3",
+          "label": "Вектор 3"
+        },
+        {
+          "id": "vektor-4",
+          "label": "Вектор 4"
+        },
+        {
+          "id": "vektor-5",
+          "label": "Вектор 5"
+        }
+      ]
+    },
+    {
+      "id": "kontur",
+      "label": "Закрытый контур",
+      "configured": false,
+      "models": [
+        {
+          "id": "kontur-1",
+          "label": "Контур 1"
+        },
+        {
+          "id": "kontur-2",
+          "label": "Контур 2"
+        },
+        {
+          "id": "kontur-3",
+          "label": "Контур 3"
+        }
+      ]
+    }
+  ],
+  "efforts": [
+    {
+      "id": "none",
+      "label": "Выключено"
+    },
+    {
+      "id": "minimal",
+      "label": "Минимальные"
+    },
+    {
+      "id": "low",
+      "label": "Низкие"
+    },
+    {
+      "id": "medium",
+      "label": "Средние"
+    },
+    {
+      "id": "high",
+      "label": "Высокие"
+    },
+    {
+      "id": "xhigh",
+      "label": "Очень высокие"
+    },
+    {
+      "id": "max",
+      "label": "Максимальные"
+    },
+    {
+      "id": "ultra",
+      "label": "Предельные"
+    }
+  ],
+  "source": "hermes:inventory",
+  "cached": true,
+  "updated_at": 1793171850,
+  "warnings": [],
+  "agent_defaults": {
+    "default": {
+      "provider": "oblako-a",
+      "model": "dilizhans-pro",
+      "reasoning": "high"
+    },
+    "biz-director": {
+      "provider": "oblako-a",
+      "model": "dilizhans-pro",
+      "reasoning": "high"
+    },
+    "biz-lawyer": {
+      "provider": "oblako-a",
+      "model": "dilizhans-midi",
+      "reasoning": "medium"
+    },
+    "biz-ops": {
+      "provider": "lokal",
+      "model": "dilizhans-home",
+      "reasoning": "medium"
+    },
+    "biz-strategy": {
+      "provider": "oblako-b",
+      "model": "vektor-3",
+      "reasoning": "high"
+    },
+    "biz-marketing": {
+      "provider": "oblako-a",
+      "model": "dilizhans-midi",
+      "reasoning": "low"
+    },
+    "biz-cfo": {
+      "provider": "oblako-a",
+      "model": "dilizhans-ultra",
+      "reasoning": "xhigh"
+    },
+    "biz-runner": {
+      "provider": "lokal",
+      "model": "dilizhans-kompakt",
+      "reasoning": "minimal"
+    },
+    "biz-critic": {
+      "provider": "oblako-b",
+      "model": "vektor-4",
+      "reasoning": "high"
+    },
+    "coder": {
+      "provider": "oblako-b",
+      "model": "vektor-5",
+      "reasoning": "medium"
+    },
+    "lawyer": {
+      "provider": "oblako-a",
+      "model": "dilizhans-pro",
+      "reasoning": "high"
+    },
+    "surveyor": {
+      "provider": "lokal",
+      "model": "dilizhans-home-2",
+      "reasoning": "low"
+    }
+  }
+}

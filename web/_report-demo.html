@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="ru" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Демо отчёта — Комната команды</title>
+
+<!-- Запасные токены: нужны, только пока/если web/css/tokens.css не загрузился.
+     Обёрнуты в :where() — нулевая специфичность, поэтому настоящая дизайн-система
+     (её :root[data-theme='dark'] и :root) всегда выигрывает. Раньше html[data-theme="dark"]
+     перебивал :root и демо в тёмной теме жило на своей палитре (F-7). -->
+<style>
+  :where(html) {
+    --background: #fafafa; --foreground: #18181b; --muted: #f4f4f5; --muted-foreground: #6b7280;
+    --card: #ffffff; --border: #e4e4e7; --accent: #4f6bed; --ok: #16a34a; --warn: #b45309; --danger: #dc2626; --info: #2563eb;
+    --radius-sm: 8px; --radius-md: 10px; --radius-lg: 12px;
+    --space-1: 4px; --space-2: 8px; --space-3: 10px; --space-4: 14px; --space-5: 22px; --space-6: 28px;
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, .06);
+  }
+  :where(html[data-theme="dark"], html.dark) {
+    --background: #131316; --foreground: #ececef; --muted: #1e1e23; --muted-foreground: #9a9aa5;
+    --card: #18181d; --border: #2c2c33; --accent: #7b93ff; --ok: #4ade80; --warn: #fbbf24; --danger: #f87171; --info: #60a5fa;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
+  }
+  @media (prefers-color-scheme: dark) {
+    :where(html:not([data-theme="light"])) {
+      --background: #131316; --foreground: #ececef; --muted: #1e1e23; --muted-foreground: #9a9aa5;
+      --card: #18181d; --border: #2c2c33; --accent: #7b93ff; --ok: #4ade80; --warn: #fbbf24; --danger: #f87171; --info: #60a5fa;
+    }
+  }
+  body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--font-sans); }
+  .demo-bar {
+    position: sticky; top: 0; z-index: 20; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    padding: 8px 16px; background: color-mix(in srgb, var(--card) 92%, transparent);
+    border-bottom: 1px solid var(--border); backdrop-filter: blur(6px);
+    font: 12px/1.4 var(--font-sans); color: var(--muted-foreground);
+  }
+  .demo-bar strong { color: var(--foreground); font-weight: 600; }
+  .demo-bar .sp { flex: 1; }
+  .demo-bar button, .demo-bar select {
+    font: inherit; color: var(--foreground); background: var(--card); border: 1px solid var(--border);
+    border-radius: 7px; padding: 4px 9px; cursor: pointer;
+  }
+  @media print { .demo-bar { display: none !important; } }
+  .demo-err { margin: 16px; padding: 12px 14px; border: 1px solid var(--danger); border-radius: 10px; color: var(--danger); font: 13px/1.5 var(--font-sans); white-space: pre-wrap; }
+</style>
+
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/report-charts.css">
+<link rel="stylesheet" href="css/report-graph.css">
+<link rel="stylesheet" href="css/report.css">
+</head>
+<body>
+
+<div class="demo-bar">
+  <strong>reportkit · демо</strong>
+  <span id="src-label">источник…</span>
+  <span class="sp"></span>
+  <span id="stats-label"></span>
+  <button type="button" id="theme-btn">Тема</button>
+</div>
+
+<div id="report"></div>
+
+<!-- Встроенная спека для ?inline=1 (и для file://, где fetch запрещён) -->
+<script type="application/json" id="spec">
+{
+  "version": 1,
+  "title": "Мини-отчёт: проверка блоков",
+  "subtitle": "Встроенный пример (?inline=1) — таблица, KPI и выноска",
+  "summary": "Если вы это видите, спека взята прямо из страницы (`<script type=\"application/json\">`), без запроса к файлу. Сама страница всё равно должна быть открыта по **http**: ES-модули не загружаются с `file://`.",
+  "blocks": [
+    { "type": "heading", "text": "Показатели", "level": 1 },
+    { "type": "stats", "items": [
+      { "label": "Выручка", "value": "R$ 128 400", "delta": 12.4, "hint": "за квартал" },
+      { "label": "Маржа", "value": "31,2%", "delta": -1.8 },
+      { "label": "Заказов", "value": "1 284", "delta": 96 }
+    ] },
+    { "type": "table", "title": "Каналы", "columns": [
+      { "key": "ch", "label": "Канал" },
+      { "key": "rev", "label": "Выручка", "type": "money", "currency": "BRL" },
+      { "key": "st", "label": "Статус", "type": "status" }
+    ], "rows": [
+      { "ch": "Instagram", "rev": 74200, "st": "в работе" },
+      { "ch": "Marketplace", "rev": 54120, "st": "готово" }
+    ], "totals": { "rev": "sum" } },
+    { "type": "callout", "tone": "warn", "title": "Проверка", "md": "Числа демонстрационные." }
+  ]
+}
+</script>
+
+<!-- ===================== ЗАГЛУШКИ ЗАВИСИМОСТЕЙ =====================
+     Только для демо-страницы: если web/js/util.js или web/js/md.js ещё не созданы
+     параллельным исполнителем, подставляем их временные реализации через import map.
+     В web/js ничего не подменяется. -->
+<script type="text/plain" id="stub-util">
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+export function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, (c) => ESC[c]); }
+function apply(el, attrs) {
+  if (!attrs) return;
+  for (const k of Object.keys(attrs)) {
+    const v = attrs[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class' || k === 'className') { el.setAttribute('class', String(v)); continue; }
+    if (k === 'dataset') { for (const dk of Object.keys(v)) if (v[dk] !== null && v[dk] !== undefined) el.dataset[dk] = String(v[dk]); continue; }
+    if (k === 'style') {
+      if (typeof v === 'string') el.style.cssText = v;
+      else for (const sk of Object.keys(v)) { if (sk.indexOf('--') === 0) el.style.setProperty(sk, v[sk]); else el.style[sk] = v[sk]; }
+      continue;
+    }
+    if (/^on[a-z]+$/i.test(k) && typeof v === 'function') { el.addEventListener(k.slice(2).toLowerCase(), v); continue; }
+    if (k === 'html' || k === 'innerHTML') { el.innerHTML = String(v); continue; }
+    if (v === true) { el.setAttribute(k, ''); continue; }
+    el.setAttribute(k, String(v));
+  }
+}
+function kids(el, children) {
+  for (const c of children) {
+    if (c === null || c === undefined || c === false || c === true) continue;
+    if (Array.isArray(c)) { kids(el, c); continue; }
+    el.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+}
+export function h(tag, attrs, ...children) {
+  const el = document.createElement(tag);
+  apply(el, attrs);
+  kids(el, children);
+  return el;
+}
+export function s(tag, attrs, ...children) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  apply(el, attrs);
+  kids(el, children);
+  return el;
+}
+const pad = (n) => String(n).padStart(2, '0');
+export function fmtDate(v) {
+  if (!v) return '';
+  const d = v instanceof Date ? v : new Date(/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) + 'T00:00:00' : v);
+  if (Number.isNaN(d.getTime())) return String(v);
+  return pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + '.' + d.getFullYear();
+}
+export function fmtDateTime(v) {
+  const d = v instanceof Date ? v : new Date(v);
+  if (Number.isNaN(d.getTime())) return String(v || '');
+  return fmtDate(d) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+export function timeAgo(v) {
+  const d = v instanceof Date ? v : new Date(v);
+  if (Number.isNaN(d.getTime())) return '';
+  const sec = Math.round((Date.now() - d.getTime()) / 1000);
+  const abs = Math.abs(sec);
+  const units = [[31536000, 'г'], [2592000, 'мес'], [86400, 'д'], [3600, 'ч'], [60, 'мин'], [1, 'с']];
+  for (const [size, name] of units) {
+    if (abs >= size) { const n = Math.round(abs / size); return (sec < 0 ? 'через ' : '') + n + ' ' + name + (sec < 0 ? '' : ' назад'); }
+  }
+  return 'только что';
+}
+export function fmtDuration(sec) {
+  const s2 = Math.max(0, Math.round(Number(sec) || 0));
+  const h2 = Math.floor(s2 / 3600), m = Math.floor((s2 % 3600) / 60), r = s2 % 60;
+  return h2 ? h2 + ' ч ' + m + ' мин' : m ? m + ' мин ' + r + ' с' : r + ' с';
+}
+export function plural(n, one, few, many) {
+  const a = Math.abs(n) % 100, b = a % 10;
+  if (a > 10 && a < 20) return many;
+  if (b > 1 && b < 5) return few;
+  if (b === 1) return one;
+  return many;
+}
+export function fmtNumber(n, opts) {
+  const d = opts && opts.decimals;
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: d === undefined ? 2 : d, minimumFractionDigits: d === undefined ? 0 : d }).format(Number(n) || 0);
+}
+export function fmtMoney(n, opts) {
+  const cur = (opts && opts.currency) || 'RUB';
+  const d = opts && opts.decimals;
+  return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: cur, maximumFractionDigits: d === undefined ? 2 : d }).format(Number(n) || 0);
+}
+export function fmtPercent(x, opts) {
+  const d = (opts && opts.decimals) === undefined ? 1 : opts.decimals;
+  const v = opts && opts.ratio ? Number(x) * 100 : Number(x);
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: d }).format(v || 0) + '%';
+}
+export function debounce(fn, ms) {
+  let t = 0;
+  return function (...args) { clearTimeout(t); t = setTimeout(() => fn.apply(this, args), ms || 0); };
+}
+export function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
+let seq = 0;
+export function uid(prefix) { seq += 1; return (prefix || 'id') + '-' + seq + '-' + Math.random().toString(36).slice(2, 7); }
+</script>
+
+<script type="text/plain" id="stub-md">
+const E = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const esc = (v) => String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, (c) => E[c]);
+export function mdInline(src) {
+  let s2 = esc(src);
+  s2 = s2.replace(/`([^`]+)`/g, '<code>$1</code>');
+  s2 = s2.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s2 = s2.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  s2 = s2.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, t, href) => {
+    const safe = /^(https?:|mailto:|#|\/)/i.test(href) ? href : '#';
+    return '<a href="' + esc(safe) + '">' + t + '</a>';
+  });
+  return s2;
+}
+export function renderMarkdown(src, opts) {
+  const lines = String(src === null || src === undefined ? '' : src).replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let list = null, para = [], code = null, quote = [];
+  const flushPara = () => { if (para.length) { out.push('<p>' + mdInline(para.join(' ')) + '</p>'); para = []; } };
+  const flushList = () => { if (list) { out.push('<' + list.tag + '>' + list.items.map((i) => '<li>' + mdInline(i) + '</li>').join('') + '</' + list.tag + '>'); list = null; } };
+  const flushQuote = () => { if (quote.length) { out.push('<blockquote>' + quote.map(mdInline).join('<br>') + '</blockquote>'); quote = []; } };
+  for (const raw of lines) {
+    if (code !== null) {
+      if (/^```/.test(raw.trim())) { out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>'); code = null; }
+      else code.push(raw);
+      continue;
+    }
+    const line = raw.trim();
+    if (/^```/.test(line)) { flushPara(); flushList(); flushQuote(); code = []; continue; }
+    if (!line) { flushPara(); flushList(); flushQuote(); continue; }
+    const hm = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (hm) { flushPara(); flushList(); flushQuote(); const lvl = hm[1].length; out.push('<h' + lvl + '>' + mdInline(hm[2]) + '</h' + lvl + '>'); continue; }
+    if (/^(-{3,}|\*{3,})$/.test(line)) { flushPara(); flushList(); flushQuote(); out.push('<hr>'); continue; }
+    if (/^>\s?/.test(line)) { flushPara(); flushList(); quote.push(line.replace(/^>\s?/, '')); continue; }
+    const ul = /^[-*+]\s+(.*)$/.exec(line);
+    const ol = /^\d+[.)]\s+(.*)$/.exec(line);
+    if (ul || ol) {
+      flushPara(); flushQuote();
+      const tag = ul ? 'ul' : 'ol';
+      if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
+      list.items.push((ul || ol)[1]);
+      continue;
+    }
+    para.push(line);
+  }
+  if (code !== null) out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>');
+  flushPara(); flushList(); flushQuote();
+  return out.join('\n');
+}
+export function mdToText(src) { return String(src || '').replace(/[#*`>_-]/g, '').replace(/\s+/g, ' ').trim(); }
+</script>
+
+<script>
+// Демо-обвязка: выбор спеки, тема, подстановка заглушек, рендер.
+(async function main() {
+  const params = new URLSearchParams(location.search);
+  const $ = (id) => document.getElementById(id);
+  const theme = params.get('theme');
+  if (theme === 'dark') { document.documentElement.dataset.theme = 'dark'; document.documentElement.classList.add('dark'); }
+  if (theme === 'light') { document.documentElement.dataset.theme = 'light'; document.documentElement.classList.remove('dark'); }
+  $('theme-btn').addEventListener('click', () => {
+    const dark = document.documentElement.dataset.theme === 'dark';
+    document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+    document.documentElement.classList.toggle('dark', !dark);
+  });
+
+  const fail = (msg) => {
+    const box = document.createElement('div');
+    box.className = 'demo-err';
+    box.textContent = msg;
+    document.getElementById('report').appendChild(box);
+  };
+
+  // 1. Спека
+  let spec = null;
+  let fileUrl = location.href;
+  const inline = params.get('inline') === '1';
+  const src = params.get('src');
+  try {
+    if (inline || !src) {
+      spec = JSON.parse($('spec').textContent);
+      $('src-label').textContent = 'встроенная спека';
+    } else {
+      const url = new URL(src, new URL('../', location.href)).href;
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + url);
+      spec = await res.json();
+      fileUrl = url;
+      $('src-label').textContent = src;
+    }
+  } catch (e) {
+    fail('Не удалось загрузить спеку: ' + (e && e.message ? e.message : e) +
+      '\nПодсказка: для ?src= нужен http-сервер (python -m http.server 8790 --directory C:/TeamRoom/Team/team-room).');
+    return;
+  }
+
+  // 2. Заглушки util.js/md.js, если параллельный исполнитель их ещё не создал
+  async function exists(url) {
+    try { const r = await fetch(url, { cache: 'no-store' }); return r.ok; } catch (e) { return false; }
+  }
+  const [hasUtil, hasMd] = await Promise.all([exists('js/util.js'), exists('js/md.js')]);
+  if (!hasUtil || !hasMd) {
+    const imports = {};
+    if (!hasUtil) imports[new URL('js/util.js', location.href).href] = URL.createObjectURL(new Blob([$('stub-util').textContent], { type: 'text/javascript' }));
+    if (!hasMd) imports[new URL('js/md.js', location.href).href] = URL.createObjectURL(new Blob([$('stub-md').textContent], { type: 'text/javascript' }));
+    const im = document.createElement('script');
+    im.type = 'importmap';
+    im.textContent = JSON.stringify({ imports });
+    document.head.appendChild(im);
+    $('stats-label').dataset.stub = hasUtil ? 'md-заглушка' : hasMd ? 'util-заглушка' : 'заглушки util+md';
+  }
+
+  // 3. Рендер
+  try {
+    const mod = await import('./js/report/index.js');
+    if (params.get('broken') === '1') {
+      spec.blocks = (spec.blocks || []).concat([
+        { type: 'heading', text: 'Проверка устойчивости', level: 2 },
+        { type: 'table', title: 'Таблица без колонок', columns: [], rows: [] },
+        { type: 'callout' },
+        { type: 'no-such-block', text: 'привет' },
+      ]);
+    }
+    if (params.get('stress') === '1') {
+      for (const b of spec.blocks || []) {
+        if (b.type === 'table' && Array.isArray(b.rows) && b.rows.length) {
+          const base = b.rows.slice(0, 40);
+          const rows = [];
+          for (let i = 0; i < 260; i++) {
+            const r = Object.assign({}, base[i % base.length]);
+            r[b.columns[0].key] = String(r[b.columns[0].key]) + ' · ' + (i + 1);
+            rows.push(r);
+          }
+          b.rows = rows;
+          b.pageSize = 50;
+        }
+      }
+    }
+
+    const started = performance.now();
+    mod.renderReport($('report'), spec, { fileUrl });
+    // ?selftest=1 — проверка интерактива на живой странице (результаты в <pre id="selftest">)
+    async function selftest() {
+      const res = [];
+      const ok = (name, cond, extra) => res.push((cond ? 'ok   ' : 'FAIL ') + name + (extra ? ' — ' + extra : ''));
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const q = (s, root) => (root || document).querySelector(s);
+      const qa = (s, root) => [...(root || document).querySelectorAll(s)];
+      const grid = q('.rb-table__grid');
+      const hasTable = (spec.blocks || []).some((b) => b.type === 'table');
+      if (hasTable) ok('таблица отрисована', !!grid);
+      if (grid) {
+        const headBtns = qa('.rb-th__btn', grid);
+        const moneyBtn = headBtns.find((b) => b.dataset.key === 'revenue');
+        const num = (tr, i) => {
+          const txt = tr.children[i] ? tr.children[i].textContent.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.') : '';
+          return Number(txt);
+        };
+        const colIndex = qa('.rb-th', grid).findIndex((th) => q('.rb-th__btn', th) === moneyBtn);
+        if (moneyBtn) {
+          moneyBtn.click();
+          await wait(30);
+          const th = moneyBtn.closest('th');
+          ok('сортировка по клику: asc', th.getAttribute('aria-sort') === 'ascending', th.getAttribute('aria-sort'));
+          const bodyRows = qa('tbody tr', grid);
+          const vals = bodyRows.map((tr) => num(tr, colIndex)).filter((n) => Number.isFinite(n));
+          ok('значения реально возрастают', vals.every((v, i) => i === 0 || vals[i - 1] <= v), vals.slice(0, 4).join(', '));
+          moneyBtn.click();
+          await wait(30);
+          ok('повторный клик: desc', th.getAttribute('aria-sort') === 'descending', th.getAttribute('aria-sort'));
+        }
+        const filter = q('.rb-table__filter');
+        if (filter) {
+          // считаем по счётчику «N из M», а не по DOM: DOM ограничен страницей
+          const countEl = q('.rb-table__count');
+          const total = () => Number((countEl.textContent.match(/\d+/) || ['0'])[0]); // первое число = видимых
+          const before = total();
+          const rows = qa('tbody tr', grid);
+          const probes = [rows[0], rows[rows.length - 1]]
+            .map((tr) => (tr && tr.children[0] ? tr.children[0].textContent.trim().slice(0, 10) : ''))
+            .filter(Boolean);
+          let narrowed = -1;
+          let used = '';
+          for (const probe of probes) {
+            filter.value = probe;
+            filter.dispatchEvent(new Event('input', { bubbles: true }));
+            await wait(300);
+            const after = total();
+            if (after > 0 && after < before) { narrowed = after; used = probe; break; }
+          }
+          ok('фильтр сузил выборку', narrowed > 0, before + ' → ' + (narrowed > 0 ? narrowed : 'нет') + ' (запрос «' + used + '»)');
+          filter.value = '';
+          filter.dispatchEvent(new Event('input', { bubbles: true }));
+          await wait(300);
+          ok('фильтр сброшен', total() === before, String(total()));
+        }
+        const moreBtn = qa('.rb-table__more button')[0];
+        if (moreBtn) {
+          const before = qa('tbody tr', grid).length;
+          moreBtn.click();
+          await wait(30);
+          ok('«Показать ещё» добавил строки', qa('tbody tr', grid).length > before, before + ' → ' + qa('tbody tr', grid).length);
+        }
+      }
+      const tabs = qa('.rb-tabs__tab');
+      if (tabs.length > 1) {
+        tabs[1].click();
+        await wait(20);
+        const panel = q('#' + tabs[1].getAttribute('aria-controls'));
+        ok('вкладка переключилась', !!panel && !panel.hidden && panel.children.length > 0, panel ? panel.textContent.trim().slice(0, 24) : 'нет панели');
+      }
+      const box = q('.rb-checklist__box');
+      if (box) {
+        const counter = q('.rb-checklist__count');
+        const before = counter.textContent;
+        box.click();
+        await wait(10);
+        ok('галочка меняет счётчик', counter.textContent !== before, before + ' → ' + counter.textContent);
+      }
+      const img = q('.rb-gallery__img');
+      if (img) {
+        img.closest('button').click();
+        await wait(10);
+        const lb = q('.rb-lightbox');
+        ok('лайтбокс открывается', !!lb);
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+        await wait(10);
+        ok('лайтбокс закрывается по Esc', !q('.rb-lightbox'));
+      }
+      const details = q('.rb-accordion__item');
+      if (details) ok('аккордеон использует <details>', details.tagName === 'DETAILS');
+      const errs = $('report').querySelectorAll('.rb-error, .rb-unknown').length;
+      ok('нет карточек ошибок', errs === 0, String(errs));
+      const fails = res.filter((r) => r.startsWith('FAIL')).length;
+      const pre = document.createElement('pre');
+      pre.id = 'selftest';
+      pre.style.cssText = 'margin:16px;padding:12px;font:12px/1.5 monospace;border:1px solid #8888;border-radius:8px;white-space:pre-wrap';
+      pre.textContent = res.join('\n') + '\n\nИТОГ: ' + (fails ? fails + ' провалов' : 'все ' + res.length + ' проверок прошли');
+      document.body.appendChild(pre);
+      document.documentElement.dataset.selftest = fails ? 'fail:' + fails : 'ok';
+    }
+    const ms = Math.round(performance.now() - started);
+    const blocks = (spec.blocks || []).length;
+    const errors = $('report').querySelectorAll('.rb-error, .rb-unknown').length;
+    const stubs = $('stats-label').dataset.stub;
+    $('stats-label').textContent = [blocks + ' блоков', ms + ' мс', errors ? errors + ' ошибок' : 'без ошибок', stubs].filter(Boolean).join(' · ');
+    const measure = () => { document.documentElement.dataset.height = String(Math.ceil(document.documentElement.scrollHeight)); };
+    measure();
+    setTimeout(measure, 900); // графики/графы монтируются асинхронно и добавляют высоту
+    document.title = (spec.title || 'Отчёт') + ' — демо reportkit';
+    if (params.get('selftest') === '1') await selftest();
+  } catch (e) {
+    fail('Рендер не удался: ' + (e && e.message ? e.message : e) + '\n' + (e && e.stack ? e.stack : ''));
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+{
+  "ok": true,
+  "app": {
+    "name": "team-room",
+    "version": "1.0.0",
+    "port": 8777,
+    "started_at": 1793171000,
+    "uptime_s": 900,
+    "sandbox": false,
+    "tz": "Europe/Moscow"
+  },
+  "engine": {
+    "ok": true,
+    "warning": null,
+    "board": "team",
+    "mock": true,
+    "db": "C:/Users/User/AppData/Local/hermes/kanban/boards/team/kanban.db",
+    "schema_ok": true,
+    "schema_version": 3,
+    "tasks": {
+      "total": 61,
+      "done": 54,
+      "blocked": 2,
+      "active": 0
+    },
+    "cli": {
+      "ok": true,
+      "path": "C:/Users/User/AppData/Local/hermes/bin/hermes"
+    }
+  },
+  "dispatcher": {
+    "ok": true,
+    "state": "running",
+    "pid": 9608,
+    "warning": null,
+    "updated_at": 1793171850
+  },
+  "data": {
+    "dir": "D:/Проекты/Комната/data",
+    "writable": true,
+    "rooms": 2,
+    "requests": 7
+  },
+  "vault": {
+    "dir": "D:/Проекты/Vault",
+    "ok": true
+  },
+  "watcher": {
+    "running": true,
+    "last_run_at": 1793171890,
+    "last_error": null
+  },
+  "warnings": []
+}
