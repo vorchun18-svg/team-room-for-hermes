@@ -24,6 +24,13 @@ TICK_IDLE = 15           # секунд простоя
 MAX_REQUESTS = 6         # сколько последних запросов комнаты смотреть за тик
 TICK_BUDGET = 20.0       # D6: тик не висит дольше этого бюджета (секунды)
 REQUEST_BUDGET = 5.0     # бюджет одного чтения запроса внутри тика
+#: B-35: сколько секунд после завершения не напоминаем — даём руководителю
+#: дописать записи в «Особенности» и отметку уже после kanban_complete.
+DUTY_GRACE_S = 180
+#: B-35: запросы, завершённые ДО запуска приложения (и раньше, чем за 15 минут до него),
+#: не трогаем: иначе первый же тик после обновления разослал бы напоминания по всей
+#: истории комнаты. Обязанность касается новых завершений.
+DUTY_START_LOOKBACK_S = 900
 
 
 def _module_missing(exc: BaseException) -> bool:
@@ -82,6 +89,8 @@ class Watcher:
         self._stop = threading.Event()
         self._mirrored: set = set()
         self._synced: dict = {}        # (room_id, root_id) -> подпись заметки Obsidian
+        #: B-35: с какого момента напоминаем об оценке работы (без ретро-рассылки)
+        self._duty_since = int(time.time())
 
     # --- публичное ---
     def start(self) -> None:
@@ -230,6 +239,9 @@ class Watcher:
                         self.app.fn("titles", "maybe_refresh")(self.cfg, room, rec, detail)
                     except Exception as exc:  # noqa: BLE001 - название вторично
                         self._fail("название %s (%s)" % (root_id, room_id), exc)
+                    # 6) B-35: отметка «оценил работу» после завершения, иначе ОДНО
+                    #    напоминание комментарием в ветке. Модели не запускаются.
+                    self._leader_duty(room, root_id, detail, stats)
                 except Exception as exc:  # noqa: BLE001 - один запрос не валит цикл
                     stats["errors"] += 1
                     self._fail("запрос %s (%s)" % (root_id, room_id), exc)
@@ -363,6 +375,86 @@ class Watcher:
             return
         if res.get("written"):
             stats["notes_written"] = int(stats.get("notes_written") or 0) + len(res["written"])
+
+    def _leader_duty(self, room: dict, root_id: str, detail: dict, stats: dict) -> None:
+        """B-35: «оценил работу» после завершения, иначе ОДНО напоминание руководителю.
+
+        После завершения запроса смотрим metadata карточек: отметку ``leader_review``
+        ставит руководитель в своей карточке (корень или доработка). Есть — пишем
+        событие в журнал комнаты. Нет — один комментарий-напоминание на корень (тот же
+        механизм комментариев, что у «Напомнить руководителю»), без карточек, без
+        вопросов Михаилу и без запуска моделей: комментарий ничего не диспатчит.
+        Ошибки не роняют тик.
+        """
+        if str(detail.get("status") or "") != "done":
+            return
+        finished = int(detail.get("finished_at") or 0)
+        if not finished:
+            return                     # время завершения неизвестно — не рискуем рассылкой
+        if int(time.time()) - finished < DUTY_GRACE_S:
+            return
+        since = int(getattr(self, "_duty_since", 0) or 0)
+        if since and finished < since - DUTY_START_LOOKBACK_S:
+            return                     # завершено до запуска приложения — не напоминаем
+        try:
+            record = self.app.fn("agent_notes", "record_leader_review")
+            status_of = self.app.fn("agent_notes", "leader_review_status")
+        except Exception as exc:  # noqa: BLE001 - модуль ещё не готов
+            if not _module_missing(exc):
+                stats["errors"] += 1
+                self._fail("отметка об оценке (%s)" % root_id, exc)
+            return
+        room_id = str(room.get("id") or "")
+        try:
+            mark = record(self.cfg, room_id, root_id, detail)
+        except Exception as exc:  # noqa: BLE001 - журнал вторичен для тика
+            stats["errors"] += 1
+            self._fail("отметка об оценке (%s)" % root_id, exc)
+            return
+        if mark:
+            stats["leader_marks"] = int(stats.get("leader_marks") or 0) + 1
+            return
+        try:
+            if status_of(self.cfg, room_id, root_id).get("done"):
+                return
+            present = self.app.fn("agent_notes", "reminder_present")
+            text_of = self.app.fn("agent_notes", "reminder_text")
+            log_reminder = self.app.fn("agent_notes", "log_leader_reminder")
+        except Exception as exc:  # noqa: BLE001 - модуль ещё не готов
+            if not _module_missing(exc):
+                stats["errors"] += 1
+                self._fail("напоминание руководителю (%s)" % root_id, exc)
+            return
+        try:
+            if present(self.cfg, room, root_id):
+                return
+        except Exception:  # noqa: BLE001 - проверка вторична, попробуем поставить
+            pass
+        lead = str(room.get("orchestrator") or "").strip()
+        if not lead:
+            return
+        board = room.get("board") or getattr(self.app, "board", "team")
+        text = text_of(str(room.get("title") or room_id or ""))
+        try:
+            self.app.fn("engine_write", "act")(self.cfg, board, root_id, "comment",
+                                               text=text, task_id=root_id, author=lead)
+        except Exception as exc:  # noqa: BLE001 - без комментария напоминания нет
+            stats["errors"] += 1
+            self._fail("напоминание руководителю (%s)" % root_id, exc)
+            return
+        version = 0
+        synthesis = detail.get("synthesis")
+        if isinstance(synthesis, dict):
+            try:
+                version = int(synthesis.get("version") or 0)
+            except (TypeError, ValueError):
+                version = 0
+        try:
+            log_reminder(self.cfg, room_id, root_id, version=version, text=text)
+        except Exception as exc:  # noqa: BLE001 - журнал вторичен, комментарий уже есть
+            stats["errors"] += 1
+            self._fail("журнал напоминания (%s)" % root_id, exc)
+        stats["leader_reminders"] = int(stats.get("leader_reminders") or 0) + 1
 
     def _agent_models_room(self, room: dict, stats: dict) -> None:
         """Модель комнаты на ВСЕ её карточки + сверка факта (WAVE10, WAVE13 пакет A).

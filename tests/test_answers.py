@@ -266,7 +266,8 @@ class ReactionTests(_Base):
         self.assertEqual(question["answer_state"], "sent")
         self.assertTrue(question["leader_pending"])
         self.assertTrue(question["can_remind"])
-        self.assertIn("руководитель ещё не ответил", question["answer_label"])
+        # W19-D2 (B-21): первая ступень цепочки — «ответ отправлен»
+        self.assertEqual(question["answer_label"], "ответ отправлен")
         self.assertIn("reaction_overdue", question)
         self.assertIsNotNone(question["reaction_waited_s"])
         detail = self.detail(rid)
@@ -282,7 +283,7 @@ class ReactionTests(_Base):
                         % (answers_mod.REACTION_MARK, qid))
         question = self.question_of(rid)
         self.assertEqual(question["answer_state"], "applied")
-        self.assertEqual(question["answer_label"], "учтено: работа пересмотрена")
+        self.assertEqual(question["answer_label"], "учтено: изменено 1 карточка")
         self.assertFalse(question["leader_pending"])
         self.assertFalse(question["can_remind"])
         self.assertEqual(question["reaction"]["status"], "applied")
@@ -298,7 +299,7 @@ class ReactionTests(_Base):
                         % (answers_mod.REACTION_MARK, qid))
         question = self.question_of(rid)
         self.assertEqual(question["answer_state"], "no_change")
-        self.assertEqual(question["answer_label"], "принято: менять ничего не нужно")
+        self.assertEqual(question["answer_label"], "учтено: менять ничего не нужно")
         self.assertFalse(question["answer_changes_done"])
 
     def test_plain_leader_comment_with_question_id_counts_as_reaction(self):

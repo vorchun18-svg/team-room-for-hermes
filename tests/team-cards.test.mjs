@@ -58,6 +58,25 @@ test('modelSent: расхождение берётся из последней �
   assert.equal(sent.text, 'ушло на: glm-5.3-flash');
 });
 
+test('modelSent: «применится со следующей задачи» — ожидание, а не тревога (B-29)', () => {
+  const sent = modelSent({
+    model_sent: {
+      text: 'ушло на: ollama-cloud · glm-5.3-flash · высокие',
+      mismatch: false,
+      confirmed: true,
+      pending: true,
+      pending_text: 'Новая модель применится со следующей задачи',
+    },
+  });
+  assert.equal(sent.mismatch, false, 'нейтральное состояние — не предупреждение');
+  assert.equal(sent.pending, true);
+  assert.equal(sent.pendingText, 'Новая модель применится со следующей задачи');
+  // Старое поле без pending остаётся ожиданием «нет» — обратная совместимость.
+  const legacy = modelSent({ model_sent: { text: 'ушло на: qwen36', mismatch: true } });
+  assert.equal(legacy.pending, false);
+  assert.equal(legacy.pendingText, '');
+});
+
 test('компактный чип: ОДНА выбранная модель, без «ушло на» и «как у агента»', () => {
   const line = agentModelLine(ROOM, 'lawyer', {
     profile: 'lawyer',
@@ -84,6 +103,35 @@ test('компактный чип без модели: «не выбрана», 
   assert.equal(text, 'не выбрана');
   assert.match(withClass(line, 'agent-model__line-chip')[0].getAttribute('title') || '',
     /не задана ни в комнате, ни в профиле/);
+});
+
+test('компактный чип-кнопка: клик открывает редактор модели (B-23)', () => {
+  const called = [];
+  const line = agentModelLine(ROOM, 'lawyer', {
+    profile: 'lawyer',
+    model_settings: { provider: 'oblako-b', model: 'vektor-5', reasoning: 'high', source: 'room' },
+  }, { compact: true, onEdit: (profile) => called.push(profile) });
+
+  const chips = withClass(line, 'agent-model__line-chip');
+  assert.equal(chips.length, 1);
+  const chip = chips[0];
+  assert.equal(String(chip.tagName).toLowerCase(), 'button', 'чип — настоящая кнопка: работает Enter/Space');
+  assert.ok(withClass(line, 'agent-model__line-chip--btn').length === 1);
+  assert.equal(chip.getAttribute('type'), 'button');
+  assert.equal(chip.getAttribute('aria-haspopup'), 'dialog');
+  assert.match(chip.getAttribute('aria-label') || '', /Изменить модель/);
+  assert.match(chip.getAttribute('title') || '', /нажмите, чтобы изменить/);
+  chip.dispatch('click');
+  assert.deepEqual(called, ['lawyer'], 'клик по чипу зовёт редактор модели этого участника');
+  // Текст прежний: один чип выбранной модели, без «модель:».
+  assert.match(textOf(line), /Вектор|vektor/i);
+  assert.ok(!/^модель:/.test(textOf(line)));
+});
+
+test('компактный чип без обработчика остаётся пассивным (регрессия)', () => {
+  const line = agentModelLine(ROOM, 'lawyer', {}, { compact: true });
+  const chip = withClass(line, 'agent-model__line-chip')[0];
+  assert.equal(String(chip.tagName).toLowerCase(), 'span');
 });
 
 test('регрессия: обычная строка модели по-прежнему с «Изменить» и «ушло на»', () => {

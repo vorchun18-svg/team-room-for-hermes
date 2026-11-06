@@ -179,15 +179,33 @@ export async function mount(el, ctx) {
     });
 
     const item = (label, iconName, run, extra = {}) => h('button', {
-      class: 'tm-menu__item' + (extra.danger ? ' tm-menu__item--danger' : ''),
+      class: 'tm-menu__item' + (extra.danger ? ' tm-menu__item--danger' : '')
+        + (extra.note ? ' tm-menu__item--rich' : ''),
       type: 'button', role: 'menuitem', tabindex: '-1',
+      title: extra.hint || label,
       onclick: () => { close(); run(); },
-    }, icon(iconName, { size: 13 }), h('span', null, label));
+    }, icon(iconName, { size: 13 }),
+    h('span', { class: 'tm-menu__label' }, label,
+      extra.note ? h('span', { class: 'tm-menu__note' }, extra.note) : null));
 
     pop.appendChild(item('Изменить модель', 'settings-gear', () => { openMemberModel(model.profile).catch(() => {}); }));
     pop.appendChild(item('Подпись', 'edit', () => { editLabel(model).catch(() => {}); }));
     if (model.roleEditable) {
       pop.appendChild(item('Роль в комнате…', 'organization', () => { openRoleDialog(model).catch(() => {}); }));
+    }
+    // W19 B-28: закрепление живёт здесь, с объяснением, а не значком скрепки на
+    // лице карточки. У руководителя и критика закрепление не спрашивается: они
+    // всегда в составе, и это видно текстом «обязательная роль» рядом с именем.
+    if (!model.isDirector && !model.isCritic) {
+      pop.appendChild(model.pinned
+        ? item('Открепить', 'pin', () => { togglePin(model).catch(() => {}); }, {
+          hint: 'Снять закрепление — участника снова можно убрать из комнаты',
+          note: 'Сейчас закреплён: остаётся в составе',
+        })
+        : item('Закрепить в составе', 'pin', () => { togglePin(model).catch(() => {}); }, {
+          hint: 'Оставить участника в комнате, даже если задачи давно не приходят',
+          note: 'Останется в комнате, даже без задач',
+        }));
     }
     if (model.removable) {
       pop.appendChild(item('Убрать из комнаты', 'trash', () => { removeMember(model).catch(() => {}); }, { danger: true }));
@@ -310,18 +328,22 @@ export async function mount(el, ctx) {
       ? null
       : h('span', { class: 'tm-role', title: 'Роль в комнате: ' + label.role }, label.roleShort);
 
+    // W19 B-28: обязательные роли помечены ОДИНАКОВО — текстом «обязательная роль»
+    // (раньше у руководителя и критика был разный набор значков без подписей).
+    const mandatory = (model.isDirector || model.isCritic)
+      ? h('span', { class: 'tm-mandatory', title: 'Руководителя комнаты и критика нельзя убрать из состава — они задаются настройками комнаты' },
+        'обязательная роль')
+      : null;
+
     const head = h('div', { class: 'tm-card__head' },
       avatar(label.short, { size: 32, title: titleAttr }),
       h('div', { class: 'tm-card__who' },
         h('div', { class: 'tm-card__titleline' },
           h('span', { class: 'tm-card__name', title: titleAttr }, heading),
           roleBadge),
-        jobNode),
-      h('div', { class: 'tm-card__tools' },
-        model.pinned
-          ? h('span', { class: 'tm-card__pin', title: 'Всегда в составе: не убирается из комнаты' }, icon('pin', { size: 12 }))
-          : null,
-        cardMenu(model)));
+        jobNode,
+        mandatory),
+      h('div', { class: 'tm-card__tools' }, cardMenu(model)));
 
     // Одна строка «Сейчас: …» — обрезка в одну строку, полный текст в подсказке.
     const nowLine = h('div', { class: 'tm-card__now' },
@@ -366,7 +388,23 @@ export async function mount(el, ctx) {
       model_settings: model.model_settings,
       agent_default: model.agent_default,
       model_sent: model.model_sent,
-    }, { catalog: state.catalog, compact: true });
+    }, {
+      catalog: state.catalog, compact: true,
+      // W19 B-23: клик по чипу снова открывает редактор модели (как до редизайна).
+      onEdit: (profile) => { openMemberModel(profile).catch(() => {}); },
+    });
+
+    // W19 B-29: модель сменили, но последний запуск был РАНЬШЕ смены (или в
+    // очереди уже стоит карточка с верной моделью) — это не тревога, а ожидание.
+    const pendingNote = (sent && sent.pending)
+      ? h('div', {
+        class: 'tm-card__pending',
+        title: 'Модель изменена позже последнего запуска: следующая карточка пойдёт уже на ней',
+      },
+      icon('clock', { size: 12 }),
+      h('span', { class: 'tm-card__pendingtext' },
+        sent.pendingText || 'Новая модель применится со следующей задачи'))
+      : null;
 
     // «Особенности (N)» — ссылка на модальный редактор (пакет F), счётчик
     // обновляется сам после правки записей.
@@ -411,6 +449,7 @@ export async function mount(el, ctx) {
     (model.stateKind === 'idle' && !model.current) ? null : stateLine(model),
     nowLine,
     warn,
+    pendingNote,
     h('div', { class: 'tm-card__meta' }, chip, notes),
     details);
   }
@@ -697,6 +736,21 @@ export async function mount(el, ctx) {
       state.room = await api.get(`/api/rooms/${encodeURIComponent(roomId)}`, { signal: abort.signal });
       state.settingsSig = '';
     } catch { /* оставим то, что уже показано */ }
+  }
+
+  async function togglePin(model) {
+    // W19 B-28: закрепление — флаг реестра комнаты, а не значок на карточке.
+    const want = !model.pinned;
+    try {
+      await api.patch(`/api/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(model.profile)}`,
+        { pinned: want });
+      toast(want ? 'Закреплён в составе: не убирается из комнаты'
+        : 'Закрепление снято: участника можно убрать из комнаты', 'ok');
+    } catch (err) {
+      toast(err && err.message ? err.message : 'Не удалось изменить закрепление', 'danger');
+    }
+    await refreshRoom();
+    await load({ silent: true });
   }
 
   async function changeRole(model, role) {

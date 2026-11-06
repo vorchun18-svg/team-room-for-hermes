@@ -150,7 +150,7 @@ class MockServerTest(unittest.TestCase):
     def test_rooms_and_room_detail(self):
         status, _, data = self.json("/api/rooms")
         self.assertEqual(status, 200)
-        self.assertEqual([r["id"] for r in data["rooms"]], ["cafe", "fn"])
+        self.assertEqual([r["id"] for r in data["rooms"]], ["cafe", "fn", "long"])
         cafe = data["rooms"][0]
         self.assertEqual(cafe["critic"], "biz-critic")
         self.assertEqual(cafe["max_rounds"], 1)

@@ -897,8 +897,12 @@ def _notes_file_text(cfg, room: dict) -> tuple:
             action = {"add": "добавлено", "update": "изменено", "remove": "удалено",
                       "merge": "объединено", "review": "переоценка", "replace": "заменено",
                       "rollback": "откат", "pinned": "закреплено",
-                      "unpin": "снято закрепление"}.get(str(event.get("action")),
-                                                        str(event.get("action") or ""))
+                      "unpin": "снято закрепление",
+                      # WAVE19 B-27/B-35: журнал комнаты в заметке — по-русски
+                      "artifact_outside": "файл вне папки проекта",
+                      "leader_review": "оценка работы руководителем",
+                      "leader_reminder": "напоминание руководителю"}.get(str(event.get("action")),
+                                                                       str(event.get("action") or ""))
             head = "- %s · %s · %s" % (stamp or "—", _clean(event.get("profile")) or "—", action)
             tail = " — %s" % _mask_notes(event.get("text") or "") if event.get("text") else ""
             note = (" (%s)" % _clean(event.get("note"))) if event.get("note") else ""

@@ -113,7 +113,10 @@ function createNavItem(room) {
     class: 'nav-item',
     href: buildHash({ roomId: room.id, tab: 'composer' }),
     dataset: { room: room.id },
-  }, icon(room.icon, { size: 15 }), h('span', { class: 'nav-item__text' }, room.title), badges);
+  }, icon(room.icon, { size: 15 }),
+  // Подсказка и на самой подписи: длинное название обрезается многоточием, и
+  // проверка вёрстки (ui_audit) требует title у обрезанного элемента, а не только у строки.
+  h('span', { class: 'nav-item__text', title: room.title }, room.title), badges);
   return { node, badges, room };
 }
 
@@ -123,6 +126,7 @@ function updateNavItem(item, room) {
   item.node.title = room.title;
   const text = item.node.querySelector('.nav-item__text');
   if (text && text.textContent !== room.title) text.textContent = room.title;
+  if (text && text.title !== room.title) text.title = room.title;
   const ic = item.node.querySelector('.codicon');
   if (ic && room.icon) ic.className = 'codicon codicon-' + (hasIcon(room.icon) ? room.icon : 'home');
 

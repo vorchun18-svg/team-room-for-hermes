@@ -555,6 +555,11 @@ class ReadRoutes:
             questions = questions if isinstance(questions, list) else []
             reactions = mod.reactions_from_thread(detail.get("thread") or [], questions,
                                                   stored, lead=room.get("orchestrator"))
+            # W19-D2 (B-21): первая дорога — исход в метаданных реакции
+            # (`metadata.reaction.outcome`); комментарий без исхода — запасной.
+            meta_reactions = mod.reactions_from_tree(detail.get("tree") or [])
+            if meta_reactions:
+                reactions = mod.merge_reactions(meta_reactions, reactions)
             for question in questions:
                 if not isinstance(question, dict):
                     continue
@@ -570,6 +575,25 @@ class ReadRoutes:
                                    mod.reaction_for_question(question, reactions))
             if isinstance(detail.get("questions"), list):
                 detail["questions"] = questions
+            # W19-D2 (B-20, B-21): решения — статус из реестра ответов и реакция
+            # руководителя. Принятое/отклонённое (`open=False`) сразу уходит из
+            # «Нужен ваш ответ» и из счётчиков — по данным API, без перезагрузки.
+            if isinstance(detail.get("decisions"), list):
+                dec_reactions = mod.decision_reactions_from_thread(detail.get("thread") or [],
+                                                                   lead=room.get("orchestrator"))
+                if meta_reactions:
+                    dec_reactions = mod.merge_reactions(meta_reactions, dec_reactions)
+                detail["decisions"] = [
+                    mod.apply_decision(d, mod.decision_record_for(d, stored),
+                                       mod.reaction_for_question(d, dec_reactions))
+                    for d in detail["decisions"] if isinstance(d, dict)
+                ]
+                detail["decision_actions"] = {
+                    "labels": dict(mod.DECISION_ACTION_RU),
+                    "hints": dict(mod.DECISION_ACTION_HINT),
+                    "status_labels": dict(mod.DECISION_STATUS_RU),
+                    "chain_hint": mod.CHAIN_HINT,
+                }
             dropped = rec.get("steps_dropped") if isinstance(rec.get("steps_dropped"), list) else []
             # W14-H §12: действия пользователя по шагу и реакция руководителя на них
             steps = mod.link_steps(detail.get("next_steps") or [], questions, stored, dropped,
@@ -969,14 +993,60 @@ class ReadRoutes:
         return 200, {"q": needle, "room": room_id, "total": total, "items": items[:limit]}, {}
 
     # --- файлы, календарь, экспорт ---
+    def _artifact_room(self, room_id):
+        """Комната для артефактов ЭТОЙ комнаты (B-22): словарь или None, если не указана."""
+        room_id = str(room_id or "").strip()
+        if not room_id:
+            return None
+        room = self._room(room_id)
+        if not isinstance(room, dict):
+            raise err(404, "Комната не найдена", room=room_id)
+        return room
+
+    def _artifact_guard(self, path: str, room: dict) -> None:
+        """Проверка пути артефакта: корни комнаты (папка проекта, зеркало) и внешние файлы.
+
+        Отказы — человеческим текстом: «Файл удалён или перемещён» только когда файла
+        правда нет; «Файл нельзя открыть…» — когда он есть, но тип/имя запрещены.
+        """
+        roots = config.room_roots(self.cfg, room)
+        if config.path_allowed(self.cfg, path, roots=roots) is not None:
+            return
+        if config.external_allowed(self.cfg, path) is not None:
+            return                             # B-27: показываем, но с предупреждением
+        try:
+            candidate = Path(path).resolve(strict=False)
+        except (OSError, ValueError):
+            candidate = None
+        exists = False
+        try:
+            exists = bool(candidate is not None and candidate.is_file())
+        except OSError:
+            exists = False
+        if exists:
+            raise err(403, "Файл нельзя открыть: запрещённый тип или имя",
+                      reason="blacklisted", path=path)
+        raise err(404, "Файл удалён или перемещён", path=path)
+
     def h_file(self, query, body):
         path = (query.get("path") or [""])[0].strip()
         if not path:
             raise err(400, "Нужен параметр path", field="path")
         self._deny_log_file(path)          # D13: журналы — только через /api/logs (с маскировкой)
-        self._file_guard(path)
+        room = self._artifact_room((query.get("room") or [""])[0])
+        if room is not None:
+            # B-22: артефакты читаются из корней комнаты, а не только из общих
+            self._artifact_guard(path, room)
+            extra = {"roots": config.room_roots(self.cfg, room), "allow_external": True}
+        else:
+            self._file_guard(path)
+            extra = None
         try:
-            res = self.call("files", "open_file", ((self.cfg, path), {}))
+            if extra:
+                res = self.call("files", "open_file", ((self.cfg, path), dict(extra)),
+                                ((self.cfg, path), {}))
+            else:
+                res = self.call("files", "open_file", ((self.cfg, path), {}))
         except ApiError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -1000,6 +1070,39 @@ class ReadRoutes:
             headers.setdefault("Content-Security-Policy", self._report_csp())
         headers.setdefault("Cache-Control", "no-cache")
         return 200, Raw(payload or b"", str(ctype), headers), {}
+
+    def h_artifact_open(self, query, body):
+        """POST /api/artifacts/open — «Открыть / В проводнике» для файла карточки (B-22).
+
+        Тело: `{path, room}`. Путь проверяется по корням ЭТОЙ комнаты (папка проекта,
+        зеркало в Vault) и, как исключение B-27, по отдельной проверке внешних файлов.
+        Ответ: `{ok, path, revealed}`; отказ — понятным русским текстом.
+        """
+        payload = body if isinstance(body, dict) else {}
+        path = payload.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise err(400, "Нужен path", field="path")
+        path = path.strip()
+        room_id = str(payload.get("room") or "").strip()
+        if not room_id:
+            raise err(400, "Нужен room", field="room")
+        room = self._artifact_room(room_id)
+        self._deny_log_file(path)
+        self._artifact_guard(path, room)
+        roots = config.room_roots(self.cfg, room)
+        try:
+            res = self.call("files", "reveal", ((self.cfg, path),
+                                                {"roots": roots, "allow_external": True}),
+                            ((self.cfg, path), {}))
+        except ApiError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self.log.error("reveal %s" % path, exc)
+            raise ApiError(500, "Не удалось открыть проводник", detail={"path": path}) from exc
+        revealed = bool(res.get("revealed")) if isinstance(res, dict) else bool(res)
+        if not revealed:
+            raise err(400, "Не удалось открыть в проводнике", path=path)
+        return 200, {"ok": True, "path": path, "revealed": True}, {}
 
     # --- журналы -----------------------------------------------------------
     def h_logs(self, query, body):

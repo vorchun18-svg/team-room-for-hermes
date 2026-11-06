@@ -243,7 +243,7 @@ ROUTE_METHODS = (
     (r"^/api/rooms/%s/reports$" % _ROOM, ("GET",)),
     (r"^/api/rooms/%s/archive$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/members$" % _ROOM, ("POST",)),
-    (r"^/api/rooms/%s/members/[a-z0-9_.-]{2,40}$" % _ROOM, ("DELETE",)),
+    (r"^/api/rooms/%s/members/[a-z0-9_.-]{2,40}$" % _ROOM, ("DELETE", "PATCH")),
     (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/notes$" % _ROOM, ("GET", "PUT")),
     (r"^/api/rooms/%s/notes$" % _ROOM, ("GET",)),
     (r"^/api/rooms/%s/notes/journal$" % _ROOM, ("GET",)),

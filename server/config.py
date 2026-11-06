@@ -369,8 +369,13 @@ def is_denied_name(name: str) -> bool:
     return any(p in low for p in DENY_NAME_PARTS)
 
 
-def path_allowed(cfg: Cfg, path: str | os.PathLike) -> Path | None:
-    """Вернёт resolved-путь, если файл лежит в белом списке корней и не в чёрном списке имён; иначе None."""
+def path_allowed(cfg: Cfg, path: str | os.PathLike, roots=None) -> Path | None:
+    """Вернёт resolved-путь, если файл лежит в белом списке корней и не в чёрном списке имён; иначе None.
+
+    ``roots`` — свой набор корней вместо ``cfg.allowed_roots`` (B-22 WAVE19): артефакты
+    запроса комнаты читаются из общих корней И из папки проекта ЭТОЙ комнаты
+    (``room_roots``). Проверки имени/типа/существования те же.
+    """
     try:
         p = Path(path).resolve(strict=True)
     except (OSError, RuntimeError, ValueError):
@@ -381,10 +386,140 @@ def path_allowed(cfg: Cfg, path: str | os.PathLike) -> Path | None:
         return None
     if p.suffix.lower() not in ALLOWED_EXT:
         return None
-    for root in cfg.allowed_roots:
+    for root in (roots if roots is not None else cfg.allowed_roots):
         try:
             p.relative_to(Path(root).resolve())
             return p
         except (ValueError, OSError):
             continue
     return None
+
+
+# ---------------------------------------------------- корни артефактов комнаты
+#
+# B-22 WAVE19: у комнаты есть своя папка проекта (`project_dir`), куда команда
+# складывает итоговые файлы, и зеркало комнаты в Vault. Раньше они не входили в
+# `allowed_roots`, поэтому «Открыть / Копировать путь / В проводнике» у артефактов
+# этих папок отвечали «файл не найден», хотя файлы лежали на диске.
+
+def project_root_of(cfg, room) -> Path | None:
+    """Папка проекта комнаты — только если её пропускает ``project_dir.check_dir``.
+
+    Возвращает resolved-путь или None. Запреты те же, что в диалоге комнаты:
+    системные каталоги Windows, ``hermes_home``, каталог программы и ``data``
+    приложения. Ничего не создаёт и не меняет на диске.
+    """
+    raw = str(((room or {}) if isinstance(room, dict) else {}).get("project_dir") or "").strip()
+    if not raw:
+        return None
+    try:
+        try:
+            from . import project_dir as pdir
+        except ImportError:                        # запуск как скрипт
+            import project_dir as pdir             # type: ignore
+        result = pdir.check_dir(cfg, raw)
+    except Exception:                              # noqa: BLE001 — папка не обязательна
+        return None
+    if not isinstance(result, dict) or not result.get("allowed"):
+        return None
+    path = str(result.get("normalized") or raw)
+    try:
+        return Path(path).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def mirror_root_of(cfg, room) -> Path | None:
+    """Зеркальная папка комнаты в Vault (``<vault_dir>/<room.id>``) или None."""
+    room = room if isinstance(room, dict) else {}
+    room_id = str(room.get("id") or "").strip()
+    if not room_id or vault_root_dir(cfg) is None:
+        return None
+    try:
+        return room_vault_dir(cfg, room_id).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def room_roots(cfg, room) -> list[Path]:
+    """Разрешённые корни для артефактов ЭТОЙ комнаты.
+
+    Общие ``allowed_roots`` + папка проекта комнаты + зеркало комнаты. Только чтение
+    файлов; запись по-прежнему идёт через ``project_dir`` и проверки записи.
+    """
+    out: list[Path] = []
+    for root in cfg.allowed_roots:
+        try:
+            out.append(Path(root).resolve())
+        except (OSError, ValueError, RuntimeError):
+            continue
+    for extra in (project_root_of(cfg, room), mirror_root_of(cfg, room)):
+        if extra is not None and extra not in out:
+            out.append(extra)
+    return out
+
+
+#: Каталоги, из которых артефакт нельзя показывать даже с предупреждением.
+_FALLBACK_SYSTEM_ROOTS = (r"C:\Windows", r"C:\Program Files", r"C:\Program Files (x86)",
+                          r"C:\ProgramData")
+
+
+def _forbidden_dirs(cfg) -> list[Path]:
+    """Куда артефакт не должен вести: системные каталоги, Hermes, программа, данные."""
+    raw: list = list(_FALLBACK_SYSTEM_ROOTS)
+    try:
+        try:
+            from . import project_dir as pdir
+        except ImportError:
+            import project_dir as pdir             # type: ignore
+        raw += [root for root, _message in pdir._forbidden_roots(cfg)]
+    except Exception:                              # noqa: BLE001
+        pass
+    for attr in ("hermes_home", "app_dir", "data_dir"):
+        value = getattr(cfg, attr, None)
+        if value:
+            raw.append(str(value))
+    out: list[Path] = []
+    for item in raw:
+        try:
+            out.append(Path(item).resolve())
+        except (OSError, ValueError, RuntimeError):
+            continue
+    return out
+
+
+def _under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def external_allowed(cfg: Cfg, path) -> Path | None:
+    """Файл ВНЕ корней комнаты, который всё же можно показать (B-27).
+
+    Так бывает, когда агент сохранил результат не в папку проекта. Блокировать
+    показ нельзя (файл нужен Михаилу), поэтому проверяем его отдельно: настоящий
+    файл, разрешённое расширение, не запрещённое имя в любом сегменте пути и не
+    системный/Hermes/app-каталог. Возвращает resolved ``Path`` или None.
+    """
+    try:
+        p = Path(path).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    try:
+        if not p.is_file():
+            return None
+    except OSError:
+        return None
+    if p.suffix.lower() not in ALLOWED_EXT:
+        return None
+    if p.name.lower().endswith(".pem"):
+        return None
+    if any(is_denied_name(part) for part in p.parts):
+        return None
+    for forbidden in _forbidden_dirs(cfg):
+        if _under(p, forbidden):
+            return None
+    return p

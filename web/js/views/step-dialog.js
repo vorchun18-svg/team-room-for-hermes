@@ -80,7 +80,7 @@ export function stepReactionLine(step) {
     const cards = Array.isArray(reaction.cards) ? reaction.cards : [];
     return {
       kind: 'reaction',
-      label: s.reaction_label || 'принято',
+      label: s.reaction_label || 'руководитель прочитал',
       text: reaction.text || '',
       cards,
     };

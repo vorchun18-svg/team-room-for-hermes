@@ -246,10 +246,13 @@ export async function mountAgentModel(container, ctx = {}, opts = {}) {
  * Факт последнего запуска участника («на какой модели ушла последняя карточка»).
  *
  * WAVE17 B-17/P2: на лице карточки этого нет — только предупреждение, если
- * последняя карточка ушла НЕ на выбранную модель. Возвращает
- * `{text, mismatch, confirmed}` или null.
+ * последняя карточка ушла НЕ на выбранную модель. W19 B-29: тревога — только
+ * если карточка правда ушла на другую модель ПОСЛЕ последней смены модели;
+ * иначе `pending` — «Новая модель применится со следующей задачи».
+ * Возвращает `{text, mismatch, confirmed, pending, pendingText}` или null.
  * @param {object} member участник из /team (поле model_sent)
- * @returns {{text: string, mismatch: boolean, confirmed: boolean}|null}
+ * @returns {{text: string, mismatch: boolean, confirmed: boolean, pending: boolean,
+ *            pendingText: string}|null}
  */
 export function modelSent(member) {
   const sent = member && member.model_sent && typeof member.model_sent === 'object'
@@ -257,7 +260,13 @@ export function modelSent(member) {
   if (!sent) return null;
   const text = String(sent.text || '').trim();
   if (!text) return null;
-  return { text, mismatch: sent.mismatch === true, confirmed: sent.confirmed === true };
+  return {
+    text,
+    mismatch: sent.mismatch === true,
+    confirmed: sent.confirmed === true,
+    pending: sent.pending === true,
+    pendingText: String(sent.pending_text || '').trim(),
+  };
 }
 
 /**
@@ -267,7 +276,8 @@ export function modelSent(member) {
  * @param {object} [member] участник из members[] (с model_settings/agent_default)
  * @param {{catalog?: object, onEdit?: Function, live?: boolean, compact?: boolean}} [opts]
  *   `compact` — для компактной карточки (WAVE17 P2): ОДИН чип выбранной модели,
- *   без «ушло на» и без кнопки (действия живут в меню «⋯»).
+ *   без «ушло на» и без кнопки. W19 B-23: при переданном `onEdit` чип — кнопка
+ *   и открывает тот же редактор модели (доступно и с клавиатуры: это <button>).
  * @returns {HTMLElement}
  */
 export function agentModelLine(room, profile, member, opts = {}) {
@@ -278,16 +288,33 @@ export function agentModelLine(room, profile, member, opts = {}) {
   const ids = [settings.provider, settings.model].filter(Boolean).join(' · ');
   const compact = o.compact === true;
   const known = Boolean(settings.model);
+  const onEdit = typeof o.onEdit === 'function' ? o.onEdit : null;
   const title = 'Модель' + (isRoom ? ' в этой комнате' : ' из профиля Hermes') + ': '
     + (known ? settingsLabel(catalog, settings) : 'не задана ни в комнате, ни в профиле')
     + (ids ? ' · ' + ids : '')
     + (compact ? '' : (isRoom ? ' · изменено для этой комнаты' : ' · по умолчанию'))
     + ' (профиль: ' + String(profile || '') + ')';
   const shortText = known ? shortModelText(catalog, settings) : 'не выбрана';
-  const chip = h('span', {
-    class: 'chip chip--outline agent-model__line-chip' + (isRoom ? ' agent-model__line-chip--room' : ''),
-    title,
-  }, (compact ? '' : 'модель: ') + shortText);
+  const chipCls = 'chip chip--outline agent-model__line-chip'
+    + (isRoom ? ' agent-model__line-chip--room' : '');
+  const chipText = (compact ? '' : 'модель: ') + shortText;
+
+  // W19 B-23: на компактной карточке чип снова кликабелен — открывает тот же
+  // редактор модели, что и пункт «Изменить модель» в меню «⋯».
+  const chip = (compact && onEdit)
+    ? h('button', {
+      class: chipCls + ' agent-model__line-chip--btn',
+      type: 'button',
+      title: title + ' · нажмите, чтобы изменить',
+      'aria-haspopup': 'dialog',
+      'aria-label': 'Модель: ' + shortText + '. Изменить модель участника',
+      dataset: { profile: String(profile || '') },
+      onclick: (ev) => {
+        if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
+        onEdit(String(profile || ''));
+      },
+    }, icon('edit', { size: 10 }), chipText)
+    : h('span', { class: chipCls, title }, chipText);
 
   // WAVE17 P2: на лице карточки — ровно один чип. «ушло на: …» показывается
   // только как предупреждение о расхождении (см. modelSent) и только если

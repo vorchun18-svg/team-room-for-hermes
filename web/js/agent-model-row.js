@@ -8,7 +8,7 @@
 
 import { h, uid } from './util.js';
 import { icon } from './icons.js';
-import { field, segmented } from './ui.js';
+import { field, segmented, confirmDialog } from './ui.js';
 import { countNoun } from './text-ru.js';
 import { humanApiMessage } from './shell-labels.js';
 import {
@@ -613,6 +613,20 @@ export function buildRow(person, env) {
       showError('Перезапуск недоступен — обновите страницу и попробуйте снова.');
       return null;
     }
+    // B-26: перезапуск идущих карточек — отдельное явное действие с предупреждением.
+    // Смена модели сама по себе работу не прерывает: она применится со следующей задачи.
+    const busyCards = Number(st.pending) || 0;
+    const askConfirm = (ctx && typeof ctx.confirm === 'function') ? ctx.confirm : confirmDialog;
+    const ok = await askConfirm({
+      title: 'Перезапустить на новой модели?',
+      text: 'Текущая работа будет прервана: '
+        + (busyCards ? countNoun(busyCards, ['карточка', 'карточки', 'карточек']) + ' сейчас выполняется. ' : '')
+        + 'Незавершённый результат этих задач потеряется, они начнутся заново уже на новой модели. '
+        + 'Если не перезапускать, новая модель применится со следующей задачи.',
+      confirmLabel: 'Перезапустить',
+      cancelLabel: 'Оставить как есть',
+    });
+    if (!ok) return null;
     st.busy = true;
     paint();
     try {

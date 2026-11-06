@@ -60,7 +60,9 @@ PHASE_STATUSES = {"done", "active", "next", "blocked"}
 ARTIFACT_KINDS = {"md", "json", "html", "csv", "image", "pdf", "docx", "xlsx", "pptx", "other"}
 WARNING_CODES = {"legacy_metadata", "missing_artifact", "no_synthesis", "report_invalid", "schema_drift",
                  "partial_ingest", "dispatcher_down", "card_failed", "outside_room", "critic_failed",
-                 "critic_rounds_exhausted"}
+                 "critic_rounds_exhausted",
+                 # WAVE19 A2 (B-22/B-27): место сохранения артефакта
+                 "artifact_outside", "artifact_denied"}
 TIMELINE_KINDS = {"created", "decomposed", "promoted", "claimed", "started", "commented", "completed",
                   "blocked", "unblocked", "failed", "archived", "heartbeat"}
 JOURNAL_KINDS = {"request_created", "request_status", "request_done", "step_added", "step_done",

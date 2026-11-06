@@ -1292,13 +1292,17 @@ class RealModelTests(_Base):
         card_id = self._orchestrator_card("Для команды", "biz-cfo", status="running")
         sid = "local-team-1"
         self._make_session("biz-cfo", sid, "glm-5.3-flash", "ollama-cloud")
-        self._run_with_session(card_id, "biz-cfo", sid)
+        # W19 B-29: предупреждение — только если карточка ушла не туда ПОСЛЕ смены
+        # модели. Запуск явно позже смены (started_at = сейчас), иначе это ожидание
+        # «Новая модель применится со следующей задачи» (см. tests/test_team_fix.py).
+        self._run_with_session(card_id, "biz-cfo", sid, started_at=int(time.time()))
         status, body, _h = self.app.dispatch("GET", "/api/rooms/%s/team" % ROOM, {}, {})
         self.assertEqual(status, 200)
         member = next(m for m in body["members"] if m["profile"] == "biz-cfo")
         self.assertEqual(member["model_settings"]["model"], "glm-5.3")
         self.assertEqual(member["model_sent"]["text"], "ушло на: ollama-cloud · glm-5.3-flash")
         self.assertTrue(member["model_sent"]["mismatch"])
+        self.assertFalse(member["model_sent"]["pending"])
 
     def test_sent_endpoint(self):
         self.set_model("biz-cfo")

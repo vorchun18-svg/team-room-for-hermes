@@ -68,6 +68,8 @@ SCENARIOS = {
     "S11": "Проектный режим на моке: комната → бриф → карта → запуск → диалог → «Дальше»",
     # W10: папка проекта у каждой комнаты, «Настройки комнаты», цикл смены пути.
     "S12": "Папка проекта и настройки комнаты: «Задать папку» → путь → «Открыть» → смена → убрать",
+    # W19 (R2): окно настроек — разделы-вкладки, защита несохранённого, проектный режим.
+    "S13": "Настройки комнаты: вкладки, «Доска» убрана, Esc не выбрасывает введённое, проектный режим из карты",
 }
 
 JS_READY = r"""
@@ -1715,10 +1717,202 @@ def scenario_s12(h: Harness) -> Result:
     return res
 
 
+def scenario_s13(h: Harness) -> Result:
+    """W19/R2: окно настроек комнаты (B-30…B-33) в настоящем Chrome на песочнице.
+
+    Что проверяем глазами пользователя:
+      * разделы-вкладки («Основное», «Состав», «Работа», «Проект», «Файлы»), один на экране;
+      * поля «Доска» больше нет;
+      * модели и «Особенности» — короткой строкой со ссылкой в карточку команды;
+      * Esc и «Отмена» с несохранёнными правками не выбрасывают окно, введённое цело;
+      * окно переживает опрос (ждём полный цикл 15 с);
+      * проектный режим: выключение сохраняется, «Включить проектный режим» с карты открывает
+        НАСТРОЙКИ ЭТОЙ комнаты на разделе «Проект» (а не создание новой), включение снова сохраняется.
+    """
+    res = Result("S13", SCENARIOS["S13"])
+    room = "fn"
+
+    def dialog_state():
+        return h.cdp.eval_js(r"""
+        (() => {
+          const d = document.querySelector('.roomdlg-shell');
+          if (!d) return {open: false};
+          const tabs = [...d.querySelectorAll('[role="tab"]')];
+          const panels = [...d.querySelectorAll('[role="tabpanel"]')];
+          const active = tabs.find((t) => t.getAttribute('aria-selected') === 'true');
+          const badge = d.querySelector('.roomdlg__state');
+          const title = d.querySelector('input[aria-label="Название комнаты"]');
+          const bar = d.querySelector('[data-test="unsaved"]');
+          return {
+            open: true,
+            head: ((d.querySelector('.dialog__title') || {}).textContent || '').trim(),
+            tabs: tabs.map((t) => (t.textContent || '').trim()),
+            active: active ? active.getAttribute('data-tab') : '',
+            panels: panels.length,
+            visible: panels.filter((p) => !p.hasAttribute('hidden')).length,
+            badge: badge ? (badge.textContent || '').trim() : '',
+            badgeState: badge ? badge.getAttribute('data-state') : '',
+            title: title ? title.value : '',
+            bar: Boolean(bar && !bar.classList.contains('hidden')),
+            board: Boolean(d.querySelector('input[aria-label="Доска задач"]')),
+            modelEditor: d.querySelectorAll('.agent-model').length,
+            teamLink: (() => {
+              const a = [...d.querySelectorAll('a')].find((x) => (x.textContent || '').trim() === 'Настроить в команде');
+              return a ? (a.getAttribute('href') || '') : '';
+            })(),
+            notesLinks: d.querySelectorAll('.notes-link').length,
+          };
+        })()
+        """) or {"open": False}
+
+    def open_settings():
+        h.cdp.eval_js(_click_button_js("Настройки комнаты", "document.querySelector('#topbar') || document"))
+        state = {}
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            state = dialog_state()
+            if state.get("open"):
+                break
+            time.sleep(0.15)
+        return state
+
+    # 1) «Команда» → шестерёнка: окно на разделах, без «Доски»
+    _close_dialogs(h)
+    h.goto("#/room/%s/team" % room)
+    h.wait_ready(15)
+    state = open_settings()
+    res.check("настройки комнаты открылись из «Команды»", state.get("open") and "Настройки комнаты" in str(state.get("head")),
+              json.dumps({k: state.get(k) for k in ("open", "head")}, ensure_ascii=False)[:300],
+              "заголовок «Настройки комнаты — …»", "team")
+    res.check("пять разделов-вкладок названы по-русски",
+              state.get("tabs") == ["Основное", "Состав", "Работа", "Проект", "Файлы"],
+              json.dumps(state.get("tabs"), ensure_ascii=False), "5 вкладок", "team")
+    res.check("на экране ровно один раздел", state.get("panels") == 5 and state.get("visible") == 1,
+              json.dumps({"panels": state.get("panels"), "visible": state.get("visible")}), "5 и 1", "team")
+    res.check("открылся раздел «Основное»", state.get("active") == "main", str(state.get("active")), "main", "team")
+    res.check("поля «Доска» больше нет", state.get("board") is False, str(state.get("board")), "нет поля", "team")
+
+    # 2) «Состав»: модели и особенности — строкой и ссылкой, без второго редактора
+    h.cdp.eval_js("(() => { const t=document.querySelector('.roomdlg__tabs [data-tab=members]'); if (t) t.click(); return 'ok'; })()")
+    time.sleep(0.4)
+    state = dialog_state()
+    res.check("«Состав»: ссылка «Настроить в команде» ведёт в карточку команды",
+              state.get("teamLink") == "#/room/%s/team" % room, str(state.get("teamLink")),
+              "#/room/%s/team" % room, "team")
+    res.check("«Состав»: редактора модели внутри окна нет", int(state.get("modelEditor") or 0) == 0,
+              str(state.get("modelEditor")), "0", "team")
+    res.check("«Состав»: «Особенности» — ссылки в блокнот, а не редакторы",
+              int(state.get("notesLinks") or 0) >= 1, str(state.get("notesLinks")), "≥ 1 ссылка", "team")
+
+    # 3) «Проект»: состояние словами
+    h.cdp.eval_js("(() => { const t=document.querySelector('.roomdlg__tabs [data-tab=project]'); if (t) t.click(); return 'ok'; })()")
+    time.sleep(0.4)
+    state = dialog_state()
+    res.check("«Проект»: плашка «Сейчас: …» видна и называет состояние",
+              "Сейчас:" in str(state.get("badge")) and state.get("badgeState") in ("on", "off"),
+              json.dumps({"badge": state.get("badge"), "state": state.get("badgeState")}, ensure_ascii=False)[:300],
+              "«Сейчас: включён/выключен»", "roadmap")
+
+    # 4) Несохранённые правки: Esc и «Отмена» не выбрасывают окно
+    typed = h.cdp.eval_js(r"""
+    (() => {
+      const t = document.querySelector('.roomdlg__shell input[aria-label="Название комнаты"]')
+             || document.querySelector('.dialog input[aria-label="Название комнаты"]');
+      if (!t) return {ok: false};
+      t.focus(); t.value = t.value + ' (правка)';
+      t.dispatchEvent(new Event('input', {bubbles: true}));
+      return {ok: true, value: t.value};
+    })()""") or {"ok": False}
+    res.check("название изменено — правки не сохранены", bool(typed.get("ok")), json.dumps(typed, ensure_ascii=False)[:200], "ввод принят", "team")
+    h.cdp.eval_js("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}))")
+    time.sleep(0.4)
+    state = dialog_state()
+    res.check("Esc с несохранёнными правками не закрыл окно", state.get("open") is True, json.dumps(state, ensure_ascii=False)[:200], "окно на месте", "team")
+    res.check("Esc показал выбор «сохранить / закрыть без сохранения / вернуться»", state.get("bar") is True, str(state.get("bar")), "плашка", "team")
+    res.check("введённое не потеряно", str(state.get("title") or "").endswith("(правка)"), str(state.get("title")), "текст с «(правка)»", "team")
+    h.cdp.eval_js(_click_button_js("Вернуться"))
+    time.sleep(0.3)
+    state = dialog_state()
+    res.check("«Вернуться» убрал плашку и оставил окно", state.get("bar") is False and state.get("open") is True,
+              json.dumps({"bar": state.get("bar"), "open": state.get("open")}), "окно открыто", "team")
+
+    # 5) Окно переживает полный цикл опроса (15 с)
+    time.sleep(16.5)
+    state = dialog_state()
+    res.check("после цикла опроса (16 с) окно всё ещё открыто", state.get("open") is True,
+              json.dumps({"open": state.get("open")}), "открыто", "team")
+
+    # 6) Отказываемся от правок осознанно — окно закрывается
+    h.cdp.eval_js(_click_button_js("Отмена"))
+    time.sleep(0.3)
+    h.cdp.eval_js(_click_button_js("Закрыть без сохранения"))
+    time.sleep(0.5)
+    res.check("«Закрыть без сохранения» закрывает окно", dialog_state().get("open") is False,
+              json.dumps(dialog_state(), ensure_ascii=False)[:200], "окно закрыто", "team")
+
+    # 7) Проектный режим: выключаем и проверяем, что сохранилось (B-33)
+    _ok, before, _raw = h.json_ok("/api/rooms/" + room)
+    state = open_settings()
+    res.check("настройки открылись повторно", state.get("open") is True, str(state.get("open")), "окно", "team")
+    was_on = str(state.get("badgeState") or "") == "on"
+    h.cdp.eval_js(r"""
+    (() => {
+      const t = document.querySelector('.roomdlg__tabs [data-tab=project]'); if (t) t.click();
+      const b = document.querySelector('#roomdlg-project-mode');
+      if (!b) return 'нет переключателя';
+      if (b.checked !== %s) { b.checked = %s; b.dispatchEvent(new Event('change', {bubbles: true})); }
+      return 'ok';
+    })()""" % ("false" if was_on else "true", "false" if was_on else "true"))
+    time.sleep(0.3)
+    h.cdp.eval_js(_click_button_js("Сохранить"))
+    time.sleep(1.2)
+    _ok2, after, _raw2 = h.json_ok("/api/rooms/" + room)
+    want = (not was_on)
+    res.check("проектный режим сохранился в комнате (API)", bool(after.get("project_mode")) == want,
+              json.dumps({"было": before.get("project_mode"), "стало": after.get("project_mode"),
+                          "ожидали": want}, ensure_ascii=False), str(want), "roadmap")
+
+    # 8) B-9: ссылка «Включить проектный режим» с карты открывает НАСТРОЙКИ ЭТОЙ комнаты
+    if want is False:
+        h.goto("#/room/%s/roadmap" % room)
+        h.wait_ready(15)
+        time.sleep(0.6)
+        clicked = h.cdp.eval_js(_click_button_js("Включить проектный режим", "document.querySelector('#view') || document"))
+        res.check("на карте есть кнопка «Включить проектный режим»", bool(clicked and clicked.get("ok")),
+                  json.dumps(clicked, ensure_ascii=False)[:300], "кнопка нажата", "roadmap")
+        state = {}
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            state = dialog_state()
+            if state.get("open"):
+                break
+            time.sleep(0.15)
+        res.check("ссылка открыла настройки ТЕКУЩЕЙ комнаты, а не создание новой",
+                  "Настройки комнаты" in str(state.get("head")) and "Новая комната" not in str(state.get("head")),
+                  str(state.get("head")), "«Настройки комнаты — «Рабочее пространство»»", "roadmap")
+        res.check("и сразу на разделе «Проект»", state.get("active") == "project", str(state.get("active")), "project", "roadmap")
+        res.check("состояние в плашке — «выключен»", "выключен" in str(state.get("badge")), str(state.get("badge")), "«Сейчас: выключен»", "roadmap")
+        h.cdp.eval_js("(() => { const b=document.querySelector('#roomdlg-project-mode'); if (!b) return; b.checked = true; b.dispatchEvent(new Event('change',{bubbles:true})); })()")
+        time.sleep(0.2)
+        h.cdp.eval_js(_click_button_js("Сохранить"))
+        time.sleep(1.2)
+        _ok3, final, _raw3 = h.json_ok("/api/rooms/" + room)
+        res.check("включение с карты сохранилось", bool(final.get("project_mode")) is True,
+                  json.dumps({"project_mode": final.get("project_mode")}), "true", "roadmap")
+        res.check("после сохранения окно закрылось", dialog_state().get("open") is False,
+                  json.dumps(dialog_state(), ensure_ascii=False)[:200], "закрыто", "roadmap")
+    else:
+        res.notes.append("Шаг 8 пропущен: проектный режим остался включённым (кнопка «Включить» на карте не появляется).")
+
+    _close_dialogs(h)
+    return res
+
+
 SCENARIO_FUNCS = {
     "S1": scenario_s1, "S2": scenario_s2, "S3": scenario_s3, "S4": scenario_s4,
     "S5": scenario_s5, "S6": scenario_s6, "S7": scenario_s7, "S8": scenario_s8,
     "S9": scenario_s9, "S10": scenario_s10, "S11": scenario_s11, "S12": scenario_s12,
+    "S13": scenario_s13,
 }
 
 

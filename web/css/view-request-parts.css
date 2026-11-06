@@ -70,6 +70,16 @@
 .rp-warning__body { overflow-wrap: anywhere; }
 .rp-warning__hint { opacity: 0.85; }
 .rp-warning .btn { flex: none; align-self: center; }
+/* B-24: список попыток и кнопка закрытия плашки. */
+.rp-warning__attempts {
+  display: flex; flex-direction: column; gap: 2px;
+  margin: var(--space-1) 0 0; padding: 0; list-style: none; min-width: 0;
+}
+.rp-warning__attempt { overflow-wrap: anywhere; }
+.rp-warning__close { flex: none; align-self: flex-start; margin-left: auto; white-space: nowrap; }
+.rp-warning__close .codicon { margin-right: 4px; }
+/* B-25: кнопка повтора запроса целиком (блок «Ответ не получился»). */
+.req-answer__retry { margin-top: var(--space-2); }
 
 /* ── Критик ───────────────────────────────────────────────────────────────── */
 .rp-critic__meta { margin-top: calc(-1 * var(--space-1)); }
@@ -108,18 +118,21 @@
   width: 1px; background: var(--border-soft);
 }
 .rp-node__head {
-  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: start;
+  /* W19-T (B-24): не grid с колонкой `auto` — она съедала заголовок (длинное название
+     сжималось до одной буквы в строке, чипы вылезали). Flex с переносом: пока кнопки
+     помещаются справа — стоят справа, не помещаются — уходят под заголовок. */
+  display: flex; flex-wrap: wrap; align-items: flex-start;
   gap: var(--space-2); padding: var(--space-2); border-radius: var(--radius-sm);
   transition: background var(--dur-fast) var(--ease);
 }
 .rp-node__head:hover { background: var(--ui-row-hover-background); }
 .rp-node--outside .rp-node__head { box-shadow: inset 2px 0 0 var(--warn); }
 .rp-node--flash .rp-node__head { background: var(--ui-row-active-background); }
-.rp-node__toggle { margin-top: 1px; }
-.rp-node__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rp-node__toggle { margin-top: 1px; flex: none; }
+.rp-node__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 220px; }
 .rp-node__line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
 .rp-node__title { font-size: var(--text-base); font-weight: 500; overflow-wrap: anywhere; min-width: 0; }
-.rp-node__chips { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
+.rp-node__chips { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); min-width: 0; }
 .rp-node__sub { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
 .rp-node__dur, .rp-node__id { color: var(--ui-text-quaternary); }
 .rp-node__panel {
@@ -130,10 +143,31 @@
 }
 .rp-node__panel[hidden] { display: none; }
 .rp-node__error { font-size: var(--text-sm); align-items: flex-start; }
+/* B-24: плашка ошибки закрывается — кнопка справа, перенос на узких экранах. */
+.rp-node__error-slot { min-width: 0; }
+.rp-node__error-close { flex: none; align-self: flex-start; margin-left: auto; white-space: nowrap; }
+.rp-node__error-close .codicon { margin-right: 4px; }
+.rp-node__error-dismissed { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.rp-node__attempts {
+  display: flex; flex-direction: column; gap: 2px;
+  margin: var(--space-1) 0 0; padding: 0; list-style: none; min-width: 0;
+}
+.rp-node__attempt {
+  display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap;
+  color: var(--danger-ink); font-size: var(--text-sm);
+}
+.rp-node__attempt-n { font-weight: 600; flex: none; }
+.rp-node__attempt-at { flex: none; }
+.rp-node__attempt-why { min-width: 0; overflow-wrap: anywhere; }
+/* B-25: кнопка повтора и её статус «принято, в очереди». */
+.rp-retry { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
+.rp-retry__status { color: var(--ok-ink); max-width: 260px; }
+.rp-retry--busy { opacity: 0.75; }
+.rp-retry--sent .rp-retry__status { white-space: normal; }
 .rp-block__label { text-transform: uppercase; letter-spacing: 0.05em; }
 
-.rp-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); justify-content: flex-end; }
-.rp-actions__slot { grid-column: 1 / -1; }
+.rp-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); justify-content: flex-end; flex: 0 1 auto; margin-left: auto; }
+.rp-actions__slot { flex: 1 1 100%; }
 .rp-actions__panel {
   display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
   margin-top: var(--space-1); padding: var(--space-2);
@@ -268,8 +302,7 @@
 
   .rp-node { padding-left: calc(var(--rp-depth, 0) * 8px); }
   .rp-node--child::before { left: calc(var(--rp-depth, 0) * 8px - 5px); }
-  .rp-node__head { grid-template-columns: 22px minmax(0, 1fr); }
-  .rp-actions { grid-column: 1 / -1; justify-content: flex-start; padding-left: calc(22px + var(--space-2)); }
+  .rp-actions { padding-left: calc(22px + var(--space-2)); }
   .rp-node__panel { margin-left: calc(22px + var(--space-2)); padding-left: var(--space-2); }
   .rp-actions__select { min-width: 0; flex-basis: 100%; }
   .rp-art { grid-template-columns: 24px minmax(0, 1fr); }

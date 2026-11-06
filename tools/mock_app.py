@@ -22,8 +22,8 @@ from mock_notes import MockNotes
 from mock_read import MockRead
 from mock_thread import MockThread
 from mock_versions import normalize_v2, phase_at, phase_start, total_seconds
-from mock_write import (MockWrite, answers_mod_apply, apply_step_overrides,
-                        enrich_answers)
+from mock_write import (MockWrite, answers_mod_apply, apply_decision_overrides,
+                        apply_step_overrides, enrich_answers, enrich_decisions)
 import mock_backlog
 import mock_demo as demo
 
@@ -140,6 +140,15 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
         # W14-H §12: шаги пересобираются на каждый GET — действия пользователя
         # («Согласен», «Убрать», …) накладываем заново, как реестр бэкенда.
         apply_step_overrides(detail, rid, self.step_overrides_for(rid))
+        # W19-T (B-25): результат «Повторить» — карточка ушла в очередь, плашка снята.
+        retry_patch = (getattr(self, "retry_overrides", None) or {}).get(str(rid), {})
+        for node in detail.get("tree") or []:
+            patch = retry_patch.get(str(node.get("id")))
+            if isinstance(patch, dict):
+                node.update(patch)
+        # W19-D2 (B-20, B-21): решения — в форму API и с ответами Михаила (как реестр).
+        enrich_decisions(detail)
+        apply_decision_overrides(detail, rid, self.decision_overrides_for(rid))
         # W17-B §4: переименование пользователем хранится отдельно от фикстуры —
         # накладываем при каждом чтении (деталь, списки, сводка, бэклог).
         overrides = getattr(self, "title_overrides", None)

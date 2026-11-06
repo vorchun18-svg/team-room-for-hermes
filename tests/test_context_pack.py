@@ -126,7 +126,10 @@ class BlockTest(unittest.TestCase):
         self.assertIn("и перечисли пути в artifacts", block)
         self.assertIn("Дублируй суть в Obsidian", block)
         self.assertIn("Исключение — только если Михаил явно указал другое место", block)
-        self.assertNotIn("Материалы", block)
+        # WAVE19 A2 (B-27): зеркало комнаты названо вторым разрешённым местом —
+        # и добавлено жёсткое правило мест сохранения
+        self.assertIn("Правило мест сохранения файлов", block)
+        self.assertIn("в другие места — лишь с прямого разрешения Михаила", block)
 
     def test_without_project_dir_points_to_vault_materials(self):
         block = cp.build_context_block(self.cfg, _room(project_dir=""), TEXT)

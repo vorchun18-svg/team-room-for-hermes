@@ -15,6 +15,8 @@ import {
   personName, profileName, criticOf, synthesisOf, versionsOf, latestVersion, wrapTables, devDetails,
 } from './request-util.js';
 import { failureInfo } from './request-parts-model.js';
+import { createRetryButton } from './retry-button.js';
+import { createMarks } from './notice-state.js';
 import { countNoun } from '../text-ru.js';
 import {
   KICK_LABEL, KICK_HINT, kickStateFromTree, kickUsefulness, kickWhyNot, kickPanel, kickNow,
@@ -516,12 +518,21 @@ export function createAnswer(R) {
 
     if (d.status === 'failed') {
       const f = failureInfo(d);
-      card.append(h('div', { class: 'req-empty' }, emptyState({
-        icon: 'error',
-        title: 'Ответ не получился',
-        text: f.text,
-        action: { label: 'Повторить', variant: 'primary', onclick: () => runAction('retry', {}, { toast: 'Перезапуск отправлен' }) },
-      })));
+      // B-25: кнопка повтора даёт отклик (блокируется и пишет «принято, в очереди»),
+      // повторная отправка того же нажатия не создаёт дубль (idempotency_key на сервере).
+      const retry = createRetryButton({
+        ctx,
+        rid: String(d.id || ''),
+        node: { id: d.id, status: d.status, started_at: d.started_at },
+        marks: createMarks({ requestId: String(d.id || '') }),
+        title: 'Повторить запрос?',
+        text: 'Руководитель запустит работу заново: это новый прогон агента. '
+          + 'Результаты прошлых попыток останутся в дереве работ.',
+        onSent: () => { if (typeof render === 'function') render(); },
+      });
+      card.append(h('div', { class: 'req-empty' },
+        emptyState({ icon: 'error', title: 'Ответ не получился', text: f.text }),
+        h('div', { class: 'req-answer__retry' }, retry)));
       // Сырой лог — только по клику, для разработчика (D7).
       const dev = devDetails(f.details);
       if (dev) card.appendChild(dev);

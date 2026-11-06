@@ -417,24 +417,33 @@ def _request_subdir(text: str) -> str:
 
 
 def files_rule(cfg, room: dict, text: str = "") -> str:
-    """Правило Д2: куда складывать итоговые файлы (папка проекта либо Vault/Материалы)."""
+    """Правило Д2 + B-27: куда складывать итоговые файлы — и куда нельзя.
+
+    Два разрешённых места: папка проекта комнаты и зеркальная папка комнаты в Vault.
+    Нарушение не блокируется: приложение покажет «Файл сохранён вне папки проекта»
+    и запишет это в журнал комнаты (WAVE19, B-27/B-34).
+    """
     room = room if isinstance(room, dict) else {}
+    tail_rule = ("Правило мест сохранения файлов: только эти два места; в другие места — "
+                 "лишь с прямого разрешения Михаила в этом запросе. Файл вне папки проекта "
+                 "приложение покажет с предупреждением и запишет в журнал комнаты.")
     project_dir = _one_line(room.get("project_dir") or "", MAX_PATH_CHARS)
+    folder = _vault_room_dir(cfg, str(room.get("id") or ""))
+    mirror = _one_line(_join_win(str(folder), MATERIALY), MAX_PATH_CHARS) if folder is not None else ""
     if not project_dir:
-        folder = _vault_room_dir(cfg, str(room.get("id") or ""))
-        tail = _join_win(str(folder), MATERIALY) if folder is not None else MATERIALY + "\\"
+        tail = mirror or (MATERIALY + "\\")
         return (
             "Папка проекта не задана — итоговые файлы сохраняй в Vault, в папку комнаты "
-            f"Материалы\\ (`{tail}`)."
+            f"Материалы\\ (`{tail}`). {tail_rule}"
         )
     subdir = _request_subdir(text)
     target = _join_win(project_dir, subdir)
-    return (
-        f"Папка проекта: {project_dir}. Все итоговые файлы (отчёты, таблицы, документы) "
-        f"сохраняй в `{target}` и перечисли пути в artifacts. Дублируй суть в Obsidian "
-        f"(заметка запроса ссылается на папку). Исключение — только если Михаил явно "
-        f"указал другое место."
-    )
+    where = (f"Папка проекта: {project_dir}. Все итоговые файлы (отчёты, таблицы, документы) "
+             f"сохраняй в `{target}` и перечисли пути в artifacts.")
+    if mirror:
+        where += f" Дублируй суть в Obsidian — зеркальная папка комнаты `{mirror}`."
+    where += " Исключение — только если Михаил явно указал другое место."
+    return where + " " + tail_rule
 
 
 # ---------------------------------------------------------------- сборка блока

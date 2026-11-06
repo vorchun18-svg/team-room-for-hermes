@@ -920,6 +920,10 @@ class RoutingTests(HttpBase):
 # --- watcher ---------------------------------------------------------------
 class WatcherTests(unittest.TestCase):
     def setUp(self):
+        # время завершения «готового» запроса — момент теста, а не импорта модуля
+        # (в полном прогоне разница — минуты и срабатывает льготный срок проверки руководителя)
+        global DONE_AT
+        DONE_AT = int(time.time())
         self.tmp = tempfile.TemporaryDirectory(prefix="tr-watch-")
         self.base = Path(self.tmp.name)
         self.cfg = make_cfg(self.base)

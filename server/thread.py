@@ -689,9 +689,15 @@ def build_answer_body(cfg, room: dict, root: str, row: dict, question: dict, tex
             "(по этому вопросу), создавать нельзя; при ответе «нет/не нужно» связанные шаги "
             "снимаются приложением автоматически.",
             "д) В своде укажи блок «Учтено из ответов»: вопрос → что сделано.",
-            "е) Заверши СВОЮ карточку: kanban_complete(summary=<короткий свод по-русски>, "
-            "metadata={\"answer_reaction\":{\"question_id\":\"%s\",\"status\":"
-            "\"received|applied|no_change\"},\"acknowledged\":[\"…\"]})." % qid,
+            "е) Заверши СВОЮ карточку с ЯВНЫМ исходом реакции — по нему приложение "
+            "показывает «ответ отправлен → руководитель прочитал → учтено» "
+            "(не угадывает по словам):",
+            "   kanban_complete(summary=<короткий свод по-русски>, metadata={\"reaction\": "
+            "{\"question_id\":\"%s\", \"outcome\":\"read|applied|no_change\", "
+            "\"cards\":[\"t_…\"], \"changes\":<сколько карточек изменено>}, "
+            "\"acknowledged\":[\"…\"]})." % qid,
+            "   outcome: read — прочитал; applied — учтено, карточки изменены; "
+            "no_change — учтено, менять ничего не нужно.",
         ]
     if bool(room.get("project_mode")):
         lines += [
@@ -742,6 +748,101 @@ def post_answer_note(cfg, room, rid, question: dict, text: str,
                                body=body, key_seed=qid)
         merged = False
     return {"task_id": card_id, "merged": merged, "routed_to": lead, "question_id": qid}
+
+
+def build_decision_body(cfg, room: dict, root: str, row: dict, decision: dict, outcome: str,
+                        text: str, lead: str) -> str:
+    """Тело карточки «Уточнение» для решения, которое ждало слова Михаила (W19-D2, B-20).
+
+    Руководитель получает ровно то, что нужно: какое решение, что с ним сделал
+    Михаил и как отметить исход. Исход — ``metadata.reaction.outcome`` (B-21), а не
+    догадка по словам ответа.
+    """
+    did = str(decision.get("id") or "d_0")
+    what = {"accept": "принял это решение", "reject": "отклонил это решение",
+            "discuss": "просит обсудить это решение"}.get(str(outcome), "ответил по решению")
+    title = str(row.get("title") or "")
+    status = _STATUS_RU.get(str(row.get("status") or ""), str(row.get("status") or ""))
+    lines = [
+        "СООБЩЕНИЕ МАКСИМА (передано приложением «Комната команды»):",
+        "ЕГО РЕШЕНИЕ ПО ВАШЕМУ ПРЕДЛОЖЕНИЮ:",
+        "Решение: %s «%s»" % (did, _short(decision.get("text") or "", 200)),
+    ]
+    if decision.get("why"):
+        lines.append("Почему предлагалось: %s" % _short(decision.get("why") or "", 300))
+    lines += ["Что сделал Михаил: %s." % what]
+    if text:
+        lines += ["<<<ОТВЕТ>>>", text, "<<<КОНЕЦ>>>"]
+    lines += [
+        "",
+        "Запрос: %s «%s» (сейчас %s)." % (root, _short(title, 120), status or "неизвестно"),
+        "",
+        "Ты — руководитель комнаты «%s» (%s). Это решение касается ТОЛЬКО этого "
+        "запроса; остальные участники сообщение не получали."
+        % (str(room.get("title") or room.get("id") or "комната"), lead),
+        "Что сделать (по шагам):",
+        "а) Учти решение в работе: перечитай корень и карточки запроса "
+        "(kanban_show(task_id=\"%s\")) и при необходимости поставь доработку." % root,
+    ]
+    if str(outcome) == "discuss":
+        lines += [
+            "б) Михаил просит ОБСУДИТЬ: ответь в ветке простым русским языком, 2–4 "
+            "предложения — что предлагаешь и почему; само решение остаётся за ним.",
+            "в) Ответ: kanban_comment(task_id=\"%s\", body=\"%s %s] …\") — коротко, по делу."
+            % (root, answers.DECISION_REACTION_MARK, did),
+        ]
+    else:
+        lines += [
+            "б) Ответь короткой РЕАКЦИЕЙ на решение в ветке — её Михаил видит у решения: "
+            "kanban_comment(task_id=\"%s\", body=\"%s %s] Учтено: изменено 2 карточки — "
+            "t_…, t_…\") или «… Учтено: менять ничего не нужно»."
+            % (root, answers.DECISION_REACTION_MARK, did),
+        ]
+    lines += [
+        "в) Заверши СВОЮ карточку с явным исходом (по нему приложение показывает "
+        "статус — «ответ отправлен → руководитель прочитал → учтено»):",
+        "   kanban_complete(summary=<что сделал, по-русски>, metadata={\"reaction\": "
+        "{\"decision_id\": \"%s\", \"outcome\": \"read|applied|no_change\", "
+        "\"cards\": [\"t_…\"], \"changes\": <сколько карточек изменено>}})." % did,
+        "   outcome: read — прочитал; applied — учтено, карточки изменены; "
+        "no_change — учтено, менять ничего не нужно.",
+        "",
+        "Работать можно только инструментами канбана (%s) и своими обычными навыками Hermes."
+        % ", ".join(LEAD_TOOLS),
+    ]
+    return "\n".join(lines)
+
+
+def post_decision_note(cfg, room, rid, decision: dict, outcome: str, text: str = "") -> dict:
+    """Передать решение руководителю карточкой «Уточнение» (W19-D2, B-20).
+
+    Одна карточка на запрос: если незавершённая карточка «Уточнение» уже есть,
+    сообщение дописывается в неё комментарием (``merged``), как у ответов на вопросы.
+    """
+    root = assert_task_id(rid, "rid")
+    room = _room(cfg, room)
+    if not room:
+        raise EngineWriteError("not_found", "Комната запроса не найдена.",
+                               detail={"reason": "room_not_found"}, http_status=404)
+    board = _board_of(room)
+    row = card_row(cfg, board, root)
+    if not row:
+        raise EngineWriteError("not_found", "Запрос не найден на доске комнаты.",
+                               detail={"reason": "no_card", "rid": root}, http_status=404)
+    lead = _lead(room, row)
+    did = str((decision or {}).get("id") or "").strip() or "d_0"
+    mark = answers.decision_comment(outcome, did, (decision or {}).get("text") or "", text)
+    note = _open_note(cfg, board, root, _tenant(room))
+    if note:
+        card_id = assert_task_id(str(note["id"]), "task_id")
+        _comment(cfg, board, card_id, mark)
+        merged = True
+    else:
+        body = build_decision_body(cfg, room, root, row, decision or {}, outcome, text, lead)
+        card_id = _create_note(cfg, room, board, root, row, text or mark, None, lead, False,
+                               body=body, key_seed=did)
+        merged = False
+    return {"task_id": card_id, "merged": merged, "routed_to": lead, "decision_id": did}
 
 
 def build_answers_digest_body(cfg, room: dict, root: str, row: dict, items: list,

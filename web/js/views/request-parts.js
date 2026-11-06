@@ -15,7 +15,7 @@ import { h, timeAgo, fmtDateTime, fromCount, plainTerms } from '../util.js';
 import { fileUrl } from '../api.js';
 import { icon } from '../icons.js';
 import {
-  pathChip, sectionHeader, openPath, copyText, ensureCss,
+  pathChip, sectionHeader, copyText, ensureCss,
 } from '../ui.js';
 import {
   pipeline, warningItems, criticInfo, artifactKindMeta, formatBytes,
@@ -23,6 +23,7 @@ import {
 } from './request-parts-model.js';
 import { toast, changed, postAction, button, lock, focusTreeTask } from './rp-shared.js';
 import { renderTree } from './request-parts-tree.js';
+import { createNotices } from './notice-state.js';
 import { firstLine, blockHead, personName } from './request-util.js';
 import { countNoun } from '../text-ru.js';
 
@@ -85,11 +86,18 @@ export function renderPipeline(detail) {
 /**
  * Баннеры предупреждений: detail.warnings, dispatcher.warning, карточки вне
  * состава комнаты. null, если предупреждений нет.
+ *
+ * B-24: плашку ошибки можно закрыть («Понятно»), попытки перечислены строками,
+ * а закрытие помнится по «id карточки + номер попытки» — после новой попытки
+ * плашка показывается снова (notice-state.js).
+ *
  * @param {object} detail RequestDetail
  * @returns {HTMLElement|null}
  */
 export function renderWarnings(detail) {
-  const items = warningItems(detail);
+  const notices = createNotices({ requestId: String((detail && detail.id) || '') });
+  const items = warningItems(detail).filter(
+    (w) => !(w.stamp && notices.isDismissed('request', w.code, w.stamp)));
   if (!items.length) return null;
 
   const box = h('div', { class: 'stack stack--tight rp-warnings', role: 'status', 'data-rp': 'warnings' });
@@ -104,6 +112,16 @@ export function renderWarnings(detail) {
       h('div', { class: 'rp-warning__title' }, w.title),
       h('div', { class: 'rp-warning__body' }, plainTerms(w.text)));
     if (w.hint) text.appendChild(h('div', { class: 'rp-warning__hint small' }, w.hint));
+    // Понятный список попыток: «Попытка 1 · 12:04 — превышено время ожидания».
+    if (Array.isArray(w.attempts) && w.attempts.length) {
+      const ul = h('ul', { class: 'rp-warning__attempts small' });
+      for (const a of w.attempts) {
+        const when = a.at ? fmtDateTime(a.at) : '';
+        ul.appendChild(h('li', { class: 'rp-warning__attempt', title: a.reason },
+          ['Попытка ' + String(a.n), when, a.reason].filter(Boolean).join(' · ')));
+      }
+      text.appendChild(ul);
+    }
     banner.appendChild(text);
 
     if (w.code === 'outside_room' && w.taskId) {
@@ -117,6 +135,20 @@ export function renderWarnings(detail) {
           }
         },
       }));
+    }
+    // Закрытие плашки: одна кнопка «Понятно» (с крестиком), доступная с клавиатуры.
+    if (w.stamp) {
+      banner.appendChild(h('button', {
+        type: 'button',
+        class: 'btn btn--ghost btn--sm rp-warning__close',
+        title: 'Понятно — больше не показывать эту ошибку',
+        'aria-label': 'Понятно: скрыть сообщение об ошибке',
+        onclick: () => {
+          notices.dismiss('request', w.code, w.stamp);
+          banner.remove();
+          if (!box.childNodes.length) box.remove();
+        },
+      }, icon('close', { size: 12 }), 'Понятно'));
     }
     box.appendChild(banner);
   }
@@ -284,16 +316,67 @@ export function relativeToDir(path, dir) {
 }
 
 /** Чип пути: внутри папки проекта — короткий относительный, полный в title. */
-function artifactPathChip(full, rel) {
-  if (!rel) return pathChip(full);
+function artifactPathChip(full, rel, ctx, roomId) {
+  if (!rel) return pathChip(full, { onOpen: () => { openArtifact(ctx, full, roomId).catch(() => {}); } });
   const el = h('button', {
     class: 'chip chip--outline path-chip',
     type: 'button',
     title: full + ' — внутри папки проекта',
     'aria-label': 'Открыть: ' + full,
   }, icon('file-text', { size: 11 }), h('span', { class: 'path-chip__text mono' }, rel));
-  el.addEventListener('click', () => { openPath(full).catch(() => {}); });
+  el.addEventListener('click', () => { openArtifact(ctx, full, roomId).catch(() => {}); });
   return el;
+}
+
+/* B-22 (WAVE19): файлы карточки открываются в контексте КОМНАТЫ — тогда сервер
+ * разрешает её папку проекта и зеркало в Vault. Без `room` сервер искал файл
+ * только в общих корнях и отвечал «файл не найден» на существующие файлы. */
+const ART_PREVIEW_RE = /\.(?:md|markdown|txt|log|json|jsonl|csv|tsv|ya?ml|xml|html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif|ics|py|js|css|sh)$/i;
+
+/** URL файла карточки: путь + комната (папка проекта этой комнаты — в белом списке). */
+export function artifactUrl(path, roomId) {
+  const base = fileUrl(path);
+  const room = String(roomId || '').trim();
+  return room ? base + '&room=' + encodeURIComponent(room) : base;
+}
+
+/** Открыть файл карточки: превью — новой вкладкой, остальное — в проводнике. */
+async function openArtifact(ctx, path, roomId) {
+  const p = String(path === null || path === undefined ? '' : path).trim();
+  if (!p) return;
+  if (ART_PREVIEW_RE.test(p) && typeof window !== 'undefined' && typeof window.open === 'function') {
+    window.open(artifactUrl(p, roomId), '_blank', 'noopener');
+    return;
+  }
+  try {
+    await ctx.api.post('/api/artifacts/open', { path: p, room: String(roomId || '') });
+    toast(ctx, 'Открыто в проводнике', 'ok');
+  } catch (err) {
+    toast(ctx, (err && err.message) || 'Не удалось открыть файл', 'danger');
+  }
+}
+
+/** Подпись состояния файла: что именно не так и что с этим делать (B-22, B-27). */
+function artifactStateChip(artifact, state) {
+  if (state === 'missing') {
+    return h('span', {
+      class: 'chip chip--warn',
+      title: artifact.reason || 'Файл удалён или перемещён — возможно, его переименовали или перенесли.',
+    }, 'Файл удалён или перемещён');
+  }
+  if (state === 'denied') {
+    return h('span', {
+      class: 'chip chip--warn',
+      title: artifact.reason || 'Такой тип файла или имя приложение не открывает.',
+    }, 'нельзя открыть');
+  }
+  if (state === 'outside') {
+    return h('span', {
+      class: 'chip chip--warn',
+      title: 'Файл сохранён вне папки проекта: ' + String(artifact.path || ''),
+    }, 'вне папки проекта');
+  }
+  return null;
 }
 
 /**
@@ -302,12 +385,13 @@ function artifactPathChip(full, rel) {
  * Пути внутри папки проекта комнаты показываются относительно неё.
  * @param {object} detail RequestDetail
  * @param {object} ctx
- * @param {{projectDir?: string}} [opts]
+ * @param {{projectDir?: string, room?: string}} [opts]
  * @returns {HTMLElement|null}
  */
 export function renderArtifacts(detail, ctx, opts = {}) {
   const o = opts || {};
   const projectDir = String(o.projectDir || o.project_dir || '').trim();
+  const roomId = String((detail && detail.room) || o.room || '').trim();
   const items = (detail && Array.isArray(detail.artifacts) ? detail.artifacts : [])
     .filter((a) => a && typeof a === 'object' && a.path);
   if (!items.length) return null;
@@ -318,8 +402,10 @@ export function renderArtifacts(detail, ctx, opts = {}) {
 
   for (const artifact of items) {
     const meta = artifactKindMeta(artifact.kind);
-    const exists = artifact.exists !== false;
     const path = String(artifact.path);
+    const state = String(artifact.state || (artifact.exists === false ? 'missing' : 'ok'));
+    const exists = artifact.exists !== false && state !== 'missing' && state !== 'denied';
+    const outside = state === 'outside' || artifact.outside_project === true;
     const rel = relativeToDir(path, projectDir);
     const title = String(artifact.title || path.split(/[\\/]/).pop() || 'Файл');
 
@@ -327,16 +413,20 @@ export function renderArtifacts(detail, ctx, opts = {}) {
     const thumb = exists && artifact.kind === 'image'
       ? h('button', {
         class: 'rp-art__thumb', type: 'button', title: 'Открыть картинку',
-        onclick: () => { openPath(path); },
-      }, h('img', { src: fileUrl(path), alt: title, loading: 'lazy' }))
+        onclick: () => { openArtifact(ctx, path, roomId).catch(() => {}); },
+      }, h('img', { src: artifactUrl(path, roomId), alt: title, loading: 'lazy' }))
       : h('span', { class: 'rp-art__icon', 'aria-hidden': 'true' }, icon(meta.icon, { size: 15 }));
 
     const main = h('div', { class: 'rp-art__main' },
       h('div', { class: 'rp-art__title-row' },
         h('span', { class: 'rp-art__title' }, title),
         h('span', { class: 'chip chip--muted rp-art__kind' }, meta.label),
-        exists ? null : h('span', { class: 'chip chip--warn' }, 'файл не найден')),
-      h('div', { class: 'rp-art__path' }, artifactPathChip(path, rel)));
+        artifactStateChip(artifact, state)),
+      h('div', { class: 'rp-art__path' }, artifactPathChip(path, rel, ctx, roomId)),
+      outside
+        ? h('div', { class: 'rp-art__note small muted' },
+          'Сохранён вне папки проекта — договоритесь с командой хранить файлы в папке проекта')
+        : null);
 
     const info = h('div', { class: 'rp-art__info small muted tnum' },
       artifact.size === null || artifact.size === undefined ? '' : formatBytes(artifact.size));
@@ -344,7 +434,7 @@ export function renderArtifacts(detail, ctx, opts = {}) {
     if (exists) {
       acts.appendChild(button('Открыть', {
         variant: 'secondary', size: 'sm', icon: 'open-preview',
-        onclick: () => { openPath(path); },
+        onclick: () => { openArtifact(ctx, path, roomId).catch(() => {}); },
       }));
     }
     acts.appendChild(button('Копировать путь', {
@@ -359,7 +449,7 @@ export function renderArtifacts(detail, ctx, opts = {}) {
         variant: 'ghost', size: 'sm', icon: 'folder-opened',
         onclick: async () => {
           try {
-            await ctx.api.post('/api/open', { path });
+            await ctx.api.post('/api/artifacts/open', { path, room: roomId });
             toast(ctx, 'Открыто в проводнике', 'ok');
           } catch (err) {
             toast(ctx, (err && err.message) || 'Не удалось открыть проводник', 'danger');

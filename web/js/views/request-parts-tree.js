@@ -11,10 +11,13 @@ import { h, fmtDuration, timeAgo, fmtDateTime, plainTerms, fromCount } from '../
 import { fileUrl } from '../api.js';
 import { icon } from '../icons.js';
 import {
-  statusChip, roleChip, mdBlock, emptyState,
-  confirmDialog, promptDialog,
+  statusChip, roleChip, mdBlock, emptyState, promptDialog,
 } from '../ui.js';
-import { buildTree, nodeActions, errorReason, isFailedRun } from './request-parts-model.js';
+import { buildTree, nodeActions, errorReason, isFailedRun,
+         failureStamp, failureAttemptsList } from './request-parts-model.js';
+import { createTreeState, problemSignature } from './request-tree-state.js';
+import { createNotices, createMarks } from './notice-state.js';
+import { createRetryButton } from './retry-button.js';
 import { toast, changed, postAction, button, lock } from './rp-shared.js';
 import { personName, profileName, devDetails, blockHead } from './request-util.js';
 import { participantLabel } from '../participant-label.js';
@@ -192,22 +195,92 @@ async function askAnswer(node, ctx, detail, onDone) {
   }
 }
 
-async function askRetry(node, ctx, detail, onDone) {
-  const ok = await confirmDialog({
+/**
+ * Кнопка повтора с откликом и идемпотентностью (B-25) — общий модуль retry-button.js:
+ * в дереве и в блоке «Ответ не получился» одно и то же поведение.
+ */
+function retryControl(node, ctx, detail, ui, onChanged) {
+  return createRetryButton({
+    ctx,
+    rid: String((detail && detail.id) || ''),
+    taskId: String(node.id),
+    node,
+    marks: (ui && ui.marks) || null,
     title: 'Повторить задачу?',
     text: `Задача «${String(node.title || node.id)}» будет запущена заново. Это новый прогон агента.`,
-    confirmLabel: 'Повторить',
+    onSent: typeof onChanged === 'function' ? onChanged : null,
   });
-  if (!ok) return;
-  try {
-    await postAction(ctx, detail.id, { action: 'retry', task_id: node.id });
-    toast(ctx, 'Задача поставлена на повтор', 'ok');
-    onDone();
-    changed(ctx);
-  } catch (err) {
-    toast(ctx, (err && err.message) || 'Не удалось повторить задачу', 'danger');
-  }
 }
+
+/** Строки попыток под плашкой ошибки: «Попытка 2 · 12:04 · превышено время ожидания». */
+function attemptsBlock(node) {
+  const rows = failureAttemptsList({ tree: [node] }, { limit: 5 });
+  if (!rows.length) return null;
+  const box = h('ul', { class: 'rp-node__attempts small' });
+  for (const row of rows) {
+    box.appendChild(h('li', { class: 'rp-node__attempt', title: row.reason },
+      h('span', { class: 'rp-node__attempt-n' }, `Попытка ${row.n}`),
+      row.at ? h('span', { class: 'rp-node__attempt-at muted tnum' }, timeAgo(row.at)) : null,
+      h('span', { class: 'rp-node__attempt-why' }, row.reason)));
+  }
+  return box;
+}
+
+/**
+ * Плашка ошибки карточки (B-24): причина, попытки и кнопка «Понятно».
+ * Закрытая плашка помнится по «id карточки + номер попытки»; новая попытка показывает её снова.
+ *
+ * @returns {HTMLElement|null}
+ */
+function errorPlaque(node, ui) {
+  if (!node.error) return null;
+  const notices = ui && ui.notices;
+  const stamp = failureStamp(node) || `${String(node.id)}:0`;
+  const box = h('div', { class: 'rp-node__error-slot' });
+
+  const hidden = () => (notices ? notices.isDismissed('node', node.id, stamp) : false);
+
+  const paintHidden = () => {
+    box.textContent = '';
+    if (!hidden()) return;
+    box.appendChild(h('div', { class: 'rp-node__error-dismissed small muted' },
+      h('span', {}, 'Причина ошибки скрыта.'),
+      h('button', {
+        type: 'button', class: 'btn btn--link btn--sm',
+        onclick: () => {
+          if (notices) notices.restore('node', node.id);
+          paintBanner();
+        },
+      }, 'показать снова')));
+  };
+
+  const paintBanner = () => {
+    box.textContent = '';
+    if (hidden()) { paintHidden(); return; }
+    const reason = errorReason(node.error.message || node.error.code);
+    const attempts = attemptsBlock(node);
+    const banner = h('div', { class: 'rp-node__error banner banner--error', role: 'alert' },
+      icon('error', { size: 13 }),
+      h('div', { class: 'banner__text' },
+        h('div', {}, reason ? `Задача не справилась: ${reason}.` : 'Задача завершилась ошибкой — подробности ниже.'),
+        attempts),
+      h('button', {
+        type: 'button',
+        class: 'btn btn--ghost btn--sm rp-node__error-close',
+        title: 'Понятно — больше не показывать эту ошибку',
+        'aria-label': 'Понятно: скрыть сообщение об ошибке',
+        onclick: () => {
+          if (notices) notices.dismiss('node', node.id, stamp);
+          paintHidden();
+        },
+      }, icon('close', { size: 12 }), 'Понятно'));
+    box.appendChild(banner);
+  };
+
+  paintBanner();
+  return box;
+}
+
 
 function commentsBlock(node) {
   const comments = Array.isArray(node.comments) ? node.comments : [];
@@ -275,13 +348,17 @@ function treeStatusChip(node) {
   return el;
 }
 
-function nodeRow(row, ctx, detail, onChanged) {
+function nodeRow(row, ctx, detail, onChanged, ui) {
   const node = row.node;
   const actions = nodeActions(node);
+  const state = (ui && ui.state) || null;
+  const problem = problemSignature(node);
   const li = h('li', {
     class: ['rp-node', node.outside_room ? 'rp-node--outside' : '', row.depth > 0 ? 'rp-node--child' : ''],
     style: { '--rp-depth': String(row.depth) },
     dataset: { taskId: node.id },
+    // W17-C: стабильный ключ — точечная правка узнаёт эту строку и не пересоздаёт её.
+    'data-key': 'rp-node-' + String(node.id),
     title: 'Номер задачи: ' + String(node.id),
   });
 
@@ -353,10 +430,7 @@ function nodeRow(row, ctx, detail, onChanged) {
       }));
     }
     if (actions.includes('retry')) {
-      actBox.appendChild(button('Повторить', {
-        variant: 'secondary', size: 'sm', icon: 'refresh',
-        onclick: () => askRetry(node, ctx, detail, () => rerenderActions()),
-      }));
+      actBox.appendChild(retryControl(node, ctx, detail, ui, () => rerenderActions()));
     }
     if (actions.includes('reassign')) {
       actBox.appendChild(button('Переназначить', {
@@ -392,11 +466,8 @@ function nodeRow(row, ctx, detail, onChanged) {
     toast: (msg, ok) => toast(ctx, msg, ok ? 'ok' : 'danger'),
   };
   if (node.error) {
-    const reason = errorReason(node.error.message || node.error.code);
-    panel.appendChild(h('div', { class: 'rp-node__error banner banner--error' },
-      icon('error', { size: 13 }),
-      h('div', { class: 'banner__text' },
-        h('div', {}, reason ? `Задача не справилась: ${reason}.` : 'Задача завершилась ошибкой — подробности ниже.'))));
+    const plaque = errorPlaque(node, ui);
+    if (plaque) panel.appendChild(plaque);
     const dev = devDetails([idRow, {
       label: 'Сообщение движка',
       text: String(node.error.message || node.error.code || ''),
@@ -424,9 +495,17 @@ function nodeRow(row, ctx, detail, onChanged) {
     toggle.appendChild(icon(open ? 'chevron-down' : 'chevron-right', { size: 13 }));
   };
   if (expandable) {
-    toggle.addEventListener('click', () => setOpen(panel.hidden));
-    // Проблемные карточки раскрыты сразу: ошибка и «ждёт тебя» видны без клика.
-    if (node.error || node.needs_human) setOpen(true);
+    // B-19: раскрытость берём из данных (память + sessionStorage), а не из DOM.
+    // Перерисовка по опросу и точечная правка live-patch состояние больше не сбрасывают.
+    setOpen(Boolean(state && state.isOpen(node.id)));
+    toggle.addEventListener('click', () => {
+      const next = panel.hidden;      // было свёрнуто — раскрываем, и наоборот
+      setOpen(next);
+      // Выбор человека главнее авто-раскрытия — запоминаем его вместе с подписью проблемы.
+      if (state) state.setOpen(node.id, next, problem);
+    });
+    // Авто-раскрытие — один раз при первом появлении ошибки/«ждёт тебя».
+    if (state && problem && state.autoOpen(node.id, problem)) setOpen(true);
   }
   return li;
 }
@@ -467,7 +546,16 @@ export function renderTree(detail, ctx, opts = {}) {
   }
 
   const list = h('ul', { class: 'rp-tree__list' });
-  for (const row of tree.rows) list.appendChild(nodeRow(row, ctx, detail, () => changed(ctx, o.onChanged)));
+  // B-19/B-24/B-25: состояние — в данных (sessionStorage), ключ — id запроса.
+  // Одна копия на отрисовку: раскрытость, закрытые плашки, отметки «повтор отправлен».
+  const rid = String((detail && detail.id) || '');
+  const ui = {
+    state: createTreeState({ requestId: rid }),
+    notices: createNotices({ requestId: rid }),
+    marks: createMarks({ requestId: rid }),
+  };
+  ui.state.retain(tree.rows.map((row) => row.id));
+  for (const row of tree.rows) list.appendChild(nodeRow(row, ctx, detail, () => changed(ctx, o.onChanged), ui));
   card.appendChild(list);
   return card;
 }

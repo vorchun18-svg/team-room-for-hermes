@@ -330,7 +330,15 @@ export const ACTION_RU = {
   add: 'добавлено', update: 'изменено', remove: 'удалено', merge: 'объединено',
   review: 'переоценка', replace: 'заменено', rollback: 'откат',
   pinned: 'закреплено', unpin: 'снято закрепление',
+  // WAVE19 B-27/B-35: служебные события журнала комнаты
+  artifact_outside: 'файл вне папки проекта',
+  leader_review: 'оценка работы руководителем',
+  leader_reminder: 'напоминание руководителю',
 };
+
+/** События, которые реально меняли записи участника: только их можно откатить. */
+export const ROLLBACKABLE = new Set(['add', 'update', 'remove', 'merge', 'review',
+  'replace', 'pinned', 'unpin']);
 
 /** Записи из значения реестра: новые `entries` или старый одиночный `text`. */
 export function entriesOfItem(item) {
@@ -607,10 +615,10 @@ export async function mountNotesEntries(host, ctx = {}, opts = {}) {
           h('div', { class: 'notes-journal__text small' }, String(event.text || '')),
           event.why ? h('div', { class: 'notes-journal__why small muted' }, 'зачем: ' + event.why) : null,
           event.rolled_back ? h('div', { class: 'small muted' }, 'изменение откачено')
-            : h('button', {
+            : (ROLLBACKABLE.has(event.action) ? h('button', {
               class: 'btn btn--ghost btn--sm', type: 'button',
               onclick: () => { rollback(event).catch(() => {}); },
-            }, 'Откатить')));
+            }, 'Откатить') : null)));
       }
     } catch (err) {
       journalBox.replaceChildren(h('div', { class: 'small muted' }, 'Журнал не загрузился'));

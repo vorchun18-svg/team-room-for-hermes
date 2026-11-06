@@ -14,10 +14,12 @@ import re
 from pathlib import Path
 
 try:  # пакетный и «плоский» импорт (python -m unittest из корня проекта)
-    from .config import path_allowed
+    from .config import (external_allowed, mirror_root_of, path_allowed, project_root_of,
+                         room_roots)
     from . import phase_book as _phases
 except ImportError:  # pragma: no cover
-    from config import path_allowed  # type: ignore
+    from config import (external_allowed, mirror_root_of, path_allowed, project_root_of,  # type: ignore
+                        room_roots)
     import phase_book as _phases  # type: ignore
 
 PREVIEW_MAX = 200
@@ -142,9 +144,52 @@ def kind_of(path: str) -> str:
             "jpeg": "image", "gif": "image", "webp": "image", "svg": "image"}.get(ext, "other")
 
 
-def artifacts(cfg, canon: dict, warnings: list) -> list:
-    """Artifact[] с проверкой существования по белому списку config (иначе warning)."""
-    out, seen = [], set()
+def _is_file(path: str) -> bool:
+    """Есть ли файл на диске (без исключений платформы и прав)."""
+    try:
+        return Path(str(path)).is_file()
+    except (OSError, ValueError):
+        return False
+
+
+def _under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def log_outside_artifacts(cfg, room, items) -> list:
+    """Записать в журнал комнаты файлы вне папки проекта (B-27). Ошибки не всплывают."""
+    if not isinstance(room, dict) or not room.get("id") or not items:
+        return []
+    try:
+        try:
+            from . import agent_notes as notes
+        except ImportError:  # pragma: no cover
+            import agent_notes as notes  # type: ignore
+        return notes.log_artifact_outside(cfg, str(room["id"]), items)
+    except Exception:  # noqa: BLE001 — журнал вторичен, чтение важнее
+        return []
+
+
+def artifacts(cfg, canon: dict, warnings: list, room=None) -> list:
+    """Artifact[] с проверкой существования и места сохранения (B-22, B-27).
+
+    `room` — словарь комнаты (обязателен для B-22): её папка проекта и зеркало
+    в Vault входят в разрешённые корни. Состояния (`state`):
+
+    * ``ok``      — файл есть и лежит в разрешённом месте;
+    * ``missing`` — файла нет на диске («Файл удалён или перемещён»);
+    * ``outside`` — файл есть, но сохранён вне папки проекта и зеркала комнаты:
+      показываем и предупреждаем, в журнал комнаты пишем одну запись на файл;
+    * ``denied``  — файл есть, но открыть нельзя (запрещённый тип или имя).
+    """
+    out, seen, outside = [], set(), []
+    roots = room_roots(cfg, room) if isinstance(room, dict) else None
+    local = [root for root in (project_root_of(cfg, room), mirror_root_of(cfg, room))
+             if root is not None] if isinstance(room, dict) else []
     for item in as_list(canon.get("artifacts")):
         item = {"path": item} if isinstance(item, str) else item
         if not isinstance(item, dict) or not item.get("path"):
@@ -153,14 +198,55 @@ def artifacts(cfg, canon: dict, warnings: list) -> list:
         if path in seen:
             continue
         seen.add(path)
-        real = path_allowed(cfg, path)  # вне корней → exists=False без ошибки
-        out.append({"path": path, "title": item.get("title") or Path(path).name,
-                    "kind": item.get("kind") or kind_of(path), "exists": bool(real),
-                    "size": real.stat().st_size if real else None})
-        if not real:
+        real = path_allowed(cfg, path, roots=roots)   # вне корней → None без ошибки
+        state, exists, size, reason = "ok", True, None, None
+        if real is not None:
+            try:
+                size = real.stat().st_size
+            except OSError:
+                size = None
+        else:
+            on_disk = external_allowed(cfg, path) if _is_file(path) else None
+            if on_disk is not None:
+                if local and not any(_under(on_disk, root) for root in local):
+                    # B-27: файл существует, но лежит не там, где договорились
+                    state, reason = "outside", "Файл сохранён вне папки проекта"
+                    outside.append({"path": path, "title": item.get("title") or Path(path).name,
+                                    "resolved": str(on_disk)})
+                else:
+                    state = "denied"
+                    reason = "Файл нельзя открыть: запрещённый тип или имя"
+                    exists = False
+                try:
+                    size = on_disk.stat().st_size
+                except OSError:
+                    size = None
+            elif _is_file(path):
+                state, exists = "denied", False
+                reason = "Файл нельзя открыть: запрещённый тип или имя"
+            else:
+                state, exists = "missing", False
+                reason = "Файл удалён или перемещён"
+        entry = {"path": path, "title": item.get("title") or Path(path).name,
+                 "kind": item.get("kind") or kind_of(path), "exists": bool(exists),
+                 "size": size, "state": state, "outside_project": state == "outside",
+                 "reason": reason}
+        out.append(entry)
+        if state == "missing":
             warnings.append({"code": "missing_artifact",
-                             "message": f"Артефакт недоступен: {Path(path).name}",
-                             "detail": {"path": path}})
+                             "message": f"Файл удалён или перемещён: {Path(path).name}",
+                             "detail": {"path": path, "state": state}})
+        elif state == "denied":
+            warnings.append({"code": "artifact_denied",
+                             "message": f"Файл нельзя открыть: {Path(path).name} — "
+                                        f"запрещённый тип или имя",
+                             "detail": {"path": path, "state": state}})
+        elif state == "outside":
+            warnings.append({"code": "artifact_outside", "message": f"{reason}: {path}",
+                             "detail": {"path": path, "state": state,
+                                        "outside_project": True}})
+    if outside:
+        log_outside_artifacts(cfg, room, outside)
     return out
 
 
@@ -206,4 +292,5 @@ def critic_brief(critic) -> dict:
 
 __all__ = ["as_list", "stage", "steps", "questions", "decisions", "future", "all_questions",
            "stage_filled", "merge_canon", "kind_of", "artifacts", "report", "progress",
-           "preview", "critic_brief", "PHASES", "PHASE_IDS", "CRITIC_STATES", "PREVIEW_MAX"]
+           "preview", "critic_brief", "PHASES", "PHASE_IDS", "CRITIC_STATES", "PREVIEW_MAX",
+           "log_outside_artifacts"]

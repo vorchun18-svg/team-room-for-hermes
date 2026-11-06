@@ -191,7 +191,7 @@ class StepAgreeTests(_Base):
         fresh = self.step(rid)
         self.assertFalse(fresh["reaction_pending"])
         self.assertEqual(fresh["reaction_status"], "received")
-        self.assertEqual(fresh["reaction_label"], "принято")
+        self.assertEqual(fresh["reaction_label"], "руководитель прочитал")
         self.assertEqual(fresh["reaction"]["text"], "Принято, шаг оставляем")
         self.assertEqual(fresh["history"][-1]["kind"], "reaction")
 
@@ -203,7 +203,7 @@ class StepAgreeTests(_Base):
                         % (answers_mod.STEP_REACTION_MARK, step["id"]))
         fresh = self.step(rid)
         self.assertEqual(fresh["reaction_status"], "applied")
-        self.assertEqual(fresh["reaction_label"], "учтено: работа пересмотрена")
+        self.assertEqual(fresh["reaction_label"], "учтено: работа изменена")
         self.assertEqual(fresh["reaction"]["cards"], ["t_e9c6c2b2"])
 
     def test_agree_on_unknown_step_is_404(self):
@@ -405,9 +405,9 @@ class StepFormatTests(unittest.TestCase):
         self.assertEqual(answers_mod.step_reaction_state("Принято"), "received")
 
     def test_labels(self):
-        self.assertEqual(answers_mod.step_reaction_label("agree", "received"), "принято")
+        self.assertEqual(answers_mod.step_reaction_label("agree", "received"), "руководитель прочитал")
         self.assertEqual(answers_mod.step_reaction_label("agree", "applied"),
-                         "учтено: работа пересмотрена")
+                         "учтено: работа изменена")
         self.assertEqual(answers_mod.step_reaction_label("move", "received", True), "срок изменён")
         self.assertEqual(answers_mod.step_reaction_label("move", "received", False), "порядок изменён")
         self.assertEqual(answers_mod.step_reaction_label("drop", None), "шаг убран")

@@ -60,6 +60,30 @@
         "blocked": 0,
         "active": 0
       },
+      "model_settings": {
+        "provider": "ollama-cloud",
+        "model": "claude-haiku-5-5",
+        "reasoning": "max",
+        "source": "room",
+        "updated_at": 1793171000
+      },
+      "model_sent": {
+        "provider": "ollama-cloud",
+        "model": "glm-5.3-flash",
+        "reasoning": "high",
+        "label": "ollama-cloud · glm-5.3-flash · высокие",
+        "text": "ушло на: ollama-cloud · glm-5.3-flash · высокие",
+        "confirmed": true,
+        "run_id": 41,
+        "at": 1793080000,
+        "expected": {"provider": "ollama-cloud", "model": "claude-haiku-5-5", "reasoning": "max"},
+        "mismatch": false,
+        "note": "",
+        "changed_at": 1793171000,
+        "run_at": 1793080000,
+        "pending": true,
+        "pending_text": "Новая модель применится со следующей задачи"
+      },
       "name": "Лев",
       "job": "договоры и визы",
       "label": "Лев — договоры и визы",
@@ -86,6 +110,30 @@
         "done": 2,
         "blocked": 0,
         "active": 0
+      },
+      "model_settings": {
+        "provider": "llamacpp",
+        "model": "qwen36",
+        "reasoning": "high",
+        "source": "room",
+        "updated_at": 1793000000
+      },
+      "model_sent": {
+        "provider": "ollama-cloud",
+        "model": "glm-5.3-flash",
+        "reasoning": "ultra",
+        "label": "ollama-cloud · glm-5.3-flash · предельные",
+        "text": "ушло на: ollama-cloud · glm-5.3-flash · предельные",
+        "confirmed": true,
+        "run_id": 44,
+        "at": 1793169000,
+        "expected": {"provider": "llamacpp", "model": "qwen36", "reasoning": "high"},
+        "mismatch": true,
+        "note": "расходится с выбором комнаты",
+        "changed_at": 1793000000,
+        "run_at": 1793169000,
+        "pending": false,
+        "pending_text": ""
       },
       "name": "Тимур",
       "job": "код и автоматизация",
@@ -114,9 +162,16 @@
         "blocked": 1,
         "active": 0
       },
+      "model_settings": {
+        "provider": "ollama-cloud",
+        "model": "deepseek-v4.1-flash:1017",
+        "reasoning": "max",
+        "source": "room",
+        "updated_at": 1793130000
+      },
       "name": "Ратмир",
-      "job": "проверка фактов и источников",
-      "label": "Ратмир — проверка фактов и источников",
+      "job": "маркшейдерия, горные отводы, землеустройство и согласования с ресурсоснабжающими организациями",
+      "label": "Ратмир — маркшейдерия, горные отводы, землеустройство и согласования",
       "label_source": "profile",
       "custom_label": "",
       "label_pending": false

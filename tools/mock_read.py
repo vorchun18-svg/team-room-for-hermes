@@ -370,6 +370,12 @@ class MockRead:
             custom = self.member_label(room, member.get("profile"))
             if custom:
                 member.update(self.label_fields(member.get("profile"), custom))
+            # W19 B-28: «Закрепить в составе / Открепить» меняет флаг в реестре комнаты —
+            # карточка в демо должна показать это сразу.
+            row = next((m for m in room.get("members") or []
+                        if m.get("profile") == member.get("profile")), None)
+            if row is not None and "pinned" in row:
+                member["pinned"] = bool(row.get("pinned"))
         return data
 
     def roadmap(self, room_id: str) -> dict:
@@ -496,7 +502,7 @@ class MockRead:
             raise ApiError(403, "forbidden", "Расширение файла не разрешено", {"reason": "outside_roots",
                                                                               "path": raw, "ext": ext})
         if not os.path.isfile(path):
-            raise ApiError(404, "not_found", "Файл не найден", {"path": raw})
+            raise ApiError(404, "not_found", "Файл удалён или перемещён", {"path": raw})
         return path
 
     def file_response(self, query: dict) -> tuple:

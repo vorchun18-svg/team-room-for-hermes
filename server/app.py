@@ -671,6 +671,8 @@ ROUTES = [(method, re.compile(pattern), handler) for method, pattern, handler in
     ("GET", r"/api/search", "h_search"),
     ("GET", r"/api/file", "h_file"),
     ("POST", r"/api/open", "h_open"),
+    # B-22 WAVE19: «Открыть / В проводнике» для артефактов комнаты (папка проекта).
+    ("POST", r"/api/artifacts/open", "h_artifact_open"),
     ("GET", r"/api/ics", "h_ics"),
     ("GET", r"/api/export/request/" + _RID + r"\.md", "h_export_md"),
     ("GET", r"/api/export/request/" + _RID + r"\.html", "h_export_html"),
@@ -707,6 +709,12 @@ install_diag_routes(App, ROUTES)
 from server.routes_stt import install_stt_routes                          # noqa: E402
 
 install_stt_routes(App, ROUTES)
+
+# --- состав комнаты: закрепление участника (волна 19, B-28) ----------------
+# ``PATCH /api/rooms/{id}/members/{profile} {pinned}`` — флаг реестра комнаты.
+from server.routes_members import install_member_routes                   # noqa: E402
+
+install_member_routes(App, ROUTES)
 
 
 # --- сервер ----------------------------------------------------------------

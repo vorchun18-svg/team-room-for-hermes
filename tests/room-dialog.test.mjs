@@ -35,6 +35,9 @@ function installDom() {
   };
   // без head: ensureCss() сразу считает стили подключёнными и не ждёт load
   globalThis.document = doc;
+  // Черновик окна живёт в sessionStorage: между тестами его быть не должно,
+  // иначе введённое в одном тесте «восстанавливается» в следующем.
+  try { if (globalThis.sessionStorage) globalThis.sessionStorage.clear(); } catch { /* нет хранилища */ }
   return doc;
 }
 
@@ -241,10 +244,18 @@ test('диалог: поле «Папка проекта», «Предложит
   await sleep(20);
   assert.ok(!doc.body.textContent.includes('Нельзя'), 'пустое поле — без вердикта');
 
-  // закрыть диалог (обещание закрывается)
+  // B-31: «Отмена» с несохранёнными правками не выбрасывает введённое —
+  // сначала спрашиваем, и только «Закрыть без сохранения» закрывает окно.
   const cancel = byText(doc.body, 'Отмена', 'button');
   cancel.dispatch('click');
+  await sleep(20);
+  assert.ok(byAttr(doc.body, 'data-test', 'unsaved'), 'плашка про несохранённое показана');
+  assert.ok(byAttr(doc.body, 'aria-label', 'Название комнаты').isConnected !== false,
+    'окно на месте');
+  assert.equal(titleInput.value, 'Лето', 'введённое не потеряно');
+  byText(doc.body, 'Закрыть без сохранения', 'button').dispatch('click');
   await done;
+  assert.equal(doc.body.childNodes.length, 0, 'окно закрылось по явному выбору');
 });
 
 test('room-dialog.js: путь уходит в POST/PATCH как project_dir', () => {
@@ -331,6 +342,8 @@ test('диалог: выключенный проектный режим — п�
   assert.ok(!nodes.hint.className.includes('hidden'), 'пояснение про лимит снова видно');
 
   byText(doc.body, 'Отмена', 'button').dispatch('click');
+  await sleep(20);
+  byText(doc.body, 'Закрыть без сохранения', 'button').dispatch('click');
   await done;
 });
 

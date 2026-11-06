@@ -38,6 +38,8 @@ function installDom() {
     if (idx !== -1) list.splice(idx, 1);
   };
   globalThis.document = doc;
+  // Черновик окна настроек живёт в sessionStorage — между тестами его быть не должно.
+  try { if (globalThis.sessionStorage) globalThis.sessionStorage.clear(); } catch { /* нет хранилища */ }
   return doc;
 }
 

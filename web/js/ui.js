@@ -559,8 +559,9 @@ function shortPath(p) {
  * @param {string} path
  * @returns {HTMLElement}
  */
-export function pathChip(path) {
+export function pathChip(path, opts = {}) {
   useStyles();
+  const o = opts || {};
   const p = path === null || path === undefined ? '' : String(path);
   const el = h('button', {
     class: 'chip chip--outline path-chip',
@@ -569,7 +570,10 @@ export function pathChip(path) {
     'aria-label': p ? 'Открыть: ' + p : 'Файл',
   // B8 (пакет G): у обрезаемого текста своя подсказка — полный путь.
   }, icon('file-text', { size: 11 }), h('span', { class: 'path-chip__text mono', title: p || undefined }, shortPath(p)));
-  el.addEventListener('click', () => { openPath(p).catch(() => {}); });
+  // B-22 (WAVE19): свой обработчик открытия — файлы карточки открываются с комнатой
+  // (`onOpen`), остальные места работают как раньше.
+  const open = typeof o.onOpen === 'function' ? o.onOpen : () => openPath(p);
+  el.addEventListener('click', () => { Promise.resolve(open()).catch(() => {}); });
   return el;
 }
 

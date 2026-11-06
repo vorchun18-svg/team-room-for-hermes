@@ -399,7 +399,7 @@ def request_detail(cfg, board, root_id, room=None, extra_cards=None, critic=None
                 "open_questions": data["questions"],
                 "decisions": _decisions(canon, root_id, data["synth"].get("at")),
                 "stage": _stage(canon, _phases.phases_of(cfg, data["room"])),
-                "future_questions": _future(canon), "artifacts": _artifacts(cfg, canon, warnings),
+                "future_questions": _future(canon), "artifacts": _artifacts(cfg, canon, warnings, data["room"]),
                 "report": _report(cfg, canon), "tree": nodes, "timeline": timeline,
                 "heartbeats": heartbeats,
                 "warnings": _dedupe_warnings(warnings), "critic": data["critic"]})

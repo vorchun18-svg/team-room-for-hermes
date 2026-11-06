@@ -380,7 +380,7 @@ test('«Напомнить» вернул 409 с реакцией: она пок
     assert.ok(after, 'реакция видна в окне вопроса (а не только в тосте)');
     assert.match(text(after), /Принято: срок прейтензии 30 дней/);
     assert.match(s.toasts[s.toasts.length - 1].message, /Руководитель уже ответил/);
-    assert.equal(String(s.detail.open_questions[1].answer_label || ''), 'принято руководителем');
+    assert.equal(String(s.detail.open_questions[1].answer_label || ''), 'руководитель прочитал');
     assert.equal(s.detail.open_questions[1].can_remind, false, 'напоминать больше не о чем');
   } finally {
     uninstallFakeDom();

@@ -45,6 +45,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -298,7 +299,10 @@ def catalog(cfg, force: bool = False) -> dict:
     override = getattr(cfg, "model_catalog_override", None)
     key = str(getattr(cfg, "hermes_home", "")) + "|" + str(getattr(cfg, "app_dir", ""))
     if isinstance(override, dict) and override.get("providers"):
-        key += "|override"
+        # Подмена каталога: ключ кэша включает содержимое, иначе два набора тестов/демо с разными
+        # каталогами в одном процессе получают чужой каталог из кэша.
+        key += "|override|" + hashlib.sha1(
+            json.dumps(override, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()[:12]
         if not force and _CACHE["data"] is not None and _CACHE["key"] == key \
                 and time.time() - float(_CACHE["at"] or 0) < CACHE_TTL:
             data = dict(_CACHE["data"])
@@ -949,11 +953,14 @@ def apply_profile(cfg, room_id, profile, *, limit: int = MAX_CARDS) -> dict:
     board = _board(cfg, room)
     cards = card_map(cfg, room, board=board)      # tenant комнаты, а не только деревья
     todo: list = []
+    running: list = []
     for card in cards.values():
         if card["assignee"] != name:
             continue
         if card["status"] == "running":
             out["pending_running"] += 1
+            # B-26: идущая карточка не перезапускается — новая модель применится со следующей.
+            running.append(card)
             continue
         if card["status"] not in APPLY_STATUSES:
             continue
@@ -963,6 +970,8 @@ def apply_profile(cfg, room_id, profile, *, limit: int = MAX_CARDS) -> dict:
     done, failed = _push(cfg, board, todo[:max(1, int(limit))], want)
     out["cards_updated"] = len(done)
     out["cards_failed"] = failed
+    # B-26: запоминаем идущие карточки — их работу смена модели не прерывает.
+    out["pending"] = mark_pending(cfg, str(room_id), name, running, model=str(want.get("model") or ""))
     return out
 
 
@@ -1012,6 +1021,7 @@ def restart_running(cfg, room_id, profile) -> dict:
             result["warnings"].append("%s: %s" % (card_id, str(exc)[:160]))
             continue
         result["cards"].append(card_id)
+        clear_pending(cfg, str(room_id), card_id)   # перезапустили явно — ожидание снято
     result["restarted"] = len(result["cards"])
     return result
 
@@ -1195,8 +1205,53 @@ def sent_of(cfg, room, card, *, board: str | None = None, run: dict | None = Non
             "note": "расходится с выбором комнаты" if (mismatch and label) else ""}
 
 
+def _queued_right(con, tenant: str, profile: str, *, after: int, expected: dict,
+                  exclude: str = "") -> dict:
+    """Карточка в очереди участника, которой уже записана ВЕРНАЯ модель (W19 B-29).
+
+    Нужна, чтобы не пугать предупреждением, когда последний запуск был ДО смены
+    модели, а следующая карточка (уже созданная) пойдёт на выбранной модели.
+    Берём только карточки «ещё не поехали» (`APPLY_STATUSES`), созданные не раньше
+    `after`, с точной парой провайдер+модель из выбора комнаты.
+    """
+    if not after or not (expected or {}).get("model"):
+        return {}
+    marks = ",".join("?" for _ in APPLY_STATUSES)
+    sql = ("SELECT id, status, created_at, model_override, provider_override FROM tasks "
+           "WHERE tenant = ? AND assignee = ? AND status IN (%s) " % marks)
+    args: list = [tenant, profile, *APPLY_STATUSES]
+    if exclude:
+        sql += "AND id <> ? "
+        args.append(str(exclude))
+    sql += "ORDER BY created_at DESC LIMIT 20"
+    try:
+        rows = con.execute(sql, tuple(args)).fetchall()
+    except Exception:  # noqa: BLE001 - старая схема без колонок модели
+        return {}
+    want_model = str(expected.get("model") or "")
+    want_provider = str(expected.get("provider") or "")
+    for row in rows:
+        item = dict(row)
+        if _int(item.get("created_at")) < after:
+            continue
+        if str(item.get("model_override") or "") != want_model:
+            continue
+        if want_provider and str(item.get("provider_override") or "") \
+                and str(item.get("provider_override") or "") != want_provider:
+            continue
+        return {"id": str(item.get("id") or ""), "status": str(item.get("status") or ""),
+                "created_at": _int(item.get("created_at"))}
+    return {}
+
+
 def member_sent(cfg, room, profile, *, board: str | None = None) -> dict:
-    """«Ушло на: …» участника по ЕГО последнему запуску в комнате (для вкладки «Команда»)."""
+    """«Ушло на: …» участника по ЕГО последнему запуску в комнате (для вкладки «Команда»).
+
+    W19 B-29: расхождение — только если карточка РЕАЛЬНО ушла на другую модель ПОСЛЕ
+    последней смены модели участника. Если смена позже последнего запуска или в
+    очереди уже есть карточка с верной моделью, это не тревога, а ожидание:
+    ``pending=true`` и текст «Новая модель применится со следующей задачи».
+    """
     name = _profile(profile)
     if not name:
         return {}
@@ -1210,7 +1265,9 @@ def member_sent(cfg, room, profile, *, board: str | None = None) -> dict:
             row = con.execute(
                 "SELECT t.id AS id, t.status AS status, t.assignee AS assignee, "
                 "t.model_override AS model_override, t.provider_override AS provider_override, "
-                "t.reasoning_effort AS reasoning_effort "
+                "t.reasoning_effort AS reasoning_effort, "
+                "t.created_at AS card_created_at, "
+                "r.started_at AS run_started_at, r.id AS run_ref "
                 "FROM task_runs r JOIN tasks t ON t.id = r.task_id "
                 "WHERE t.tenant = ? AND t.assignee = ? ORDER BY r.id DESC LIMIT 1",
                 (tenant, name)).fetchone()
@@ -1219,7 +1276,37 @@ def member_sent(cfg, room, profile, *, board: str | None = None) -> dict:
         if row is None:
             return {}
         card = dict(row)
-        return sent_of(cfg, room, card, board=use)
+        sent = sent_of(cfg, room, card, board=use)
+        if not sent:
+            return {}
+        changed_at = _int((settings_of(room).get(name) or {}).get("updated_at"))
+        run_at = _int(card.get("run_started_at")) or _int(sent.get("at"))
+        queued: dict = {}
+        pending = False
+        if sent.get("mismatch"):
+            # 1) смена модели была ПОСЛЕ этого запуска — карточка физически не могла
+            #    пойти на новую модель; это ожидание, а не тревога.
+            if changed_at and run_at and run_at < changed_at:
+                pending = True
+            else:
+                # 2) в очереди уже стоит карточка с верной моделью, созданная после
+                #    этого запуска (и/или после смены) — следующая работа пойдёт верно.
+                after = max(_int(card.get("card_created_at")), changed_at or 0)
+                queued = _queued_right(con, tenant, name, after=after,
+                                       expected=sent.get("expected") or {},
+                                       exclude=str(card.get("id") or ""))
+                pending = bool(queued)
+            if pending:
+                sent["mismatch"] = False
+                sent["note"] = ""
+        sent["changed_at"] = changed_at
+        sent["run_at"] = run_at or None
+        sent["pending"] = bool(pending)
+        sent["pending_text"] = ("Новая модель применится со следующей задачи"
+                                if pending else "")
+        if queued:
+            sent["queue"] = queued
+        return sent
     finally:
         con.close()
 
@@ -1397,6 +1484,75 @@ def _fixups_path(cfg, room_id) -> Path:
     return Path(cfg.state_dir) / str(room_id) / "model_fixups.json"
 
 
+# --- «применится со следующей задачи» (B-26) ------------------------------
+#
+# Смена модели у участника во время работы НЕ должна ронять идущую карточку.
+# В момент сохранения выбора мы запоминаем идущие карточки участника (id + время
+# старта попытки) в `model_pending.json`; `verify_started` видит такую карточку,
+# понимает, что она стартовала до смены, и не делает `reassign --reclaim` — просто
+# сообщает «применится со следующей задачи». Отметка снимается сама, как только у
+# карточки появляется новая попытка (другое время старта) или её перезапустили явно.
+
+def _pending_path(cfg, room_id) -> Path:
+    return Path(cfg.state_dir) / str(room_id) / "model_pending.json"
+
+
+def _pending(cfg, room_id) -> dict:
+    try:
+        value = sf.read_json(_pending_path(cfg, room_id), {})
+    except Exception:  # noqa: BLE001 - файл вторичен
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def pending_marked(cfg, room_id, card_id) -> dict | None:
+    """Отметка «карточка начала работу ДО смены модели» (B-26), либо None."""
+    item = _pending(cfg, str(room_id)).get(str(card_id))
+    return item if isinstance(item, dict) else None
+
+
+def mark_pending(cfg, room_id, profile, cards, *, model: str = "") -> list:
+    """Запомнить идущие карточки участника на момент смены модели (B-26).
+
+    `cards` — карточки в статусе `running` из `card_map` (id + started_at).
+    Возвращает id отмеченных. Ошибка записи не ломает смену модели.
+    """
+    ids = []
+    if not cards:
+        return ids
+    try:
+        path = _pending_path(cfg, room_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with sf.lock_for(path):
+            data = _pending(cfg, room_id)
+            for card in cards:
+                cid = str((card or {}).get("id") or "")
+                if not cid:
+                    continue
+                data[cid] = {"profile": str(profile or ""), "started_at": _int(card.get("started_at")),
+                             "model": str(model or ""), "at": _now()}
+                ids.append(cid)
+            sf.write_json_atomic(path, data)
+    except Exception:  # noqa: BLE001 - журнал ожидания вторичен
+        return ids
+    return ids
+
+
+def clear_pending(cfg, room_id, card_id) -> bool:
+    """Снять отметку ожидания (карточка перезапущена или уже на новой модели)."""
+    try:
+        path = _pending_path(cfg, room_id)
+        with sf.lock_for(path):
+            data = _pending(cfg, room_id)
+            if str(card_id) not in data:
+                return False
+            del data[str(card_id)]
+            sf.write_json_atomic(path, data)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _fixups(cfg, room_id) -> dict:
     try:
         value = sf.read_json(_fixups_path(cfg, room_id), {})
@@ -1431,7 +1587,7 @@ def verify_started(cfg, room_id, *, board: str | None = None, fix: bool = True,
     диспетчер запустит её заново уже на нужной модели. Попытки ограничены `FIXUP_MAX`:
     если модель так и не встала, дальше только предупреждение, без бесконечных перезапусков.
     """
-    out = {"checked": 0, "confirmed": 0, "mismatched": [], "fixed": [], "failed": [],
+    out = {"checked": 0, "confirmed": 0, "mismatched": [], "fixed": [], "failed": [], "pending": [],
            "unknown": 0, "skipped": 0}
     room = _modules().get_room(cfg, str(room_id)) or {}
     if not room:
@@ -1473,6 +1629,21 @@ def verify_started(cfg, room_id, *, board: str | None = None, fix: bool = True,
                 continue
             expected_label = _short_label(want["provider"], want["model"], want["reasoning"])
             actual_label = _short_label(got.get("provider") or "", got["model"], card["reasoning"])
+            # B-26: карточка стартовала ДО смены модели — это не «ушла не на ту модель»,
+            # а ожидаемое поведение. Работу не прерываем: новая модель применится со
+            # следующей задачи. Отметку ставит `apply_profile` в момент сохранения выбора.
+            note = pending_marked(cfg, str(room_id), card["id"])
+            if note is not None:
+                run_started = _int(run.get("started_at")) or _int(card.get("started_at"))
+                marked_start = _int(note.get("started_at"))
+                if not marked_start or not run_started or marked_start == run_started:
+                    out["pending"].append({"id": card["id"], "assignee": profile,
+                                           "expected": expected_label, "actual": actual_label,
+                                           "run_id": run.get("id"),
+                                           "since": _int(note.get("at"))})
+                    out["skipped"] += 1
+                    continue
+                clear_pending(cfg, str(room_id), card["id"])   # отметка устарела: новая попытка
             out["mismatched"].append({"id": card["id"], "assignee": profile,
                                       "expected": expected_label, "actual": actual_label,
                                       "run_id": run.get("id")})
@@ -1599,6 +1770,7 @@ __all__ = ["EFFORTS", "EFFORT_LABELS", "EFFORT_SHORT", "APPLY_STATUSES", "FIXUP_
            "config_path", "state_path", "bridge_path", "catalog", "provider_label", "agent_default",
            "validate", "validate_map", "normalize", "settings_of", "effective", "model_settings",
            "get", "set", "clear", "label", "human", "apply_to_tree", "apply_profile",
-           "restart_running", "decorate_room", "card_settings", "participants",
+           "restart_running", "pending_marked", "mark_pending", "clear_pending",
+           "decorate_room", "card_settings", "participants",
            "apply_to_room", "verify_started", "tenant_cards", "card_map", "actual_model",
            "sent_of", "member_sent", "models_block"]

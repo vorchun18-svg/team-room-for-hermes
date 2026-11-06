@@ -210,21 +210,40 @@
       "title": "Сводный ответ по «Лету»",
       "kind": "md",
       "exists": false,
-      "size": null
+      "size": null,
+      "state": "missing",
+      "outside_project": false,
+      "reason": null
     },
     {
       "path": "D:/Проекты/Комната/data/reports/cafe/r-20261028-0210-a1b2/report.json",
       "title": "Юнит-экономика набора «Лето 6»",
       "kind": "json",
       "exists": false,
-      "size": null
+      "size": null,
+      "state": "missing",
+      "outside_project": false,
+      "reason": null
     },
     {
       "path": "D:/Проекты/Vault/Projects/Business areas/Лето/03-Ops/packaging-quotes.xlsx",
       "title": "Котировки упаковки (черновик)",
       "kind": "xlsx",
       "exists": false,
-      "size": null
+      "size": null,
+      "state": "missing",
+      "outside_project": false,
+      "reason": null
+    },
+    {
+      "path": "C:/Work/Rooms/demo/2026-11-06 Письмо Лебедев — ответ/Письмо Лебедев — ответ.docx",
+      "title": "Письмо Лебедев — ответ (сохранено вне папки проекта)",
+      "kind": "docx",
+      "exists": true,
+      "size": 18432,
+      "state": "outside",
+      "outside_project": true,
+      "reason": "Файл сохранён вне папки проекта"
     }
   ],
   "report": {

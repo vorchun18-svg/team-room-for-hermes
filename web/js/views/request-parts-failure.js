@@ -154,3 +154,37 @@ export function failureInfo(detail) {
 
   return { attempts, reason, text, details };
 }
+
+/**
+ * Список попыток для плашки ошибки (B-24): «3 попытки: …» — каждая строка с временем
+ * и понятной причиной. Технический текст остаётся в `details` (для разработчика).
+ *
+ * @param {object} detail RequestDetail
+ * @param {{limit?: number}} [opts]
+ * @returns {Array<{n: number, at: number, profile: string, reason: string, failed: boolean}>}
+ */
+export function failureAttemptsList(detail, opts = {}) {
+  const d = detail && typeof detail === 'object' ? detail : {};
+  const limit = Math.max(1, Number(opts.limit) || 6);
+  const rows = [];
+  for (const node of Array.isArray(d.tree) ? d.tree : []) {
+    const runs = node && Array.isArray(node.runs) ? node.runs : [];
+    runs.forEach((run, i) => {
+      if (!run || typeof run !== 'object') return;
+      const failed = isFailedRun(run);
+      const text = String(run.error || '');
+      const reason = text ? errorReason(text) : (failed ? 'исполнитель не справился' : '');
+      if (!failed && !reason) return;
+      rows.push({
+        n: Number(run.id) || (i + 1),
+        at: Number(run.started_at || run.ended_at || 0) || 0,
+        profile: String(run.profile || (node && node.assignee) || ''),
+        reason: reason || 'исполнитель не справился',
+        failed,
+        taskId: String((node && node.id) || ''),
+      });
+    });
+  }
+  rows.sort((a, b) => (a.at || 0) - (b.at || 0));
+  return rows.slice(-limit).map((row, i) => Object.assign({}, row, { n: i + 1 }));
+}

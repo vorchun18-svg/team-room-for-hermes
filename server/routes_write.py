@@ -11,6 +11,7 @@ import time
 try:  # пакетный и «плоский» импорт
     from . import config
     from . import answers as answers_mod
+    from . import idempotency as idem_mod
     from .app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM, BACKLOG_STATUSES,
                              MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS, REPORT_KEY_RE, TASK_ID_RE,
                              UNASSIGN_VALUES, derive_title, err, has_nul, make_slug, profile_ok,
@@ -22,6 +23,7 @@ try:  # пакетный и «плоский» импорт
 except ImportError:  # pragma: no cover
     import config  # type: ignore
     import answers as answers_mod  # type: ignore
+    import idempotency as idem_mod  # type: ignore
     from app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM,  # type: ignore
                             BACKLOG_STATUSES, MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS,
                             REPORT_KEY_RE, TASK_ID_RE, UNASSIGN_VALUES, derive_title, err, has_nul,
@@ -366,12 +368,12 @@ class WriteRoutes:
             raise err(400, "Неизвестное действие", action=action, allowed=list(ACTION_ALLOWED))
         room, rec = self._find_record(rid)
         kw: dict = {}
-        for field in ("task_id", "question_id", "profile", "step_id"):
+        for field in ("task_id", "question_id", "profile", "step_id", "decision_id"):
             if field in body and body.get(field) is not None:
                 value = body.get(field)
                 if not isinstance(value, str) or not value.strip():
                     raise err(400, "Поле %s должно быть непустой строкой" % field, field=field)
-        for field in ("task_id", "question_id", "profile", "step_id", "title", "author"):
+        for field in ("task_id", "question_id", "profile", "step_id", "decision_id", "title", "author"):
             value = body.get(field)
             if isinstance(value, str) and value.strip():
                 kw[field] = value.strip()
@@ -391,6 +393,20 @@ class WriteRoutes:
         if action == "revise" and "task_id" not in kw:
             kw.pop("task_id", None)
         self._check_action_values(room, rec, rid, action, kw)
+        # B-25: ключ идемпотентности — повторная доставка того же нажатия «Повторить»
+        # не запускает действие второй раз, а получает сохранённый ответ (`duplicate: true`).
+        retry_slot = ""
+        if action == "retry" and body.get("idempotency_key") is not None:
+            try:
+                idem_key = idem_mod.ensure_key(body.get("idempotency_key"))
+            except idem_mod.IdempotencyError as exc:
+                raise err(400, exc.message, field="idempotency_key",
+                          value=str(body.get("idempotency_key"))[:120]) from exc
+            retry_slot = "%s:%s:%s" % (rid, kw.get("task_id") or "", idem_key)
+            replayed = idem_mod.GUARD.replay(retry_slot, scope="retry")
+            if replayed is not None:
+                replayed["duplicate"] = True
+                return 200, replayed, {}
         if action == "clone":
             return self._clone(room, rec, kw.get("title"))
         if action in ("critique", "revise"):
@@ -423,6 +439,9 @@ class WriteRoutes:
             # §12: действия пользователя по шагу — «Согласен», «Прокомментировать»,
             # «Переместить», «Не согласен — убрать» (общий механизм ответа, §5/§6).
             return self._step_action(room, rec, rid, kw, action[len("step_"):], body)
+        if action == "decision":
+            # W19-D2 §1 (B-20): действие над решением «предложено».
+            return self._decision_action(room, rec, rid, kw, body)
         question = None
         need_explanation = body.get("need_explanation")
         if need_explanation is not None and not isinstance(need_explanation, bool):
@@ -515,6 +534,9 @@ class WriteRoutes:
                 "at": int(time.time())}
         elif action == "reassign":
             payload["task"] = self._task_node(room, rid, rec, res.get("task_id") or kw.get("task_id"))
+        if retry_slot:
+            # Запомнили ответ: повторное нажатие получит его же и ничего не запустит.
+            idem_mod.GUARD.remember(retry_slot, payload, scope="retry")
         return 200, payload, {}
 
     # --- диалог по запросу (Блок A + Д1) ---
@@ -937,6 +959,89 @@ class WriteRoutes:
         payload["request"] = self._summary_or_local(
             room, rid, rec.get("text") or "", rec.get("title") or "",
             bool(rec.get("critic")), rec.get("mode") or "auto", rec.get("answers"))
+        return 200, payload, {}
+
+    # --- решения «предложено»: принять / отклонить / обсудить (W19-D2, B-20) ---
+
+    def _decision_action(self, room: dict, rec: dict, rid: str, kw: dict, body: dict):
+        """Действие Михаила над решением руководителя (B-20).
+
+        Механизм тот же, что у ответов на вопросы и действий по шагам (W14-D §1–§4):
+
+        * в ветке — метка ``[Михаил · решение d_x «текст решения»] Принять: …``;
+        * в реестре — запись ``answers[d_x]`` с ``kind="decision"``; её читают деталь
+          запроса, вкладка «Дальше» и счётчики, поэтому принятое/отклонённое сразу
+          уходит из «Нужен ваш ответ» (данные API, без перезагрузки);
+        * руководителю — карточка «Уточнение» с контрактом реакции
+          (``metadata.reaction.outcome``), чтобы исход был явным, а не по словам.
+        """
+        body = body if isinstance(body, dict) else {}
+        decision_id = str(kw.get("decision_id") or "").strip()
+        if ":" in decision_id:                      # `<rid>:d_1` → `d_1`
+            decision_id = decision_id.split(":", 1)[1]
+        if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", decision_id):
+            raise err(400, "Некорректный id решения", field="decision_id", value=decision_id[:80])
+        outcome = str(body.get("decision") or body.get("outcome") or "").strip().lower()
+        if outcome not in answers_mod.DECISION_ACTIONS:
+            raise err(400, "decision: принять/отклонить/обсудить",
+                      field="decision", allowed=list(answers_mod.DECISION_ACTIONS), value=outcome[:40])
+        text = body.get("text")
+        text = text.strip() if isinstance(text, str) else ""
+        if len(text) > MAX_NOTE:
+            raise err(400, text_too_long("Текст", len(text), MAX_NOTE), field="text",
+                      length=len(text), limit=MAX_NOTE)
+        if has_nul(text):
+            raise err(400, "В тексте есть NUL-байт", field="text")
+        if outcome == "discuss" and not text:
+            raise err(400, "Напишите или надиктуйте, что обсудить", field="text")
+        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"),
+                              rec.get("answers"))
+        decision = next((d for d in detail.get("decisions") or []
+                         if isinstance(d, dict) and str(d.get("id")) == decision_id), None)
+        if decision is None:
+            raise err(404, "Решение не найдено", decision_id=decision_id)
+        at = int(time.time())
+        mark = answers_mod.decision_comment(outcome, decision_id, decision.get("text") or "", text)
+        record = {"kind": "decision", "decision_id": decision_id,
+                  "decision_text": str(decision.get("text") or ""),
+                  "action": outcome,
+                  "outcome": {"accept": "accepted", "reject": "rejected",
+                              "discuss": "discuss"}[outcome],
+                  "text": text or answers_mod.DECISION_ACTION_RU[outcome],
+                  "user_text": text or None,
+                  "at": at, "answered": True, "status": "sent",
+                  "decision_status_at_answer": str(decision.get("status") or "proposed")}
+        answers = dict(rec.get("answers") or {})
+        answers[decision_id] = record
+        self._save_answers(room, rid, answers)
+        # Ветка: решение уходит руководителю тем же путём, что и ответ на вопрос.
+        try:
+            with self.engine():
+                self.call("engine_write", "act",
+                          ((self.cfg, room.get("board") or self.board, rid, "comment"),
+                           {"text": mark, "author": AUTHOR_MAXIM}))
+        except Exception as exc:  # noqa: BLE001 - запись в реестре уже есть
+            self.log.warning("сообщение о решении %s не записано: %s" % (decision_id, exc))
+        note: dict = {}
+        try:
+            note = self.call("thread", "post_decision_note",
+                             ((self.cfg, room, rid, dict(decision), outcome, text), {}),
+                             ((self.cfg, room, rid, dict(decision), outcome, text), {})) or {}
+        except Exception as exc:  # noqa: BLE001 - карточка не важнее ответа
+            self.log.warning("карточка-решение %s: %s" % (rid, exc))
+        view = answers_mod.apply_decision(dict(decision), record, None)
+        payload = {"ok": True, "action": "decision", "decision_id": decision_id,
+                   "decision": view, "message": mark,
+                   "action_label": answers_mod.DECISION_ACTION_RU[outcome],
+                   "answer_label": view.get("answer_label"),
+                   "pending_label": answers_mod.PENDING_RU,
+                   "chain_hint": answers_mod.CHAIN_HINT}
+        for key in ("task_id", "merged", "routed_to"):
+            if note.get(key) is not None:
+                payload.setdefault("note", {})[key] = note[key]
+        payload["request"] = self._summary_or_local(
+            room, rid, rec.get("text") or "", rec.get("title") or "",
+            bool(rec.get("critic")), rec.get("mode") or "auto", answers)
         return 200, payload, {}
 
     # --- проверки значений действия (D1) ---

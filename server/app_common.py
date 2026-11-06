@@ -37,12 +37,13 @@ ACTION_ALLOWED = ("dispatch", "comment", "answer", "unblock", "reassign", "rewor
                   # W14-D §2/§4: «Напомнить руководителю» и «Убрать» шаг
                   # W14-H §12: действия по шагу — согласен / прокомментировать / переместить
                   # W17-B §3: «Отправить руководителю накопленные ответы» (только по клику)
+                  # W19-D2 §1 (B-20): действие над решением «предложено»
                   "answer_remind", "step_drop", "step_agree", "step_comment", "step_move",
-                  "answers_resend")
+                  "answers_resend", "decision")
 ACTION_REQUIRED = {"answer": ("question_id",), "reassign": ("task_id", "profile"),
                    "answer_remind": ("question_id",), "step_drop": ("step_id",),
                    "step_agree": ("step_id",), "step_comment": ("step_id",),
-                   "step_move": ("step_id",)}
+                   "step_move": ("step_id",), "decision": ("decision_id",)}
 ACTION_TEXT = {"comment", "answer", "rework", "revise", "step_comment"}
 # D1: строгие формы значений, которые уходят в argv CLI (см. docs/critic/wave4-backend.md §2.1)
 TASK_ID_RE = re.compile(r"^t_[0-9a-f]{8}$")

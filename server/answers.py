@@ -28,16 +28,34 @@ EXPLAIN_MARK = "[Михаил · просит пояснить по вопрос
 REACTION_MARK = "[Руководитель · реакция на ответ"
 REMIND_MARK = "[Михаил · напоминание]"
 
-#: статусы ответа по контракту (W14-D §2)
+#: статусы ответа по контракту (W14-D §2; W19-D2 §2 — понятная цепочка)
 STATES = ("open", "waiting_explanation", "sent", "received", "applied", "no_change")
 STATE_RU = {
     "open": "ждёт вашего ответа",
     "waiting_explanation": "ждёт вашего решения после пояснения",
-    "sent": "ответ отправлен — руководитель ещё не ответил",
-    "received": "принято руководителем",
-    "applied": "учтено: работа пересмотрена",
-    "no_change": "принято: менять ничего не нужно",
+    # W19-D2 (B-21): «Ответ отправлен» → «Руководитель прочитал» → «Учтено».
+    "sent": "ответ отправлен",
+    "received": "руководитель прочитал",
+    "applied": "учтено: работа изменена",
+    "no_change": "учтено: менять ничего не нужно",
 }
+#: «Что значит» — одна подсказка на каждое состояние (B-21: не угадывать по словам).
+STATE_HINT = {
+    "open": "Вопрос ждёт вашего ответа — руководитель не может двигаться дальше без него.",
+    "waiting_explanation": "Вы попросили пояснение: вопрос остаётся открытым, пока руководитель "
+                           "не объяснит, о чём речь.",
+    "sent": "Ответ ушёл руководителю. Пока он его не открыл и не отметил исход — ждите "
+            "или нажмите «Напомнить руководителю».",
+    "received": "Руководитель прочитал ответ и взял его в работу. «Учтено» появится, когда он "
+                "запишет, что именно изменил.",
+    "applied": "Руководитель учёл ответ: работа пересмотрена, карточки изменены. "
+               "Их список — рядом с реакцией.",
+    "no_change": "Руководитель учёл ответ и решил, что менять в работе ничего не нужно.",
+}
+#: короткая расшифровка цепочки — для подсказки у блока («что значит»)
+CHAIN_HINT = ("Цепочка ответа: «ответ отправлен» → «руководитель прочитал» → «учтено» "
+              "(с изменением карточек или «менять ничего не нужно»). "
+              "Исход указывает сам руководитель в метаданных реакции.")
 PENDING_RU = "руководитель ещё не ответил"
 CANCELLED_RU = "снят по вашему ответу"
 CONFLICT_RU = "противоречит вашему ответу"
@@ -155,9 +173,11 @@ def digest_comment(items, limit: int = 180) -> str:
         qtext = short(item.get("question_text") or "", 120)
         answer = short(item.get("answer") or "", limit)
         lines.append("%d) %s «%s» — %s" % (number, qid, qtext, answer))
-    lines.append("Формат реакции: «%s %s] Принято: …» (или «Ничего менять не нужно», "
-                 "«Работа пересмотрена: карточки t_…»)."
-                 % (REACTION_MARK, str((rows[0] if rows else {}).get("question_id") or "q_x")))
+    lines.append("Формат реакции: «%s %s] Учтено: изменено 2 карточки — t_…» (или "
+                 "«Учтено: менять ничего не нужно»), и явный исход в метаданных реакции: "
+                 "metadata={\"reaction\":{\"question_id\":\"%s\",\"outcome\":\"read|applied|no_change\"}}."
+                 % (REACTION_MARK, str((rows[0] if rows else {}).get("question_id") or "q_x"),
+                    str((rows[0] if rows else {}).get("question_id") or "q_x")))
     return "\n".join(lines)
 
 
@@ -210,8 +230,73 @@ def question_text_of(text) -> str:
     return norm(match.group(1)) if match else ""
 
 
-def reaction_state(text) -> str:
-    """Класс реакции по тексту: applied / no_change / received."""
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    """Русская форма числа: 1 карточка / 2 карточки / 5 карточек."""
+    count = abs(int(n)) % 100
+    if 11 <= count <= 14:
+        return many
+    tail = count % 10
+    if tail == 1:
+        return one
+    if 2 <= tail <= 4:
+        return few
+    return many
+
+
+def state_label(state, cards=None, changes=None) -> str:
+    """Видимая подпись статуса ответа (B-21): третья ступень уточняется числом карточек."""
+    key = str(state or "")
+    if key == "applied":
+        count = changes if changes is not None else len(cards or [])
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            count = 0
+        if count > 0:
+            return "учтено: изменено %d %s" % (count, _plural(count, "карточка", "карточки", "карточек"))
+        return STATE_RU["applied"]
+    return STATE_RU.get(key, STATE_RU["open"])
+
+
+def state_hint(state) -> str:
+    """Подсказка «что значит» для статуса ответа (B-21)."""
+    return STATE_HINT.get(str(state or ""), STATE_HINT["open"])
+
+
+#: явный исход реакции в тексте: `outcome=applied` / `исход: no_change` / `учтено: …`
+_OUTCOME_TAG = re.compile(r"(?:outcome|исход)\s*[:=]\s*[\"«']?([A-Za-zА-Яа-я_]+)", re.IGNORECASE)
+_OUTCOME_ALIASES = {
+    "read": "received", "received": "received", "прочитал": "received", "прочитано": "received",
+    "applied": "applied", "учтено": "applied", "учёл": "applied", "учел": "applied",
+    "no_change": "no_change", "nochange": "no_change", "без_изменений": "no_change",
+    "ничего": "no_change",
+}
+
+
+def outcome_of(text) -> str:
+    """Явный исход реакции из текста (``outcome=…``/``исход: …``) или ''.
+
+    W19-D2 (B-21): основная дорога — ``metadata.reaction.outcome`` (читается в
+    :func:`reactions_from_tree`). Этот разбор — тот же исход, но записанный в
+    комментарии реакции по контракту: ``… outcome=applied``. Пусто — исход не
+    указан, тогда (и только тогда) работает запасной разбор по словам.
+    """
+    match = _OUTCOME_TAG.search(norm(text))
+    if not match:
+        return ""
+    value = match.group(1).strip().lower()
+    return _OUTCOME_ALIASES.get(value, value if value in ("received", "applied", "no_change") else "")
+
+
+def reaction_state(text, outcome=None) -> str:
+    """Класс реакции: applied / no_change / received.
+
+    Порядок (B-21): явный ``outcome`` (из метаданных реакции) → метка ``outcome=…``
+    в тексте → запасной разбор по словам (только старые записи без исхода).
+    """
+    explicit = norm(outcome).lower() or outcome_of(text)
+    if explicit in ("received", "applied", "no_change"):
+        return explicit
     value = norm(text).lower()
     if any(word in value for word in ("ничего менять не нужно", "менять не нужно", "без изменений",
                                       "ничего не меняем", "изменения не нужны", "ничего менять не надо")):
@@ -220,6 +305,7 @@ def reaction_state(text) -> str:
                                       "в работу", "пересобр", "карточк")):
         return "applied"
     return "received"
+
 
 
 def _cards_of(text) -> list:
@@ -336,15 +422,95 @@ def reactions_from_thread(items, questions=None, answers=None, lead=None) -> dic
         if not _after_answer(at, rec_of.get(qid)):
             continue                    # комментарий ДО ответа — не реакция (B-12)
         status = reaction_state(text)
+        cards = _cards_of(text)
         previous = out.get(qid)
         if previous and int(previous.get("at") or 0) > at:
             continue
         out[qid] = {"text": text, "at": at, "status": status,
-                    "label": STATE_RU.get(status, STATE_RU["received"]),
-                    "cards": _cards_of(text), "author": item.get("author") or "",
+                    "label": state_label(status, cards),
+                    # W19-D2 (B-21): исход указан явно (метка `outcome=…`) или
+                    # выведен запасным разбором по словам старой записи.
+                    "outcome": outcome_of(text) or None, "guessed": not outcome_of(text),
+                    "cards": cards, "changes": len(cards) or None,
+                    "source": "thread", "author": item.get("author") or "",
                     "author_label": item.get("author_label") or "",
                     "implicit": implicit, "task_id": item.get("task_id")}
     return out
+
+
+def reactions_from_tree(nodes) -> dict:
+    """Реакции из ``metadata.reaction`` карточек дерева: ``{question_id|decision_id: …}``.
+
+    W19-D2 (B-21): исход задаёт САМ руководитель в метаданных реакции — его карточка
+    завершается с ``metadata={"reaction": {"question_id": "q_x", "outcome": "applied",
+    "cards": ["t_…"]}}`` (или ``decision_id`` для решения). Это первая дорога чтения,
+    комментарий без метки ``outcome`` — запасная (старые записи).
+
+    Поддерживаются формы: один объект, список объектов, а также ключ
+    ``answer_reaction`` (старый контракт карточки «Уточнение»).
+    """
+    out: dict = {}
+    for node in nodes or []:
+        if not isinstance(node, dict):
+            continue
+        meta = node.get("metadata")
+        if not isinstance(meta, dict):
+            continue
+        extra = meta.get("extra") if isinstance(meta.get("extra"), dict) else {}
+        raw = extra.get("reaction") or extra.get("answer_reaction") or meta.get("reaction") \
+            or meta.get("answer_reaction")
+        if not raw:
+            continue
+        items = raw if isinstance(raw, list) else [raw]
+        at_default = int(node.get("ended_at") or node.get("at") or 0)
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("question_id") or item.get("decision_id")
+                      or item.get("question") or item.get("decision") or "").strip()
+            if not key:
+                continue
+            status = reaction_state(item.get("text") or "", item.get("outcome") or item.get("status"))
+            cards = [str(c) for c in (item.get("cards") or []) if str(c).strip()]
+            try:
+                changes = int(item.get("changes")) if item.get("changes") is not None else None
+            except (TypeError, ValueError):
+                changes = None
+            at = int(item.get("at") or 0) or at_default
+            previous = out.get(key)
+            if previous and int(previous.get("at") or 0) > at:
+                continue
+            out[key] = {"text": norm(item.get("text")), "at": at, "status": status,
+                        "label": state_label(status, cards, changes),
+                        "outcome": str(item.get("outcome") or item.get("status") or status),
+                        "guessed": False, "cards": cards,
+                        "changes": changes if changes is not None else (len(cards) or None),
+                        "source": "metadata", "node": str(node.get("id") or ""),
+                        "author": str(node.get("assignee") or ""), "author_label": "",
+                        "implicit": False, "task_id": str(node.get("id") or "")}
+    return out
+
+
+def merge_reactions(primary, secondary) -> dict:
+    """Слить реакции: явные (метаданные) главнее, текст добираем из ленты."""
+    out: dict = dict(secondary or {})
+    for key, value in (primary or {}).items():
+        if not isinstance(value, dict):
+            continue
+        old = out.get(key)
+        merged = dict(value)
+        if isinstance(old, dict):
+            if not merged.get("text"):
+                merged["text"] = old.get("text") or ""
+            if not merged.get("at"):
+                merged["at"] = int(old.get("at") or 0)
+            if not merged.get("cards"):
+                merged["cards"] = list(old.get("cards") or [])
+            merged.setdefault("author_label", old.get("author_label") or "")
+            merged["implicit"] = bool(old.get("implicit")) and not merged.get("outcome")
+        out[key] = merged
+    return out
+
 
 
 def reaction_for_question(question, reactions) -> dict | None:
@@ -426,7 +592,10 @@ def apply_question(question: dict, record, reaction=None, now: int | None = None
     question["answer"] = text or None
     question["answered_at"] = at if answered else None
     question["answer_state"] = state
-    question["answer_label"] = STATE_RU.get(state, STATE_RU["open"])
+    question["answer_label"] = state_label(state, (reaction or {}).get("cards") if isinstance(reaction, dict) else None,
+                                           (reaction or {}).get("changes") if isinstance(reaction, dict) else None)
+    question["answer_hint"] = state_hint(state)
+    question["answer_chain_hint"] = CHAIN_HINT
     question["needs_explanation"] = state == "waiting_explanation"
     question["explanation_requested_at"] = at if state == "waiting_explanation" else None
     question["explanation_text"] = text or None if state == "waiting_explanation" else None
@@ -451,6 +620,7 @@ def answer_item(question: dict) -> dict:
             "answer": question.get("answer"), "at": question.get("answered_at"),
             "state": question.get("answer_state") or "open",
             "label": question.get("answer_label") or STATE_RU["open"],
+            "hint": question.get("answer_hint") or state_hint(question.get("answer_state")),
             "reaction": question.get("reaction"), "needs_explanation": bool(question.get("needs_explanation"))}
 
 
@@ -639,7 +809,12 @@ def step_reaction_state(text) -> str:
 
 
 def step_reaction_label(kind, status, due_changed=False) -> str:
-    """Видимая подпись реакции на действие по шагу (§12: «принято/учтено/убран/срок изменён»)."""
+    """Видимая подпись реакции на действие по шагу (§12; W19-D2 — слова цепочки B-21).
+
+    Те же слова, что у вопроса и решения: «ответ отправлен» → «руководитель прочитал» →
+    «учтено: работа изменена» / «учтено: менять не нужно». Технические подписи
+    «срок изменён»/«порядок изменён»/«шаг убран» остаются как были.
+    """
     kind = str(kind or "")
     status = str(status or "")
     if kind == "drop" or status == "removed":
@@ -647,11 +822,11 @@ def step_reaction_label(kind, status, due_changed=False) -> str:
     if status == "moved" or kind == "move":
         return "срок изменён" if due_changed else "порядок изменён"
     if status == "no_change":
-        return "принято: менять не нужно"
+        return "учтено: менять не нужно"
     if status == "applied":
-        return "учтено: работа пересмотрена"
+        return STATE_RU["applied"]
     if status == "received":
-        return "принято"
+        return STATE_RU["received"]
     return PENDING_RU
 
 
@@ -767,6 +942,229 @@ def steps_to_cancel(steps, question, answer_text) -> list:
         if linked and str(step.get("state") or "open") not in ("done", "dismissed", "cancelled"):
             out.append(str(step["id"]))
     return out
+
+
+# ------------------------------------------------------------ решения (W19-D2) ---
+# B-20: «решение предложено» — это тоже то, что ждёт слова Михаила. Действия
+# («Принять», «Отклонить», «Обсудить») уходят руководителю ТЕМ ЖЕ механизмом, что
+# ответы на вопросы и действия по шагам: метка в ветке
+# ``[Михаил · решение d_x «текст решения»] Принять: …``, запись в реестре
+# (``answers[d_x]`` с ``kind="decision"``) и видимый статус ответа
+# («ответ отправлен → руководитель прочитал → учтено»).
+# B-21: исход задаёт руководитель (``metadata.reaction.outcome``), слова — запасной
+# вариант для старых записей.
+
+DECISION_MARK = "[Михаил · решение"
+DECISION_REACTION_MARK = "[Руководитель · реакция на решение"
+DECISION_ACTIONS = ("accept", "reject", "discuss")
+DECISION_ACTION_RU = {"accept": "Принять", "reject": "Отклонить", "discuss": "Обсудить"}
+DECISION_ACTION_HINT = {
+    "accept": "Согласиться с предложенным решением — руководитель увидит это сразу",
+    "reject": "Отклонить решение: можно сразу написать, что предложить вместо",
+    "discuss": "Написать или надиктовать, что обсудить — решение останется за вами",
+}
+DECISION_STATUS_RU = {"proposed": "предложено", "accepted": "принято вами",
+                      "rejected": "отклонено вами", "discuss": "обсуждаем с руководителем"}
+DECISION_STATUS_HINT = {
+    "proposed": "Руководитель предлагает так; решение за вами — «Принять», «Отклонить» "
+                "или «Обсудить».",
+    "accepted": "Вы приняли решение. Руководитель получил ваш ответ и учтёт его в работе.",
+    "rejected": "Вы отклонили решение. Руководитель получил ответ и предложит другой вариант.",
+    "discuss": "Вы просите обсудить: решение остаётся за вами, пока руководитель не ответит.",
+}
+_STATUS_OF_ACTION = {"accept": "accepted", "reject": "rejected", "discuss": "discuss"}
+_ACTION_OF_STATUS = {"accepted": "accept", "rejected": "reject", "discuss": "discuss"}
+
+_DID_RE = re.compile(r"(d_[0-9A-Za-z_\-]+)")
+
+
+def decision_id_of(text) -> str:
+    """id решения из метки (``d_1``) или ''."""
+    match = _DID_RE.search(str(text or ""))
+    return match.group(1) if match else ""
+
+
+def decision_kind_of(text) -> bool:
+    """Запись ветки — решение Михаила (метка ``[Михаил · решение …]``)."""
+    return str(text or "").startswith(DECISION_MARK)
+
+
+def decision_action_of(text) -> str:
+    """Действие из метки решения: ``accept|reject|discuss`` или ''."""
+    value = str(text or "")
+    if not value.startswith(DECISION_MARK):
+        return ""
+    tail = value.split("]", 1)[1].strip().lower() if "]" in value else ""
+    for action, word in (("accept", "принять"), ("reject", "отклонить"), ("discuss", "обсудить")):
+        if tail.startswith(word):
+            return action
+    return ""
+
+
+def decision_comment(action, decision_id, decision_text, text="") -> str:
+    """Метка решения в ветке: видно, какое решение и что с ним сделал Михаил."""
+    label = DECISION_ACTION_RU.get(str(action), "Решение")
+    head = "%s %s «%s»]" % (DECISION_MARK, str(decision_id or "d_0"), short(decision_text, 120))
+    body = norm(text)
+    return "%s %s: %s" % (head, label, body) if body else "%s %s" % (head, label)
+
+
+def decision_reaction_comment(decision_id, text) -> str:
+    """Готовая метка реакции руководителя на решение (пишет он сам в ветке)."""
+    return "%s %s] %s" % (DECISION_REACTION_MARK, decision_id, norm(text))
+
+
+def decision_reactions_from_thread(items, lead=None) -> dict:
+    """Реакции руководителя на решения из ленты: ``{d_id: {text, at, status, …}}``.
+
+    Исход — явный (``outcome=…`` в тексте) или, для старых записей, по словам.
+    Автор — руководитель комнаты (``lead``), как у реакций на ответы (B-12).
+    """
+    out: dict = {}
+    leads = _lead_names(lead)
+    for item in items or []:
+        if not _from_leader(item, leads):
+            continue
+        text = norm(item.get("text"))
+        if not text.startswith(DECISION_REACTION_MARK):
+            continue
+        did = decision_id_of(text)
+        if not did:
+            continue
+        at = int(item.get("at") or 0)
+        previous = out.get(did)
+        if previous and int(previous.get("at") or 0) > at:
+            continue
+        status = reaction_state(text)
+        cards = _cards_of(text)
+        out[did] = {"text": answer_text_of(text), "at": at, "status": status,
+                    "label": state_label(status, cards), "cards": cards,
+                    "outcome": outcome_of(text) or None, "guessed": not outcome_of(text),
+                    "changes": len(cards) or None, "source": "thread",
+                    "author": item.get("author") or "",
+                    "author_label": item.get("author_label") or "", "implicit": False,
+                    "task_id": item.get("task_id")}
+    return out
+
+
+def _local_decision_id(value) -> str:
+    """``t_825ada4c:d_1`` → ``d_1`` (в реестре и метках живёт короткий id)."""
+    text = str(value or "").strip()
+    return text.split(":", 1)[1] if ":" in text else text
+
+
+def decision_index(records) -> dict:
+    """Реестр ответов комнаты → ``{d_id: запись решения}`` (для бэклога и детали)."""
+    out: dict = {}
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        stored = record.get("answers")
+        if not isinstance(stored, dict):
+            continue
+        for key, entry in stored.items():
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("kind") or "") != "decision" and not str(key).startswith("d_"):
+                continue
+            out[_local_decision_id(key)] = entry
+    return out
+
+
+def decision_record_for(decision, records) -> dict | None:
+    """Запись решения из реестра ответов (по id, с учётом префикса карточки)."""
+    if not isinstance(records, dict) or not isinstance(decision, dict):
+        return None
+    did = _local_decision_id(decision.get("id"))
+    entry = records.get(did)
+    if not isinstance(entry, dict):
+        for key in (str(decision.get("id") or ""), did):
+            if key and isinstance(records.get(key), dict):
+                entry = records[key]
+                break
+    if isinstance(entry, dict):
+        return entry
+    for key, value in records.items():
+        if isinstance(value, dict) and str(value.get("kind")) == "decision" \
+                and _local_decision_id(value.get("decision_id") or key) == did:
+            return value
+    return None
+
+
+def apply_decision(decision: dict, record=None, reaction=None, now: int | None = None) -> dict:
+    """Наложить на решение действие Михаила и реакцию руководителя (B-20, B-21).
+
+    * ``status`` — ``proposed`` (ждёт слова), ``accepted``/``rejected`` (решено
+      Михаилом), ``discuss`` (обсуждаем: решение всё ещё за ним);
+    * ``answer_state``/``answer_label``/``answer_hint`` — цепочка ответа
+      («ответ отправлен → руководитель прочитал → учтено»);
+    * ``leader_pending``, ``can_remind``, ``reaction`` — то же, что у вопросов.
+    """
+    d = dict(decision) if isinstance(decision, dict) else {}
+    rec = record if isinstance(record, dict) else {}
+    moment = int(now or _time.time())
+    status = str(d.get("status") or "proposed")
+    if not rec and (d.get("answer_text") or d.get("answered_at")):
+        # Запись ответа потеряна (старый формат/фикстура), но ответ виден в самом
+        # решении — читаем его оттуда, не приписывая ответ руководителю.
+        rec = {"kind": "decision", "decision_id": d.get("id"), "answered": True,
+               "text": norm(d.get("answer_text")), "at": int(d.get("answered_at") or 0) or None,
+               "status": "sent",
+               "action": _ACTION_OF_STATUS.get(status) if status in ("accepted", "rejected", "discuss") else None}
+    action = str(rec.get("action") or "").strip() or _ACTION_OF_STATUS.get(str(rec.get("outcome") or ""), "")
+    if action in _STATUS_OF_ACTION:
+        status = _STATUS_OF_ACTION[action]
+    reaction = dict(reaction) if isinstance(reaction, dict) else None
+    state = state_of(rec, reaction)
+    if state == "open" and reaction and str(reaction.get("status")) in ("received", "applied", "no_change"):
+        # реакция есть, запись ответа потеряна — цепочка всё равно видна
+        state = str(reaction["status"])
+    at = int(rec.get("at") or 0) or None
+    texts = norm(rec.get("text")) or None
+    cards = (reaction or {}).get("cards") or []
+    changes = (reaction or {}).get("changes")
+    waited = max(0, moment - at) if (state == "sent" and at) else 0
+    d.update({
+        "status": status,
+        "status_label": (DECISION_STATUS_RU.get(status, DECISION_STATUS_RU["proposed"])
+                         if action or status not in ("accepted", "rejected")
+                         else "принято руководителем" if status == "accepted" else "отклонено руководителем"),
+        "status_hint": ("Руководитель отметил это решение сам; вашего ответа здесь не требовалось."
+                        if (not action and status in ("accepted", "rejected"))
+                        else DECISION_STATUS_HINT.get(status, DECISION_STATUS_HINT["proposed"])),
+        "status_source": "user" if action else "leader",
+        "open": status in ("proposed", "discuss"),
+        "answered": bool(rec),
+        "answer_action": action or None,
+        "answer_action_label": DECISION_ACTION_RU.get(action) if action else None,
+        "answer_text": texts,
+        "answered_at": at,
+        "answer_state": state,
+        "answer_label": state_label(state, cards, changes) if (rec or reaction) else None,
+        "answer_hint": state_hint(state) if (rec or reaction) else None,
+        "reaction": reaction,
+        "leader_pending": state == "sent",
+        "can_remind": state == "sent",
+        "reaction_waited_s": waited if state == "sent" else None,
+        "reaction_overdue": bool(state == "sent" and waited >= REACTION_WAIT_S),
+        "can_accept": True, "can_reject": True, "can_discuss": True,
+        "actions": [{"action": key, "label": DECISION_ACTION_RU[key], "hint": DECISION_ACTION_HINT[key],
+                     "current": key == action} for key in DECISION_ACTIONS],
+    })
+    return d
+
+
+def decision_summary(decisions) -> dict:
+    """Сколько решений ждут слова Михаила и сколько уже решено (для подписей)."""
+    open_count = closed = 0
+    for item in decisions or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status") or "proposed") in ("proposed", "discuss"):
+            open_count += 1
+        else:
+            closed += 1
+    return {"total": open_count + closed, "open": open_count, "closed": closed}
 
 
 # --------------------------------------------------- статус вопросов (W17-B §7) ---
@@ -925,12 +1323,31 @@ def backlog_overlay(view: dict, records) -> dict:
         return view
     items = [item for item in view.get("items") or [] if isinstance(item, dict)]
     by_id, by_text = _records_index(records)
+    decisions = decision_index(records)
     merged: dict = {}
     hidden = []
     out: list = []
     for raw in items:
         item = dict(raw)
         kind = str(item.get("kind") or "")
+        if kind == "decision":
+            # W19-D2 (B-20): принятое/отклонённое решение сразу уходит из «Дальше»
+            # и из счётчиков — по данным реестра ответов, без перезаписи данных.
+            did = _local_decision_id(str(item.get("id") or "").partition(":")[2] or item.get("id"))
+            entry = decisions.get(did)
+            if isinstance(entry, dict):
+                view_item = apply_decision(item, entry, None)
+                item["decision_status"] = view_item["status"]
+                item["status_label"] = view_item["status_label"]
+                item["answer_state"] = view_item["answer_state"]
+                item["answer_label"] = view_item["answer_label"]
+                item["answer_text"] = view_item["answer_text"]
+                item["answered_at"] = view_item["answered_at"]
+                if str(item.get("status") or "open") not in ("asked", "dismissed"):
+                    item["status"] = ("done" if view_item["status"] == "accepted" else
+                                      "dismissed" if view_item["status"] == "rejected" else "open")
+            out.append(item)
+            continue
         if kind in ("open_question", "future_question"):
             if is_service_question(item.get("text")):
                 hidden.append({"id": item.get("id"), "text": item.get("text")})
@@ -1036,6 +1453,15 @@ __all__ = ["ANSWER_MARK", "EXPLAIN_MARK", "REACTION_MARK", "REMIND_MARK", "STATE
            "sort_steps", "step_id_of", "step_comment", "step_reaction_state", "step_reaction_label",
            "step_reactions_from_thread", "apply_step", "steps_log_for",
            "steps_to_cancel", "summary",
+           # W19-D2 (B-21): цепочка статусов ответа и явный исход реакции
+           "STATE_HINT", "CHAIN_HINT", "state_label", "state_hint", "outcome_of",
+           "reactions_from_tree", "merge_reactions",
+           # W19-D2 (B-20): решения «предложено» — действия и статус
+           "DECISION_MARK", "DECISION_REACTION_MARK", "DECISION_ACTIONS", "DECISION_ACTION_RU",
+           "DECISION_ACTION_HINT", "DECISION_STATUS_RU", "DECISION_STATUS_HINT",
+           "decision_id_of", "decision_kind_of", "decision_action_of", "decision_comment",
+           "decision_reaction_comment", "decision_reactions_from_thread", "decision_index",
+           "decision_record_for", "apply_decision", "decision_summary",
            # W17-B §7 (B7): статус вопроса из реестра, близнецы, служебные вопросы
            "is_service_question", "text_key", "record_for", "dedupe_questions",
            "question_state", "backlog_overlay"]

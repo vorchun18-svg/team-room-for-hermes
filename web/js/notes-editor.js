@@ -32,7 +32,7 @@ import { h } from './util.js';
 import { icon } from './icons.js';
 import { ensureCss, confirmDialog } from './ui.js';
 import { createMic } from './dictation.js';
-import { entriesOfItem, MAX_TEXT, SOURCE_RU, ACTION_RU } from './agent-notes-ui.js';
+import { entriesOfItem, MAX_TEXT, SOURCE_RU, ACTION_RU, ROLLBACKABLE } from './agent-notes-ui.js';
 
 /** Подзаголовок окна — дословно из ТЗ. */
 export const EDITOR_SUBTITLE = 'Добавка к SOUL.md только для этой комнаты. '
@@ -683,10 +683,10 @@ export function openNotesEditor(opts = {}) {
           event.why ? h('div', { class: 'small muted' }, 'зачем: ' + event.why) : null,
           event.rolled_back
             ? h('div', { class: 'small muted' }, 'изменение откачено')
-            : h('button', {
+            : (ROLLBACKABLE.has(event.action) ? h('button', {
               class: 'btn btn--ghost btn--sm', type: 'button',
               onclick: () => { rollback(event).catch(() => {}); },
-            }, 'Откатить'));
+            }, 'Откатить') : null));
         list.appendChild(row);
       }
       journalBox.replaceChildren(

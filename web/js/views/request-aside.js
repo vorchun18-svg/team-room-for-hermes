@@ -33,15 +33,22 @@ import { countNoun } from '../text-ru.js';
 import { createSteps } from './request-steps.js';
 import { blockedCards, inboxSummary } from './backlog-model.js';
 import { foldCard } from './aside-fold.js';
+import {
+  CHAIN_HINT, decisionActions, decisionAnswerOf, decisionStatusOf,
+  openDecisionDialog, postDecision,
+} from './decision-dialog.js';
 
-/** Подписи статусов ответа — те же слова, что в API (`answer_label`). */
+/**
+ * Подписи статусов ответа — те же слова, что в API (`answer_label`, B-21):
+ * «ответ отправлен» → «руководитель прочитал» → «учтено».
+ */
 const Q_STATE_RU = {
   open: 'ждёт вашего ответа',
   waiting_explanation: 'ждёт вашего решения после пояснения',
-  sent: 'ответ отправлен — руководитель ещё не ответил',
-  received: 'принято руководителем',
-  applied: 'учтено: работа пересмотрена',
-  no_change: 'принято: менять ничего не нужно',
+  sent: 'ответ отправлен',
+  received: 'руководитель прочитал',
+  applied: 'учтено: работа изменена',
+  no_change: 'учтено: менять ничего не нужно',
 };
 const Q_STATE_CHIP = {
   open: 'chip--muted',
@@ -50,6 +57,15 @@ const Q_STATE_CHIP = {
   received: 'chip--info',
   applied: 'chip--ok',
   no_change: 'chip--muted',
+};
+/** «Что значит» для статуса ответа — одна подсказка на все вопросы, шаги, решения. */
+const Q_STATE_HINT = {
+  open: 'Вопрос ждёт вашего ответа — руководитель не может двигаться дальше без него.',
+  waiting_explanation: 'Вы попросили пояснение: вопрос остаётся открытым, пока руководитель не объяснит, о чём речь.',
+  sent: 'Ответ ушёл руководителю. Пока он его не открыл и не отметил исход — ждите или нажмите «Напомнить руководителю».',
+  received: 'Руководитель прочитал ответ и взял его в работу. «Учтено» появится, когда он запишет, что именно изменил.',
+  applied: 'Руководитель учёл ответ: работа пересмотрена, карточки изменены. Их список — рядом с реакцией.',
+  no_change: 'Руководитель учёл ответ и решил, что менять в работе ничего не нужно.',
 };
 
 export function createAside(R) {
@@ -275,7 +291,7 @@ export function createAside(R) {
       h('div', { class: 'req-q__answer-head' },
         h('span', { class: 'req-q__pair' }, 'Вопрос — ваш ответ'),
         h('span', { class: 'chip ' + (Q_STATE_CHIP[state] || 'chip--muted') + ' req-q__state',
-          title: 'Статус ответа: ' + label }, label)),
+          title: 'Статус ответа: ' + label + ' — ' + (Q_STATE_HINT[state] || CHAIN_HINT) }, label)),
       h('div', { class: 'req-q__atext' }, String(q.answer || '')),
       h('div', { class: 'req-q__meta' },
         answeredAt ? h('span', { class: 'muted req-q__when' }, 'отвечено ' + timeAgo(answeredAt)) : null,
@@ -461,7 +477,8 @@ export function createAside(R) {
       card.appendChild(h('div', { class: 'req-side__subhead small muted' },
         'Решения, которые ждут вашего слова',
         h('span', { class: 'tnum' }, ' · ' + view.openDecisions.length)));
-      card.appendChild(h('div', { class: 'req-side__body req-decisions' },
+      card.appendChild(decisionHintLine());
+      card.appendChild(h('div', { class: 'req-side__body req-decisions', 'data-scroll-key': 'decisions-open' },
         view.openDecisions.map(decisionRow)));
     }
 
@@ -481,18 +498,135 @@ export function createAside(R) {
     return card;
   }
 
+  /* ── решения руководителя: принять / отклонить / обсудить (W19-D2, B-20) ── */
+
+  /** Решение ещё ждёт слова Михаила: сервер отдаёт `open`, старая запись — по статусу. */
+  function decisionOpen(d) {
+    if (d && typeof d.open === 'boolean') return d.open;
+    const status = String((d && d.status) || 'proposed');
+    return status === 'proposed' || status === 'discuss';
+  }
+
+  /** Понятная расшифровка блока решений: что происходит после ответа (B-20, B-21). */
+  function decisionHintLine() {
+    return h('div', { class: 'req-side__hint req-decision__hint small muted', title: CHAIN_HINT },
+      icon('comment-discussion', { size: 11 }),
+      h('span', null, 'Решение за вами: «Принять» или «Отклонить» — и оно уйдёт из этого '
+        + 'списка; у ответа видна цепочка «отправлен → прочитал → учтено». '
+        + '«Обсудить» оставляет решение за вами.'));
+  }
+
+  /** Отправить «Принять» сразу: одно нажатие, без окна (остальное — с текстом и диктовкой). */
+  async function acceptDecision(d, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await postDecision({ api: ctx.api, requestId: rid, decision: d, outcome: 'accept' });
+      ctx.toast('Решение принято — руководитель увидит ответ', 'ok');
+      await refresh({ force: true });
+    } catch (err) {
+      if (btn) btn.disabled = false;
+      ctx.toast((err && err.message) || 'Не удалось принять решение', 'danger');
+    }
+  }
+
+  /** «Отклонить» и «Обсудить» — окно с полем и диктовкой (decision-dialog.js). */
+  function openDecisionAction(d, outcome) {
+    const dlg = openDecisionDialog({
+      api: ctx.api,
+      requestId: rid,
+      decision: d,
+      outcome,
+      toast: ctx.toast,
+      refresh: () => refresh({ force: true }),
+    });
+    if (!dlg) ctx.toast('Не удалось открыть окно решения', 'danger');
+    return dlg;
+  }
+
+  /** Кнопки решения. Текущее действие помечено `aria-pressed` — видно, что уже сделано. */
+  function decisionActionsRow(d) {
+    const box = h('div', {
+      class: 'req-decision__actions', role: 'group',
+      'aria-label': 'Действия по решению: ' + firstLine(d.text, 60),
+    });
+    for (const item of decisionActions(d)) {
+      const tone = item.action === 'accept' ? 'btn--primary'
+        : item.action === 'reject' ? 'btn--secondary' : 'btn--ghost';
+      const label = item.action === 'discuss' && !/…$/.test(item.label)
+        ? item.label + '…' : item.label;
+      const btn = h('button', {
+        type: 'button',
+        class: 'btn btn--sm ' + tone + ' req-decision__act',
+        'data-action': 'decision-' + item.action,
+        'data-decision-id': String(d.id || ''),
+        'aria-pressed': item.current ? 'true' : 'false',
+        title: item.hint,
+        'aria-label': item.label + ': ' + firstLine(d.text, 60),
+      }, label);
+      btn.addEventListener('click', () => {
+        if (item.action === 'accept') acceptDecision(d, btn);
+        else openDecisionAction(d, item.action);
+      });
+      box.appendChild(btn);
+    }
+    return box;
+  }
+
+  /** Цепочка ответа у решения: «ответ отправлен → руководитель прочитал → учтено». */
+  function decisionAnswerBlock(d, answer) {
+    const reaction = answer.reaction || null;
+    const cards = reaction && Array.isArray(reaction.cards) ? reaction.cards.filter(Boolean).slice(0, 6) : [];
+    const at = Number(d.answered_at) || 0;
+    const block = h('div', { class: 'req-decision__answer req-decision__answer--' + answer.key },
+      h('div', { class: 'req-decision__answer-head' },
+        h('span', { class: 'req-decision__pair small muted' }, 'Ваш ответ'),
+        h('span', {
+          class: 'chip chip--' + answer.tone + ' req-decision__state',
+          title: 'Статус ответа: ' + answer.label + ' — ' + answer.hint,
+        }, answer.label)),
+      answer.text ? h('div', { class: 'req-decision__atext' }, String(answer.text)) : null,
+      at ? h('div', { class: 'muted req-q__when' }, 'отвечено ' + timeAgo(at)) : null);
+    if (reaction && reaction.text) {
+      block.appendChild(h('div', { class: 'req-q__reaction' },
+        h('div', { class: 'req-q__reaction-head' },
+          icon('comment-discussion', { size: 12 }),
+          h('span', { class: 'req-q__cap' }, 'Руководитель'),
+          Number(reaction.at) ? h('span', { class: 'muted req-q__when' }, timeAgo(Number(reaction.at))) : null),
+        h('div', { class: 'req-q__reaction-text' }, String(reaction.text)),
+        cards.length
+          ? h('div', { class: 'req-q__cards' }, cards.map((id) => h('span', {
+            class: 'req-q__card tnum', title: 'Карточка, которой коснулся ответ: ' + id,
+          }, String(id))))
+          : null));
+    } else if (answer.pending) {
+      block.appendChild(h('div', { class: 'req-decision__pending' },
+        h('span', { class: 'req-q__pending-label' },
+          icon('clock', { size: 12 }),
+          h('span', null, answer.overdue
+            ? 'руководитель ещё не ответил — ждём' : 'руководитель ещё не ответил'))));
+    }
+    return block;
+  }
+
   function decisionRow(d) {
-    const status = d.status || 'proposed';
-    const chip = status === 'accepted'
-      ? h('span', { class: 'chip chip--ok' }, 'принято')
-      : status === 'rejected'
-        ? h('span', { class: 'chip chip--muted' }, 'отклонено')
-        : h('span', { class: 'chip chip--warn' }, 'предложено');
-    return h('div', { class: 'req-decision', 'data-key': 'dec' + String(d.id || '') },
+    const status = decisionStatusOf(d);
+    const answer = decisionAnswerOf(d);
+    const row = h('div', {
+      class: 'req-decision req-decision--' + status.key,
+      'data-key': 'dec' + String(d.id || ''),
+      'data-decision-id': String(d.id || ''),
+      'data-decision-status': status.key,
+    },
       h('div', { class: 'req-decision__top' },
         h('div', { class: 'req-decision__text' }, d.text || ''),
-        chip),
+        h('span', {
+          class: 'chip chip--' + status.tone + ' req-decision__status', title: status.hint,
+        }, status.label)),
       d.why ? h('div', { class: 'req-decision__why' }, d.why) : null);
+    if (answer) row.appendChild(decisionAnswerBlock(d, answer));
+    // Действия — только пока решение ждёт слова Михаила (B-20: «предложено»).
+    if (decisionOpen(d)) row.appendChild(decisionActionsRow(d));
+    return row;
   }
 
   function decisionsCard(decisions) {
@@ -501,6 +635,7 @@ export function createAside(R) {
       name: 'decisions',
       title: 'Решения',
       count: countNoun(decisions.length, ['решение', 'решения', 'решений']),
+      hint: 'Принятые и отклонённые решения. Статус ответа — «отправлен → прочитал → учтено».',
       defaultOpen: false,
       className: 'req-decisions-card',
       key: 'blk-decisions',
@@ -611,8 +746,8 @@ export function createAside(R) {
 
     const openQs = questions.filter((q) => q && qOpen(q));
     const answeredQs = questions.filter((q) => q && !qOpen(q) && (q.answer || q.answered));
-    const openDecisions = decisions.filter((d) => d && (d.status || 'proposed') === 'proposed');
-    const closedDecisions = decisions.filter((d) => d && (d.status || 'proposed') !== 'proposed');
+    const openDecisions = decisions.filter((d) => d && decisionOpen(d));
+    const closedDecisions = decisions.filter((d) => d && !decisionOpen(d));
     // Заблокированные задачи этой ветки: тот же источник, что у вкладки «Дальше».
     let blocked = [];
     try { blocked = blockedCards([detail]); } catch { blocked = []; }

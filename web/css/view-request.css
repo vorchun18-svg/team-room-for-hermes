@@ -643,6 +643,42 @@
 .req-decision__text { flex: 1 1 auto; font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
 .req-decision__why { margin-top: 4px; color: var(--muted-foreground); font-size: var(--text-sm); line-height: var(--leading-normal); }
 
+/* W19-D2 (B-20, B-21): действия над решением и цепочка ответа.
+   Решение было только текстом — теперь у него те же три действия, что у вопроса
+   и шага, и видимый статус ответа руководителю. */
+.req-decision__top { flex-wrap: wrap; }
+.req-decision__status { flex: 0 0 auto; height: auto; min-height: 21px; padding: 2px 7px; white-space: normal; line-height: 1.25; max-width: 100%; text-align: left; }
+.req-decision__actions { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-2); }
+.req-decision__act { min-width: 0; }
+.req-decision__hint { display: flex; align-items: flex-start; gap: 5px; margin: 0 0 var(--space-2); line-height: var(--leading-normal); }
+.req-decision__hint .codicon { font-size: 12px; margin-top: 2px; flex: 0 0 auto; }
+.req-decision__answer {
+  display: flex; flex-direction: column; gap: 3px;
+  margin-top: var(--space-2); padding-top: var(--space-2);
+  border-top: 1px solid var(--border-soft); min-width: 0;
+}
+.req-decision__answer-head { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-2); }
+.req-decision__pair { flex: 0 0 auto; }
+.req-decision__state { flex: 1 1 auto; height: auto; min-height: 21px; padding: 2px 7px; white-space: normal; line-height: 1.25; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
+.req-decision__atext { color: var(--ui-text-secondary); font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.req-decision__pending { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.req-decision__pending .codicon { font-size: 12px; }
+.req-decision--accepted .req-decision__text,
+.req-decision--rejected .req-decision__text { color: var(--ui-text-secondary); }
+
+/* Окно «Отклонить»/«Обсудить» (decision-dialog.js): решение, подсказка, поле с
+   диктовкой (микрофон ставит dictation-auto.js перед кнопкой действия). */
+.decdlg { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.decdlg__body { display: flex; flex-direction: column; gap: var(--space-3); overflow: auto; }
+.decdlg__decision { display: flex; flex-direction: column; gap: 3px; padding: var(--space-2) var(--space-3); background: var(--ui-bg-tertiary); border-radius: var(--radius-sm); }
+.decdlg__cap { font-size: var(--text-2xs); font-weight: 600; }
+.decdlg__text { font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.decdlg__why { overflow-wrap: anywhere; }
+.decdlg__hint { line-height: var(--leading-normal); }
+.decdlg__input { width: 100%; min-height: 96px; resize: vertical; }
+.decdlg__note { line-height: var(--leading-normal); }
+.decdlg__foot { display: flex; justify-content: flex-end; gap: var(--space-2); flex-wrap: wrap; }
+
 /* Будущие вопросы */
 .req-future { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-2) 0; border-top: 1px solid var(--border-soft); }
 .req-future:first-child { border-top: 0; padding-top: 0; }

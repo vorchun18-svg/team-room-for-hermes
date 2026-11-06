@@ -69,7 +69,7 @@
 
 * `Host` обязателен и должен быть одним из: `127.0.0.1:<port>`, `localhost:<port>`, `[::1]:<port>`. Иначе `403 forbidden` (`detail.reason = "bad_host"`).
 * Для `POST/PATCH/DELETE` проверяется `Origin`: если заголовок есть, он должен быть `http://127.0.0.1:<port>` или `http://localhost:<port>`; иначе `403` (`detail.reason = "bad_origin"`). Отсутствующий `Origin` (curl, тесты) допускается.
-* `GET /api/file` — только из белых корней (`data/`, `C:\TeamRoom\Vault`, `C:\TeamRoom\Team`, `C:\TeamRoom\Agents`, `%LOCALAPPDATA%\hermes\kanban\boards\*\workspaces`) после `realpath`; чёрный список: `.env`, `auth.json`, `*token*`, `*secret*`, `*.session`, `google_*`. Нарушение → `403 forbidden`.
+* `GET /api/file` — только из белых корней (`data/`, `C:\TeamRoom\Vault`, `C:\TeamRoom\Team`, `C:\TeamRoom\Agents`, `%LOCALAPPDATA%\hermes\kanban\boards\*\workspaces`) после `realpath`; чёрный список: `.env`, `auth.json`, `*token*`, `*secret*`, `*.session`, `google_*`. Нарушение → `403 forbidden`. С `?room=<id>` к корням добавляются папка проекта этой комнаты (после проверки, что она не системная и не внутри Hermes) и её зеркало в Vault — для артефактов карточки (WAVE19, B-22).
 * HTML-отчёты и пользовательский HTML отдаются только в `<iframe sandbox="allow-scripts">`; сервер добавляет к `text/html` заголовок `Content-Security-Policy: default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'`.
 * `POST /api/open` вызывает `explorer /select,<path>` только для путей из белого списка.
 
@@ -134,7 +134,7 @@
 | `created_at` | int | epoch |
 | `archived` | bool | в архиве |
 
-`Member`: `{profile, role: "worker"|"critic"|"observer", note, pinned: bool, added_at: int}`.
+`Member`: `{profile, role: "worker"|"critic"|"observer", note, pinned: bool, added_at: int}`. `pinned` — «всегда в составе» (меняется `PATCH …/members/{profile}`); у руководителя и критика закрепления нет — они в комнате по настройкам, в интерфейсе это текст «обязательная роль».
 `role` — роль в комнате. Директор (`orchestrator`) в `members` не входит; критик входит с `role:"critic"` и дублирует `room.critic` (это позволяет держать в комнате второго критика с той же ролью). `POST /api/rooms/{id}/members` не принимает директора и текущего `room.critic` — они меняются через `PATCH`.
 
 `RoomSummary` = `{id, title, icon, archived, orchestrator, critic, members_count, project_dir, mode_default, critic_pass, max_rounds, critic_mode, critic_round_cap, launch_mode, max_parallel_streams, project_mode, phases, counters, phase, updated_at}`:
@@ -196,7 +196,7 @@
 | `next_steps` | `NextStep[]` | 3–7 шагов (+ связь с вопросом и метки ответа, W14-D §4) |
 | `open_questions` | `OpenQuestion[]` | вопросы Михаилу/профилю (+ статус ответа и реакция руководителя, W14-D §1–§3) |
 | `answers` | `{items, summary, pending_label, waiting_label, conflict_label, cancelled_label}` | сводка ответов на вопросы (W14-D): «вопрос — ваш ответ», статусы, конфликты шагов |
-| `decisions` | `Decision[]` | решения |
+| `decisions` | `Decision[]` | решения (действия «Принять/Отклонить/Обсудить», статус и цепочка ответа — W19-D2 §1–§2) |
 | `stage` | `Stage` | этап проекта |
 | `future_questions` | `string[]` | вопросы «на будущее» |
 | `artifacts` | `Artifact[]` | файлы работы |
@@ -281,19 +281,42 @@
 префиксы «Не к спеху:», скобочные уточнения). В `open_questions` такой вопрос один, остальные id — в
 `aliases`; ответ, данный на любой из id, закрывает все. `answered`/`answer_state` считаются по реестру
 ответов — он единственный источник истины статуса.
-`answer_state`: `open` (нет ответа) | `waiting_explanation` (встречный вопрос: **вопрос не закрыт**, в т.ч. старые записи реестра, распознанные по тексту) | `sent` (ответ отправлен, руководитель ещё не ответил) | `received` (принят) | `applied` (учтено, работа пересмотрена) | `no_change` (менять не нужно). `answer_label` — то же по-русски.
-`reaction = {text, at, status, cards: t_…, author, author_label, implicit, task_id}|null` — реакция руководителя из ветки: `[Руководитель · реакция на ответ q_x] …`; `implicit=true`, если метки не было и связь найдена по id вопроса в тексте.
+`answer_state` — цепочка статуса ответа (W19-D2 §2, B-21): `open` (нет ответа) | `waiting_explanation` (встречный вопрос: **вопрос не закрыт**) | `sent` — «ответ отправлен» | `received` — «руководитель прочитал» | `applied` — «учтено: изменено N карточек» | `no_change` — «учтено: менять ничего не нужно». `answer_label` — то же по-русски (`state_label` подставляет число карточек: «учтено: изменено 2 карточки»); `answer_hint` — подсказка «что значит» для этого состояния; `answer_chain_hint` — расшифровка всей цепочки.
+Исход реакции задаёт **руководитель** в метаданных своей карточки: `metadata.reaction = {question_id|decision_id, outcome: "read"|"applied"|"no_change", cards?: ["t_…"], changes?: int, text?}` (первая дорога чтения, `answers.reactions_from_tree`). Комментарий реакции без исхода (`[Руководитель · реакция на ответ q_x] …` или с меткой `outcome=…`) — запасная дорога для старых записей: тогда `reaction.guessed=true`.
+`reaction = {text, at, status, label, cards: t_…, changes, outcome, guessed, source: "metadata"|"thread", author, author_label, implicit, task_id}|null`.
 `leader_pending=true` + `can_remind=true` → «руководитель ещё не ответил» и кнопка «Напомнить руководителю» (`answer_remind`); `reaction_waited_s` — сколько секунд ждём, `reaction_overdue=true` — реакции нет дольше «разумного времени» (180 с). `answer_changes_done=true` — ответ изменил уже сделанное (в реакции есть карточки).
 
-`Decision`: `{id, text, why: string|null, status: "proposed"|"accepted"|"rejected", at: int|null, source_request: string}`. `id` — `d_1…`.
+`Decision` (W19-D2 §1, B-20): `{id, text, why: string|null, status: "proposed"|"accepted"|"rejected"|"discuss", at: int|null, source_request: string, open: bool, status_label, status_hint, status_source: "user"|"leader", answered: bool, answer_action: "accept"|"reject"|"discuss"|null, answer_action_label, answer_text: string|null, answered_at: int|null, answer_state, answer_label: string|null, answer_hint, reaction, leader_pending: bool, can_remind: bool, reaction_waited_s, reaction_overdue: bool, actions: [{action, label, hint, current}]}`. `id` — `d_<hash8>` от текста.
+`open=true` — решение ждёт слова Михаила (`proposed` — ещё не отвечено, `discuss` — он попросил обсудить, слово всё ещё за ним). «Принять»/«Отклонить» ставят `status=accepted|rejected`, `open=false`, и решение **сразу уходит** из «Нужен ваш ответ» и из счётчиков (деталь запроса, вкладка «Дальше», боковое меню) — по данным реестра ответов, без перезаписи файлов.
+`status_source` — кто закрыл решение: `user` (Михаил кнопкой) или `leader` (руководитель отметил в metadata); у второго `status_label` — «принято/отклонено руководителем».
+`answer_state`/`answer_label`/`answer_hint`/`reaction` — та же цепочка, что у вопросов (см. `OpenQuestion`): «ответ отправлен → руководитель прочитал → учтено (изменено N карточек / менять ничего не нужно)». Запись ответа лежит в реестре запроса: `answers[d_x] = {kind: "decision", decision_id, decision_text, action, outcome, text, user_text, at, answered, status: "sent"}`.
+`decision_actions` (на уровне детали) — `{labels, hints, status_labels, chain_hint}`: подписи действий и расшифровка цепочки одним источником, чтобы интерфейс не придумывал свои слова.
 
 `Stage`: `{current: string|null, phases: StagePhase[]}`; `StagePhase` = `{id, title, status: "done"|"active"|"next"|"blocked", note: string}`.
 **Этапы принадлежат комнате** (W17-R §1, B-8): список, порядок и заголовки — из `Room.phases`; списка этапов в коде нет. У комнаты без этапов `stage` — `{current: null, phases: []}` (полоса этапов и чип «этап» не показываются).
 Статус и `note` берутся из metadata ответа: этап комнаты сопоставляется с этапом из ответа по `id`, а если не совпал — по названию (старые ответы называли этапы словами). Этапы, которых комната не объявила, в ответ не попадают.
 `current` = `current` ответа, если он есть среди этапов комнаты; иначе первая фаза со статусом `active|blocked`, иначе последняя `done`, иначе первая `next`, иначе `null`.
 
-`Artifact`: `{path, title, kind, exists: bool, size: int|null}`.
+`Artifact`: `{path, title, kind, exists: bool, size: int|null, state: "ok"|"missing"|"outside"|"denied", outside_project: bool, reason: string|null}`.
 `kind`: `md|json|html|csv|image|pdf|docx|xlsx|pptx|other` (по расширению; неизвестное → `other`). `size` — байты, `null` если файла нет.
+
+**Где ищется файл (WAVE19, B-22).** Для артефактов запроса корни — общие (`data/`, Vault, `Team`,
+`Agents`, `workspaces`, `TEAMROOM_EXTRA_ROOTS`) **плюс папка проекта ЭТОЙ комнаты** (`Room.project_dir`,
+только после проверки `project_dir.check_dir`: системные каталоги, каталог Hermes, каталог программы и
+`data/` не допускаются) **и зеркальная папка комнаты в Vault** (`<vault_dir>/<room.id>`).
+Раньше папка проекта не входила в белый список, и файлы внутри неё показывались как «файл не найден»,
+хотя лежали на диске.
+
+`state`:
+* `ok` — файл есть и лежит в разрешённом месте;
+* `missing` — файла нет по этому пути: «Файл удалён или перемещён» (не «недоступен»);
+* `outside` — файл есть, но сохранён **вне** папки проекта и вне зеркала комнаты: `exists=true`,
+  `outside_project=true`, в `warnings` — `artifact_outside` («Файл сохранён вне папки проекта: …»),
+  в журнал комнаты добавляется одна запись на файл (`action: "artifact_outside"`). Файл не блокируется
+  и не переносится — он открывается, но с предупреждением;
+* `denied` — файл есть, но открыть нельзя (имя или тип в чёрном списке): `exists=false`, `reason`,
+  предупреждение `artifact_denied`.
+`reason` — готовая фраза для интерфейса (`null` при `state="ok"`).
 
 `ReportRef`: `{available: bool, kind: "spec"|"html"|null, path: string|null, title: string|null}`.
 `path` — абсолютный путь к `report.json`/`report.html`; `available=false` при `kind=null,path=null,title=null`.
@@ -328,7 +351,7 @@
 `actor` — профиль, `"mikhail"` или `"system"`; `text` — короткая русская строка.
 `heartbeat` («Признак жизни») — технический шум: по умолчанию не отдаётся, его счётчик и время — в `RequestDetail.heartbeats` (W17-B).
 
-`Warning` = `{code, message, detail?}`; коды: `legacy_metadata`, `missing_artifact`, `no_synthesis`, `report_invalid`, `schema_drift`, `partial_ingest`, `dispatcher_down`, `card_failed`, `outside_room` (ребёнок назначен профилю вне состава комнаты), `critic_failed` (карточка критика упала), `critic_rounds_exhausted` (лимит раундов исчерпан, ответ отдаётся как есть).
+`Warning` = `{code, message, detail?}`; коды: `legacy_metadata`, `missing_artifact`, `no_synthesis`, `report_invalid`, `schema_drift`, `partial_ingest`, `dispatcher_down`, `card_failed`, `outside_room` (ребёнок назначен профилю вне состава комнаты), `critic_failed` (карточка критика упала), `critic_rounds_exhausted` (лимит раундов исчерпан, ответ отдаётся как есть), `artifact_outside` (файл сохранён вне папки проекта и вне зеркала комнаты — WAVE19 B-27), `artifact_denied` (файл есть, но его имя или тип открывать нельзя — WAVE19 B-22).
 
 ### 3.5 `TeamMember`, `Roadmap`, `BacklogItem`, `ReportIndexItem`, `JournalEvent`, `SearchHit`, `Profile`
 
@@ -669,9 +692,52 @@ stale_days: 30, entry_hint: 1000}` (отдаются в ответах `GET …/
 Журнал комнаты: `agent_notes_log` (поле комнаты, отдаётся в `GET /api/rooms/{id}`),
 новые события сверху, ≤ 200. Событие: `{id, at, action, profile, entry_id, text, why,
 origin, actor, source, note, rolled_back, before[], after[]}`, `action` —
-`add | update | remove | merge | review | replace | pinned | unpin | rollback`.
+`add | update | remove | merge | review | replace | pinned | unpin | rollback` +
+`artifact_outside` (B-27: файл вне папки проекта), `leader_review` и `leader_reminder`
+(B-35, ниже).
 Каждое событие можно откатить: возвращаются записи из `before`, закреплённые записи,
 добавленные позже, сохраняются.
+
+##### Отметка «оценил работу» и одно напоминание (WAVE19 B-35)
+
+Обязанность руководителя после каждого завершённого запроса: оценить работу участников,
+решить, нужна ли запись в «Особенности», и оставить отметку в `metadata` своей карточки
+(`leader_review`). Текст обязанности приложение пишет само — блок «Правила комнаты»
+в контракте карточки (вместе с правилом мест сохранения файлов, B-27/B-34).
+
+Приложение (watcher, раз в тик) делает две вещи:
+
+1. **Отметка → журнал.** Нашёл `metadata.leader_review` в дереве запроса (корень или
+   карточка доработки; блок читается и из `metadata.extra`, куда попадают незнакомые ключи
+   после нормализации) — пишет событие журнала комнаты:
+
+```
+{action: "leader_review", source: "leader", profile: "<руководитель>",
+ at, text: "оценил работу участников; добавил 2 записи (biz-lawyer, default)",
+ why: "добавил 2 записи", note: "<summary>",
+ key: "leader_review:<hash12>", root_id, outcome: "no_change"|"note_added",
+ outcome_ru, profiles: [профиль], added: [{profile, text}], count: N}
+```
+
+   `action_ru` в `journal()` — «оценка работы руководителем». На запрос — одна отметка:
+   повторный проход возвращает то же событие (`key` = комната + корень).
+
+2. **Отметки нет → ОДНО напоминание.** Не раньше `DUTY_GRACE_S` (180 с) после завершения
+   приложение пишет комментарий на корневую карточку от профиля руководителя:
+   `[Комната команды · проверка работы] …` (что сделать и как оформить `leader_review`).
+   Это обычный комментарий — карточек «Уточнение» не создаётся, модели не запускаются,
+   вопросов Михаилу не задаётся. Ретро-рассылки нет: запросы, завершённые до запуска приложения
+   (и раньше чем за `DUTY_START_LOOKBACK_S` = 900 с до него), не трогаются — обязанность касается
+   новых завершений; если время завершения неизвестно, напоминания тоже нет. Повторно
+   напоминание не ставится: событие
+   `leader_reminder` (`key`, `root_id`, `version`, `source: "auto"`) и метка в тексте
+   комментария проверяются до записи. Появившаяся позже отметка снимает обязанность и
+   второго напоминания не будет.
+
+Служебные события (`leader_review`, `leader_reminder`, `artifact_outside`) записи участника не
+меняли, поэтому `POST …/notes/journal/{e}/rollback` для них отвечает `409 conflict`
+(`detail.action`) — иначе «откат» вернул бы пустой список и снёс записи. В интерфейсе кнопка
+«Откатить» у таких событий не показывается.
 
 `GET /api/rooms/{id}/notes` → `{ok, room, count, limits, participants: [{profile, role,
 entries, text, updated_at, review}]}`.
@@ -770,6 +836,10 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 Частичное обновление. Разрешены поля: `title, icon, orchestrator, critic, context_files, project_dir, mode_default, critic_pass, max_rounds, critic_mode, critic_round_cap, launch_mode, max_parallel_streams, project_mode, phases, agent_notes`.
 Настройки проектного режима меняются только здесь — общих режимов «для всех комнат» нет (A1); `id`, `board`, `tenant` неизменяемы.
 Пустой `launch_mode` (`""`) = рекомендуемый `plan_first`. PATCH не трогает `project_dir` и состав, если они не переданы.
+
+Окно настроек комнаты отправляет одним PATCH `project_mode`, `launch_mode`, `max_parallel_streams` и
+`phases` вместе с остальными полями — поэтому «Сохранить» в разделе «Проект» сохраняет и режим, и
+этапы, а карта проекта обновляется тем же ответом (`project_mode` читается обратно из `GET /api/rooms/{id}`).
 `200` → `RoomDetail`. `400 bad_request` — неизменяемое поле (`id`, `board`, `tenant`) или неизвестное (`detail.fields`), `mode_default="swarm"`, `max_rounds` вне 1..2, `critic_mode` не из `rounds|until_approved`, `critic_round_cap` вне 2..30. `404 not_found`. `409 conflict` — `orchestrator`/`critic` не из ростера. Отклонённая правка ничего не меняет (проверка до записи).
 
 #### `POST /api/rooms/{id}/archive`
@@ -784,6 +854,17 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 #### `DELETE /api/rooms/{id}/members/{profile}`
 `200` → `{ok: true, members: Member[]}`. `404 not_found` — нет комнаты/участника.
 `409 conflict` — профиль является `orchestrator` или `critic` комнаты (`detail.reason="room_lead"`): сначала смените директора через `PATCH`.
+
+#### `PATCH /api/rooms/{id}/members/{profile}`
+Закрепление участника в составе (волна 19, B-28): `{pinned: bool}`. Флаг `pinned` — «всегда в составе»:
+участник остаётся в комнате, даже если задачи давно не приходят. Меняется только реестр комнаты
+(`data/rooms.json`); профиль Hermes (`profile.yaml`, `SOUL.md`, `config.yaml`) не трогается.
+В интерфейсе это пункт меню «⋯» карточки участника («Закрепить в составе / Открепить») с пояснением;
+на лице карточки значка больше нет. Руководитель комнаты и критик закреплены всегда — на карточке
+у них одинаковая подпись «обязательная роль», а не отдельный значок.
+`200` → `{ok: true, profile, pinned, members: Member[]}`. `400 bad_request` — нет поля `pinned` или оно не bool.
+`404 not_found` — нет комнаты/участника. `409 conflict` — `orchestrator` или `critic` комнаты
+(`detail.reason="mandatory_role"`).
 
 ### 6.3 Запросы
 
@@ -850,6 +931,7 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 | `answer` | `question_id`, `text` (1..8000), `need_explanation?` (bool) | **Ответ на конкретный вопрос** (W14-D §1–§4): комментарий с меткой `[Михаил · ответ на вопрос q_x «текст вопроса»]` + `unblock` блокирующих детей; в ветке появляется запись `kind="answer"` со ссылкой на вопрос; руководителю создаётся (или дописывается) карточка «Уточнение» с контрактом реакции. Запись в реестре: `answers[q_id] = {text, at, answered, status, question_text, steps_at_answer, unblocked, cancelled_steps?}`. Статус `sent`, пока руководитель не отреагировал. При ответе-отказе («нет/не нужно») связанные шаги снимаются («снят по вашему ответу»). `need_explanation:true` (кнопка «Мне нужно пояснение») → **вопрос остаётся открытым** (`answered:false`, `answer_state:"waiting_explanation"`); текст-просьба без кнопки («поясни…») считается ОБЫЧНЫМ ОТВЕТОМ (W17-B §2, аудит B5) | `{question: OpenQuestion, answer: {question_id, text, at, state, label, needs_explanation}, steps: {cancelled: string[], cancelled_label}, unblocked: string[], note?: {task_id, merged, routed_to}}` | `400` (`need_explanation` не bool), `404` (`detail.question_id`), `409` уже отвечен (кроме встречного вопроса — на него можно ответить снова) |
 | `answer_remind` | `question_id` | **«Напомнить руководителю»** (W14-D §2): короткий сигнал в ветку `[Михаил · напоминание] …` на корень и в открытую карточку «Уточнение»; отметка `reminded_at`/`reminders` в реестре. Реакция ищется ТОЙ ЖЕ функцией, что в окне вопроса (B-12): только от руководителя комнаты и только ПОСЛЕ ответа | `{question_id, reminded_at, reminders, text, routed_to, reaction: null, question}` | `404` ответа на вопрос нет. `409` руководитель уже отреагировал — `detail: {reason: "already_answered", question_id, answer: {question_id, text, at, state, label}, reaction: {text, at, status, label, cards, implicit, author}, reaction_label, question}`: ответ и найденная реакция приходят ВМЕСТЕ с ошибкой, чтобы окно показало их, а не пустое «уже ответил» |
 | `answers_resend` | — | **«Отправить руководителю накопленные ответы»** (W17-B, только по клику): одним сообщением в ветку `[Михаил · накопленные ответы] …` и одной карточкой «Уточнение» руководителю — все ответы без реакции, по порядку вопросов, со ссылками `q_…` на каждый вопрос и требованием отреагировать на каждый. Автоматически (по таймеру/при открытии) не отправляется никогда: это запускает настоящего агента. Отметка `resent_at`/`resend_count` в реестре ответов | `{sent: int, question_ids: string[], task_id, at, note?: {task_id, merged, routed_to}}` | `409` нечего отправлять (`detail.reason=\"nothing_to_resend\"`, `detail.pending=0`) |
+| `decision` | `decision_id` (`d_…` или `<rid>:d_…`), `decision` (`accept`\|`reject`\|`discuss`), `text?` (1..12000; для `discuss` обязателен) | **«Принять» / «Отклонить» / «Обсудить» решение** (W19-D2 §1, B-20): в ветке — метка `[Михаил · решение d_x «текст решения»] Принять: …`, запись в реестре `answers[d_x]` (`kind="decision"`), руководителю — карточка «Уточнение» с контрактом реакции (`metadata.reaction.decision_id/outcome`). Принятое/отклонённое сразу уходит из «Нужен ваш ответ» и из счётчиков; `discuss` оставляет решение за Михаилом (`open=true`). | `{decision_id, decision: Decision, message, action_label, answer_label, pending_label, chain_hint, note?: {task_id, merged, routed_to}}` | `400` (`decision` вне `accept/reject/discuss`, пустой текст у `discuss`, длинный текст), `404` решения нет (`detail.decision_id`) |
 | `step_drop` | `step_id` (`ns_…` или `<rid>:ns_…`) | **«Не согласен — убрать»** (W14-D §4, W14-H §12): шаг помечается убранным (`steps_dropped` + `step_actions` в реестре), снимается в бэклоге комнаты (`dismissed`), руководителю уходит `[Михаил · убрать шаг ns_x «…»]` | `{step_id, step: NextStep, dropped: string[], message, reaction_label: "шаг убран"}` | `400` кривой id, `404` шага нет |
 | `step_agree` | `step_id` | **«Согласен»** (W14-H §12): действие пользователя по шагу — ответ на ЭТОТ шаг. Метка в ветке `[Михаил · согласен с шагом ns_x «…»]`, запись `step_actions[ns_x] = {kind:"agree", at}`; статус шага не меняется (его ведёт руководитель), `reaction_label` = «руководитель ещё не ответил» до реакции | `{step_id, step: NextStep, message, reaction_label, pending_label, log}` | `400` кривой id, `404` шага нет |
 | `step_comment` | `step_id`, `text` (1..8000) | **«Прокомментировать»**: комментарий к шагу как ответ на него — `[Михаил · комментарий к шагу ns_x «…»] текст`; текст виден в `step.user_action.text` и в истории | `{step_id, step, message, reaction_label, pending_label, log}` | `400` нет текста/кривой id, `404` шага нет |
@@ -860,7 +942,7 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 | `critique` | — | запустить критика вручную (повторная проверка текущей версии); `round += 1` | `{round: int, critic_task_id: string, state: "reviewing"}` | `409` у комнаты нет критика (`detail.reason="no_critic"`), `409` ответа ещё нет |
 | `reassign` | `task_id`, `profile` | сменить исполнителя карточки; снимает `outside_room`, если профиль из состава комнаты | `{task: TaskNode}` | `400` не участник комнаты (`detail.available`), `404` нет карточки, `409` карточка done/archived |
 | `rework` | `task_id?`, `text` (1..8000) | «на доработку» конкретной карточки (по умолчанию — критик/корень) с указанием | `{task: TaskNode}` | `400`, `404`, `409` карточка archived |
-| `retry` | `task_id?` | перезапустить упавшие карточки | `{retried: string[]}` | `409` нет упавших |
+| `retry` | `task_id?`, `idempotency_key?` | перезапустить упавшие карточки. **Ключ идемпотентности (W19-T, B-25):** `idempotency_key` — случайный ключ одного нажатия (`^[A-Za-z0-9._:\-]{6,120}$`, клиент строит `retry-<task>-<время36>-<случайное>`). Повторная доставка того же ключа в пределах 120 с не запускает действие второй раз: сервер возвращает сохранённый ответ с `duplicate: true`. Другой ключ (новое нажатие) — новое действие. Без ключа работает как раньше (обратная совместимость) | `{retried: string[], duplicate?: true}` | `400` кривой `idempotency_key` (`detail.field="idempotency_key"`), `409` нет упавших |
 | `archive` | — | архивировать корень и детей | `{archived: string[], changed: bool}` | `409` уже в архиве (`changed:false` не ошибка — `200`) |
 | `clone` | `title?` | новый запрос с тем же текстом и флагом критика | `{root_id, warning?}` + `201 Created` | `502` |
 
@@ -949,6 +1031,7 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 У каждого участника также `model_settings` (что выбрано, §6.11) и необязательное `model_sent` —
 «что реально ушло» у его последнего запуска в комнате (`{}`, если запусков не было): поля
 `provider, model, reasoning, label, text, confirmed, expected, mismatch, note` (§6.11).
+**W19 B-29:** `mismatch` — только если карточка ушла не на выбранную модель ПОСЛЕ последней смены модели участника. Если смена позже последнего запуска или в очереди уже есть карточка с верной моделью — `mismatch:false`, `pending:true` и `pending_text:"Новая модель применится со следующей задачи"`; рядом `changed_at` (когда меняли модель, из `agent_models[…].updated_at`), `run_at` (начало последнего запуска) и необязательное `queue: {id, status, created_at}` — та самая карточка в очереди с верной моделью. Интерфейс показывает `pending` спокойной строкой, без значка тревоги.
 `state=working` — есть активный run профиля; `waiting` — blocked-карточка или вопрос к нему. `404 not_found`.
 → `fixtures/team_cafe.json`
 
@@ -1023,11 +1106,25 @@ Query: `name` — имя файла (`engine.log`, `app.log`, `app.log.1`; по 
 `200` → `text/plain; charset=utf-8`, `Cache-Control: no-store`. Значения секретов маскируются: `password=`, `passwd=`, `pwd=`, `token=`, `secret=`, `api_key=`, `api-key=`, `access_key=`, `Authorization: Bearer …` → `***` (`server/http_util.mask_secrets`).
 `400 bad_request` — плохое `name`/`tail`. `403 forbidden` — путь вне `data/logs`. `404 not_found` — журнала нет.
 
-#### `GET /api/file?path=<абсолютный путь>`
+#### `GET /api/file?path=<абсолютный путь>[&room=<id комнаты>]`
 Отдача файла из белого списка. `200` — байты; `Content-Type` по расширению, `Content-Length`, `Content-Disposition: inline` (для `docx/xlsx/pptx` — `attachment`).
-`400 bad_request` — нет `path`. `403 forbidden` — вне корней или чёрный список (`detail.reason = "outside_roots"|"blacklisted"`). `404 not_found` — файла нет.
+`400 bad_request` — нет `path`. `403 forbidden` — вне корней или чёрный список (`detail.reason = "outside_roots"|"blacklisted"`). `404 not_found` — файла нет (с `room` текст «Файл удалён или перемещён»).
 Range-запросы не поддерживаются (всегда `200`, не `206`). SVG отдаётся `image/svg+xml` с `Content-Security-Policy: sandbox`. Для `docx/xlsx/pptx` — `Content-Disposition: attachment; filename="<имя>"`, для остальных — `inline`.
 Белый список корней: `data/`, `C:\TeamRoom\Vault`, `C:\TeamRoom\Team`, `C:\TeamRoom\Agents`, `%LOCALAPPDATA%\hermes\kanban\boards\*\workspaces`; дополнительно проверяются `realpath`, расширение (`.md .txt .json .csv .html .png .jpg .jpeg .gif .webp .svg .pdf .docx .xlsx .pptx .ics .log`) и чёрный список имён в последних 4 сегментах пути. Исходники `.py`, `.js`, `.css` через `/api/file` не отдаются.
+
+**`room` (WAVE19, B-22).** С параметром `room` белый список расширяется папкой проекта этой комнаты
+(после проверки `project_dir.check_dir`) и её зеркалом в Vault — так открываются артефакты карточки.
+Файл, который лежит **вне** этих мест, но прошёл отдельную проверку (настоящий файл, разрешённое
+расширение, не запрещённое имя ни в одном сегменте, не системный каталог, не каталог Hermes,
+не каталог программы и не `data/`), тоже отдаётся — интерфейс показывает к нему предупреждение
+`artifact_outside` (B-27). Без `room` — ровно прежнее поведение.
+
+#### `POST /api/artifacts/open`
+«Открыть / В проводнике» для файла карточки (WAVE19, B-22). Тело: `{path, room}`.
+`200` → `{ok: true, path, revealed: true}`. Проверки те же, что у `/api/file?room=…`:
+`400` — нет `path`/`room` или проводник не запустился; `403` — файл есть, но открыть нельзя
+(`detail.reason="blacklisted"`); `404` — комнаты нет или файла нет по этому пути
+(«Файл удалён или перемещён»). Журналы (`*.log`, `data/logs`) по-прежнему не открываются.
 
 #### `POST /api/open`
 «Открыть в проводнике». Тело: `{path, kind?, mkdir?}`.
@@ -1107,6 +1204,7 @@ Range-запросы не поддерживаются (всегда `200`, не
 | GET | `/api/file?path=` | байты | — |
 | GET | `/api/logs?name=&tail=` | `text/plain` (секреты маскируются) | — |
 | POST | `/api/open` | `{ok, revealed}` | — |
+| POST | `/api/artifacts/open` | `{ok, path, revealed}` — файл карточки с комнатой (`{path, room}`) | — |
 | GET | `/api/ics` | `text/calendar` | — |
 | GET | `/api/export/request/{rid}.md\|.html` | текст/HTML | — |
 | POST | `/api/rooms/{id}/consolidate` | `{request, root_id}` (201) | — |
@@ -1343,7 +1441,10 @@ agent_models = {"<профиль>": {provider:string, model:string, reasoning:st
     `model.default` тоже даёт пустую модель, а не чужую).
 
 `POST /api/rooms` и `PATCH /api/rooms/{id}` принимают `agent_models` (та же форма, что в поле
-комнаты; профили — только из состава комнаты, иначе `400`). Ошибки проверки — русский текст,
+комнаты; профили — только из состава комнаты, иначе `400`). Интерфейс правит модели **в карточке
+участника** на вкладке «Команда» (`PUT …/agents/{profile}/model`); окно настроек комнаты модели не
+меняет и при создании отправляет `agent_models: {}` — пока модель не выбрана в карточке, действует
+настройка профиля. Ошибки проверки — русский текст,
 `400`, тело `{error:{code:"bad_request",message,detail}}` как обычно.
 
 #### `PUT /api/rooms/{id}/agents/{profile}/model`
@@ -1380,6 +1481,16 @@ agent_models = {"<профиль>": {provider:string, model:string, reasoning:st
 `pending_running > 0` и работает `POST …/restart`. Изменение пишется в журнал комнаты
 (`kind: "model_changed"`, «Модель участника «…» изменена: провайдер · модель · мышление»).
 
+**Идущая карточка сменой модели не прерывается (W19-T, B-26).** В момент сохранения выбора
+приложение запоминает идущие карточки этого участника (`id` + время старта попытки) в
+`data/state/<комната>/model_pending.json`; сторож (`verify_started`, `POST …/models/check`)
+видит такую карточку, понимает, что она стартовала ДО смены, и не снимает её с работы — в ответе
+проверки она попадает в `pending: [{id, assignee, expected, actual, run_id, since}]`
+с формулировкой «новая модель применится со следующей задачи». Отметка снимается сама, когда
+у карточки появляется новая попытка (другое время старта): тогда расхождение снова считается
+настоящим и перехватывается как раньше. Явный `POST …/restart` отметку снимает сразу — это
+осознанное «перезапустить на новой модели, текущая работа будет прервана».
+
 `400 bad_request` — профиль не в составе комнаты; задана модель без провайдера; провайдер не
 настроен в Hermes («Провайдер «…» не настроен — в Hermes нет ключа»); модели нет в каталоге
 провайдера (если каталог провайдера непуст — иначе разрешена «своя модель»; в `detail` —
@@ -1410,14 +1521,19 @@ agent_models = {"<профиль>": {provider:string, model:string, reasoning:st
 `model_sent` — та же форма, что у узла дерева (§6.11 «RequestDetail»): `provider/model/reasoning`,
 готовая подпись `text`, `confirmed`, `expected`, `pinned`, `mismatch`, `note`. Факт берётся из
 сессии воркера профиля (`state.db`, `mode=ro`); нет подтверждения — `{}` у участника и запись
-карточки в `model_sent` с `confirmed:false`.
+карточки в `model_sent` с `confirmed:false`. У участника (вкладка «Команда») дополнительно
+`pending`, `pending_text`, `changed_at`, `run_at`, `queue` — расхождение только после смены модели, см. §6.4.
 
 #### `POST /api/rooms/{id}/models/check` — сверить и вернуть «не ту» карточку
 ```
 {fix?: bool}          // по умолчанию true — останавливать и возвращать
-200 → {ok, room, fix, checked, confirmed, mismatched: [{id, assignee, expected, actual, run_id}],
+`200` → {ok, room, fix, checked, confirmed, mismatched: [{id, assignee, expected, actual, run_id}],
+       pending: [{id, assignee, expected, actual, run_id, since}],
        fixed: [id], failed: [{id, reason}], unknown}
 ```
+`pending` — карточки, которые стартовали ДО смены модели: их работа не прерывается, новая модель
+применится со следующей задачи (W19-T, B-26); в `mismatched` они не попадают и `reassign --reclaim`
+для них не выполняется.
 Та же проверка, что сторож делает каждый тик: у идущих карточек (`running/review`) модель
 реального запуска сравнивается с выбором комнаты. Расхождение пишется в журнал комнаты
 (`kind: "model_changed"`, «Карточка … ушла на …, а в комнате выбрано …»); при `fix:true` карточка

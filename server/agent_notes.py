@@ -41,6 +41,10 @@
     render_block(cfg, room, limit=3000) -> str             # раздел для карточки
     comment_text(profile, text, *, updated=False) -> str   # одна строка с маркером
     ensure_comments(cfg, room, root_id) -> {written, skipped, errors}
+    record_leader_review(cfg, room, root_id, detail) -> событие | None   # B-35
+    leader_review_status(cfg, room, root_id) -> {done, mark, reminder}
+    log_leader_reminder(cfg, room, root_id, version=0) -> (событие, поставлено)
+    reminder_present(cfg, room, root_id) -> bool           # была ли уже метка напоминания
 
 Свойства: ничего не пишем в файлы профилей; комментарии — только через
 `engine_write` (CLI `hermes kanban`), только для карточек дерева запроса
@@ -77,7 +81,12 @@ SOURCES = ("user", "leader", "auto")
 SOURCE_RU = {"user": "Михаил", "leader": "руководитель комнаты", "auto": "автоматически"}
 ACTION_RU = {"add": "добавлено", "update": "изменено", "remove": "удалено",
              "merge": "объединено", "review": "переоценка", "replace": "заменено",
-             "rollback": "откат", "pinned": "закреплено", "unpin": "снято закрепление"}
+             "rollback": "откат", "pinned": "закреплено", "unpin": "снято закрепление",
+             # B-27 (WAVE19): файл карточки лежит не в папке проекта — только отметка
+             "artifact_outside": "файл вне папки проекта",
+             # B-35 (WAVE19): отметка «оценил работу» и одно напоминание руководителю
+             "leader_review": "оценка работы руководителем",
+             "leader_reminder": "напоминание руководителю"}
 
 MARKER_PREFIX = "[Указание комнаты · "
 UPDATED_MARK = "(обновлено)"
@@ -547,6 +556,362 @@ def journal(cfg, room_id, limit: int = 50) -> list:
     return out
 
 
+def log_artifact_outside(cfg, room_id, items) -> list:
+    """Отметить в журнале комнаты файлы, сохранённые вне папки проекта (B-27).
+
+    Одна запись на файл за всё время: повторные опросы страницы запроса новых
+    записей не добавляют (ключ хранится в событии). Файлы не трогаем и не
+    переносим, ничего не блокируем — только отметка для человека.
+    Ошибки записи не всплывают: журнал вторичен по отношению к показу запроса.
+    """
+    room = _room(cfg, room_id) if str(room_id or "").strip() else {}
+    if not room:
+        return []
+    log = _log_of(room)
+    have = {str(event.get("key") or "") for event in log}
+    fresh = []
+    for item in items or []:
+        path = str((item or {}).get("path") or "").strip()
+        if not path:
+            continue
+        raw = (str(room_id) + "|" + path.lower()).encode("utf-8")
+        key = "artifact_outside:" + hashlib.sha1(raw).hexdigest()[:12]
+        if key in have:
+            continue
+        have.add(key)
+        title = _one_line((item or {}).get("title") or "") or path.rsplit("/", 1)[-1]
+        fresh.append(_event("artifact_outside", text=path,
+                            why="Файл сохранён вне папки проекта: " + path,
+                            source="auto", note="Сохранён вне папки проекта: " + title,
+                            extra={"key": key, "path": path, "title": title}))
+    if not fresh:
+        return []
+    try:
+        _write(cfg, str(room_id), notes_of(room), ([*fresh, *log])[:MAX_LOG])
+    except Exception:  # noqa: BLE001 — реестр комнаты может быть недоступен на чтении
+        return []
+    return fresh
+
+
+# ------------------------------------------- оценка работы руководителем (WAVE19 B-35)
+
+#: журнал комнаты: «оценил работу» и одно напоминание руководителю
+LEADER_REVIEW_ACTION = "leader_review"
+LEADER_REMINDER_ACTION = "leader_reminder"
+LEADER_REVIEW_KEY = "leader_review:"
+LEADER_REMINDER_KEY = "leader_reminder:"
+#: исходы отметки: записей не нужно / записи в «Особенности» добавлены
+LEADER_REVIEW_OUTCOMES = ("no_change", "note_added")
+LEADER_REVIEW_RU = {"no_change": "оценил, записей не нужно", "note_added": "добавил записи"}
+MAX_REVIEW_ADDED = 12
+MAX_REVIEW_SUMMARY = 600
+#: события журнала, которые РЕАЛЬНО меняли записи участника (их можно откатить).
+#: WAVE19 B-35: `leader_review`, `leader_reminder`, `artifact_outside` записи не меняли —
+#: их откат вернул бы пустой список и снёс записи, поэтому запрещён.
+ROLLBACK_ACTIONS = ("add", "update", "remove", "merge", "review", "replace", "pinned", "unpin")
+
+#: метка комментария-напоминания: по ней видно и человеку, и агенту, что это приложение
+REMINDER_MARK = "[Комната команды · проверка работы]"
+
+_NO_CHANGE_WORDS = ("no_change", "nochange", "none", "nothing", "checked", "не нужно",
+                    "ничего", "не требу", "записей не")
+_NOTE_ADDED_WORDS = ("note_added", "added", "add", "добав", "записал")
+
+
+def _review_outcome(value) -> str:
+    """Исход отметки по-английски: ``no_change`` | ``note_added`` (неизвестное → '')."""
+    text = _one_line(value).lower()
+    if not text:
+        return ""
+    if any(word in text for word in _NO_CHANGE_WORDS):
+        return "no_change"
+    if any(word in text for word in _NOTE_ADDED_WORDS):
+        return "note_added"
+    return ""
+
+
+def _review_list(value) -> list[str]:
+    """Список профилей из отметки: строка «a, b» тоже принимается."""
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.replace(";", ",").split(",")]
+    elif isinstance(value, (list, tuple)):
+        parts = [_one_line(item.get("profile") if isinstance(item, dict) else item) for item in value]
+    else:
+        parts = []
+    out: list[str] = []
+    for part in parts:
+        if part and part not in out:
+            out.append(part)
+    return out[:MAX_REVIEW_ADDED]
+
+
+def _review_added(value) -> list[dict]:
+    """Что записано в «Особенности»: ``[{profile, text}]`` (не больше 12 записей)."""
+    items = value if isinstance(value, (list, tuple)) else ([value] if value else [])
+    out: list[dict] = []
+    for raw in list(items)[:MAX_REVIEW_ADDED]:
+        if isinstance(raw, dict):
+            profile = _profile(raw.get("profile") or raw.get("who") or raw.get("to"))
+            text = _one_line(raw.get("text") or raw.get("note") or raw.get("what"))
+            out.append({"profile": profile, "text": text[:MAX_REVIEW_SUMMARY]})
+        else:
+            text = _one_line(raw)
+            if text:
+                out.append({"profile": "", "text": text[:MAX_REVIEW_SUMMARY]})
+    return [item for item in out if item["profile"] or item["text"]]
+
+
+def _plural(count: int, forms: tuple[str, str, str]) -> str:
+    """«1 запись / 2 записи / 5 записей» — одна форма на все счётчики."""
+    n = abs(int(count or 0))
+    if n % 10 == 1 and n % 100 != 11:
+        return forms[0]
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return forms[1]
+    return forms[2]
+
+
+def parse_leader_review(meta) -> tuple[dict | None, list[str]]:
+    """Отметка «оценил работу» из metadata карточки → (mark|None, warnings).
+
+    Формат контракта: ``metadata.leader_review = {outcome: "no_change"|"note_added",
+    profiles[], added[{profile,text}], summary}``. Принимается и строка
+    «оценил, записей не нужно» (агенты пишут по-разному), и блок внутри ``extra``
+    (туда попадают незнакомые ключи при нормализации). Блока нет — не ошибка.
+    Никогда не бросает.
+    """
+    warnings: list[str] = []
+    if not isinstance(meta, dict):
+        return None, warnings
+    raw = meta.get("leader_review")
+    if raw is None:
+        extra = meta.get("extra")
+        if isinstance(extra, dict):
+            raw = extra.get("leader_review")
+    if raw in (None, "", [], {}):
+        return None, warnings
+    if isinstance(raw, str):
+        data: dict = {"summary": _one_line(raw)}
+        outcome_hint = _review_outcome(raw)
+        if outcome_hint:
+            data["outcome"] = outcome_hint
+    elif isinstance(raw, dict):
+        data = raw
+    elif isinstance(raw, (list, tuple)):
+        data = {"added": list(raw)}
+    else:
+        warnings.append("Отметка leader_review не разобрана: нужен объект или строка.")
+        return None, warnings
+    added = _review_added(data.get("added") or data.get("notes") or data.get("entries"))
+    profiles = _review_list(data.get("profiles") or data.get("assessed") or data.get("checked"))
+    for item in added:
+        if item["profile"] and item["profile"] not in profiles:
+            profiles.append(item["profile"])
+    given = _one_line(data.get("outcome") or data.get("result") or data.get("status"))
+    outcome = _review_outcome(given)
+    if not outcome:
+        outcome = "note_added" if added else "no_change"
+        if given:
+            warnings.append("Отметка leader_review: исход «%s» неизвестен — считаем «%s»."
+                            % (given[:60], LEADER_REVIEW_RU[outcome]))
+    count = len(added)
+    try:
+        count = max(count, int(data.get("count") or 0))
+    except (TypeError, ValueError):
+        count = len(added)
+    if outcome == "no_change":
+        count = 0
+    summary = _one_line(data.get("summary") or data.get("comment") or data.get("note"))
+    summary = summary[:MAX_REVIEW_SUMMARY]
+    if outcome == "no_change":
+        outcome_ru = LEADER_REVIEW_RU["no_change"]
+        text = "оценил работу участников; записей в «Особенности» не нужно"
+    else:
+        outcome_ru = ("добавил %d %s" % (count, _plural(count, ("запись", "записи", "записей")))
+                      if count else "добавил записи в «Особенности»")
+        text = "оценил работу участников; " + outcome_ru
+        if profiles:
+            text += " (" + ", ".join(profiles[:MAX_REVIEW_ADDED]) + ")"
+    if summary.strip().lower().rstrip(".") == outcome_ru.lower().rstrip("."):
+        summary = ""                     # «оценил, записей не нужно» уже сказано выше
+    if summary:
+        text += ". " + summary
+    return {"outcome": outcome, "outcome_ru": outcome_ru, "profiles": profiles,
+            "added": added, "count": count, "summary": summary,
+            "text": text[:MAX_TEXT]}, warnings
+
+
+def leader_review_key(room_id, root_id) -> str:
+    """Ключ отметки в журнале: одна отметка на запрос (комната + корень)."""
+    raw = ("%s|%s" % (str(room_id or ""), str(root_id or ""))).encode("utf-8")
+    return LEADER_REVIEW_KEY + hashlib.sha1(raw).hexdigest()[:12]
+
+
+def leader_reminder_key(room_id, root_id) -> str:
+    """Ключ напоминания: одно напоминание на запрос, повторные проходы молчат."""
+    raw = ("%s|%s" % (str(room_id or ""), str(root_id or ""))).encode("utf-8")
+    return LEADER_REMINDER_KEY + hashlib.sha1(raw).hexdigest()[:12]
+
+
+def _log_event(cfg, room_id, action: str, root_id, key: str = "") -> dict | None:
+    """Событие журнала нужного вида по этому запросу (или None). Реестр читаем один раз."""
+    if not str(room_id or "").strip():
+        return None
+    root = str(root_id or "")
+    for event in _log_of(_room(cfg, room_id)):
+        if str(event.get("action") or "") != action:
+            continue
+        if str(event.get("root_id") or "") == root or (key and str(event.get("key") or "") == key):
+            return dict(event)
+    return None
+
+
+def leader_review_of(cfg, room_id, root_id) -> dict | None:
+    """Отметка «оценил работу» из журнала комнаты (или None)."""
+    return _log_event(cfg, room_id, LEADER_REVIEW_ACTION, root_id,
+                      leader_review_key(room_id, root_id))
+
+
+def leader_reminder_of(cfg, room_id, root_id) -> dict | None:
+    """Напоминание, уже поставленное по этому запросу (или None)."""
+    return _log_event(cfg, room_id, LEADER_REMINDER_ACTION, root_id,
+                      leader_reminder_key(room_id, root_id))
+
+
+def log_leader_review(cfg, room_id, root_id, mark, *, actor: str = "") -> dict:
+    """Записать отметку «оценил работу» в журнал комнаты (идемпотентно).
+
+    Одна отметка на запрос: повторный вызов возвращает уже записанное событие и
+    ничего не добавляет. Ошибка входа — ``NotesError`` (роут/вызывающий решает).
+    """
+    mark = mark if isinstance(mark, dict) else {}
+    outcome = str(mark.get("outcome") or "")
+    if outcome not in LEADER_REVIEW_OUTCOMES:
+        raise NotesError("Отметка об оценке работы пуста или без исхода", "bad_request",
+                         {"field": "leader_review", "outcome": outcome})
+    existing = leader_review_of(cfg, room_id, root_id)
+    if existing:
+        return existing
+    room = _room(cfg, room_id)
+    event = _event(LEADER_REVIEW_ACTION,
+                   profile=_profile(actor) or _profile(room.get("orchestrator")),
+                   source="leader", text=mark.get("text") or "",
+                   why=mark.get("outcome_ru") or LEADER_REVIEW_RU[outcome],
+                   note=mark.get("summary") or "",
+                   extra={"key": leader_review_key(room_id, root_id),
+                          "root_id": str(root_id or ""), "outcome": outcome,
+                          "outcome_ru": mark.get("outcome_ru") or LEADER_REVIEW_RU[outcome],
+                          "profiles": list(mark.get("profiles") or []),
+                          "added": list(mark.get("added") or []),
+                          "count": int(mark.get("count") or 0)})
+    _write(cfg, str(room_id), notes_of(room), _with_event(room, event))
+    return event
+
+
+def record_leader_review(cfg, room_id, root_id, detail) -> dict | None:
+    """Найти отметку в metadata карточек запроса и записать её в журнал.
+
+    Отметку ставит руководитель в metadata своей карточки (корень или доработка),
+    поэтому ищем её по всему дереву и берём последнюю. Ничего не нашли — None
+    (тогда приложение один раз напомнит). Никогда не бросает.
+    """
+    if not str(room_id or "").strip() or not str(root_id or "").strip():
+        return None
+    try:
+        existing = leader_review_of(cfg, room_id, root_id)
+        if existing:
+            return existing
+        mark = None
+        for node in ((detail or {}).get("tree") or []):
+            if not isinstance(node, dict) or not isinstance(node.get("metadata"), dict):
+                continue
+            parsed, _warnings = parse_leader_review(node["metadata"])
+            if parsed:
+                mark = parsed
+        if not mark:
+            return None
+        lead = ""
+        try:
+            lead = _profile(_room(cfg, room_id).get("orchestrator"))
+        except Exception:  # noqa: BLE001 - реестр может быть недоступен на чтении
+            lead = ""
+        return log_leader_review(cfg, room_id, root_id, mark, actor=lead)
+    except Exception:  # noqa: BLE001 - журнал вторичен, тик ронять нельзя
+        return None
+
+
+def leader_review_status(cfg, room_id, root_id) -> dict:
+    """Состояние обязанности: есть ли отметка и было ли напоминание."""
+    try:
+        mark = leader_review_of(cfg, room_id, root_id)
+        reminder = leader_reminder_of(cfg, room_id, root_id)
+    except Exception:  # noqa: BLE001 - реестр недоступен → считаем «нет отметки»
+        mark, reminder = None, None
+    return {"root_id": str(root_id or ""), "done": bool(mark),
+            "mark": mark, "reminder": reminder,
+            "reminder_at": int((reminder or {}).get("at") or 0)}
+
+
+def reminder_text(room_title: str = "") -> str:
+    """Текст единственного напоминания руководителю (комментарий в ветке).
+
+    Пользователю вопросов не задаём: это служебная строка для руководителя, а не
+    сообщение Михаилу. Текст одинаков в приложении, песочнице и моке.
+    """
+    who = (" «%s»" % _one_line(room_title)) if _one_line(room_title) else ""
+    return ("%s Напоминание приложению руководителю комнаты%s: после завершения запроса нет "
+            "отметки, что работа участников оценена. Оцени качество работы каждого участника "
+            "(исполнителей, критика и себя) и реши, нужна ли запись в «Особенности» себе или "
+            "кому-то из них: запиши её сам (без согласования с Михаилом; его записи не удаляй) "
+            "или ничего не пиши. Потом оставь отметку в metadata своей карточки: "
+            "{\"leader_review\":{\"outcome\":\"no_change\",\"summary\":\"оценил, записей не нужно\"}} "
+            "или {\"leader_review\":{\"outcome\":\"note_added\",\"profiles\":[\"<профиль>\"],"
+            "\"added\":[{\"profile\":\"<профиль>\",\"text\":\"<что записано>\"}],"
+            "\"summary\":\"<одна строка>\"}}. Отвечать Михаилу не нужно; повторно напоминание "
+            "не придёт." % (REMINDER_MARK, who))
+
+
+def log_leader_reminder(cfg, room_id, root_id, *, version: int = 0,
+                        text: str = "") -> tuple[dict | None, bool]:
+    """Записать в журнал факт напоминания. ``(событие, поставлено_сейчас)``.
+
+    Одно напоминание на запрос: повторный проход возвращает прежнее событие и
+    ``False`` — второй комментарий не появится.
+    """
+    existing = leader_reminder_of(cfg, room_id, root_id)
+    if existing:
+        return existing, False
+    room = _room(cfg, room_id)
+    body = text or reminder_text(room.get("title") or room_id)
+    event = _event(LEADER_REMINDER_ACTION, source="auto", text=body,
+                   why="Нет отметки об оценке работы после завершения запроса",
+                   note="одно напоминание на запрос",
+                   extra={"key": leader_reminder_key(room_id, root_id),
+                          "root_id": str(root_id or ""), "version": int(version or 0)})
+    _write(cfg, str(room_id), notes_of(room), _with_event(room, event))
+    return event, True
+
+
+def reminder_present(cfg, room, root_id) -> bool:
+    """Напоминание уже стоит: в журнале или комментарием на корне (страховка)."""
+    room = room if isinstance(room, dict) else {}
+    room_id = str(room.get("id") or "")
+    try:
+        if leader_reminder_of(cfg, room_id, root_id):
+            return True
+    except Exception:  # noqa: BLE001 - реестр недоступен, проверим доску
+        pass
+    con = _connect(cfg, _board_of(cfg, room))
+    if con is None:
+        return False
+    try:
+        rows = _rows(con, "SELECT 1 FROM task_comments WHERE task_id = ? AND body LIKE ? LIMIT 1",
+                     (str(root_id or ""), REMINDER_MARK + "%"))
+    finally:
+        con.close()
+    return bool(rows)
+
+
 def _write(cfg, room_id, notes: dict, log: list | None = None) -> dict:
     """Записать указания (и журнал) комнаты одним обновлением реестра."""
     patch = {"agent_notes": notes}
@@ -926,6 +1291,12 @@ def rollback(cfg, room_id, event_id, *, actor: str = "", why: str = "") -> dict:
                          {"field": "event_id", "event_id": str(event_id)})
     if event.get("rolled_back"):
         raise NotesError("Это изменение уже откачено", "conflict", {"event_id": str(event_id)})
+    action = str(event.get("action") or "")
+    if action not in ROLLBACK_ACTIONS:
+        # WAVE19 B-35: отметка об оценке работы и служебные события записи не меняли —
+        # откат вернул бы пустой список и снёс записи участника.
+        raise NotesError("Это событие не меняло записи участника — откатывать нечего",
+                         "conflict", {"event_id": str(event_id), "action": action})
     target = _profile(event.get("profile"))
     if not target:
         raise NotesError("В событии нет участника — откатывать нечего", "bad_request",
@@ -1181,5 +1552,11 @@ __all__ = ["MAX_TEXT", "MAX_ENTRIES", "REVIEW_EVERY", "STALE_DAYS", "MAX_ENTRY_H
            "NotesError", "validate", "normalize", "notes_of", "entries_of", "entry_text",
            "participants", "role_ru", "secret_warnings", "mask_secrets", "new_id",
            "get", "set", "add", "update_entry", "remove_entry", "set_pinned",
-           "review", "touch_used", "journal", "rollback",
+           "review", "touch_used", "journal", "rollback", "log_artifact_outside",
+           # WAVE19 B-35: отметка «оценил работу» и одно напоминание руководителю
+           "LEADER_REVIEW_ACTION", "LEADER_REMINDER_ACTION", "LEADER_REVIEW_RU",
+           "LEADER_REVIEW_OUTCOMES", "REMINDER_MARK", "MAX_REVIEW_ADDED", "ROLLBACK_ACTIONS",
+           "parse_leader_review", "log_leader_review", "record_leader_review",
+           "leader_review_of", "leader_review_status", "leader_review_key",
+           "log_leader_reminder", "leader_reminder_of", "reminder_text", "reminder_present",
            "render_block", "comment_hash", "comment_text", "ensure_comments"]

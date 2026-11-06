@@ -102,7 +102,7 @@ class ReactionTimeTests(_B12Base):
         question = self.question_of(rid)
         self.assertEqual(question["answer_state"], "applied", question)
         self.assertEqual(question["reaction"]["cards"], ["t_e9c6c2b2"])
-        self.assertEqual(question["reaction"]["label"], "учтено: работа пересмотрена")
+        self.assertEqual(question["reaction"]["label"], "учтено: изменено 1 карточка")
 
     def test_remind_conflict_carries_answer_and_reaction(self):
         """«Уже ответил» никогда не приходит без показа ответа и реакции."""

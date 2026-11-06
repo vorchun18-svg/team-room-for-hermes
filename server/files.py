@@ -24,10 +24,11 @@ from urllib.parse import quote
 
 try:  # import server.files
     from . import proc
-    from .config import ALLOWED_EXT, Cfg, is_denied_name, path_allowed
+    from .config import (ALLOWED_EXT, Cfg, external_allowed, is_denied_name, path_allowed)
 except ImportError:  # python server/app.py (плоский импорт)
     import proc  # type: ignore
-    from config import ALLOWED_EXT, Cfg, is_denied_name, path_allowed
+    from config import (ALLOWED_EXT, Cfg, external_allowed, is_denied_name,  # type: ignore
+                        path_allowed)
 
 MAX_BYTES = 50 * 1024 * 1024
 
@@ -103,13 +104,13 @@ def safe_resolve(root, rel):
         return None
 
 
-def root_of(cfg: Cfg, path) -> Path | None:
+def root_of(cfg: Cfg, path, roots=None) -> Path | None:
     """Белый корень, внутри которого лежит путь (для ``safe_resolve``)."""
     try:
         target = Path(path).resolve(strict=False)
     except (OSError, ValueError):
         return None
-    for root in cfg.allowed_roots:
+    for root in (roots if roots is not None else cfg.allowed_roots):
         try:
             base = Path(root).resolve()
         except (OSError, ValueError):
@@ -174,13 +175,13 @@ def _disposition(path: Path, inline: bool) -> str:
         ascii_name, quote(name, safe=""))
 
 
-def _in_roots(cfg: Cfg, raw: str) -> bool:
+def _in_roots(cfg: Cfg, raw: str, roots=None) -> bool:
     """Лежит ли путь (даже ещё не существующий) внутри белых корней."""
     try:
         p = Path(raw).resolve(strict=False)
     except (OSError, ValueError):
         return False
-    for root in cfg.allowed_roots:
+    for root in (roots if roots is not None else cfg.allowed_roots):
         try:
             p.relative_to(Path(root).resolve())
             return True
@@ -189,11 +190,23 @@ def _in_roots(cfg: Cfg, raw: str) -> bool:
     return False
 
 
-def open_file(cfg: Cfg, path) -> tuple:
+def _isfile(raw: str) -> bool:
+    try:
+        return os.path.isfile(raw)
+    except (OSError, ValueError):
+        return False
+
+
+def open_file(cfg: Cfg, path, roots=None, allow_external: bool = False) -> tuple:
     """Отдать файл из белого списка.
 
     Возвращает ``(status, headers, body)``: при 200 ``body`` — ``Path``
     (сервер сам стримит, не держим 50 МБ в памяти), при ошибке — ``bytes``.
+
+    ``roots`` — корни артефактов комнаты (папка проекта и зеркало, B-22).
+    ``allow_external`` — показать файл, который лежит вне этих корней, но прошёл
+    отдельную проверку ``config.external_allowed`` (B-27: агент сохранил файл
+    в другом месте — показываем, но с предупреждением).
     """
     raw = "" if path is None else str(path).strip()
     if not raw:
@@ -201,22 +214,24 @@ def open_file(cfg: Cfg, path) -> tuple:
     if _suspicious(raw):
         return _err(403, "Путь содержит недопустимые символы.")
 
-    resolved = path_allowed(cfg, raw)
+    resolved = path_allowed(cfg, raw, roots=roots)
+    external = False
+    if resolved is None and allow_external:
+        resolved = external_allowed(cfg, raw)
+        external = resolved is not None
     if resolved is None:
         # вне корней — всегда 403 (не подтверждаем существование файла);
         # внутри корня: запрещённое имя/расширение — 403, отсутствие — 404
-        if not _in_roots(cfg, raw):
+        # Вне корней без явного разрешения на внешние файлы — 403 «вне разрешённых» ещё ДО проверки,
+        # существует ли файл: наличие постороннего файла не подтверждаем.
+        if not allow_external and not _in_roots(cfg, raw, roots=roots):
             return _err(403, "Файл вне разрешённых каталогов или запрещён к показу.")
-        try:
-            exists = os.path.isfile(raw)
-        except (OSError, ValueError):
-            exists = False
-        if exists:
+        if _isfile(raw):
             return _err(403, "Файл запрещён к показу: имя или тип вне белого списка.")
-        return _err(404, "Файл не найден.")
+        return _err(404, "Файл удалён или перемещён." if allow_external else "Файл не найден.")
+    root = root_of(cfg, resolved, roots=roots)
     # единая проверка чтения (resolve + корень + чёрный список + запрет исполняемого)
-    root = root_of(cfg, resolved)
-    checked = safe_resolve(root, resolved) if root is not None else None
+    checked = safe_resolve(root, resolved) if root is not None else (resolved if external else None)
     if checked is None:
         return _err(403, "Файл запрещён к показу: имя или тип вне белого списка.")
 
@@ -239,17 +254,26 @@ def open_file(cfg: Cfg, path) -> tuple:
     return 200, headers, resolved
 
 
-def reveal(cfg: Cfg, path) -> bool:
-    """«Открыть в проводнике»: ``explorer /select,<path>`` только для белых путей."""
+def reveal(cfg: Cfg, path, roots=None, allow_external: bool = False) -> bool:
+    """«Открыть в проводнике»: ``explorer /select,<path>`` только для белых путей.
+
+    ``roots``/``allow_external`` — как у ``open_file``: артефакты комнаты (B-22)
+    и файлы вне папки проекта (B-27) тоже открываются, с теми же проверками.
+    """
     raw = "" if path is None else str(path).strip()
     if not raw or _suspicious(raw):
         return False
-    resolved = path_allowed(cfg, raw)
+    resolved = path_allowed(cfg, raw, roots=roots)
+    external = False
+    if resolved is None and allow_external:
+        resolved = external_allowed(cfg, raw)
+        external = resolved is not None
     if resolved is None:
         return False
-    root = root_of(cfg, resolved)
-    if root is None or safe_resolve(root, resolved) is None:
-        return False            # запрещённые имена/типы, включая .exe/.bat/.lnk/.ps1
+    if not external:
+        root = root_of(cfg, resolved, roots=roots)
+        if root is None or safe_resolve(root, resolved) is None:
+            return False        # запрещённые имена/типы, включая .exe/.bat/.lnk/.ps1
     if sys.platform != "win32":
         return False
     try:

@@ -825,6 +825,45 @@ def set_member_label(cfg, room_id: str, profile: str, label: str) -> dict:
     raise RoomsError("Комната не найдена", "not_found", {"room": str(room_id)})
 
 
+def set_member_pinned(cfg, room_id: str, profile: str, pinned: bool) -> dict:
+    """«Закрепить в составе / Открепить» обычного исполнителя (W19 B-28).
+
+    Закрепление — флаг реестра комнаты: участник остаётся в составе, даже если
+    задачи давно не приходят. Руководитель комнаты и критик закреплены всегда
+    (они — настройки комнаты), поэтому для них операция отклоняется.
+
+    Возвращает `{profile, pinned, members}` — как ждёт `PATCH …/members/{profile}`.
+    """
+    profile = str(profile or "").strip()
+    value = bool(pinned)
+    path = _rooms_path(cfg)
+    with sf.lock_for(path):
+        data = _load(cfg)
+        for idx, room in enumerate(data["rooms"]):
+            if str(room.get("id")) != str(room_id):
+                continue
+            if profile and profile in (str(room.get("orchestrator") or ""),
+                                       str(room.get("critic") or "")):
+                raise RoomsError(
+                    "Руководитель комнаты и критик всегда в составе — их роль задаётся "
+                    "настройками комнаты", "conflict",
+                    {"reason": "mandatory_role", "profile": profile},
+                )
+            members = list(room.get("members") or [])
+            for pos, member in enumerate(members):
+                if str(member.get("profile")) != profile:
+                    continue
+                fresh = dict(member)
+                fresh["pinned"] = value
+                members[pos] = fresh
+                room["members"] = members
+                data["rooms"][idx] = room
+                _save(cfg, data)
+                return {"profile": profile, "pinned": value, "members": members}
+            raise RoomsError("Участник не найден", "not_found", {"profile": profile})
+    raise RoomsError("Комната не найдена", "not_found", {"room": str(room_id)})
+
+
 def remove_member(cfg, room_id: str, profile: str) -> dict:
     """Удалить исполнителя. Руководителя комнаты и критика удалить нельзя (сначала PATCH).
 

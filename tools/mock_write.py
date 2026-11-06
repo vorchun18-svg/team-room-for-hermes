@@ -26,6 +26,49 @@ if str(_SERVER_DIR) not in _sys.path:
 import answers as mock_answers            # noqa: E402  (server/answers.py, чистые функции)
 
 
+def apply_decision_overrides(detail: dict, rid: str, overrides: dict) -> dict:
+    """Наложить запомненные ответы Михаила на решения собранной детали (W19-D2, B-20).
+
+    Демо-деталь пересобирается на каждый GET, а в бэкенде ответ по решению лежит в
+    реестре (`answers[d_x]`). Без наложения «Принять» пропадало после обновления.
+    """
+    if not isinstance(detail, dict) or not isinstance(overrides, dict):
+        return detail
+    decisions = detail.get("decisions")
+    if not isinstance(decisions, list):
+        return detail
+    for decision in decisions:
+        if not isinstance(decision, dict):
+            continue
+        record = overrides.get(str(decision.get("id") or ""))
+        if isinstance(record, dict):
+            view = mock_answers.apply_decision(decision, record, None)
+            decision.update(view)
+    return detail
+
+
+def enrich_decisions(detail: dict) -> dict:
+    """W19-D2 (B-20, B-21): решения демо-детали — в форму API.
+
+    У решения должны быть `open`, статус с честной подписью (кто решил), действия
+    и цепочка ответа — те же поля, что отдаёт сервер (`routes_read._answers_view`).
+    """
+    if not isinstance(detail, dict):
+        return detail
+    decisions = detail.get("decisions")
+    if not isinstance(decisions, list):
+        return detail
+    detail["decisions"] = [mock_answers.apply_decision(d, None, d.get("reaction"))
+                           if isinstance(d, dict) else d for d in decisions]
+    detail.setdefault("decision_actions", {
+        "labels": dict(mock_answers.DECISION_ACTION_RU),
+        "hints": dict(mock_answers.DECISION_ACTION_HINT),
+        "status_labels": dict(mock_answers.DECISION_STATUS_RU),
+        "chain_hint": mock_answers.CHAIN_HINT,
+    })
+    return detail
+
+
 def answers_mod_apply(question: dict, record: dict) -> dict:
     """Наложить запись ответа на вопрос демо-данных (как бэкенд, без реестра).
 
@@ -216,6 +259,18 @@ class MockWrite:
         store = getattr(self, "step_overrides", None)
         return (store or {}).get(str(rid)) or {}
 
+    # W19-D2 (B-20): ответы по решениям — в памяти демо, как реестр бэкенда.
+    def _remember_decision(self, rid: str, decision_id: str, record: dict) -> None:
+        store = getattr(self, "decision_overrides", None)
+        if not isinstance(store, dict):
+            store = {}
+            self.decision_overrides = store
+        store.setdefault(str(rid), {})[str(decision_id)] = dict(record or {})
+
+    def decision_overrides_for(self, rid: str) -> dict:
+        store = getattr(self, "decision_overrides", None)
+        return (store or {}).get(str(rid)) or {}
+
     # W13-F (§8): итог «Проверить доску сейчас» для демо — вымышленные карточки
     def kick_report(self, preview: bool = False) -> dict:
         ready_card = {"id": "t_demo0001", "title": "Срез 02-Ops: смета упаковки", "assignee": "biz-ops",
@@ -248,6 +303,16 @@ class MockWrite:
             return 200, {"ok": True, "spawned": report["spawned"], "reclaimed": 0, "promoted": 0,
                          "planned": [], "max": report["max"], "report": report,
                          "dispatcher": {"ok": True, "state": "running", "warning": None}, "at": now()}
+        if path == "/api/artifacts/open":
+            # B-22 WAVE19: демо/мок ничего не запускает — только подтверждает приём
+            target = body.get("path") if isinstance(body, dict) else ""
+            room = str((body or {}).get("room") or "").strip() if isinstance(body, dict) else ""
+            if not isinstance(target, str) or not target.strip():
+                raise ApiError(400, "bad_request", "Нужен path", {"field": "path"})
+            if not room:
+                raise ApiError(400, "bad_request", "Нужен room", {"field": "room"})
+            self.room(room)
+            return 200, {"ok": True, "path": target.strip(), "revealed": True, "mock": True}
         if path == "/api/rooms/check-dir":
             return 200, self.check_dir(body)
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/entries", path)
@@ -334,6 +399,9 @@ class MockWrite:
         raise ApiError(404, "not_found", "Неизвестный эндпоинт", {"path": path})
 
     def patch(self, path: str, query: dict, body: dict) -> tuple:
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/members/([a-z0-9_.-]{2,40})", path)
+        if m:
+            return 200, self.pin_member(m.group(1), m.group(2), body or {})   # W19 B-28
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/entries/([A-Za-z0-9_-]{2,40})", path)
         if m:
             return 200, self.patch_note_entry(m.group(1), m.group(2), m.group(3), body or {})
@@ -644,6 +712,28 @@ class MockWrite:
         (room.get("agent_models") or {}).pop(profile, None)   # настройка ушедшего не хранится
         return {"ok": True, "members": [self.member_view(room, m) for m in room["members"]]}
 
+    def pin_member(self, room_id: str, profile: str, body: dict) -> dict:
+        """`PATCH …/members/{profile} {pinned}` — закрепление в составе (W19 B-28)."""
+        room = self.room(room_id)
+        if profile in (room["orchestrator"], room["critic"]):
+            raise ApiError(409, "conflict",
+                           "Руководитель комнаты и критик всегда в составе",
+                           {"reason": "mandatory_role", "profile": profile})
+        if "pinned" not in body:
+            raise ApiError(400, "bad_request", "Нужно поле pinned: true или false",
+                           {"field": "pinned"})
+        value = check_bool(body, "pinned", default=None)
+        if value is None:
+            raise ApiError(400, "bad_request", "Нужно поле pinned: true или false",
+                           {"field": "pinned"})
+        for member in room["members"]:
+            if member["profile"] != profile:
+                continue
+            member["pinned"] = value
+            return {"ok": True, "profile": profile, "pinned": value,
+                    "members": [self.member_view(room, m) for m in room["members"]]}
+        raise ApiError(404, "not_found", "Участник не найден", {"profile": profile})
+
     def create_request(self, room_id: str, body: dict) -> dict:
         room = self.room(room_id)
         if room["archived"]:
@@ -734,13 +824,32 @@ class MockWrite:
     def action(self, rid: str, body: dict) -> tuple:
         detail = self.detail(rid)
         action = body.get("action")
+        # W19-T (B-25): повторное нажатие «Повторить» с тем же ключом не создаёт дублей.
+        idem_key = body.get("idempotency_key")
+        idem_slot = ""
+        if action == "retry" and idem_key is not None:
+            if not isinstance(idem_key, str) or not re.match(r"^[A-Za-z0-9._:\-]{6,120}$", idem_key):
+                raise ApiError(400, "bad_request",
+                               "idempotency_key: 6–120 знаков, буквы, цифры и «.-_:»",
+                               {"field": "idempotency_key", "value": str(idem_key)[:120]})
+            store = getattr(self, "idem_seen", None)
+            if not isinstance(store, dict):
+                store = {}
+                self.idem_seen = store
+            idem_slot = "%s:%s:%s" % (rid, body.get("task_id") or "", idem_key)
+            seen = store.get(idem_slot)
+            if isinstance(seen, dict):
+                extra = dict(seen)
+                extra["duplicate"] = True
+                return 200, extra
         allowed = ["dispatch", "comment", "answer", "unblock", "reassign", "rework", "retry", "archive", "clone",
                    "decompose", "revise", "critique",
                    # W14-D §2/§4: «Напомнить руководителю» и «Убрать» шаг
                    # W14-H §12: действия пользователя по шагу
                    "answer_remind", "step_drop", "step_agree", "step_comment", "step_move",
                    # W17-B §3: «Отправить руководителю накопленные ответы»
-                   "answers_resend"]
+                   # W19-D2 §1 (B-20): действия над решением «предложено»
+                   "answers_resend", "decision"]
         if action not in allowed:
             raise ApiError(400, "bad_request", "Неизвестное действие", {"action": action, "allowed": allowed})
         extra = {"ok": True, "action": action}
@@ -875,6 +984,50 @@ class MockWrite:
                           "task_id": root.get("id") if isinstance(root, dict) else rid,
                           "at": now(),
                           "note": {"task_id": None, "merged": False, "routed_to": None}})
+        elif action == "decision":
+            # W19-D2 §1 (B-20): «Принять» / «Отклонить» / «Обсудить» решение.
+            decision_id = (check_str(body, "decision_id", required=True, maxlen=64) or "").strip()
+            if ":" in decision_id:
+                decision_id = decision_id.split(":", 1)[1]
+            outcome = (check_str(body, "decision", required=True, maxlen=16) or "").strip().lower()
+            if outcome not in mock_answers.DECISION_ACTIONS:
+                raise ApiError(400, "bad_request", "decision: accept|reject|discuss",
+                               {"field": "decision", "value": outcome,
+                                "allowed": list(mock_answers.DECISION_ACTIONS)})
+            text = (check_str(body, "text", default="", maxlen=MAX_NOTE, allow_empty=True) or "").strip()
+            if outcome == "discuss" and not text:
+                raise ApiError(400, "bad_request", "Напишите или надиктуйте, что обсудить",
+                               {"field": "text"})
+            decision = next((d for d in detail.get("decisions") or []
+                             if str(d.get("id")) == decision_id), None)
+            if decision is None:
+                raise ApiError(404, "not_found", "Решение не найдено", {"decision_id": decision_id})
+            record = {"kind": "decision", "decision_id": decision_id,
+                      "decision_text": str(decision.get("text") or ""), "action": outcome,
+                      "outcome": {"accept": "accepted", "reject": "rejected",
+                                  "discuss": "discuss"}[outcome],
+                      "text": text or mock_answers.DECISION_ACTION_RU[outcome],
+                      "user_text": text or None, "at": now(), "answered": True, "status": "sent"}
+            self._remember_decision(rid, decision_id, record)
+            view = mock_answers.apply_decision(decision, record, None)
+            decision.update(view)
+            mark = mock_answers.decision_comment(outcome, decision_id,
+                                                 str(decision.get("text") or ""), text)
+            self.thread_seq = getattr(self, "thread_seq", 0) + 1
+            store = getattr(self, "thread_store", None)
+            if isinstance(store, dict):
+                store.setdefault(rid, []).append(
+                    {"id": "c%d" % self.thread_seq, "at": now(), "author_kind": "mikhail",
+                     "author": "mikhail", "author_label": "Михаил", "task_id": rid,
+                     "kind": "answer", "answer_kind": "decision",
+                     "question_id": None, "decision_id": decision_id,
+                     "text": text or mock_answers.DECISION_ACTION_RU[outcome], "text_mark": mark})
+            detail["needs_you"] = compute_needs_you(detail)
+            extra.update({"decision_id": decision_id, "decision": view, "message": mark,
+                          "action_label": mock_answers.DECISION_ACTION_RU[outcome],
+                          "answer_label": view.get("answer_label"),
+                          "pending_label": mock_answers.PENDING_RU,
+                          "chain_hint": mock_answers.CHAIN_HINT})
         elif action == "step_drop":
             step_id = (check_str(body, "step_id", required=True, maxlen=64) or "").strip()
             step = next((s for s in detail.get("next_steps") or [] if s.get("id") == step_id), None)
@@ -976,9 +1129,17 @@ class MockWrite:
             failed = [n for n in tree if n.get("status") == "blocked" and n.get("error")]
             if not failed:
                 raise ApiError(409, "conflict", "Нет упавших карточек", {"rid": rid})
+            # W19-T: статус запоминаем в памяти демо (фикстура не перезаписывается), иначе
+            # следующий GET снова показал бы ошибку и «уже принятый» перезапуск.
+            store = getattr(self, "retry_overrides", None)
+            if not isinstance(store, dict):
+                store = {}
+                self.retry_overrides = store
+            seen = store.setdefault(str(rid), {})
             for node in failed:
                 node["status"] = "ready"
                 node["error"] = None
+                seen[str(node["id"])] = {"status": "ready", "error": None}
             detail["status"] = "working"
             detail["status_reason"] = None
             extra["retried"] = [n["id"] for n in failed]
@@ -1056,6 +1217,8 @@ class MockWrite:
             elif action == "reassign":
                 live.setdefault("node_patch", {})[extra["task"]["id"]] = {"assignee": extra["task"]["assignee"]}
         extra["request"] = detail_to_summary(self.detail(rid))
+        if idem_slot:
+            self.idem_seen[idem_slot] = dict(extra)     # повтор того же нажатия — тот же ответ
         return 200, extra
 
     def set_backlog(self, room_id: str, item_id: str, body: dict) -> dict:

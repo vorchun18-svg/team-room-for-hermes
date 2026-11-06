@@ -14,6 +14,7 @@
  */
 
 import { plainTerms, countNoun } from '../text-ru.js';
+import { isFailedRun, failureInfo, failureAttemptsList } from './request-parts-failure.js';
 
 /* ─────────────────────────────────────────────────────────────── дерево работ */
 
@@ -293,6 +294,106 @@ export function nodeActions(node) {
   return out;
 }
 
+/* ─────────────────────────────────────── попытки, плашки и кнопка повтора (B-24) */
+
+/**
+ * Сколько всего попыток было по карточке: номер попытки — это и есть метка «когда
+ * плашку можно показать снова» (B-24). Терпимо к старым данным без `runs`.
+ *
+ * @param {object} node TaskNode
+ * @returns {number}
+ */
+export function attemptCount(node) {
+  const n = node && typeof node === 'object' ? node : {};
+  const runs = Array.isArray(n.runs) ? n.runs : [];
+  if (runs.length) return runs.length;
+  return n.error ? 1 : 0;
+}
+
+/**
+ * Штамп плашки ошибки конкретной карточки: «id карточки + номер попытки».
+ * Пока штамп тот же — плашку держим закрытой; новая попытка меняет штамп.
+ *
+ * @param {object} node TaskNode
+ * @returns {string} пустая строка, если ошибки нет
+ */
+export function failureStamp(node) {
+  const n = node && typeof node === 'object' ? node : {};
+  if (!n.id || (!n.error && !isFailedRun({ status: n.status }))) return '';
+  return `${String(n.id)}:${attemptCount(n)}`;
+}
+
+/**
+ * Штамп плашки «запрос остановился из-за ошибки» (общий баннер над страницей):
+ * все проблемные карточки и их номера попыток. Одна новая попытка — новый штамп.
+ *
+ * @param {object} detail RequestDetail
+ * @returns {string}
+ */
+export function failureSignature(detail) {
+  const d = detail && typeof detail === 'object' ? detail : {};
+  const stamps = [];
+  for (const node of Array.isArray(d.tree) ? d.tree : []) {
+    const stamp = failureStamp(node);
+    if (stamp) stamps.push(stamp);
+  }
+  if (!stamps.length) return '';
+  return stamps.sort().join('|');
+}
+
+/* ─────────────────────────────────────────── кнопка повтора: состояния (B-25) */
+
+/** Сколько держим кнопку заблокированной, если новая попытка так и не началась. */
+export const RETRY_TTL_MS = 90 * 1000;
+
+/** Подпись рядом с заблокированной кнопкой. */
+export const RETRY_SENT_TEXT = 'Перезапуск принят, карточка в очереди';
+export const RETRY_SENT_HINT = 'Кнопка разблокируется, когда начнётся новая попытка, или сама через полторы минуты.';
+
+/**
+ * Подпись состояния карточки на момент клика: id + номер попытки.
+ *
+ * Именно номер попытки, а НЕ статус: после принятого перезапуска карточка честно меняет
+ * статус (`blocked → ready`) — это часть принятого действия, а не новая попытка. Новая
+ * попытка начинается, когда появляется новый прогон (`runs` вырос) — тогда подпись другая
+ * и кнопку разблокируем.
+ *
+ * @param {object} node TaskNode
+ * @returns {string}
+ */
+export function retrySignature(node) {
+  const n = node && typeof node === 'object' ? node : {};
+  // started_at — для запроса целиком (у корневой карточки нет `runs` под рукой):
+  // новый запуск меняет время старта, значит попытка действительно началась.
+  const started = Number(n.started_at) || 0;
+  return `${String(n.id || '')}|${attemptCount(n)}|${started}`;
+}
+
+/**
+ * Состояние кнопки повтора по сохранённой отметке.
+ *
+ * «обычная → отправлено (заблокирована) → снято при старте новой попытки/таймауте».
+ *
+ * @param {{sig?: string, at?: number}|null} entry отметка клика
+ * @param {string} signature текущая подпись карточки
+ * @param {number} [now] текущее время, мс
+ * @returns {'idle'|'sent'}
+ */
+export function retryPhase(entry, signature, now) {
+  if (!entry || typeof entry !== 'object') return 'idle';
+  const at = Number(entry.at) || 0;
+  if (!at) return 'idle';
+  const stamp = Number(now) || Date.now();
+  if (stamp - at > RETRY_TTL_MS) return 'idle';          // таймаут — снимаем блокировку
+  if (String(entry.sig || '') !== String(signature || '')) return 'idle';  // новая попытка
+  return 'sent';
+}
+
+/** Ключ хранилища отметки повтора: запрос + карточка (или сам запрос). */
+export function retryKey(rid, taskId) {
+  return `${String(rid || '')}:${String(taskId || '')}`;
+}
+
 /* ─────────────────────────────────────────────────────────────── предупреждения */
 
 const WARNING_META = {
@@ -303,8 +404,18 @@ const WARNING_META = {
   },
   missing_artifact: {
     tone: 'warn',
-    title: 'Файл не найден',
-    hint: 'Проверьте путь в блоке «Артефакты»: возможно, файл перемещён.',
+    title: 'Файл удалён или перемещён',
+    hint: 'Файла нет по прежнему пути — возможно, его переименовали или перенесли.',
+  },
+  artifact_denied: {
+    tone: 'warn',
+    title: 'Файл нельзя открыть',
+    hint: 'Такой тип файла или такое имя приложение не открывает (например, исполняемые файлы).',
+  },
+  artifact_outside: {
+    tone: 'warn',
+    title: 'Файл сохранён вне папки проекта',
+    hint: 'Команда сохранила результат в другое место. Файл открывается, но лучше держать итоги в папке проекта комнаты.',
   },
   no_synthesis: {
     tone: 'warn',
@@ -389,7 +500,13 @@ export function warningItems(detail) {
     let text = String(raw.message || meta.hint || 'Подробности не переданы.');
     // «Карточка расчёта упала дважды» — технический пересказ; понятная причина
     // и сырой лог живут в «Своде команды» (D7).
-    if (code === 'card_failed') text = 'Одна из задач не справилась — подробности ниже.';
+    let attempts = [];
+    if (code === 'card_failed') {
+      // B-24: вместо «подробности ниже» — понятная причина и сколько было попыток.
+      const failedInfo = failureInfo(d);
+      text = failedInfo.text || 'Одна из задач не справилась — подробности ниже.';
+      attempts = failureAttemptsList(d);
+    }
     // «next_steps строками, stage словарём» — язык схемы, не человека.
     if (code === 'legacy_metadata') {
       text = 'Шаги, этапы и вопросы прочитаны — ответ можно читать.';
@@ -407,6 +524,10 @@ export function warningItems(detail) {
       hint: meta.hint || '',
       taskId: detailTask ? String(detailTask) : null,
       bannerClass: bannerClassFor(tone),
+      // B-24: список попыток и штамп «id карточки + номер попытки» — по нему плашка
+      // помнит, что её уже закрыли, и снова показывается после новой попытки.
+      attempts,
+      stamp: code === 'card_failed' ? failureSignature(d) : '',
     });
   }
 
@@ -446,7 +567,7 @@ export function warningItems(detail) {
 }
 
 /* Понятные причины сбоев — в request-parts-failure.js (реэкспорт). */
-export { errorReason, isFailedRun, failureAttempts, failureInfo } from './request-parts-failure.js';
+export { errorReason, isFailedRun, failureAttempts, failureInfo, failureAttemptsList } from './request-parts-failure.js';
 
 /* ─────────────────────────────────────────────────────────────────────── критик */
 

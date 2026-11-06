@@ -394,7 +394,9 @@ test('«Применить»: PUT и понятный ответ; «Переза
     post: () => ({ restarted: 2 }),
   });
   const host = new FakeElement('div');
-  const ui = await mountAgentModel(host, { api }, {
+  const asked = [];
+  const confirm = async (o) => { asked.push(o); return true; };
+  const ui = await mountAgentModel(host, { api, confirm }, {
     room: ROOM, catalog: CATALOG, mode: 'live', profile: 'biz-director',
     member: ROOM.members[0],
   });
@@ -416,10 +418,33 @@ test('«Применить»: PUT и понятный ответ; «Переза
   assert.equal(String(restart.className).includes('hidden'), false);
 
   await row.restart();
+  assert.equal(asked.length, 1, 'B-26: перед перезапуском спрашиваем подтверждение');
+  assert.match(asked[0].text, /Текущая работа будет прервана/);
   const post = api.calls.find((c) => c[0] === 'POST');
   assert.equal(post[1], '/api/rooms/cafe/agents/biz-director/restart');
   assert.match(row.statusText(), /Перезапущено: 2 задачи/);
   assert.equal(row.state().pending, 0);
+});
+
+test('B-26: отказ в подтверждении не перезапускает работающие карточки', async () => {
+  installDom();
+  const api = fakeApi({
+    put: () => ({ member: {}, applied: { cards_updated: 1, pending_running: 2 }, warnings: [] }),
+    post: () => ({ restarted: 2 }),
+  });
+  const host = new FakeElement('div');
+  const ui = await mountAgentModel(host, { api, confirm: async () => false }, {
+    room: ROOM, catalog: CATALOG, mode: 'live', profile: 'biz-director',
+    member: ROOM.members[0],
+  });
+  const row = ui.rowFor('biz-director');
+  row.setProvider('anthropic');
+  row.setQuery('claude');
+  row.choose(0);
+  await row.save();
+  await row.restart();
+  assert.equal(api.calls.filter((c) => c[0] === 'POST').length, 0, 'POST restart не отправлен');
+  assert.equal(row.state().pending, 2, 'карточки остались в работе');
 });
 
 test('нет задач в работе — одна фраза, без кнопки перезапуска', async () => {
