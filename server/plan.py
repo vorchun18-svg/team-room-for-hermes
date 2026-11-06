@@ -241,6 +241,8 @@ def _norm_stream(stream: dict) -> dict:
         "request_id": _text(request_id, 64) or None,
         "reason": _text(stream.get("reason"), 300),
         "created_by": created_by,
+        # W14-D §4: из какого вопроса владельца возникло направление (связка вопрос↔шаг)
+        "from_question": _text(stream.get("from_question"), 40) or None,
     }
 
 
@@ -994,7 +996,7 @@ def approve(cfg, room_id, stream_ids="all", room=None) -> dict:
 
 
 # ------------------------------------------------------------------- patch
-PATCH_FIELDS = ("title", "goal", "due", "members", "status", "depends_on")
+PATCH_FIELDS = ("title", "goal", "due", "members", "status", "depends_on", "from_question")
 NO_AUTO_STATUS = ("running", "waiting_quota", "queued")
 
 
@@ -1034,6 +1036,9 @@ def _patch_change(plan: dict, room: dict, item: dict, source: str, warnings: lis
             known = {s.get("id") for s in plan.get("streams") or []}
             deps = [d for d in _str_list(value) if d in known and d != stream.get("id")]
             stream["depends_on"] = deps
+        elif key == "from_question":
+            # W14-D §4: «зачем нужен» — ссылка на вопрос владельца
+            stream["from_question"] = _text(value, 40) or None
         elif key == "status":
             status = str(value or "")
             if status in NO_AUTO_STATUS:

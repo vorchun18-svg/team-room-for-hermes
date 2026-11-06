@@ -411,6 +411,21 @@ def _model_args(cfg, room: dict, profile: str) -> tuple[list, dict]:
     return args, settings
 
 
+def _push_reasoning(cfg, board: str, card_id: str, reasoning: str) -> list:
+    """Уровень мышления карточки через мост (в CLI `create` такого флага нет)."""
+    if not reasoning:
+        return []
+    try:
+        try:
+            from . import agent_models as models_mod
+        except ImportError:  # pragma: no cover
+            import agent_models as models_mod  # type: ignore
+        _done, failed = models_mod.push_effort(cfg, board, [card_id], reasoning)
+        return failed or []
+    except Exception as exc:  # noqa: BLE001 - карточка уже есть, уровень вторичен
+        return [{"id": card_id, "reason": str(exc)[:160]}]
+
+
 def create_request(cfg, room: dict, slug: str, title: str, body: str, *,
                    brief: bool = False, idem_key: str | None = None,
                    model_profile: str | None = None) -> dict:
@@ -436,6 +451,10 @@ def create_request(cfg, room: dict, slug: str, title: str, body: str, *,
         raise EngineWriteError("bad_request", "В заголовке или теле карточки есть NUL-байт.",
                                detail={"field": "title" if "\x00" in title else "body"})
     body = with_context_pack(cfg, room, brief_body(cfg, room, body) if brief else body)   # WAVE 8/9
+    # W13-A: руководитель создаёт карточки детей сам — в теле должно быть прямо сказано,
+    # какая модель/провайдер выбраны для каждого исполнителя (иначе движок берёт модель
+    # профиля: именно так работа уходила на `glm-5.3-flash` вместо выбранной в комнате).
+    body = _with_models_block(cfg, room, body)
     model_args, settings = _model_args(cfg, room, model_profile or room.get("orchestrator") or "")
     path = _write_body(cfg, body, slug)
     try:
@@ -470,9 +489,38 @@ def create_request(cfg, room: dict, slug: str, title: str, body: str, *,
     return {"root_id": root_id, "warning": warning}
 
 
+def _with_models_block(cfg, room: dict, body: str) -> str:
+    """Дописать в тело запроса блок «МОДЕЛИ ИСПОЛНИТЕЛЕЙ» (W13-A).
+
+    Блок собирает `agent_models.models_block` (мой пакет) и ставится В КОНЕЦ тела — после
+    контракта, поэтому в интерфейсе он не виден (`contract.visible_text` режет по первому
+    служебному маркеру), а агенту виден полностью. Ошибка сборки тело не ломает.
+    """
+    try:
+        try:
+            from . import agent_models as models_mod
+        except ImportError:  # pragma: no cover - «плоский» импорт
+            import agent_models as models_mod  # type: ignore
+        block = models_mod.models_block(cfg, room)
+    except Exception:  # noqa: BLE001 - блок не должен мешать создать запрос
+        return body
+    if not block:
+        return body
+    text = (body or "").rstrip()
+    if "МОДЕЛИ ИСПОЛНИТЕЛЕЙ" in text:
+        return body                     # повторная сборка — второй раз не пишем
+    return (text + "\n\n" + block).strip() + "\n"
+
+
 def create_child_card(cfg, room: dict, board: str, parent_id: str, assignee: str,
                       title: str, body: str, kind: str, idem_key: str | None = None) -> str:
-    """Создать карточку-ребёнка (критик/доработка/подзадача) и вернуть её id."""
+    """Создать карточку-ребёнка (критик/доработка/подзадача) и вернуть её id.
+
+    Модель/провайдер участника передаются сразу в `create` (W13-A): раньше карточка
+    создавалась без них и стартовала на модели профиля, если сторож не успевал
+    проставить переопределение до допуска запуска. Уровень мышления ставится мостом
+    сразу после создания — в CLI `create` для него флага нет.
+    """
     if not (assignee or "").strip():
         raise EngineWriteError("bad_request", "Не указан исполнитель новой карточки.")
     if not (parent_id or "").strip():
@@ -482,10 +530,11 @@ def create_child_card(cfg, room: dict, board: str, parent_id: str, assignee: str
     tenant = (room.get("tenant") or f"{TENANT_PREFIX}{room.get('id') or ''}").strip()
     body = body if isinstance(body, str) else str(body or "")
     key = idem_key or f"tr-{kind}-{parent_id}-{hashlib.sha1(body.encode('utf-8')).hexdigest()[:10]}"
+    model_args, settings = _model_args(cfg, room, assignee)
     path = _write_body(cfg, body, f"{kind}-{parent_id}")
     try:
         args = ["create", _title(title, body), opt("assignee", assignee), opt("parent", parent_id),
-                opt("tenant", tenant), opt("created-by", CREATED_BY),
+                opt("tenant", tenant), opt("created-by", CREATED_BY), *model_args,
                 opt("idempotency-key", key), opt("body-file", path), "--json"]
         data, _ms = _run_json(cfg, board, args)
     finally:
@@ -497,6 +546,7 @@ def create_child_card(cfg, room: dict, board: str, parent_id: str, assignee: str
     if not card_id:
         raise EngineWriteError("engine_error", "Канбан не вернул id созданной карточки.",
                                json.dumps(data, ensure_ascii=False)[:600])
+    _push_reasoning(cfg, board, card_id, str((settings or {}).get("reasoning") or ""))
     return card_id
 
 
@@ -530,6 +580,22 @@ def _parse_json_soft(text: str) -> dict:
         return {}
 
 
+def _dispatch_report(cfg, board: str, res: dict) -> dict:
+    """W13-F (§8): итог прохода диспетчера простыми словами — отдельный блок.
+
+    Считает ``server/kick_report.py`` (только чтение доски). Ошибка итога не должна
+    ломать сам проход: возвращается пустой словарь.
+    """
+    try:
+        try:
+            from . import kick_report as mod
+        except ImportError:  # pragma: no cover - «плоский» импорт
+            import kick_report as mod  # type: ignore
+        return mod.report(cfg, board, res if isinstance(res, dict) else {})
+    except Exception:  # noqa: BLE001 - итог необязателен
+        return {}
+
+
 def act(cfg, board: str, root_id: str, action: str, **kw) -> dict:
     """Действие над запросом. Возвращает {ok, detail, cmd_ms, ...} или EngineWriteError."""
     action = str(action or "").strip()
@@ -549,7 +615,8 @@ def act(cfg, board: str, root_id: str, action: str, **kw) -> dict:
         return done(res.get("detail") or "Диспетчер: проход выполнен.", res.get("cmd_ms") or 0,
                     result=res.get("result") or {}, spawned=res.get("spawned") or 0,
                     promoted=res.get("promoted") or 0, reclaimed=res.get("reclaimed") or 0,
-                    planned=res.get("planned") or [], max=res.get("max"))
+                    planned=res.get("planned") or [], max=res.get("max"),
+                    report=_dispatch_report(cfg, board, res))
 
     if action == "comment":
         text = _validate_text(kw.get("text"), "текст комментария")

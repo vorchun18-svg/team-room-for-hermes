@@ -1,4 +1,4 @@
-# Комната команды (Team Room) 1.0.1
+# Комната команды (Team Room) 1.0.2
 
 [![CI](https://github.com/vorchun18-svg/team-room-for-hermes/actions/workflows/ci.yml/badge.svg)](https://github.com/vorchun18-svg/team-room-for-hermes/actions/workflows/ci.yml)
 

@@ -9,13 +9,21 @@
   min-width: 0;
 }
 
+/* Правая колонка вопросов: шире прежних 272 px и растёт вместе с окном
+   (W15-C, п. 3; жалоба — «блок вопросов справа слишком узкий»). Ширина
+   ограничена разумными min/max: на 1280 px окна это ~380 px, на широком
+   экране — 460 px, ниже 1100 px — 300…340 px, а с 900 px и уже вопросы
+   уходят под основной блок (без горизонтального скролла). */
 .req__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 272px;
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 460px);
   gap: var(--space-6);
   align-items: start;
   min-width: 0;
 }
+/* Страница запроса — единственная, где нужна широкая колонка: на большом окне
+   отдаём ей больше общего контейнера, иначе колонка упирается в 1180 px. */
+.app:has(#view .req) .view__inner { max-width: 1440px; }
 .req__main {
   display: flex;
   flex-direction: column;
@@ -282,28 +290,85 @@
 .req-owner .avatar { width: 18px; height: 18px; font-size: 9px; }
 .req-owner__name { overflow: hidden; text-overflow: ellipsis; }
 
-/* Вопросы */
+/* ── Вопросы и ответы на них ─────────────────────────────────────────────── */
 .req-q { padding: var(--space-3) 0; border-top: 1px solid var(--border-soft); min-width: 0; }
 .req-q:first-child { border-top: 0; padding-top: 0; }
 .req-q:last-child { padding-bottom: 0; }
 .req-q__top { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
 .req-q__text { flex: 1 1 auto; font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
-.req-q__form { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
-.req-q__input { min-height: 46px; padding: var(--space-1) var(--space-2); padding-right: 40px; font-size: var(--text-sm); resize: vertical; }
-.req-q__actions { display: flex; align-items: center; gap: var(--space-2); }
-.req-q__answered {
+.req-q__form { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); min-width: 0; }
+/* Поле и «Отправить» в одной строке: микрофон встаёт между ними отдельной
+   кнопкой (dictation-auto), как в composer — не поверх поля. */
+.req-q__row { display: flex; align-items: flex-end; gap: var(--space-2); min-width: 0; }
+.req-q__row .req-q__input { flex: 1 1 auto; min-width: 0; }
+.req-q__input { min-height: 52px; padding: var(--space-1) var(--space-2); font-size: var(--text-sm); resize: vertical; }
+.req-q__send { flex: none; }
+.req-q__actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
+.req-q__hint { font-size: var(--text-2xs); line-height: var(--leading-normal); min-width: 0; }
+
+/* Ответ: «Вопрос — ваш ответ» рядом с вопросом, со статусом и реакцией. */
+.req-q__answer {
   display: flex;
+  flex-direction: column;
   gap: var(--space-2);
   margin-top: var(--space-2);
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   background: var(--ui-bg-quinary);
-  color: var(--ui-text-secondary);
+  min-width: 0;
+}
+.req-q__answer-head { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
+.req-q__pair {
+  flex: 1 1 auto;
+  color: var(--muted-foreground);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: var(--leading-normal);
+}
+.req-q__state { flex: none; height: auto; min-height: 21px; padding: 2px 7px; white-space: normal; text-align: left; line-height: 1.25; }
+.req-q__atext {
+  color: var(--foreground);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
-.req-q__answered .codicon { margin-top: 2px; color: var(--ok); font-size: 12px; }
+.req-q__meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); font-size: var(--text-2xs); }
+.req-q__when { font-size: var(--text-2xs); }
+.req-q__note { color: var(--warn-ink); }
+.req-q__answer--waiting_explanation { background: var(--warn-soft); border-color: var(--warn-soft); }
+
+.req-q__reaction {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-soft);
+  min-width: 0;
+}
+.req-q__reaction-head { display: flex; align-items: center; gap: var(--space-1); color: var(--muted-foreground); }
+.req-q__reaction-head .codicon { font-size: 12px; }
+.req-q__cap { font-size: var(--text-2xs); font-weight: 600; color: var(--muted-foreground); }
+.req-q__reaction-text { color: var(--ui-text-secondary); font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.req-q__cards { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.req-q__card {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-tertiary);
+  color: var(--ui-text-secondary);
+  font-size: var(--text-2xs);
+}
+
+/* Реакции ещё нет: честная подпись и кнопка «Напомнить руководителю». */
+.req-q__pending { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.req-q__pending-label {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--muted-foreground); font-size: var(--text-2xs); line-height: var(--leading-normal);
+}
+.req-q__pending.is-overdue .req-q__pending-label { color: var(--warn-ink); font-weight: 600; }
+.req-q__pending .codicon { font-size: 12px; }
+
 
 /* Решения */
 .req-decision { padding: var(--space-3) 0; border-top: 1px solid var(--border-soft); min-width: 0; }
@@ -398,14 +463,52 @@
 .rp-node__person { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-comment__author { color: var(--ui-text-secondary); }
 
+/* ── Ответ на вопрос в ленте диалога (W15-C, п. 5) ───────────────────────── */
+.req-ans .thr-msg__body { gap: 4px; }
+.req-ans__kind {
+  color: var(--muted-foreground);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.req-ans__quote {
+  color: var(--ui-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.req-ans--ask .req-ans__kind { color: var(--warn-ink); }
+.req-ans__foot { display: flex; justify-content: flex-end; }
+.req-ans__go { color: var(--ui-text-secondary); }
+.req-q.is-flash { animation: req-q-flash 1.3s ease-out; }
+@keyframes req-q-flash {
+  from { background: var(--info-soft); }
+  to { background: transparent; }
+}
+
 /* ── Пустые/ошибочные состояния ──────────────────────────────────────────── */
 .req-empty { padding: var(--space-4) 0; }
 .req-aside-empty { color: var(--muted-foreground); font-size: var(--text-sm); line-height: var(--leading-normal); padding: var(--space-1) 0 var(--space-2); }
 
 /* ── Адаптив ─────────────────────────────────────────────────────────────── */
+@media (max-width: 1399px) {
+  .req__grid { grid-template-columns: minmax(0, 1fr) clamp(300px, 32vw, 400px); }
+}
 @media (max-width: 1099px) {
+  /* Две колонки ещё держим: вопрос с полем ответа должен помещаться целиком. */
+  .req__grid { grid-template-columns: minmax(0, 1fr) clamp(288px, 34vw, 340px); gap: var(--space-5); }
+}
+@media (max-width: 899px) {
+  /* С 900 px и уже вопросы уходят под основной блок — горизонтального скролла нет. */
   .req__grid { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
-  .req__aside { position: static; }
+  .req__aside { position: static; max-height: none; overflow: visible; }
+  /* Строка «поле + Отправить» на узком — в столбик: кнопка во всю ширину. */
+  .req-q__row { flex-wrap: wrap; }
+  .req-q__row .req-q__input { flex: 1 1 100%; }
+  .req-q__send { flex: 1 1 auto; }
 }
 @media (max-width: 899px) {
   .req__title { font-size: var(--text-xl); }

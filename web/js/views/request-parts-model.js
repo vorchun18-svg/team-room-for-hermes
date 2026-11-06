@@ -457,15 +457,26 @@ const CRITIC_STATE = {
   approved: { label: 'принял', tone: 'ok' },
   revised: { label: 'на доработку', tone: 'warn' },
   failed: { label: 'не смог', tone: 'danger' },
+  // Режим «до полного одобрения» (W13-E §9): пауза на лимите провайдера и стоп страховки.
+  paused: { label: 'пауза', tone: 'warn' },
+  stalled: { label: 'остановлено', tone: 'warn' },
+  capped: { label: 'потолок раундов', tone: 'warn' },
+};
+
+/** Человеческое описание режима проверки. */
+const CRITIC_MODE_RU = {
+  rounds: 'по числу раундов',
+  until_approved: 'до полного одобрения',
 };
 
 /**
  * Состояние критика одним объектом: чип, вердикт, раунд, замечания.
  * @param {object} detail RequestDetail
  * @returns {{enabled: boolean, state: string, verdict: string|null,
- *            round: number, maxRounds: number, label: string, tone: string,
- *            verdictLabel: string, taskId: string|null, issues: Array<object>,
- *            active: boolean, note: string}}
+ *            round: number, maxRounds: number, mode: string, modeLabel: string,
+ *            roundCap: number, label: string, tone: string, verdictLabel: string,
+ *            taskId: string|null, issues: Array<object>, active: boolean, note: string,
+ *            progress: object, stop: object|null, pause: object|null}}
  */
 export function criticInfo(detail) {
   const d = detail && typeof detail === 'object' ? detail : {};
@@ -476,6 +487,11 @@ export function criticInfo(detail) {
   const issues = Array.isArray(c.issues) ? c.issues.filter((i) => i && typeof i === 'object') : [];
   const round = Number(c.round) || 0;
   const maxRounds = Number(c.max_rounds) || 1;
+  const mode = c.mode === 'until_approved' ? 'until_approved' : 'rounds';
+  const roundCap = Number(c.round_cap) || Number(c.progress && c.progress.round_cap) || 12;
+  const progress = c.progress && typeof c.progress === 'object' ? c.progress : {};
+  const stop = c.stopped && typeof c.stopped === 'object' ? c.stopped : null;
+  const pause = c.paused && typeof c.paused === 'object' ? c.paused : null;
 
   let note = '';
   const ready = Number(d.synthesis && d.synthesis.version) > 0;
@@ -492,6 +508,13 @@ export function criticInfo(detail) {
     ? `Критик вернул свод с замечаниями: ${issues.length}.`
     : 'Критик вернул свод на доработку.';
   else if (state === 'failed') note = 'Задача критика завершилась ошибкой.';
+  else if (state === 'paused') {
+    const until = Number(pause && pause.until) || 0;
+    const when = until ? new Date(until * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+    note = 'У провайдера кончился лимит — ждём и продолжим сами' + (when ? ` (около ${when})` : '') + '.';
+  }
+  else if (state === 'stalled') note = (stop && stop.message) || 'Цикл остановлен: замечания повторяются.';
+  else if (state === 'capped') note = (stop && stop.message) || 'Достигнут потолок раундов — цикл остановлен.';
 
   return {
     enabled: c.enabled !== false && state !== 'off',
@@ -499,6 +522,9 @@ export function criticInfo(detail) {
     verdict,
     round,
     maxRounds,
+    mode,
+    modeLabel: CRITIC_MODE_RU[mode],
+    roundCap,
     label: meta.label,
     tone: meta.tone,
     verdictLabel: verdict === 'approve' ? 'принято' : verdict === 'revise' ? 'на доработку' : '',
@@ -506,7 +532,30 @@ export function criticInfo(detail) {
     issues,
     active: state === 'reviewing',
     note,
+    progress,
+    stop,
+    pause,
   };
+}
+
+/** Подпись раунда для карточки критика: «раунд 2 из 2» или «раунд 3 · до одобрения». */
+export function criticRoundLabel(info) {
+  const c = info && typeof info === 'object' ? info : {};
+  const round = Math.max(Number(c.round) || 0, 0);
+  if (c.mode === 'until_approved') {
+    return `раунд ${round} · до полного одобрения (потолок ${Number(c.roundCap) || 12})`;
+  }
+  return `раунд ${round} из ${Number(c.maxRounds) || 1}`;
+}
+
+/** Строка хода цикла: «замечаний было 5, закрыто 3, осталось 2». */
+export function criticProgressLabel(info) {
+  const p = (info && info.progress) || {};
+  const before = Number(p.issues_before) || 0;
+  const closed = Number(p.closed) || 0;
+  const open = Number(p.open) || 0;
+  if (!before && !open) return '';
+  return `замечаний было ${before}, закрыто ${closed}, осталось ${open}`;
 }
 
 /* ──────────────────────────────────────────────────────────────────── артефакты */

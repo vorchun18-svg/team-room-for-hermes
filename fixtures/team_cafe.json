@@ -32,7 +32,13 @@
         "done": 3,
         "blocked": 0,
         "active": 1
-      }
+      },
+      "name": "Глеб",
+      "job": "руководитель штаба Лето",
+      "label": "Глеб — руководитель штаба Лето",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
     },
     {
       "profile": "biz-lawyer",
@@ -53,7 +59,13 @@
         "done": 11,
         "blocked": 0,
         "active": 0
-      }
+      },
+      "name": "Антон",
+      "job": "юрист по праву России",
+      "label": "Антон — юрист по праву России",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
     },
     {
       "profile": "biz-ops",
@@ -79,7 +91,13 @@
         "done": 12,
         "blocked": 0,
         "active": 1
-      }
+      },
+      "name": "Марина",
+      "job": "поставщики и доставка",
+      "label": "Марина — поставщики и доставка",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
     },
     {
       "profile": "biz-strategy",
@@ -100,7 +118,13 @@
         "done": 5,
         "blocked": 0,
         "active": 0
-      }
+      },
+      "name": "Илья",
+      "job": "стратегия и бренд",
+      "label": "Илья — стратегия и бренд",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
     },
     {
       "profile": "biz-marketing",
@@ -126,7 +150,13 @@
         "done": 6,
         "blocked": 1,
         "active": 1
-      }
+      },
+      "name": "Вера",
+      "job": "каналы и контент",
+      "label": "Вера — каналы и контент",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
     },
     {
       "profile": "biz-cfo",
@@ -152,7 +182,13 @@
         "done": 8,
         "blocked": 1,
         "active": 1
-      }
+      },
+      "name": "Анна",
+      "job": "финансы и экономика (CFO)",
+      "label": "Анна — финансы и экономика (CFO)",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
     },
     {
       "profile": "biz-runner",
@@ -173,7 +209,13 @@
         "done": 4,
         "blocked": 0,
         "active": 0
-      }
+      },
+      "name": "Сергей",
+      "job": "мелкие поручения",
+      "label": "Сергей — мелкие поручения",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
     },
     {
       "profile": "biz-critic",
@@ -199,7 +241,13 @@
         "done": 7,
         "blocked": 0,
         "active": 1
-      }
+      },
+      "name": "Клим",
+      "job": "проверка сводки",
+      "label": "Клим — проверка сводки",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
     }
   ]
 }

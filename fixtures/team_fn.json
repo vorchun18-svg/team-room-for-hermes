@@ -32,7 +32,13 @@
         "done": 2,
         "blocked": 0,
         "active": 1
-      }
+      },
+      "name": "",
+      "job": "",
+      "label": "",
+      "label_source": "role",
+      "custom_label": "",
+      "label_pending": false
     },
     {
       "profile": "lawyer",
@@ -53,7 +59,13 @@
         "done": 4,
         "blocked": 0,
         "active": 0
-      }
+      },
+      "name": "Лев",
+      "job": "договоры и визы",
+      "label": "Лев — договоры и визы",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
     },
     {
       "profile": "coder",
@@ -74,7 +86,13 @@
         "done": 2,
         "blocked": 0,
         "active": 0
-      }
+      },
+      "name": "Тимур",
+      "job": "код и автоматизация",
+      "label": "Тимур — код и автоматизация",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
     },
     {
       "profile": "surveyor",
@@ -95,7 +113,13 @@
         "done": 3,
         "blocked": 1,
         "active": 0
-      }
+      },
+      "name": "Ратмир",
+      "job": "проверка фактов и источников",
+      "label": "Ратмир — проверка фактов и источников",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
     }
   ]
 }

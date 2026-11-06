@@ -10,9 +10,10 @@ import { h, fmtDateTime, fmtDuration, fromCount } from '../util.js';
 import { icon } from '../icons.js';
 import { statusChip, confirmDialog } from '../ui.js';
 import { firstLine, criticOf, synthesisOf } from './request-util.js';
+import { KICK_LABEL, kickStateFromTree, kickUsefulness, kickNow } from './kick-panel.js';
 
 export function createHeader(R) {
-  const { rid, runAction, cloneRequest, decompose } = R;
+  const { rid, ctx, state, render, runAction, cloneRequest, decompose } = R;
 
   async function archive() {
     const ok = await confirmDialog({
@@ -61,11 +62,19 @@ export function createHeader(R) {
   // Недоступный пункт всегда объясняет, КОГДА он станет доступен (Д3).
   const LATER = 'Станет доступно, когда ';
 
+  /** «Проверить доску сейчас» из меню: итог покажет «Свод команды» панелью. */
+  async function kickFromMenu() {
+    state.kick = await kickNow(ctx.api, rid);
+    await R.refresh({ force: true });
+    render();
+  }
+
   function buildMenu() {
     const s = synthesisOf(R.detail);
     const c = criticOf(R.detail);
     const ready = s.state === 'ready' && Boolean(s.text_md || s.version);
     const canCritique = c.enabled && ready;
+    const kick = kickUsefulness(kickStateFromTree(R.detail.tree));
     const items = [
       // Главный пункт меню: написать руководителю комнаты (фокус в поле диалога).
       menuItem({
@@ -73,8 +82,15 @@ export function createHeader(R) {
         onclick: () => { closeMenu(); R.focusThread?.(); },
       }),
       menuItem({ iconName: 'copy', label: 'Клонировать', onclick: () => { closeMenu(); cloneRequest(); } }),
-      menuItem({ iconName: 'zap', label: 'Подтолкнуть движок', onclick: () => { closeMenu(); runAction('dispatch', {}, { toast: 'Движок подтолкнут' }); } }),
     ];
+    // Пункт «Проверить доску сейчас» — только когда есть готовые к запуску или
+    // зависшие карточки: иначе он декоративный (W13-F §8, п. 3).
+    if (kick.useful) {
+      items.push(menuItem({
+        iconName: 'zap', label: KICK_LABEL, hint: 'не ждать минуту',
+        onclick: () => { closeMenu(); kickFromMenu(); },
+      }));
+    }
     if (R.detail.status === 'queued') {
       items.push(menuItem({
         iconName: 'split-horizontal', label: 'Разложить сейчас', hint: 'потратит токены',
@@ -152,6 +168,15 @@ export function createHeader(R) {
       items.push(metaItem('history', 'идёт ' + fmtDuration(Math.max(0, Date.now() / 1000 - d.started_at))));
     }
     if (p.total) items.push(metaItem('checklist', fromCount(p.done, p.total, ['работа', 'работы', 'работ'])));
+    // W13-E §7/§9: раунд критика виден сразу в шапке (единое слово «раунд»).
+    const cr = criticOf(d);
+    if (cr.enabled && String(cr.state || '') !== 'off' && Number(cr.round) > 0) {
+      const mode = cr.mode === 'until_approved' ? 'до одобрения' : `из ${Number(cr.max_rounds) || 1}`;
+      items.push(h('span', {
+        class: 'req__meta-item',
+        title: 'Критик проверяет сводный ответ. Раунд — один цикл «проверил → доработали → проверили снова».',
+      }, icon('shield', { size: 11 }), `критик: раунд ${Number(cr.round)} ${mode}`));
+    }
     if (d.assignee) {
       items.push(h('span', { class: 'req__meta-item', title: 'Профиль: ' + d.assignee },
         icon('organization', { size: 11 }), 'руководитель комнаты'));

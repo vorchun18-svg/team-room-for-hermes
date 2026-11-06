@@ -160,7 +160,13 @@ test('memberModel соединяет участника с профилем', ()
   assert.equal(model.roleEditable, false);
   assert.equal(model.removable, false);
   assert.equal(model.isDirector, true);
-  assert.match(model.description, /раздаёт работу/);
+  // WAVE13 §11: заголовок карточки — имя и должность, техническое имя отдельно.
+  assert.equal(model.labelName, 'Глеб');
+  assert.equal(model.labelJob, 'руководитель штаба Лето');
+  assert.equal(model.label, 'Глеб — руководитель штаба Лето');
+  assert.equal(model.labelSource, 'profile');
+  assert.equal(model.customLabel, '');
+  assert.match(model.description, /руководитель штаба Лето/);
   assert.equal(model.stateLabel, 'работает');
   assert.equal(model.pulse, true);
   assert.match(model.current.since, /^уже /);

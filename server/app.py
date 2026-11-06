@@ -468,6 +468,10 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
                 "mode_default": room.get("mode_default") or "auto",
                 "critic_pass": bool(room.get("critic_pass")),
                 "max_rounds": int(room.get("max_rounds") or 1),
+                # Режим критика (W13-E §9): отдаём и в списке — бейдж «до одобрения»
+                # не должен требовать отдельного запроса детали комнаты.
+                "critic_mode": str(room.get("critic_mode") or "rounds"),
+                "critic_round_cap": int(room.get("critic_round_cap") or 12),
                 # Проектный режим — настройка самой комнаты (A1/A2), отдаём и в списке,
                 # чтобы бейдж «проектный режим» не требовал отдельного запроса.
                 "launch_mode": str(room.get("launch_mode") or "plan_first"),
@@ -612,6 +616,9 @@ ROUTES = [(method, re.compile(pattern), handler) for method, pattern, handler in
     # Особые указания участнику этой комнаты (WAVE9 §9): только реестр комнаты.
     ("PUT", r"/api/rooms/" + _ROOM + r"/agents/(?P<profile>[A-Za-z0-9_.@+\-]{1,64})/notes",
      "h_agent_notes_put"),
+    # Подпись участника в комнате (WAVE13 §11): «Имя — должность», файлы профиля не меняются.
+    ("PUT", r"/api/rooms/" + _ROOM + r"/agents/(?P<profile>[A-Za-z0-9_.@+\-]{1,64})/label",
+     "h_agent_label_put"),
     ("GET", r"/api/rooms/" + _ROOM + r"/requests", "h_requests"),
     ("POST", r"/api/rooms/" + _ROOM + r"/requests", "h_request_create"),
     ("GET", r"/api/rooms/" + _ROOM + r"/candidates", "h_candidates"),
@@ -650,11 +657,23 @@ from server.routes_models import install_model_routes                    # noqa:
 
 install_model_routes(App, ROUTES)
 
+# --- особенности для этой комнаты (WAVE14 пакет I, пункт 13) ----------------
+# Записи участникам, журнал изменений и откат: ``server/routes_notes.py``.
+from server.routes_notes import install_notes_routes                      # noqa: E402
+
+install_notes_routes(App, ROUTES)
+
 # --- проверка системы (WAVE 12) --------------------------------------------
 # Один блок подключения: методы ``DiagRoutes`` на ``App`` + строки в ``ROUTES``.
 from server.routes_diag import install_diag_routes                        # noqa: E402
 
 install_diag_routes(App, ROUTES)
+
+# --- длинная диктовка (WAVE 13, пакет B) -----------------------------------
+# Части записи на диск: ``/api/stt/recordings/*`` (см. server/routes_stt.py).
+from server.routes_stt import install_stt_routes                          # noqa: E402
+
+install_stt_routes(App, ROUTES)
 
 
 # --- сервер ----------------------------------------------------------------

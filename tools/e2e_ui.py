@@ -56,7 +56,7 @@ SCENARIOS = {
     "S1": "Навигация по всем вкладкам, темы и ширины",
     "S2": "Страницы всех посеянных состояний запроса",
     "S3": "Композер: Ctrl+Enter → запрос создан в песочнице",
-    "S4": "«Дальше»: шаг выполнен и срок изменён",
+    "S4": "«Дальше»: шаг открывается окном, согласие и новый срок",
     "S5": "Команда: добавить и убрать участника",
     "S6": "Ctrl+K: палитра находит «лег» и ведёт на запрос",
     "S7": "Настройки: здоровье без ошибок, переключение темы",
@@ -739,13 +739,48 @@ def scenario_s4(h: Harness) -> Result:
     text = str(step.get("text") or "")
     new_due = "2026-12-01"
 
-    # 1) срок: поле даты в строке шага → POST → GET показывает новый due
+    # W14-H §12: галочек у пользователя больше нет — шаг открывается окном,
+    # а действия («Согласен», «Переместить») уходят руководителю ответом на шаг.
     mark = h.cdp.event_index()
-    dated = h.cdp.eval_js(_find_step_js(
-        text, "const inp = row.querySelector('input[type=date]'); if (!inp) return {ok:false}; "
-              "inp.value = %s; inp.dispatchEvent(new Event('change', {bubbles: true}));" % json.dumps(new_due)))
-    res.check("бэклог: поле срока найдено и изменено", bool(dated and dated.get("ok")),
-              json.dumps(dated, ensure_ascii=False)[:200], "input[type=date]", "backlog")
+    opened = h.cdp.eval_js(_find_step_js(text, "row.querySelector('.step-row__open').click();"))
+    res.check("шаг найден в DOM и открылось окно шага", bool(opened and opened.get("ok")),
+              json.dumps(opened, ensure_ascii=False)[:200], "окно шага", "backlog")
+    dialog = {}
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        dialog = h.cdp.eval_js("(() => { const d = document.querySelector('.stepdlg');"
+                               " return {ok: Boolean(d), actions: d ? [...d.querySelectorAll('[data-step-action]')]"
+                               ".map((b) => b.getAttribute('data-step-action')) : []}; })()") or {}
+        # Шаг из «Дальше» подгружается запросом: ждём не только окно, но и кнопки действий.
+        if dialog.get("ok") and "move" in (dialog.get("actions") or []):
+            break
+        time.sleep(0.1)
+    res.check("окно шага: доступно с клавиатуры и с действиями", bool(dialog.get("ok")),
+              json.dumps(dialog, ensure_ascii=False)[:300], "dialog", "backlog")
+    res.check("окно шага: «Согласен / Прокомментировать / Переместить / Убрать»",
+              all(k in (dialog.get("actions") or []) for k in ("agree", "comment", "move", "drop")),
+              json.dumps(dialog.get("actions"), ensure_ascii=False), "agree,comment,move,drop", "backlog")
+    res.check("в окне шага нет галочки выполнения",
+              not h.cdp.eval_js("Boolean(document.querySelector('.stepdlg input[type=checkbox]'))"),
+              "checkbox в окне", "нет галочки", "backlog")
+
+    # «Переместить»: новый срок уходит руководителю как ответ на шаг и меняет бэклог
+    by_due = h.cdp.eval_js(r"""
+    (() => {
+      const d = document.querySelector('.stepdlg');
+      if (!d) return {ok: false};
+      d.querySelector('[data-step-action=\"move\"]').click();
+      const inp = d.querySelector('input[type=date]');
+      if (!inp) return {ok: false, why: 'нет поля срока'};
+      inp.value = %s;
+      const save = d.querySelector('[data-step-send=\"move\"]');
+      if (!save) return {ok: false, why: 'нет кнопки Сохранить'};
+      save.click();
+      return {ok: true};
+    })()
+    """ % json.dumps(new_due))
+    res.check("окно шага: срок изменён и сохранён", bool(by_due and by_due.get("ok")),
+              json.dumps(by_due, ensure_ascii=False)[:200], "saved", "backlog")
     due_item = None
     deadline = time.time() + 15
     while time.time() < deadline:
@@ -754,52 +789,23 @@ def scenario_s4(h: Harness) -> Result:
         if due_item and str(due_item.get("due") or "")[:10] == new_due:
             break
         time.sleep(0.15)
-    res.check("GET /api/rooms/cafe/backlog: срок изменён", bool(due_item) and str(due_item.get("due") or "")[:10] == new_due,
+    res.check("GET /api/rooms/cafe/backlog: срок изменён по ответу на шаг",
+              bool(due_item) and str(due_item.get("due") or "")[:10] == new_due,
               json.dumps(due_item, ensure_ascii=False)[:240] if due_item else "нет", new_due, "backlog")
-    shown = h.cdp.eval_js(_find_step_js(
-        text, "const inp = row.querySelector('input[type=date]'); return {ok: Boolean(inp && inp.value === %s)};" % json.dumps(new_due)))
-    res.check("DOM: в поле срока новая дата", bool(shown and shown.get("ok")),
-              json.dumps(shown, ensure_ascii=False)[:160], new_due, "backlog")
-
-    # 2) чекбокс → done; строка уходит из открытых в «Закрытые»
-    mark2 = h.cdp.event_index()
-    clicked = h.cdp.eval_js(_find_step_js(text, "row.querySelector('input[type=checkbox]').click();"))
-    res.check("шаг найден в DOM и чекбокс нажат", bool(clicked and clicked.get("ok")),
-              json.dumps(clicked, ensure_ascii=False)[:200], "строка шага", "backlog")
-    done_item = None
-    deadline = time.time() + 15
+    pending = {}
+    deadline = time.time() + 10
     while time.time() < deadline:
-        _s, d2, _r = h.json_ok("/api/rooms/cafe/backlog")
-        done_item = next((i for i in (d2.get("items") or []) if i.get("id") == step.get("id")), None)
-        if done_item and done_item.get("status") == "done":
+        pending = h.cdp.eval_js("(() => { const r = document.querySelector('.stepdlg__reaction, .req-step__reaction');"
+                                " return {ok: Boolean(r), text: r ? (r.textContent || '').trim() : ''}; })()") or {}
+        if pending.get("ok"):
             break
         time.sleep(0.15)
-    res.check("GET /api/rooms/cafe/backlog: шаг стал done", bool(done_item) and done_item.get("status") == "done",
-              json.dumps(done_item, ensure_ascii=False)[:240] if done_item else "нет", "status=done", "backlog")
-    still_open = h.cdp.eval_js(r"""
-    (() => {
-      const text = %s;
-      return {found: [...document.querySelectorAll('.step-row')]
-        .some((r) => ((r.querySelector('.step-row__text') || {}).textContent || '').trim() === text)};
-    })()
-    """ % json.dumps(text))
-    res.check("DOM: шаг ушёл из открытых", not (still_open or {}).get("found"),
-              json.dumps(still_open, ensure_ascii=False)[:160], "строки нет", "backlog")
-    h.cdp.eval_js("(() => { const c = document.querySelector('.backlog__closed-toggle input'); if (c) c.click(); return Boolean(c); })()")
-    time.sleep(0.3)
-    closed = h.cdp.eval_js(r"""
-    (() => {
-      const text = %s;
-      const row = [...document.querySelectorAll('.closed-row')]
-        .find((r) => ((r.querySelector('.closed-row__text') || {}).textContent || '').trim() === text);
-      return {ok: Boolean(row), chips: row ? [...row.querySelectorAll('.chip')].map((c) => (c.textContent || '').trim()) : [],
-              count: document.querySelectorAll('.closed-row').length};
-    })()
-    """ % json.dumps(text))
-    res.check("DOM: выполненный шаг виден в «Закрытых»", bool(closed and closed.get("ok")),
-              json.dumps(closed, ensure_ascii=False)[:200], "closed-row", "backlog")
-    res.check("DOM: чип «выполнено» у шага", "выполнено" in (closed or {}).get("chips", []),
-              json.dumps((closed or {}).get("chips"), ensure_ascii=False), "выполнено", "backlog")
+    res.check("видна реакция «руководитель ещё не ответил»",
+              bool(pending and pending.get("ok") and "руководител" in (pending.get("text") or "")),
+              json.dumps(pending, ensure_ascii=False)[:200], "реакция", "backlog")
+    h.cdp.eval_js("(() => { const b = document.querySelector('.stepdlg__close'); if (b) b.click();"
+                  " return Boolean(b); })()")
+    mark2 = mark
     events = h.parse_events(min(mark, mark2), "backlog")
     errors = [e for e in events if e["level"] == "error" and not h.benign(e)]
     res.check("бэклог: нет ошибок JS/API", not errors,
@@ -862,8 +868,17 @@ def scenario_s5(h: Harness) -> Result:
             time.sleep(0.2)
         res.check("команда: участник добавлен через API", bool(profile) and profile in after and len(after) == len(before) + 1,
                   f"before={before} after={after} profile={profile}", "+1 участник", "team")
-        card = h.cdp.eval_js("Boolean(document.querySelector('.tm-card[data-profile=%s]'))" % json.dumps(profile))
-        res.check("команда: карточка участника появилась", bool(card), str(card), "карточка в DOM", "team")
+        # Команда обновляется опросом (не мгновенно): ждём карточку, а не читаем DOM
+        # один раз сразу после ответа API — иначе проверка ловит гонку с поллингом.
+        card = False
+        deadline = time.time() + 12
+        while time.time() < deadline:
+            card = h.cdp.eval_js("Boolean(document.querySelector('.tm-card[data-profile=%s]'))" % json.dumps(profile))
+            if card:
+                break
+            time.sleep(0.25)
+        res.check("команда: карточка участника появилась", bool(card), str(card),
+                  "карточка в DOM (после обновления опросом, ≤12 с)", "team")
         path = h.shot("s5-team-added")
         if path:
             res.screenshots.append(path)
@@ -1549,19 +1564,54 @@ def scenario_s12(h: Harness) -> Result:
         res.check("новая папка создана", second.is_dir(), str(second), "каталог существует", "team")
 
         # 7) убрать путь — снова «Задать папку», старые комнаты не ломаются
-        h.cdp.eval_js("(() => { const b = document.querySelector('button[data-action=\"room-settings\"]'); if (b) b.click(); return Boolean(b); })()")
-        deadline = time.time() + 10
-        while time.time() < deadline and not h.cdp.eval_js("Boolean(document.querySelector('.dialog'))"):
-            time.sleep(0.1)
-        h.cdp.eval_js(r"""
-        (() => {
-          const i = document.querySelector('.dialog input[aria-label="Папка проекта"]');
-          if (!i) return false;
-          i.value = '';
-          i.dispatchEvent(new Event('input', {bubbles: true}));
-          return true;
-        })()
-        """)
+        # Шапка перерисовывается после сохранения: кнопку ищем с повторами, пока
+        # не откроется окно с полем папки (иначе проверка ловит гонку с перерисовкой).
+        opened = False
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if h.cdp.eval_js("Boolean(document.querySelector('.dialog input[aria-label=\"Папка проекта\"]'))"):
+                opened = True
+                break
+            h.cdp.eval_js("(() => { const b = document.querySelector('button[data-action=\"room-settings\"]');"
+                           " if (b) { b.click(); return true; } return false; })()")
+            time.sleep(0.4)
+        res.check("окно настроек комнаты открывается повторно", opened,
+                  "нет .dialog с полем «Папка проекта» за 15 с", "окно открылось", "team")
+        # Данные комнаты подгружаются в окно асинхронно. Дождаться, пока в поле
+        # окажется сохранённый путь, и только потом очищать: поздний ответ иначе
+        # вернёт прежнее значение, и PATCH уйдёт со старым путём.
+        loaded = False
+        deadline = time.time() + 12
+        while time.time() < deadline:
+            cur = h.cdp.eval_js("(() => { const i = document.querySelector('.dialog input[aria-label=\"Папка проекта\"]');"
+                                " return i ? i.value : null; })()")
+            if str(cur or "") == str(second):
+                loaded = True
+                break
+            time.sleep(0.2)
+        res.check("в окне настроек показан текущий путь комнаты", loaded,
+                  f"в поле {cur!r}, ожидали {str(second)!r}", "текущий путь", "team")
+        field_ok = False
+        for _ in range(6):
+            cleared_now = bool(h.cdp.eval_js(r"""
+            (() => {
+              const i = document.querySelector('.dialog input[aria-label="Папка проекта"]');
+              if (!i) return false;
+              if (i.value !== '') {
+                i.value = '';
+                i.dispatchEvent(new Event('input', {bubbles: true}));
+              }
+              return i.value === '';
+            })()
+            """))
+            time.sleep(0.4)
+            still = h.cdp.eval_js("(() => { const i = document.querySelector('.dialog input[aria-label=\"Папка проекта\"]');"
+                                  " return i ? i.value : null; })()")
+            if cleared_now and str(still or "") == "":
+                field_ok = True
+                break
+        res.check("поле «Папка проекта» очищено перед сохранением", field_ok,
+                  f"поле={field_ok}", "пусто и остаётся пустым", "team")
         h.cdp.eval_js(_click_button_js("Сохранить", "document.querySelector('.dialog') || document"))
         cleared = {}
         deadline = time.time() + 25
@@ -1573,10 +1623,17 @@ def scenario_s12(h: Harness) -> Result:
             time.sleep(0.2)
         res.check("PATCH: папку можно убрать", cleared.get("project_dir") == "",
                   str(cleared.get("project_dir")), '""', "team")
-        head = h.cdp.eval_js(_header_state_js()) or {}
+        # Заголовок обновляется после сохранения и закрытия окна: ждём состояние,
+        # а не читаем его один раз (иначе проверка ловит гонку с перерисовкой).
+        deadline = time.time() + 12
+        while time.time() < deadline:
+            head = h.cdp.eval_js(_header_state_js()) or {}
+            if head.get("pd") == "ask" and head.get("hint"):
+                break
+            time.sleep(0.25)
         res.check("после удаления пути снова «Задать папку» и подсказка",
                   head.get("pd") == "ask" and bool(head.get("hint")),
-                  json.dumps(head, ensure_ascii=False)[:300], "data-pd=ask + подсказка", "team")
+                  json.dumps(head, ensure_ascii=False)[:300], "data-pd=ask + подсказка (≤12 с)", "team")
 
         # 8) старая комната без папки (cafe) — без поломок
         h.goto("#/room/cafe/composer")

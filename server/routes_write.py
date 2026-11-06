@@ -10,31 +10,69 @@ import time
 
 try:  # пакетный и «плоский» импорт
     from . import config
+    from . import answers as answers_mod
     from .app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM, BACKLOG_STATUSES,
                              MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS, REPORT_KEY_RE, TASK_ID_RE,
                              UNASSIGN_VALUES, derive_title, err, has_nul, make_slug, profile_ok,
                              task_id_ok, text_too_long, try_call)
     from .http_util import ApiError
+    # Режим критика (W13-E §9): поля комнаты и значения — из одного источника.
+    from .rooms import (CRITIC_MODES, MAX_CRITIC_ROUND_CAP, MIN_CRITIC_ROUND_CAP,
+                        DEFAULT_CRITIC_ROUND_CAP)
 except ImportError:  # pragma: no cover
     import config  # type: ignore
+    import answers as answers_mod  # type: ignore
     from app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM,  # type: ignore
                             BACKLOG_STATUSES, MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS,
                             REPORT_KEY_RE, TASK_ID_RE, UNASSIGN_VALUES, derive_title, err, has_nul,
                             make_slug, profile_ok, task_id_ok, text_too_long, try_call)
     from http_util import ApiError  # type: ignore
+    from rooms import (CRITIC_MODES, MAX_CRITIC_ROUND_CAP, MIN_CRITIC_ROUND_CAP,  # type: ignore
+                       DEFAULT_CRITIC_ROUND_CAP)
+
+#: Поля комнаты сверх общего списка — только критик (W13-E §9).
+CRITIC_PATCH_FIELDS = frozenset({"critic_mode", "critic_round_cap"})
 
 
 class WriteRoutes:
     """Обработчики записи (``self`` — экземпляр ``server.app.App``)."""
 
     def h_kick(self, query, body):
-        res = self._dispatch(dict(body or {}))
+        body = dict(body or {})
+        # W13-F (§8): {"preview": true} — только посмотреть доску, ничего не запускать.
+        # Нужно интерфейсу, чтобы понять, осмысленна ли кнопка «Проверить доску сейчас»;
+        # работает и в песочнице: чтение доски безопасно, CLI не зовётся.
+        if body.get("preview") is True:
+            return 200, {"ok": True, "preview": True, "report": self._kick_report({"preview": True}),
+                         "at": int(time.time())}, {}
+        res = self._dispatch(body)
         payload = {"ok": True, "spawned": int(res.get("spawned") or 0),
                    "reclaimed": int(res.get("reclaimed") or 0),
                    "promoted": int(res.get("promoted") or 0),
                    "planned": res.get("planned") or [], "max": res.get("max"),
+                   "report": res.get("report") or self._kick_report(res),
                    "dispatcher": self._dispatcher_short(), "at": int(time.time())}
         return 200, payload, {}
+
+    # --- итог прохода (W13-F, §8): «запущено N, остальные ждут …» ---
+    def _kick_report(self, res: dict) -> dict:
+        """Понятный итог прохода по состоянию доски (``server/kick_report.py``).
+
+        Только чтение; любая ошибка — пустой итог, проход из-за него не падает.
+        """
+        try:
+            report = self.mod("kick_report").report(self.cfg, self.board, dict(res or {}))
+        except Exception as exc:  # noqa: BLE001 - итог не должен ломать сам проход
+            self.log.warning("kick_report: %s" % exc)
+            return {}
+        return report if isinstance(report, dict) else {}
+
+    def _with_report(self, res) -> dict:
+        """Добавить к результату прохода поле ``report`` (если его ещё нет)."""
+        res = res if isinstance(res, dict) else {}
+        if not isinstance(res.get("report"), dict) or not res.get("report"):
+            res["report"] = self._kick_report(res)
+        return res
 
     # --- диспетчер (D2) ---
     def _dispatch(self, body: dict) -> dict:
@@ -65,15 +103,17 @@ class WriteRoutes:
         runner = getattr(mod, "dispatch_board", None)
         if not callable(runner):
             with self.engine():
-                return self.call("engine_write", "act",
-                                 ((self.cfg, board, None, "dispatch"),
-                                  {"max": max_cards, "confirm": confirm}))
+                res = self.call("engine_write", "act",
+                                ((self.cfg, board, None, "dispatch"),
+                                 {"max": max_cards, "confirm": confirm}))
+            return self._with_report(res)
         try:
-            return runner(self.cfg, board, max_cards=max_cards, confirm=confirm)
+            res = runner(self.cfg, board, max_cards=max_cards, confirm=confirm)
         except ApiError:
             raise
         except Exception as exc:  # noqa: BLE001 - доменная ошибка движка
             raise self._engine_failure(exc) from exc
+        return self._with_report(res)
 
     def _engine_failure(self, exc: Exception) -> ApiError:
         """EngineWriteError → ApiError с верным статусом (409/429/400/404/502)."""
@@ -122,9 +162,22 @@ class WriteRoutes:
 
     def h_room_patch(self, query, body, room_id):
         self._room(room_id)
-        bad = sorted(set(body) - PATCH_FIELDS)
+        bad = sorted(set(body) - PATCH_FIELDS - CRITIC_PATCH_FIELDS)
         if bad:
-            raise err(400, "Поля нельзя менять", fields=bad, allowed=sorted(PATCH_FIELDS))
+            raise err(400, "Поля нельзя менять", fields=bad,
+                      allowed=sorted(PATCH_FIELDS | CRITIC_PATCH_FIELDS))
+        # Режим критика (W13-E §9): три варианта в интерфейсе, два значения в API.
+        if "critic_mode" in body and body.get("critic_mode") not in CRITIC_MODES:
+            raise err(400, "Режим критика: «rounds» или «until_approved»",
+                      field="critic_mode", value=body.get("critic_mode"),
+                      allowed=list(CRITIC_MODES))
+        if "critic_round_cap" in body:
+            cap = body.get("critic_round_cap")
+            if isinstance(cap, bool) or not isinstance(cap, int) \
+                    or not MIN_CRITIC_ROUND_CAP <= cap <= MAX_CRITIC_ROUND_CAP:
+                raise err(400, "Потолок раундов: целое от %d до %d"
+                          % (MIN_CRITIC_ROUND_CAP, MAX_CRITIC_ROUND_CAP),
+                          field="critic_round_cap", value=cap)
         if body.get("mode_default") not in (None, "auto"):
             raise err(400, "Режим swarm не поддерживается — только auto", field="mode_default")
         with self.engine():
@@ -180,6 +233,35 @@ class WriteRoutes:
         if members is None:
             members = self._room(room_id).get("members") or []
         return 200, {"ok": True, "members": members}, {}
+
+    def h_agent_label_put(self, query, body, room_id, profile):
+        """PUT /api/rooms/{id}/agents/{profile}/label — подпись участника (WAVE13 §11).
+
+        Тело: `{label}` — «Анна — финансы и экономика (CFO)» или пустая строка
+        (вернуться к описанию профиля Hermes). Меняется только реестр комнаты:
+        `profile.yaml`, `SOUL.md` и прочие файлы профиля не трогаются.
+        """
+        room = self._room(room_id)
+        body = body if isinstance(body, dict) else {}
+        label = body.get("label")
+        if label is not None and not isinstance(label, str):
+            raise err(400, "Подпись: нужен текст строкой", field="label")
+        if has_nul(label or ""):
+            raise err(400, "В подписи есть непечатаемый символ", field="label")
+        profile = str(profile or "").strip()
+        in_room = profile in [str((m or {}).get("profile") or "") for m in room.get("members") or []]
+        if not in_room and profile not in (room.get("orchestrator"), room.get("critic")):
+            raise err(404, "Участника нет в комнате", profile=profile, room=room_id)
+        with self.engine():
+            res = self.call("rooms", "set_member_label", ((self.cfg, room_id, profile, label or ""), {}))
+        if not isinstance(res, dict):
+            raise ApiError(502, "Подпись не сохранена — приложение не ответило",
+                           detail={"room": room_id, "profile": profile})
+        members = res.get("members")
+        if members is None:
+            members = self._room(room_id).get("members") or []
+        return 200, {"ok": True, "profile": res.get("profile") or profile,
+                     "label": res.get("label") or "", "members": members}, {}
 
     def h_agent_notes_put(self, query, body, room_id, profile):
         """PUT /api/rooms/{id}/agents/{profile}/notes — особые указания участнику (WAVE9 §9).
@@ -252,7 +334,23 @@ class WriteRoutes:
         brief = body.get("brief", False)
         if not isinstance(brief, bool):
             raise err(400, "brief: ожидается да/нет", field="brief", value=brief)
-        return self._create(room, text, title, critic, attach, mode="auto", brief=brief)
+        # W13-E §9: третий вариант раундов выбирается и при постановке запроса.
+        critic_mode = body.get("critic_mode")
+        if critic_mode is not None:
+            if not isinstance(critic_mode, str) or critic_mode not in CRITIC_MODES:
+                raise err(400, "Режим критика: «rounds» или «until_approved»",
+                          field="critic_mode", value=critic_mode, allowed=list(CRITIC_MODES))
+            if not critic:
+                raise err(400, "Режим критика без критика: сначала включите проверку",
+                          field="critic_mode", value=critic_mode)
+        req_rounds = body.get("max_rounds")
+        if req_rounds is not None:
+            if isinstance(req_rounds, bool) or not isinstance(req_rounds, int) \
+                    or not 1 <= req_rounds <= 5:
+                raise err(400, "max_rounds: целое от 1 до 5", field="max_rounds",
+                          value=req_rounds)
+        return self._create(room, text, title, critic, attach, mode="auto", brief=brief,
+                            critic_mode=critic_mode, max_rounds=req_rounds)
 
     def h_request_actions(self, query, body, rid):
         action = body.get("action")
@@ -260,12 +358,12 @@ class WriteRoutes:
             raise err(400, "Неизвестное действие", action=action, allowed=list(ACTION_ALLOWED))
         room, rec = self._find_record(rid)
         kw: dict = {}
-        for field in ("task_id", "question_id", "profile"):
+        for field in ("task_id", "question_id", "profile", "step_id"):
             if field in body and body.get(field) is not None:
                 value = body.get(field)
                 if not isinstance(value, str) or not value.strip():
                     raise err(400, "Поле %s должно быть непустой строкой" % field, field=field)
-        for field in ("task_id", "question_id", "profile", "title", "author"):
+        for field in ("task_id", "question_id", "profile", "step_id", "title", "author"):
             value = body.get(field)
             if isinstance(value, str) and value.strip():
                 kw[field] = value.strip()
@@ -296,6 +394,8 @@ class WriteRoutes:
                        "promoted": int(res.get("promoted") or 0),
                        "reclaimed": int(res.get("reclaimed") or 0),
                        "planned": res.get("planned") or [], "max": res.get("max"),
+                       # W13-F (§8): итог прохода простыми словами (панель в интерфейсе)
+                       "report": res.get("report") or self._kick_report(res),
                        "dispatcher": self._dispatcher_short()}
             payload["request"] = self._summary_or_local(
                 room, rid, rec.get("text") or "", rec.get("title") or "",
@@ -307,7 +407,19 @@ class WriteRoutes:
                 raise ApiError(409, "Запрос уже разложен или не ждёт декомпозиции", code="conflict",
                                detail={"reason": "already_decomposed", "status": status,
                                        "rid": str(rid)})
+        if action == "answer_remind":          # §2: «Напомнить руководителю»
+            return self._remind_lead(room, rec, rid, kw)
+        if action in ("step_agree", "step_comment", "step_move", "step_drop"):
+            # §12: действия пользователя по шагу — «Согласен», «Прокомментировать»,
+            # «Переместить», «Не согласен — убрать» (общий механизм ответа, §5/§6).
+            return self._step_action(room, rec, rid, kw, action[len("step_"):], body)
         question = None
+        need_explanation = body.get("need_explanation")
+        if need_explanation is not None and not isinstance(need_explanation, bool):
+            raise err(400, "need_explanation: true или false", field="need_explanation")
+        before: dict = {}
+        steps_before: list = []
+        user_text = kw.get("text") or ""
         if action == "answer":
             before = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"),
                                   rec.get("answers"))
@@ -317,6 +429,14 @@ class WriteRoutes:
                 raise err(404, "Вопрос не найден", question_id=kw.get("question_id"))
             if question.get("answered"):
                 raise err(409, "Вопрос уже отвечен", question_id=kw.get("question_id"))
+            # §3: встречный вопрос не закрывает вопрос. Явная кнопка надёжнее эвристики.
+            need_explanation = bool(need_explanation) or answers_mod.is_counter_question(user_text)
+            # §1: ответ уходит в ветку с меткой, по которой видно, НА КАКОЙ вопрос отвечено
+            kw["text"] = (answers_mod.explanation_comment(kw.get("question_id"), question.get("text"), user_text)
+                          if need_explanation else
+                          answers_mod.answer_comment(kw.get("question_id"), question.get("text"), user_text))
+            steps_before = [s for s in (before.get("next_steps") or [])
+                            if isinstance(s, dict) and s.get("id")]
         with self.engine():
             res = self.call("engine_write", "act",
                             ((self.cfg, room.get("board") or self.board, rid, action), dict(kw)))
@@ -327,16 +447,43 @@ class WriteRoutes:
         if action == "answer":
             # ответ храним в реестре: metadata карточки движок переписывать не даёт
             at = int(time.time())
+            qid = str(kw.get("question_id"))
+            record = {"text": user_text, "at": at,
+                      "answered": not need_explanation,
+                      "status": "waiting_explanation" if need_explanation else "sent",
+                      "question_text": str(question.get("text") or ""),
+                      "steps_at_answer": [str(s.get("id")) for s in steps_before],
+                      "unblocked": list(res.get("unblocked") or [])}
             updated = dict(answers or {})
-            updated[str(kw.get("question_id"))] = {"text": kw.get("text") or "", "at": at}
+            updated[qid] = record
+            answers = updated
+            self._save_answers(room, rid, answers)
+            # §2: руководитель получает ответ рабочей карточкой с контрактом реакции
+            note = {}
             try:
-                self.call("registry", "update", ((self.cfg, room.get("id"), rid,
-                                                  {"answers": updated}), {}))
-                answers = updated
-            except Exception as exc:  # noqa: BLE001 - комментарий уже записан
-                self.log.error("реестр: ответ на вопрос %s не сохранён" % rid, exc)
-            payload["question"] = dict(question or {}, answered=True,
-                                       answer=kw.get("text") or "", answered_at=at)
+                note = self.call("thread", "post_answer_note",
+                                 ((self.cfg, room, rid, dict(question), user_text),
+                                  {"need_explanation": bool(need_explanation)}),
+                                 ((self.cfg, room, rid, dict(question), user_text), {})) or {}
+            except ApiError as exc:
+                self.log.warning("карточка-ответ %s: %s" % (rid, exc.message))
+            # §4: ответ «нет/не нужно» снимает связанные шаги («снят по вашему ответу»)
+            cancelled = [] if need_explanation else self._cancel_steps(room, rid, before,
+                                                                       question, user_text)
+            if cancelled:
+                record["cancelled_steps"] = cancelled
+                updated[qid] = record
+                self._save_answers(room, rid, updated)
+            payload["question"] = answers_mod.apply_question(dict(question or {}), record)
+            payload["answer"] = {"question_id": qid, "text": user_text, "at": at,
+                                 "state": record["status"],
+                                 "label": answers_mod.STATE_RU[record["status"]],
+                                 "needs_explanation": bool(need_explanation)}
+            payload["steps"] = {"cancelled": cancelled,
+                                "cancelled_label": answers_mod.CANCELLED_RU}
+            for key in ("task_id", "merged", "routed_to"):
+                if note.get(key) is not None:
+                    payload.setdefault("note", {})[key] = note[key]
             payload["unblocked"] = list(res.get("unblocked") or [])
         payload["request"] = self._summary_or_local(
             room, rid, rec.get("text") or "", rec.get("title") or "",
@@ -400,7 +547,214 @@ class WriteRoutes:
         return 201, payload, {"Location": "/api/requests/" + str(rid),
                               "Cache-Control": "no-cache"}
 
+    # --- ответы на вопросы: реестр, напоминание, шаги (W14-D §2, §4) ----------
+
+    def _save_answers(self, room: dict, rid: str, answers: dict) -> None:
+        """Записать реестр ответов (ошибка реестра не отменяет уже записанный ответ)."""
+        try:
+            self.call("registry", "update", ((self.cfg, room.get("id"), rid,
+                                              {"answers": answers}), {}))
+        except Exception as exc:  # noqa: BLE001 - комментарий уже записан
+            self.log.error("реестр: ответ на вопрос %s не сохранён" % rid, exc)
+
+    def _backlog_id(self, rid: str, step_id: str) -> str:
+        """`ns_1` → `<rid>:ns_1` (id шага в бэклоге комнаты)."""
+        text = str(step_id or "")
+        return text if ":" in text else "%s:%s" % (rid, text)
+
+    def _cancel_steps(self, room: dict, rid: str, detail: dict, question: dict, text: str) -> list:
+        """§4: ответ «нет/не нужно» снимает связанные шаги («снят по вашему ответу»)."""
+        try:
+            ids = answers_mod.steps_to_cancel((detail or {}).get("next_steps") or [], question, text)
+        except Exception as exc:  # noqa: BLE001 - связка не должна ломать ответ
+            self.log.warning("связка шагов %s: %s" % (rid, exc))
+            return []
+        out: list = []
+        for step_id in ids:
+            item_id = self._backlog_id(rid, step_id)
+            try:
+                if not self._has_mod("ingest"):
+                    break
+                ingest = self.mod("ingest")
+                item = ingest.ensure_backlog_item(self.cfg, room.get("id"), item_id, detail)
+                if item is None:
+                    continue
+                ingest.set_backlog_status(self.cfg, room.get("id"), item_id, "dismissed")
+                out.append(step_id)
+            except Exception as exc:  # noqa: BLE001 - шаг вторичен, ответ важнее
+                self.log.warning("шаг %s не снят: %s" % (item_id, exc))
+        return out
+
+    def _remind_lead(self, room: dict, rec: dict, rid: str, kw: dict):
+        """«Напомнить руководителю»: сигнал в ветке + отметка в реестре."""
+        qid = str(kw.get("question_id") or "")
+        answers = rec.get("answers") if isinstance(rec.get("answers"), dict) else {}
+        record = answers.get(qid)
+        if not isinstance(record, dict) or not str(record.get("text") or "").strip():
+            raise err(404, "Ответ на этот вопрос не найден", question_id=qid)
+        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), answers)
+        question = next((q for q in detail.get("open_questions") or []
+                         if str(q.get("id")) == qid), None)
+        if question is None:
+            raise err(404, "Вопрос не найден", question_id=qid)
+        # реакция руководителя живёт в ветке — проверяем её до напоминания
+        try:
+            reactions = answers_mod.reactions_from_thread(
+                self.call("thread", "get_thread", ((self.cfg, rid), {"room": room})) or [],
+                [question])
+        except Exception:  # noqa: BLE001 - лента не прочиталась, напоминать не мешает
+            reactions = {}
+        reaction = reactions.get(qid)
+        if isinstance(reaction, dict) and reaction.get("status") in ("received", "applied", "no_change"):
+            raise err(409, "Руководитель уже ответил на этот вопрос", question_id=qid,
+                      reaction=reaction)
+        ago = 0
+        if record.get("at"):
+            ago = max(0, int((int(time.time()) - int(record["at"])) // 60))
+        with self.engine():
+            res = self.call("thread", "remind_lead",
+                            ((self.cfg, room, rid, dict(question)), {"ago_min": ago}),
+                            ((self.cfg, room, rid, dict(question)), {}))
+        res = res if isinstance(res, dict) else {}
+        record = dict(record, reminded_at=int(time.time()),
+                      reminders=int(record.get("reminders") or 0) + 1)
+        answers[qid] = record
+        self._save_answers(room, rid, answers)
+        payload = {"ok": True, "action": "answer_remind", "question_id": qid,
+                   "reminded_at": record["reminded_at"], "reminders": record["reminders"],
+                   "text": res.get("text"), "routed_to": res.get("routed_to"),
+                   "question": answers_mod.apply_question(dict(question), record)}
+        payload["request"] = self._summary_or_local(
+            room, rid, rec.get("text") or "", rec.get("title") or "",
+            bool(rec.get("critic")), rec.get("mode") or "auto", answers)
+        return 200, payload, {}
+
+    def _step_drop(self, room: dict, rec: dict, rid: str, kw: dict):
+        """Обратная совместимость: «Убрать» шаг — это действие `step_drop`."""
+        return self._step_action(room, rec, rid, kw, "drop", {})
+
+    def _step_action(self, room: dict, rec: dict, rid: str, kw: dict, kind: str, body: dict):
+        """Действие пользователя по шагу: согласен / прокомментировать / переместить / убрать.
+
+        Пункт 12: статус шага ведёт руководитель, а пользователь может ВЛИЯТЬ на
+        план — каждое действие уходит руководителю КАК ОТВЕТ НА ЭТОТ ШАГ (тот же
+        механизм, что у вопросов, §5/§6): метка ``[Михаил · … шаг ns_x «…»]`` в
+        ветке, запись в реестре, видимая реакция «принято / учтено / срок изменён /
+        шаг убран». «Убрать» дополнительно снимает шаг в бэклоге комнаты.
+        """
+        body = body if isinstance(body, dict) else {}
+        step_id = str(kw.get("step_id") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_:\-]{1,64}", step_id):
+            raise err(400, "Некорректный id шага", field="step_id", value=step_id[:80])
+        # `<rid>:ns_1` → `ns_1` (id шага в бэклоге комнаты)
+        if ":" in step_id:
+            step_id = step_id.split(":", 1)[1]
+        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"),
+                              rec.get("answers"))
+        step = next((s for s in detail.get("next_steps") or []
+                     if str(s.get("id")) == step_id), None)
+        if step is None:
+            raise err(404, "Шаг не найден", step_id=step_id)
+        action: dict = {"kind": kind, "at": int(time.time())}
+        if kind == "comment":
+            text = str(kw.get("text") or "").strip()
+            if not text:
+                raise err(400, "Нужен текст комментария", field="text")
+            action["text"] = text
+        if kind == "move":
+            changed = False
+            if "due" in body:
+                due = body.get("due")
+                if due is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(due)):
+                    raise err(400, "due: YYYY-MM-DD", field="due", value=str(due)[:40])
+                action["due"] = str(due) if due else None
+                changed = True
+            if "owner" in body:
+                owner = body.get("owner")
+                if owner is not None:
+                    owner = str(owner).strip()
+                    if owner and owner != "mikhail" and not profile_ok(owner):
+                        raise err(400, "owner: имя профиля", field="owner", value=owner[:80])
+                action["owner"] = owner or None
+                changed = True
+            if "direction" in body:
+                direction = str(body.get("direction") or "").strip()
+                if direction not in ("up", "down"):
+                    raise err(400, "direction: «up» или «down»", field="direction", value=direction)
+                action["direction"] = direction
+                changed = True
+            if not changed:
+                raise err(400, "Перемещение без изменений: срок, исполнитель или порядок",
+                          field="due|owner|direction")
+        updates: dict = {}
+        actions = dict(rec.get("step_actions") or {})
+        actions[step_id] = action
+        updates["step_actions"] = actions
+        log = list(rec.get("steps_log") or [])
+        log.append(dict(action, step_id=step_id))
+        updates["steps_log"] = log[-80:]
+        if kind == "move" and action.get("direction"):
+            order = [str(item) for item in (rec.get("steps_order") or []) if str(item) != step_id]
+            ids = [str(s.get("id")) for s in detail.get("next_steps") or [] if s.get("id")]
+            order = order + [item for item in ids if item not in order]
+            index = order.index(step_id) if step_id in order else -1
+            if action["direction"] == "up" and index > 0:
+                order[index - 1], order[index] = order[index], order[index - 1]
+            elif action["direction"] == "down" and 0 <= index < len(order) - 1:
+                order[index + 1], order[index] = order[index], order[index + 1]
+            updates["steps_order"] = order
+        elif kind == "move":
+            order = [str(item) for item in (rec.get("steps_order") or [])]
+            updates["steps_order"] = order
+        dropped = [str(item) for item in (rec.get("steps_dropped") or [])]
+        if kind == "drop":
+            if step_id not in dropped:
+                dropped.append(step_id)
+            updates["steps_dropped"] = dropped
+        try:
+            self.call("registry", "update", ((self.cfg, room.get("id"), rid, updates), {}))
+        except Exception as exc:  # noqa: BLE001 - метка в ветке важнее реестра
+            self.log.error("реестр: действие по шагу %s не сохранено" % rid, exc)
+        item_id = self._backlog_id(rid, step_id)
+        if self._has_mod("ingest") and (kind == "drop" or "due" in action):
+            try:
+                ingest = self.mod("ingest")
+                ingest.ensure_backlog_item(self.cfg, room.get("id"), item_id, detail)
+                status = "dismissed" if kind == "drop" else (
+                    str(step.get("state") or "open")
+                    if str(step.get("state")) in ("open", "asked", "done") else "open")
+                extra = {"due": action.get("due")} if "due" in action else {}
+                ingest.set_backlog_status(self.cfg, room.get("id"), item_id, status, **extra)
+            except Exception as exc:  # noqa: BLE001 - шаг вторичен, действие важнее
+                self.log.warning("шаг %s не обновлён в бэклоге: %s" % (item_id, exc))
+        # руководитель должен узнать о действии (ответ на шаг — механизм §5/§6/§12)
+        mark = answers_mod.step_comment(kind, step_id, step.get("text"), action.get("text") or "",
+                                        action.get("due"), action.get("owner"),
+                                        action.get("direction"))
+        try:
+            with self.engine():
+                self.call("engine_write", "act",
+                          ((self.cfg, room.get("board") or self.board, rid, "comment"),
+                           {"text": mark, "author": AUTHOR_MAXIM}))
+        except Exception as exc:  # noqa: BLE001 - метка в реестре уже есть
+            self.log.warning("сообщение о шаге %s не записано: %s" % (step_id, exc))
+        view = answers_mod.apply_step(dict(step), action, None)
+        if kind == "drop":
+            view.update({"state": "dismissed", "state_label": "убран", "can_remove": False,
+                         "can_agree": False, "can_drop": False})
+        payload = {"ok": True, "action": "step_" + kind, "step_id": step_id,
+                   "step": view, "message": mark, "log": log[-5:],
+                   "reaction_label": view.get("reaction_label"),
+                   "pending_label": answers_mod.PENDING_RU}
+        if kind == "drop":
+            payload["dropped"] = dropped
+        payload["request"] = self._summary_or_local(
+            room, rid, rec.get("text") or "", rec.get("title") or "",
+            bool(rec.get("critic")), rec.get("mode") or "auto", rec.get("answers"))
+        return 200, payload, {}
+
     # --- проверки значений действия (D1) ---
+
     def _check_action_values(self, room: dict, rec: dict, rid: str, action: str, kw: dict) -> None:
         """task_id — из дерева запроса; profile — из комнаты; author — белый список.
 
@@ -750,12 +1104,15 @@ class WriteRoutes:
 
 
     def _new_request(self, room: dict, text: str, title: str, critic: bool, attach=None,
-                     brief: bool = False) -> dict:
+                     brief: bool = False, critic_mode: str | None = None,
+                     max_rounds: int | None = None) -> dict:
         """Создать корневую карточку через тот же путь, что POST /requests.
 
         contract.build_request_body → engine_write.create_request → registry.add_request.
         Возвращает ``{root_id, slug, title, text, critic, warning}`` или бросает ApiError.
         ``brief`` (WAVE 9, A5) — тело в режиме брифа проекта.
+        ``critic_mode`` (W13-E §9) — режим проверки: «rounds» или «until_approved»;
+        по умолчанию берётся из комнаты, чтобы запрос жил по её настройке.
         """
         slug = make_slug()
         attach = list(attach or [])
@@ -771,9 +1128,19 @@ class WriteRoutes:
         if not root_id:
             raise ApiError(502, "Движок не вернул id созданной карточки",
                            detail={"module": "engine_write"})
+        mode = str(critic_mode or room.get("critic_mode") or "rounds")
+        if mode not in CRITIC_MODES:
+            mode = "rounds"
+        try:
+            cap = int(room.get("critic_round_cap") or DEFAULT_CRITIC_ROUND_CAP)
+        except (TypeError, ValueError):
+            cap = DEFAULT_CRITIC_ROUND_CAP
         record = {"root_id": root_id, "slug": slug, "title": title, "text": text,
                   "created_at": int(time.time()), "critic": bool(critic), "mode": "auto",
+                  "critic_mode": mode, "critic_round_cap": cap,
                   "adopted": False, "extra_cards": [], "ingested": {}, "retargeted": False}
+        if isinstance(max_rounds, int) and not isinstance(max_rounds, bool) and 1 <= max_rounds <= 5:
+            record["max_rounds"] = max_rounds
         if brief:
             record["brief"] = True
         self._register(room, record)
@@ -786,8 +1153,10 @@ class WriteRoutes:
                 "critic": bool(critic), "warning": warning, "record": record}
 
     def _create(self, room: dict, text: str, title: str, critic: bool, attach, mode: str = "auto",
-                kind: str | None = None, brief: bool = False):
-        made = self._new_request(room, text, title, critic, attach, brief=brief)
+                kind: str | None = None, brief: bool = False, critic_mode: str | None = None,
+                max_rounds: int | None = None):
+        made = self._new_request(room, text, title, critic, attach, brief=brief,
+                                 critic_mode=critic_mode, max_rounds=max_rounds)
         if kind:
             self._register(room, dict(made["record"], kind=kind))  # пометка вида запроса
         root_id = made["root_id"]
@@ -803,7 +1172,8 @@ class WriteRoutes:
             raise err(409, "В реестре нет текста запроса — клонировать нечего", rid=rec.get("root_id"))
         new_title = (title or ("%s (копия)" % (rec.get("title") or derive_title(text))))[:120]
         status, payload, headers = self._create(room, text, new_title, bool(rec.get("critic")),
-                                                [], mode=rec.get("mode") or "auto")
+                                                [], mode=rec.get("mode") or "auto",
+                                                critic_mode=rec.get("critic_mode"))
         payload["ok"] = True
         payload["action"] = "clone"
         return status, payload, headers

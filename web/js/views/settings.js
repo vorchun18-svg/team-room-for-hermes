@@ -16,6 +16,10 @@ import {
   field, iconButton, lsGet, lsSet, openPath,
 } from '../ui.js';
 import { countText, COUNT_FORMS, humanApiMessage } from '../shell-labels.js';
+import { personName } from './request-util.js';
+import {
+  KICK_LABEL, KICK_HINT, kickPreview, kickNow, kickUsefulness, kickWhyNot, kickPanel,
+} from './kick-panel.js';
 
 const VIEW_CSS = 'css/view-settings.css';
 const THEME_KEY = 'teamroom.theme';
@@ -112,7 +116,7 @@ const FAQ = [
   { q: 'Что от меня ждут?', a: 'Число у комнаты слева и бейдж на вкладке «Дальше» — это дела, которые ждут вашего решения: вопросы, блокировки, предложенные решения. Откройте вкладку — ответить можно прямо в строке, ответ уйдёт комментарием и снимет блокировку.', tab: 'backlog', link: 'Что ждёт меня' },
   { q: 'На каком мы этапе?', a: 'Вкладка «Карта проекта»: полоса фаз и решения. Текущая фаза показана чипом в шапке комнаты.', tab: 'roadmap', link: 'Карта проекта' },
   { q: 'Кто что делает сейчас?', a: 'Вкладка «Команда»: у каждого профиля живой статус, текущая задача и последняя работа. Если все простаивают — смотрите «Здоровье» ниже.', tab: 'team', link: 'Команда' },
-  { q: 'Почему ничего не происходит?', a: 'Чаще всего остановился движок команды — он раздаёт задачи исполнителям. В блоке «Здоровье» видно его состояние и есть кнопка «Подтолкнуть движок». Второй вариант — запрос ещё не разобран на работы: нажмите «Разложить сейчас» на странице запроса (это обращение к модели, только по вашему клику).', tab: 'team', link: 'Кто чем занят' },
+  { q: 'Почему ничего не происходит?', a: 'Чаще всего остановился движок команды — он раздаёт задачи исполнителям. В блоке «Здоровье» видно его состояние и есть кнопка «Проверить доску сейчас»: она один раз запускает готовые задачи, не дожидаясь минутного таймера, и показывает, что именно запустилось. Второй вариант — запрос ещё не разобран на работы: нажмите «Разложить сейчас» на странице запроса (это обращение к модели, только по вашему клику).', tab: 'team', link: 'Кто чем занят' },
   { q: 'Что сказал критик? Можно переделать?', a: 'На странице запроса есть блок «Проверка критика»: вердикт и замечания «где / в чём проблема / что исправить». Кнопка «На доработку» отправляет ответ руководителю комнаты с вашим замечанием — получится новая версия.', tab: 'composer', link: 'К запросам' },
   { q: 'Как попросить интерактивный отчёт?', a: 'Скажите в запросе прямо: «сделай интерактивный отчёт с таблицей и графиком». Команда соберёт страницу отчёта — она появится во вкладке «Отчёты» и откроется на весь экран.', tab: 'reports', link: 'Отчёты' },
   { q: 'Как добавить агента?', a: 'Вкладка «Команда» → «Добавить»: список профилей Hermes с описаниями. Можно добавить, например, программиста на постоянку — состав комнаты меняется в любой момент.', tab: 'team', link: 'Добавить агента' },
@@ -121,7 +125,8 @@ const FAQ = [
   { q: 'Хочу в календарь', a: 'Во вкладке «Дальше» у шагов есть срок; кнопка экспорта отдаёт .ics — файл открывается календарём, без внешней сети.', tab: 'backlog', link: 'Шаги и сроки' },
   { q: 'Хочу послать кому-то результат', a: 'На странице запроса — экспорт в .md и в автономный .html: один файл, всё внутри (текст ответа, шаги, решения, отчёт), открывается без сервера.', tab: 'composer', link: 'К запросам' },
   { q: 'Сколько это шло и кто опоздал?', a: 'На странице запроса у задач в дереве работ видны длительности и прогресс N/M по работам. Сроки шагов — во вкладке «Дальше».', tab: 'composer', link: 'К запросам' },
-  { q: 'Что делает критик?', a: 'После того как руководитель комнаты свёл ответ, критик получает запрос и свод и отвечает вердиктом: «принято» или «на доработку» со списком замечаний. При «на доработку» руководитель комнаты делает новую версию ответа. Раундов по умолчанию один, максимум два.', tab: 'composer', link: 'К запросам' },
+  { q: 'Что делает критик?', a: 'После того как руководитель комнаты свёл ответ, критик получает запрос и свод и отвечает вердиктом: «принято» или «на доработку» со списком замечаний. При «на доработку» руководитель комнаты делает новую версию ответа. Сколько раз проверять — задаётся один раз в настройках комнаты, руководитель об этом вас не спрашивает.', tab: 'composer', link: 'К запросам' },
+  { q: 'Что такое раунд критика и сколько их ставить?', a: 'Раунд — один цикл «критик проверил → если нашёл замечания, исполнители доработали → снова проверили». 1 раунд — быстро: одна попытка исправить замечания. 2 раунда — тщательнее. Третий вариант «До полного одобрения критиком» — цикл идёт, пока критик не скажет «принято»: удобно оставить на ночь и утром получить готовое. Страховки: остановка, если замечания повторяются три раунда подряд, пауза при лимите провайдера и потолок раундов (по умолчанию 12) — по достижении цикл останавливается с понятным отчётом. Выбирается в настройках комнаты («Изменить…» → «Раунды проверки») и при постановке запроса.', tab: 'team', link: 'Как работает комната' },
   { q: 'Сколько это стоит в токенах?', a: 'Деньги и токены считает Hermes, а не это приложение. Каждый запрос запускает агентов только по вашему нажатию «Отправить»: сначала руководитель комнаты разбирает запрос, потом работают исполнители, критик добавляет 1–2 запуска. Посмотреть расход: команда hermes insights --days 7 (токены и стоимость по сессиям) или hermes usage (лимиты). Здесь цифр нет намеренно — мы их не выдумываем.' },
   { q: 'Что если агент ошибся?', a: 'Три пути. «На доработку» на странице запроса: напишите, что не так, — руководитель комнаты перепишет ответ, прежние версии сохраняются. «Переназначить» задачу в дереве работ — её возьмёт другой профиль. «Повторить» на упавшей карточке. Факты всё равно проверяйте: система гарантирует, что ответ собран из работы команды и прошёл критика, а не истинность.' },
   { q: 'Куда смотреть, когда ответ готов?', a: 'Вкладка «Запрос»: у готового запроса чип «готово», откройте его — ответ вверху страницы. Если включены уведомления, придёт системное сообщение. Числа в сайдбаре показывают, сколько дел ждёт вашего решения.' },
@@ -209,6 +214,12 @@ async function mountSettings(el, ctx) {
   root.appendChild(healthSection);
 
   let healthSig = '';
+  let healthData = null;
+  // W13-F §8: предпросмотр доски (нужна ли кнопка) и итог последнего прохода.
+  let kickState = null;
+  let kickResult = null;
+  let kickBusy = false;
+  let kickSig = '';
 
   function healthChips(data) {
     const engine = data.engine || {};
@@ -272,8 +283,14 @@ async function mountSettings(el, ctx) {
 
     card.appendChild(h('div', { class: 'set-card__sep' }));
     card.appendChild(infoRow('Движок команды', stateChip(dispatcher.state || (dispatcher.ok ? 'running' : 'stopped')),
-      h('button', { class: 'btn btn--secondary btn--sm', type: 'button', onclick: (e) => kickDispatcher(e.currentTarget) },
-        icon('zap', { size: 12 }), 'Подтолкнуть движок')));
+      kickControl()));
+    if (kickResult) {
+      card.appendChild(h('div', { style: { marginTop: 'var(--space-2)' } },
+        kickPanel(kickResult, {
+          labelOf: kickLabelOf,
+          onClose: () => { kickResult = null; renderHealth(healthData, null); },
+        })));
+    }
     if (dispatcher.pid) card.appendChild(infoRow('Номер процесса', h('span', { class: 'mono' }, String(dispatcher.pid))));
     if (dispatcher.updated_at) card.appendChild(infoRow('Обновлён', timeAgo(dispatcher.updated_at)));
     if (dispatcher.warning) card.appendChild(infoRow('Предупреждение', String(dispatcher.warning)));
@@ -317,17 +334,55 @@ async function mountSettings(el, ctx) {
       h('span', { class: 'muted' }, ' — версия, доска, диктовка, Vault, порт, автозапуск, плагин и последние ошибки.')));
   }
 
-  async function kickDispatcher(btn) {
-    if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
-    try {
-      await api.post('/api/dispatcher/kick', {});
-      if (typeof ctx.toast === 'function') ctx.toast('Движок подтолкнут', 'ok');
-      setTimeout(() => loadHealth({ force: true }), 500);
-    } catch (err) {
-      if (typeof ctx.toast === 'function') ctx.toast(String(err && err.message || 'Не удалось подтолкнуть движок'), 'danger');
-    } finally {
-      if (btn) { btn.disabled = false; btn.classList.remove('is-busy'); }
+  /** Подпись исполнителя в итоге: «biz-ops» → «Операции» (техническое имя — в title). */
+  const kickLabelOf = (profile) => {
+    const raw = String(profile == null ? '' : profile).trim();
+    if (!raw) return '';
+    const text = personName(raw);
+    return text ? text.charAt(0).toUpperCase() + text.slice(1) : raw;
+  };
+
+  /**
+   * Кнопка «Проверить доску сейчас» или объяснение, почему она не нужна (W13-F §8).
+   * Пока предпросмотр доски не пришёл, показываем кнопку: скрывать её по догадке хуже.
+   */
+  function kickControl() {
+    const use = kickUsefulness(kickState);
+    if (kickState && !use.useful) {
+      return h('span', { class: 'small muted', 'data-kick': 'why-not' }, kickWhyNot(kickState));
     }
+    return h('button', {
+      class: 'btn btn--secondary btn--sm', type: 'button', title: KICK_HINT,
+      'data-kick': 'button', onclick: (e) => kickDispatcher(e.currentTarget),
+    }, icon('zap', { size: 12 }), KICK_LABEL);
+  }
+
+  async function kickDispatcher(btn) {
+    if (kickBusy) return;
+    kickBusy = true;
+    if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+    // Итог — панель с подробностями (что запущено, кто чего ждёт), а не тост.
+    kickResult = await kickNow(api, '');
+    kickBusy = false;
+    if (btn) { btn.disabled = false; btn.classList.remove('is-busy'); }
+    refreshKick();
+    renderHealth(healthData, null);
+    setTimeout(() => loadHealth({ force: true }), 500);
+  }
+
+  /** Предпросмотр доски: только чтение, ничего не запускает (работает и в песочнице). */
+  async function refreshKick() {
+    try {
+      const report = await kickPreview(api);
+      if (stopped) return false;
+      kickState = report && (report.counts || report.cards) ? report : null;
+    } catch {
+      kickState = null;   // не смогли посмотреть доску — кнопку не прячем
+    }
+    const sig = JSON.stringify((kickState && kickState.counts) || null);
+    if (sig === kickSig) return false;
+    kickSig = sig;
+    return true;
   }
 
   async function loadHealth({ silent = false, force = false } = {}) {
@@ -339,11 +394,16 @@ async function mountSettings(el, ctx) {
       const data = await api.get('/api/health', conditional ? { etag: true } : undefined);
       if (stopped) return;
       if (data && data.notModified) return;
+      healthData = data;
       const sig = JSON.stringify(data);
       if (sig !== healthSig) {
         healthSig = sig;
         renderHealth(data, null);
       }
+      // Кнопка «Проверить доску сейчас» появляется/прячется по состоянию доски.
+      refreshKick().then((changed) => {
+        if (changed && !stopped) renderHealth(healthData, null);
+      });
       if (store.health && store.health.set) {
         store.health.set({ loading: false, ok: Boolean(data && data.ok), error: null, data });
       }

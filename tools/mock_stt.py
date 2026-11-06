@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -141,3 +142,91 @@ def put_dictionary(obj: dict) -> dict:
 
 def learn(raw: str, final: str, apply: bool = False) -> dict:
     return _call("learn", demo_cfg(), raw, final, apply=apply)
+
+
+# --- части длинной записи (WAVE13 §2) --------------------------------------
+# Демо ничего не пишет на диск: части живут в памяти процесса мока.
+import re as _re                                                     # noqa: E402
+
+RID_RE = _re.compile(r"^[a-z0-9][a-z0-9_-]{5,40}$")
+MAX_PART_BYTES = 64 * 1024 * 1024
+MAX_PARTS = 64
+_PARTS: dict = {}          # rid → {n: (bytes, ctype)}
+_CREATED: dict = {}        # rid → время создания
+
+
+def _rid(rid) -> str:
+    text = str(rid or "")
+    if not RID_RE.fullmatch(text):
+        raise ApiError(400, "bad_request", "Некорректный номер записи", {"field": "rid"})
+    return text
+
+
+def reset_parts() -> None:
+    """Забыть все части (тесты и перезапуск демо)."""
+    _PARTS.clear()
+    _CREATED.clear()
+
+
+def save_part(rid, part, audio: bytes, ctype: str) -> dict:
+    """Сохранить часть записи в памяти демо (`{"rid","part","bytes",...}`)."""
+    key = _rid(rid)
+    try:
+        number = int(part)
+    except (TypeError, ValueError):
+        raise ApiError(400, "bad_request", "Номер части должен быть числом", {"field": "part"})
+    if not 1 <= number <= MAX_PARTS:
+        raise ApiError(400, "bad_request", "Номер части вне диапазона 1…%d" % MAX_PARTS,
+                       {"field": "part", "limit": MAX_PARTS})
+    payload = bytes(audio or b"")
+    if not payload:
+        raise ApiError(400, "audio_empty", "Пустая часть записи", {"field": "body"})
+    if len(payload) > MAX_PART_BYTES:
+        raise ApiError(413, "audio_too_big", "Часть записи больше 64 МиБ",
+                       {"limit": MAX_PART_BYTES, "length": len(payload)})
+    base = str(ctype or "audio/webm").split(";")[0].strip().lower() or "audio/webm"
+    store = _PARTS.setdefault(key, {})
+    store[number] = (payload, base)
+    _CREATED.setdefault(key, int(time.time()))
+    return {"rid": key, "part": number, "bytes": len(payload),
+            "seconds_est": round(len(payload) / 3000.0, 2), "parts_total": len(store)}
+
+
+def recording(rid) -> dict:
+    """Сколько частей записи уже есть (демо)."""
+    key = _rid(rid)
+    store = _PARTS.get(key, {})
+    parts = [{"n": n, "bytes": len(chunk), "seconds_est": round(len(chunk) / 3000.0, 2)}
+             for n, (chunk, _ctype) in sorted(store.items())]
+    return {"rid": key, "created_at": int(_CREATED.get(key) or 0), "updated_at": 0,
+            "mime": "audio/webm", "parts": parts, "parts_total": len(parts),
+            "bytes": sum(row["bytes"] for row in parts),
+            "seconds_est": round(sum(row["seconds_est"] for row in parts), 2)}
+
+
+def part(rid, part) -> tuple:
+    """Байты части и её тип (для повторного распознавания в демо)."""
+    key = _rid(rid)
+    try:
+        number = int(part)
+    except (TypeError, ValueError):
+        raise ApiError(400, "bad_request", "Номер части должен быть числом", {"field": "part"})
+    chunk = (_PARTS.get(key) or {}).get(number)
+    if not chunk:
+        raise ApiError(404, "bad_request", "Часть записи не найдена", {"field": "part"})
+    return chunk[0], chunk[1]
+
+
+def recordings(limit: int = 20) -> dict:
+    """Последние записи демо (для «Распознать запись»)."""
+    rows = [recording(key) for key in _PARTS]
+    rows.sort(key=lambda row: row["created_at"], reverse=True)
+    return {"items": rows[:max(1, int(limit))], "limit": limit}
+
+
+def drop(rid) -> dict:
+    """Убрать запись из памяти демо."""
+    key = _rid(rid)
+    existed = bool(_PARTS.pop(key, None))
+    _CREATED.pop(key, None)
+    return {"rid": key, "removed": existed}

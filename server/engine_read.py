@@ -24,6 +24,11 @@ try:  # тело карточки: на чтении показываем тол
 except ImportError:  # pragma: no cover
     from contract import visible_text  # type: ignore
 
+try:  # W14-D: статусы ответов и связка вопрос↔шаг — в одном месте (server/answers.py)
+    from . import answers as _answers
+except ImportError:  # pragma: no cover
+    import answers as _answers  # type: ignore
+
 # --- раскладка по файлам: перенесённые имена доступны отсюда, как и раньше ---
 try:
     from .engine_db import (ACTIVE, CLOSED, EVENT_TEXT, EngineError, FAILED_STATUS, MAX_DEPTH, MAX_NODES,
@@ -195,22 +200,53 @@ def root_assignee_status(cfg, board, root_id) -> dict:
 
 
 # ------------------------------------------------------------- summary/detail ---
-def _apply_answers(questions: list, answers) -> list:
-    """Отметить вопросы, на которые Михаил уже ответил (реестр `answers`: q_id → {text, at}).
+def _apply_answers(questions: list, answers, reactions=None) -> list:
+    """Наложить ответы Михаила на вопросы (реестр `answers`: q_id → запись).
 
     Ответ хранится в реестре запросов, а не в metadata карточки: движок не даёт
     переписывать metadata run'а, поэтому `POST actions {action:"answer"}` пишет
     комментарий + запись в реестр, а чтение накладывает её на вопросы ответа.
+
+    W14-D (§1, §3): ответ — всегда ответ на КОНКРЕТНЫЙ вопрос; встречный вопрос
+    («поясни, что это») вопрос НЕ закрывает: `answered=False` и статус
+    «ждёт вашего решения после пояснения». Реакция руководителя (`reactions`)
+    меняет статус на `received → applied → no_change`.
     """
     if not isinstance(answers, dict) or not answers:
         return questions
+    reactions = reactions if isinstance(reactions, dict) else {}
     for question in questions:
-        record = answers.get(str(question.get("id")))
-        if isinstance(record, dict) and str(record.get("text") or "").strip():
-            question["answered"] = True
-            question["answer"] = str(record["text"])
-            question["answered_at"] = record.get("at")
+        qid = str(question.get("id"))
+        record = answers.get(qid)
+        if not isinstance(record, dict):
+            # ответ мог прийти из metadata (старые версии ответа) — не теряем его
+            if question.get("answered") and str(question.get("answer") or "").strip():
+                record = {"text": str(question.get("answer")), "at": question.get("answered_at")}
+            else:
+                continue
+        _answers.apply_question(question, record, reactions.get(qid))
     return questions
+
+
+def _steps_with_source(canon: dict) -> list:
+    """Шаги ответа + источник (`from_question`) из metadata, если руководитель его указал."""
+    steps = _steps(canon)
+    raw = canon.get("next_steps")
+    raw = raw if isinstance(raw, list) else []
+    source: dict = {}
+    for index, item in enumerate(raw, start=1):
+        if isinstance(item, str):
+            source.setdefault("ns_%d" % index, None)
+            continue
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("id") or "ns_%d" % index)
+        if item.get("from_question"):
+            source[key] = str(item["from_question"])
+    for step in steps:
+        sid = str(step.get("id") or "")
+        step["from_question"] = source.get(sid)
+    return steps
 
 
 def _load(cfg, board, root_id, room=None, extra_cards=None, enabled=None, answers=None):
@@ -218,7 +254,7 @@ def _load(cfg, board, root_id, room=None, extra_cards=None, enabled=None, answer
     room_dict = _room_dict(cfg, room)
     with _conn(cfg, board) as con:
         ctx = _collect(con, root_id)
-        nodes = _tree(ctx, room_dict, extra)
+        nodes = _tree(ctx, room_dict, extra, cfg, board)
         synth, canon, warns = _synthesis(ctx, nodes, extra)
         canons = _canons(nodes)
         if canons:
@@ -285,7 +321,8 @@ def request_detail(cfg, board, root_id, room=None, extra_cards=None, critic=None
     out.update({"text": visible_text(ctx["tasks"][root_id].get("body") or ""),
                 "body_full": ctx["tasks"][root_id].get("body") or "",
                 "dispatcher": _dispatcher_short(cfg),
-                "synthesis": data["synth"], "next_steps": _steps(canon), "open_questions": data["questions"],
+                "synthesis": data["synth"], "next_steps": _steps_with_source(canon),
+                "open_questions": data["questions"],
                 "decisions": _decisions(canon, root_id, data["synth"].get("at")), "stage": _stage(canon),
                 "future_questions": _future(canon), "artifacts": _artifacts(cfg, canon, warnings),
                 "report": _report(cfg, canon), "tree": nodes, "timeline": data["timeline"],

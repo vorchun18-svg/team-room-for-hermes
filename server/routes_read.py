@@ -48,8 +48,44 @@ def _stt_flag(cfg) -> bool:
         return False
 
 
+def _is_critic_rounds_question(text) -> bool:
+    """Вопрос «сколько раундов/прогонов критика?» — то, что задано в комнате (§7в).
+
+    Ищем по основам слов: «критик» + «раунд/прогон/цикл», либо «сколько … провер…».
+    """
+    flat = " ".join(str(text or "").lower().split())
+    if not flat or "критик" not in flat:
+        return False
+    if "прогон" in flat or "раунд" in flat or "цикл" in flat:
+        return True
+    return "сколько" in flat and ("провер" in flat or "доработ" in flat)
+
+
+def _journal_once(cfg, room_id, kind: str, text: str) -> bool:
+    """Запись в журнал комнаты без дублей (тот же текст уже есть — не пишем)."""
+    if not room_id:
+        return False
+    try:
+        path = Path(cfg.state_dir) / str(room_id) / "journal.jsonl"
+        with sf.lock_for(path):
+            events = sf.read_jsonl(path)
+            flat = " ".join(str(text or "").split())
+            if any(" ".join(str(e.get("text") or "").split()) == flat for e in events):
+                return False
+            number = 0
+            for event in events:
+                ident = str(event.get("id") or "")
+                if ident.startswith("j_") and ident[2:].isdigit():
+                    number = max(number, int(ident[2:]))
+            sf.append_jsonl(path, {"id": "j_%04d" % (number + 1), "room": str(room_id),
+                                   "at": int(time.time()), "kind": kind, "actor": "app",
+                                   "text": flat[:600]})
+            return True
+    except Exception:  # noqa: BLE001 - журнал вторичен для чтения страницы
+        return False
+
+
 def _stt_mode(cfg) -> str:
-    """Режим диктовки как возможность: local / provider / none (см. stt.status)."""
     try:
         try:
             from . import stt as stt_mod
@@ -58,6 +94,44 @@ def _stt_mode(cfg) -> str:
         return str((stt_mod.status(cfg) or {}).get("mode") or "none")
     except Exception:  # noqa: BLE001 — конфиг важнее диагностики
         return "none"
+
+
+def _profile_info():
+    """Модуль подписей профилей (`server/profile_info.py`) или None — подпись вторична."""
+    try:
+        try:
+            from . import profile_info as mod
+        except ImportError:  # «плоский» импорт (тесты, CLI)
+            import profile_info as mod  # type: ignore
+        return mod
+    except Exception:  # noqa: BLE001 — без модуля подписей интерфейс работает как раньше
+        return None
+
+
+def _labels(cfg, profiles, log=None) -> dict:
+    """Подписи профилей из кэша `profile_info.labels` (фоновое обновление, без ожидания)."""
+    mod = _profile_info()
+    if mod is None:
+        return {}
+    try:
+        return mod.labels(cfg, profiles) or {}
+    except Exception as exc:  # noqa: BLE001 - подпись не должна ломать ответ
+        if log is not None:
+            log.warning("подписи профилей: %s" % exc)
+        return {}
+
+
+def _decorate(description, entry, custom, log=None) -> dict:
+    """Поля подписи участника/профиля (имя, должность, источник) — см. profile_info.decorate."""
+    mod = _profile_info()
+    if mod is None:
+        return {}
+    try:
+        return mod.decorate(description or "", entry or {}, custom or "") or {}
+    except Exception as exc:  # noqa: BLE001
+        if log is not None:
+            log.warning("подпись участника: %s" % exc)
+        return {}
 
 
 class ReadRoutes:
@@ -182,6 +256,11 @@ class ReadRoutes:
         if isinstance(roster, dict):
             roster = roster.get("items") or []
         items = [self._profile_card(item) for item in roster or [] if isinstance(item, dict)]
+        # WAVE13 §11: подпись профиля — имя и должность из `hermes profile describe`
+        # (кэш server/profile_info.py); ответ CLI не ждёт ни один запрос.
+        labels = _labels(self.cfg, [card.get("profile") for card in items], self.log)
+        for card in items:
+            card.update(_decorate(card.get("description") or "", labels.get(card.get("profile")), "", self.log))
         return 200, {"items": items, "count": len(items), "dispatcher": self._dispatcher_short()}, {}
 
     @staticmethod
@@ -283,9 +362,139 @@ class ReadRoutes:
         room, rec = self._find_record(rid)
         detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), rec.get("answers"))
         self._ensure_ingested(room, detail)
+        self._critic_view(room, rec, detail)          # W13-E §9: режим, ход, страховки
+        self._drop_known_critic_question(room, rec, detail)   # §7: не переспрашивать
         detail["thread"] = self._thread(room, rid)
+        self._answers_view(room, rec, detail)          # W14-D: ответ ↔ вопрос, шаги
         return 200, detail, {"ETag": http_util.etag_of(http_util.json_bytes(detail)),
                              "Cache-Control": "no-cache"}
+
+    # --- ответы на вопросы и связка вопрос↔шаг (W14-D §1–§4) ------------------
+
+    def _answers_view(self, room: dict, rec: dict, detail: dict) -> None:
+        """Статус ответа, реакция руководителя у вопроса, метки шагов.
+
+        Вопрос получает ``answer_state`` (sent → received → applied → no_change,
+        плюс ``waiting_explanation`` для встречного вопроса), ``answer_label``,
+        ``reaction`` (текст реакции руководителя из ветки) и ``leader_pending``
+        («руководитель ещё не ответил», кнопка «Напомнить»). Шаг получает
+        ``from_question``, ``cancelled_by_answer``/``cancelled_reason`` и
+        ``conflicts_with_answer`` («противоречит вашему ответу» + «Убрать»).
+        Старые ключи не меняются: всё добавлено, а не заменено.
+        """
+        if not isinstance(detail, dict) or not self._has_mod("answers"):
+            return
+        try:
+            mod = self.mod("answers")
+            stored = rec.get("answers") if isinstance(rec.get("answers"), dict) else {}
+            questions = detail.get("open_questions")
+            questions = questions if isinstance(questions, list) else []
+            reactions = mod.reactions_from_thread(detail.get("thread") or [], questions)
+            for question in questions:
+                if not isinstance(question, dict):
+                    continue
+                record = stored.get(str(question.get("id")))
+                if not isinstance(record, dict):
+                    record = ({"text": question.get("answer"), "at": question.get("answered_at")}
+                              if question.get("answered") and question.get("answer") else {})
+                mod.apply_question(question, record, reactions.get(str(question.get("id"))))
+            if isinstance(detail.get("questions"), list):
+                detail["questions"] = questions
+            dropped = rec.get("steps_dropped") if isinstance(rec.get("steps_dropped"), list) else []
+            # W14-H §12: действия пользователя по шагу и реакция руководителя на них
+            steps = mod.link_steps(detail.get("next_steps") or [], questions, stored, dropped,
+                                   rec, detail.get("thread") or [])
+            detail["next_steps"] = steps
+            detail["answers"] = {
+                "items": [mod.answer_item(q) for q in questions
+                          if isinstance(q, dict) and (q.get("answer_state") not in (None, "", "open")
+                                                      or q.get("needs_explanation"))],
+                "summary": mod.summary(questions, steps),
+                "pending_label": mod.PENDING_RU,
+                "waiting_label": mod.STATE_RU["waiting_explanation"],
+                "conflict_label": mod.CONFLICT_RU,
+                "cancelled_label": mod.CANCELLED_RU,
+            }
+        except Exception as exc:  # noqa: BLE001 - страница запроса важнее меток
+            self.log.warning("answers view %s: %s" % (detail.get("id"), exc))
+
+    # --- критик: объяснение, ход цикла и страховки (W13-E §7, §9) -------------
+
+    def _critic_view(self, room: dict, rec: dict, detail: dict) -> None:
+        """Дополнить `detail.critic` режимом и ходом цикла, не ломая прежние ключи.
+
+        Старые ключи (`enabled, state, verdict, round, max_rounds, issues, task_id`)
+        остаются как были; добавляются `mode`, `round_cap`, `paused`, `stopped`,
+        `progress` и `rounds_history`. Состояния расширены: `paused`, `stalled`, `capped`.
+        """
+        if not isinstance(detail, dict):
+            return
+        critic = detail.get("critic")
+        critic = dict(critic) if isinstance(critic, dict) else {}
+        mode = str(rec.get("critic_mode") or room.get("critic_mode") or "rounds")
+        if mode not in ("rounds", "until_approved"):
+            mode = "rounds"
+        try:
+            cap = int(rec.get("critic_round_cap") or room.get("critic_round_cap") or 12)
+        except (TypeError, ValueError):
+            cap = 12
+        now = int(time.time())
+        pause = rec.get("critic_pause") if isinstance(rec.get("critic_pause"), dict) else None
+        if pause and int(pause.get("until") or 0) <= now:
+            pause = None                        # пауза истекла — она уже не новость
+        stop = rec.get("critic_stop") if isinstance(rec.get("critic_stop"), dict) else None
+        history = rec.get("critic_rounds") if isinstance(rec.get("critic_rounds"), list) else []
+        progress = {}
+        try:
+            func = getattr(self.mod("critic_loop"), "progress", None) if self._has_mod("critic_loop") else None
+            if callable(func):
+                progress = func(rec, detail) or {}
+        except Exception as exc:  # noqa: BLE001 - страница важнее статистики цикла
+            self.log.warning("critic progress %s: %s" % (detail.get("id"), exc))
+        critic.update({"mode": mode, "round_cap": cap,
+                       "paused": pause, "stopped": stop,
+                       "progress": progress,
+                       "rounds_history": [item for item in history if isinstance(item, dict)]})
+        if critic.get("enabled"):
+            if stop:
+                critic["state"] = "stalled" if str(stop.get("kind")) == "no_progress" else "capped"
+            elif pause:
+                critic["state"] = "paused"
+        detail["critic"] = critic
+
+    def _drop_known_critic_question(self, room: dict, rec: dict, detail: dict) -> None:
+        """Убрать вопрос «сколько раундов/прогонов критика» — это задано в комнате.
+
+        Требование §7(в): руководитель не должен переспрашивать то, что уже стоит в
+        настройках комнаты. Вопрос не показываем; факт пишем в журнал комнаты один раз.
+        """
+        if not isinstance(detail, dict):
+            return
+        questions = detail.get("questions")
+        if not isinstance(questions, list):
+            questions = detail.get("open_questions")
+        if not isinstance(questions, list) or not questions:
+            return
+        kept, dropped = [], []
+        for item in questions:
+            if isinstance(item, dict) and _is_critic_rounds_question(item.get("text")):
+                dropped.append(item)
+            else:
+                kept.append(item)
+        if not dropped:
+            return
+        detail["questions"] = kept
+        if isinstance(detail.get("open_questions"), list):
+            detail["open_questions"] = kept
+        if detail.get("critic") is None or not isinstance(detail.get("critic"), dict) \
+                or detail["critic"].get("enabled"):
+            mode = str(rec.get("critic_mode") or room.get("critic_mode") or "rounds")
+            rounds = int(rec.get("critic_round_cap") or room.get("max_rounds") or 1)
+            value = ("число раундов уже задано в настройках комнаты (%d)" % rounds
+                     if mode != "until_approved" else
+                     "в комнате выбран режим «до полного одобрения», число раундов не нужно")
+            _journal_once(self.cfg, room.get("id"), "critic_review",
+                          "Вопрос руководителя «сколько раундов критика» скрыт: " + value + ".")
 
     def _ensure_ingested(self, room: dict, detail: dict) -> None:
         """Готовый запрос, открытый до приёма watcher'ом, — принять сейчас.
@@ -339,8 +548,55 @@ class ReadRoutes:
         if isinstance(members, dict):
             members = members.get("members") or []
         members = self._with_models(room, members or [])
+        members = self._with_labels(room, members or [])
         return 200, {"room": room_id, "generated_at": int(time.time()),
                      "dispatcher": self._dispatcher(), "members": members or []}, {}
+
+    def _with_labels(self, room, members):
+        """Подписи участников (WAVE13 §11): имя и должность вместо технического профиля.
+
+        Порядок источников — `label` участника (руками в «Изменить»), описание
+        профиля из `hermes profile describe` (кэш, обновляется в фоне), описание
+        из `profile.yaml`, роль в комнате. Ни одна подпись не ждёт CLI: пока
+        ответа нет, `label_pending=true`, интерфейс показывает описание профиля.
+        """
+        names = [str((m or {}).get("profile") or "").strip() for m in members if isinstance(m, dict)]
+        labels = _labels(self.cfg, [name for name in names if name], self.log)
+        descriptions = self._profile_descriptions()
+        # Ручная подпись живёт в реестре комнаты, а `team_state` её не возвращает —
+        # берём из состава комнаты (руководитель и критик задаются настройками).
+        custom: dict = {}
+        for member in room.get("members") or []:
+            if isinstance(member, dict) and member.get("profile"):
+                custom[str(member["profile"])] = str(member.get("label") or "")
+        out = []
+        for member in members:
+            if not isinstance(member, dict):
+                out.append(member)
+                continue
+            item = dict(member)
+            profile = str(item.get("profile") or "").strip()
+            item.update(_decorate(descriptions.get(profile, ""), labels.get(profile),
+                                  custom.get(profile) or item.get("label") or "", self.log))
+            out.append(item)
+        return out
+
+    def _profile_descriptions(self) -> dict:
+        """Описание профиля из `profile.yaml` (мост читает его без CLI): сразу и без задержки."""
+        try:
+            roster = self.call("engine_write", "list_profiles", ((self.cfg,), {}))
+        except Exception:  # noqa: BLE001 - подпись вторична, ростер бывает недоступен
+            return {}
+        if isinstance(roster, dict):
+            roster = roster.get("items") or []
+        out: dict = {}
+        for item in roster or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("profile") or "").strip()
+            if name:
+                out[name] = str(item.get("description") or "")
+        return out
 
     def _with_models(self, room, members):
         """Дополнить строки команды моделью: замена комнаты поверх настроек агента.
@@ -372,6 +628,17 @@ class ReadRoutes:
                     item["agent_default"] = agent_default(self.cfg, profile)
                 except Exception:  # noqa: BLE001
                     pass
+            # W13-A: «ушло на» — факт последнего запуска участника в комнате (для «Команды»).
+            # Необязательное поле: нет запуска/сессии — пустой объект, а не ошибка.
+            if profile and "model_sent" not in item:
+                try:
+                    try:
+                        from .agent_models import member_sent  # noqa: PLC0415 - лениво
+                    except ImportError:
+                        from agent_models import member_sent  # type: ignore
+                    item["model_sent"] = member_sent(self.cfg, room, profile)
+                except Exception:  # noqa: BLE001 - подпись вторична
+                    item["model_sent"] = {}
             out.append(item)
         return out
 

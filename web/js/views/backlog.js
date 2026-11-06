@@ -24,8 +24,9 @@ import { setInboxCounts } from '../shell-inbox.js';
 import { countText, COUNT_FORMS } from '../shell-labels.js';
 import {
   STEP_HINT, SAVE_FAILED, ownerName, requestHref, sourceLink, ownerChip, icsLink,
-  dueChip, filterBar,
+  filterBar,
 } from './backlog-parts.js';
+import { openStepDialog } from './step-dialog.js';
 
 const POLL_MS = 5000;
 
@@ -48,6 +49,8 @@ function countHeader(title, n, forms, actions) {
 export async function mount(el, ctx) {
   ensureCss('css/view-backlog.css');
   ensureCss('css/view-backlog-extras.css');
+  // W14-H §12: шаг — кликабельная строка и окно шага (стили общие со страницей запроса).
+  ensureCss('css/view-steps.css');
 
   const roomId = String((ctx.route && ctx.route.roomId) || (ctx.room && ctx.room.id) || '');
   if (!roomId) {
@@ -375,28 +378,57 @@ export async function mount(el, ctx) {
     paint('inbox', inboxHost, buildInbox(), signature);
   }
 
+  /** Шаг «Дальше»: не чекбокс, а кликабельная строка — окно действий (W14-H §12). */
   function stepRow(item) {
-    const isDone = item.status === 'done';
     const busy = state.busy.has(item.id);
-    const cb = h('input', {
-      type: 'checkbox',
-      checked: isDone,
-      disabled: busy,
-      title: STEP_HINT,
-      'aria-label': 'Шаг выполнен: ' + item.text,
-      onchange: (ev) => setStep(item, { status: ev.target && ev.target.checked ? 'done' : 'open' }),
-    });
-    return h('div', { class: 'step-row' + (busy ? ' step-row--busy' : '') },
-      h('div', { class: 'step-row__check' }, cb),
-      h('div', { class: 'step-row__body' },
-        h('div', { class: 'step-row__text' }, item.text),
-        h('div', { class: 'step-row__meta' },
-          ownerChip(item.owner),
-          dueChip(item, { busy, onChange: (due) => setStep(item, { status: item.status, due }) }),
-          item.status === 'asked' ? h('span', { class: 'chip chip--info' }, 'задан') : null,
-          sourceLink(roomId, item.source_request, item.source_title))),
+    const done = item.status === 'done';
+    const statusRu = { open: 'предстоит', asked: 'в работе', done: 'сделано', dismissed: 'убран' };
+    const open = h('div', {
+      class: 'step-row__open',
+      role: 'button',
+      tabindex: '0',
+      'aria-haspopup': 'dialog',
+      'aria-label': 'Шаг: ' + item.text + ' — открыть окно шага',
+      onclick: () => openStep(item),
+      onkeydown: (ev) => {
+        const key = ev && ev.key;
+        if (key === 'Enter' || key === ' ' || key === 'Spacebar') {
+          if (typeof ev.preventDefault === 'function') ev.preventDefault();
+          openStep(item);
+        }
+      },
+    },
+    h('div', { class: 'step-row__body' },
+      h('div', { class: 'step-row__text' }, item.text),
+      h('div', { class: 'step-row__meta' },
+        ownerChip(item.owner),
+        item.due ? dueBadge(item.due) : null,
+        h('span', { class: 'chip chip--' + (done ? 'ok' : item.status === 'asked' ? 'info' : 'muted') },
+          statusRu[item.status] || 'предстоит'),
+        sourceLink(roomId, item.source_request, item.source_title))));
+    return h('div', { class: 'step-row' + (busy ? ' step-row--busy' : '') + (done ? ' step-row--done' : '') },
+      open,
       h('div', { class: 'step-row__actions' },
         icsLink(roomId, item.id, 'В календарь: ' + item.text)));
+  }
+
+  /** Окно шага из «Дальше»: шаг лежит в запросе-источнике. */
+  function openStep(item) {
+    const rid = String(item.source_request || '').trim();
+    const localId = String(item.id || '').includes(':') ? String(item.id).split(':').pop() : String(item.id || '');
+    if (!rid) {
+      toast('У шага нет запроса-источника — открыть окно нельзя', 'warn');
+      return;
+    }
+    openStepDialog({
+      requestId: rid,
+      stepId: localId,
+      room: null,
+      roomId,
+      api,
+      toast,
+      onDone: () => load({ silent: true }),
+    });
   }
 
   function buildSteps() {
@@ -599,12 +631,6 @@ export async function mount(el, ctx) {
       state.busy.delete(itemId);
       await load({ silent: true });
     }
-  }
-
-  async function setStep(item, patch) {
-    const body = { status: patch.status || item.status };
-    if (Object.prototype.hasOwnProperty.call(patch, 'due')) body.due = patch.due;
-    await mutate(item.id, body, body.status === 'done' ? 'Шаг выполнен' : 'Срок сохранён');
   }
 
   async function decide(item, status) {

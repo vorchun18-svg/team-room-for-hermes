@@ -14,131 +14,179 @@
         "base",
         "general"
       ],
-      "available": true
+      "available": true,
+      "name": "",
+      "job": "",
+      "label": "",
+      "label_source": "role"
     },
     {
       "profile": "biz-director",
       "title": "Руководитель проекта",
       "kind": "director",
-      "description": "Разбирает запрос Михаила, раздаёт работу команде исполнителей, сводит один ответ и проверяет его с критиком.",
+      "description": "Глеб — руководитель штаба Лето",
       "tags": [
         "декомпозиция",
         "синтез",
         "приоритеты"
       ],
-      "available": true
+      "available": true,
+      "name": "Глеб",
+      "job": "руководитель штаба Лето",
+      "label": "Глеб — руководитель штаба Лето",
+      "label_source": "profile"
     },
     {
       "profile": "biz-lawyer",
       "title": "Юрист проекта",
       "kind": "worker",
-      "description": "ИП, ОКВЭД, СЭС, СанПиН, Роспатент, договоры. Работает по действующему праву, ссылается на источники.",
+      "description": "Антон — юрист по праву России",
       "tags": [
         "legal",
         "ИП",
         "Роспатент"
       ],
-      "available": true
+      "available": true,
+      "name": "Антон",
+      "job": "юрист по праву России",
+      "label": "Антон — юрист по праву России",
+      "label_source": "profile"
     },
     {
       "profile": "biz-ops",
       "title": "Операции",
       "kind": "worker",
-      "description": "Поставщики, упаковка, производство, доставка, закупки. Считает себестоимость и MOQ.",
+      "description": "Марина — поставщики и доставка",
       "tags": [
         "ops",
         "упаковка",
         "поставщики"
       ],
-      "available": true
+      "available": true,
+      "name": "Марина",
+      "job": "поставщики и доставка",
+      "label": "Марина — поставщики и доставка",
+      "label_source": "profile"
     },
     {
       "profile": "biz-strategy",
       "title": "Стратег",
       "kind": "worker",
-      "description": "План 90 дней, бренд-платформа, позиционирование, развилки и kill-критерии.",
+      "description": "Илья — стратегия и бренд",
       "tags": [
         "стратегия",
         "бренд"
       ],
-      "available": true
+      "available": true,
+      "name": "Илья",
+      "job": "стратегия и бренд",
+      "label": "Илья — стратегия и бренд",
+      "label_source": "profile"
     },
     {
       "profile": "biz-marketing",
       "title": "Маркетолог",
       "kind": "worker",
-      "description": "Каналы, контент, Mom Test D19, Telegram-каналы, B2B-кофейни.",
+      "description": "Вера — каналы и контент",
       "tags": [
         "каналы",
         "D19",
         "контент"
       ],
-      "available": true
+      "available": true,
+      "name": "Вера",
+      "job": "каналы и контент",
+      "label": "Вера — каналы и контент",
+      "label_source": "profile"
     },
     {
       "profile": "biz-cfo",
       "title": "Финансист",
       "kind": "worker",
-      "description": "Юнит-экономика, налоги ИП, сметы, точка безубыточности.",
+      "description": "Анна — финансы и экономика (CFO)",
       "tags": [
         "финансы",
         "ИП",
         "маржа"
       ],
-      "available": true
+      "available": true,
+      "name": "Анна",
+      "job": "финансы и экономика (CFO)",
+      "label": "Анна — финансы и экономика (CFO)",
+      "label_source": "profile"
     },
     {
       "profile": "biz-runner",
       "title": "Помощник",
       "kind": "utility",
-      "description": "Собирает и проверяет факты по Vault и доске, готовит срезы для руководителя комнаты.",
+      "description": "Сергей — мелкие поручения",
       "tags": [
         "факты",
         "vault"
       ],
-      "available": true
+      "available": true,
+      "name": "Сергей",
+      "job": "мелкие поручения",
+      "label": "Сергей — мелкие поручения",
+      "label_source": "profile"
     },
     {
       "profile": "biz-critic",
       "title": "Критик",
       "kind": "critic",
-      "description": "Проверяет цифры, ссылки и противоречия в своде. Даёт вердикт: принять / принять с правками / на доработку.",
+      "description": "Клим — проверка сводки",
       "tags": [
         "проверка",
         "источники"
       ],
-      "available": true
+      "available": true,
+      "name": "Клим",
+      "job": "проверка сводки",
+      "label": "Клим — проверка сводки",
+      "label_source": "profile"
     },
     {
       "profile": "coder",
       "title": "Программист",
       "kind": "worker",
-      "description": "Пишет и проверяет код, автоматизирует локальные задачи.",
+      "description": "Тимур — код и автоматизация",
       "tags": [
         "python",
         "js"
       ],
-      "available": true
+      "available": true,
+      "name": "Тимур",
+      "job": "код и автоматизация",
+      "label": "Тимур — код и автоматизация",
+      "label_source": "profile"
     },
     {
       "profile": "lawyer",
       "title": "Юрист",
       "kind": "worker",
-      "description": "Общие юридические вопросы вне проекта.",
+      "description": "Лев — договоры и визы",
       "tags": [
         "legal"
       ],
-      "available": true
+      "available": true,
+      "name": "Лев",
+      "job": "договоры и визы",
+      "label": "Лев — договоры и визы",
+      "label_source": "profile"
     },
     {
       "profile": "surveyor",
       "title": "Исследователь",
       "kind": "worker",
-      "description": "Проверяет факты и источники, сводит противоречия.",
+      "description": "Ратмир — проверка фактов и источников",
       "tags": [
         "research"
       ],
-      "available": true
+      "available": true,
+      "name": "Ратмир",
+      "job": "проверка фактов и источников",
+      "label": "Ратмир — проверка фактов и источников",
+      "label_source": "profile"
     }
   ]
 }

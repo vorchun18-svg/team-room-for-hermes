@@ -4,6 +4,9 @@
 * берёт последние запросы из реестра;
 * читает ``engine_read.request_detail`` для незавершённых и недавно завершённых;
 * зовёт ``critic_loop.run_step`` (retarget / критик / доработка);
+* закрепляет выбор модели комнаты на ВСЕХ её карточках по tenant и сверяет фактическую
+  модель идущих запусков (``agent_models.apply_to_room`` + ``verify_started``) — до того,
+  как движок успеет взять карточку на модель профиля;
 * для завершённых — ``ingest.ingest_request`` + ``ingest.write_vault_mirror`` (идемпотентно);
 * обновляет кэш сводок для ``GET /api/rooms``.
 
@@ -149,6 +152,12 @@ class Watcher:
             counters: dict = {"working": 0, "needs_you": 0, "done_today": 0}
             phase = None
             changed = False
+            # 0) модель участников комнаты (WAVE10/13): ДО чтения запросов и до диспетчера.
+            #    Руководитель создаёт карточки сам (`hermes kanban create` без --model),
+            #    а движок берёт переопределение только в момент допуска запуска, поэтому
+            #    закрепляем выбор комнаты на всех её карточках как можно раньше — и сразу
+            #    сверяем факт с журналом запусков (`verify_started`).
+            self._agent_models_room(room, stats)
             try:
                 records = self._records(room_id)
             except Exception as exc:  # noqa: BLE001
@@ -196,7 +205,9 @@ class Watcher:
                         stats["errors"] += 1
                         self._fail("цикл критика %s (%s)" % (root_id, room_id), exc)
                     # 2) ingest версии ответа (ровно один раз на run_id последней версии)
-                    if self._ingest(room, root_id, rec, detail):
+                    #    в режиме «до полного одобрения критиком» версия не публикуется,
+                    #    пока критик не сказал approve (W13-E §9): спрашиваем critic_loop
+                    if not self._delivery_hold(room, rec, detail) and self._ingest(room, root_id, rec, detail):
                         stats["ingested"] += 1
                         changed = True
                     # 3) заметка запроса в Obsidian — при изменении состояния/диалога
@@ -212,8 +223,6 @@ class Watcher:
                             self._fail("заметка Obsidian %s (%s)" % (root_id, room_id), exc)
                     # 4) особые указания участникам комнаты — автокомментарии (WAVE9 §9)
                     self._agent_notes(room, root_id, stats)
-                    # 5) модель участников комнаты — закрепить на карточках дерева (WAVE10)
-                    self._agent_models(room, root_id, stats)
                 except Exception as exc:  # noqa: BLE001 - один запрос не валит цикл
                     stats["errors"] += 1
                     self._fail("запрос %s (%s)" % (root_id, room_id), exc)
@@ -279,6 +288,21 @@ class Watcher:
             raise RuntimeError("engine_read.request_detail вернул пустой ответ")
         return detail
 
+    def _delivery_hold(self, room: dict, rec: dict, detail: dict) -> bool:
+        """Версию ответа пока нельзя публиковать (режим «до полного одобрения»).
+
+        Решение принимает critic_loop; модуля нет или он не умеет — False (прежнее
+        поведение: ответ публикуется как только готов).
+        """
+        try:
+            func = self.app.fn("critic_loop", "delivery_hold")
+        except Exception:  # noqa: BLE001 - модуль ещё не готов
+            return False
+        try:
+            return bool(func(self.cfg, room, rec, detail))
+        except Exception:  # noqa: BLE001 - сбой проверки не должен блокировать ingest
+            return False
+
     def _ingest(self, room: dict, root_id: str, rec: dict, detail: dict) -> bool:
         """Записать версию ответа в здание проекта ровно один раз (ключ — run_id версии)."""
         syn = detail.get("synthesis") or {}
@@ -333,25 +357,40 @@ class Watcher:
         if res.get("written"):
             stats["notes_written"] = int(stats.get("notes_written") or 0) + len(res["written"])
 
-    def _agent_models(self, room: dict, root_id: str, stats: dict) -> None:
-        """Закрепить модель комнаты на карточках дерева запроса (WAVE10, сторож).
+    def _agent_models_room(self, room: dict, stats: dict) -> None:
+        """Модель комнаты на ВСЕ её карточки + сверка факта (WAVE10, WAVE13 пакет A).
 
-        Идемпотентно: карточка обновляется только при отличии от настроек комнаты;
-        `running`/`done` не трогаются (для идущих — явная кнопка «Перезапустить»).
+        Один проход по tenant комнаты за тик (а не по деревьям запросов): карточки,
+        которые руководитель создаёт сам, в деревьях реестра не видны — из-за этого
+        работа уходила на модель профиля. Затем `verify_started` сверяет модель
+        реальных запусков с выбором комнаты и возвращает «не ту» карточку на нужную.
         Модуля нет, замен нет, ошибка моста — тихо пропускаем, тик не рушим.
         """
         try:
-            func = self.app.fn("agent_models", "apply_to_tree")
+            apply_room = self.app.fn("agent_models", "apply_to_room")
         except Exception:  # noqa: BLE001 - модуль ещё не готов
             return
         try:
-            res = func(self.cfg, room.get("id"), root_id) or {}
+            res = apply_room(self.cfg, room.get("id")) or {}
+            if res.get("updated"):
+                stats["models_applied"] = int(stats.get("models_applied") or 0) + len(res["updated"])
         except Exception as exc:  # noqa: BLE001 - модель вторична для тика
             stats["errors"] += 1
-            self._fail("модель комнаты %s (%s)" % (root_id, room.get("id")), exc)
+            self._fail("модель комнаты (%s)" % room.get("id"), exc)
+        try:
+            verify = self.app.fn("agent_models", "verify_started")
+        except Exception:  # noqa: BLE001 - модуль ещё не готов
             return
-        if res.get("updated"):
-            stats["models_applied"] = int(stats.get("models_applied") or 0) + len(res["updated"])
+        try:
+            check = verify(self.cfg, room.get("id")) or {}
+            if check.get("mismatched"):
+                stats["models_mismatched"] = int(stats.get("models_mismatched") or 0) + \
+                    len(check["mismatched"])
+            if check.get("fixed"):
+                stats["models_fixed"] = int(stats.get("models_fixed") or 0) + len(check["fixed"])
+        except Exception as exc:  # noqa: BLE001 - сверка модели не валит тик
+            stats["errors"] += 1
+            self._fail("проверка модели (%s)" % room.get("id"), exc)
 
     @staticmethod
     def _signature(detail: dict, rec: dict) -> tuple:

@@ -21,6 +21,7 @@ import {
   renderEngineStatus, localTitle,
 } from './shell-sidebar.js';
 import { displayName } from './shell-labels.js';
+import { participantLabel } from './participant-label.js';
 import { crumbItems, requestTitle as fetchRequestTitle, scopeHash } from './scope.js';
 import { folderActionButton, roomSettingsButton, projectDirHint } from './project-dir-button.js';
 import {
@@ -364,14 +365,16 @@ function renderTopbar(route) {
     const members = Array.isArray(room.members) ? room.members : [];
     const shown = members.slice(0, 4);
     if (shown.length) {
+      // WAVE13 §11: та же подпись, что в «Команде» — имя и должность, иначе роль.
       const names = members.map((m) => {
         const profile = String((m && (m.profile || m.name)) || '');
-        return displayName(profile, memberRole(room, m), m && m.title);
+        return participantLabel(profile, { member: m, role: memberRole(room, m) }).title;
       });
       const team = h('div', { class: 'topbar__team', title: 'Команда: ' + names.filter(Boolean).join(', ') });
       for (const m of shown) {
         const profile = String((m && (m.profile || m.name)) || '');
-        const name = displayName(profile, memberRole(room, m), m && m.title);
+        const label = participantLabel(profile, { member: m, role: memberRole(room, m) });
+        const name = label.title;
         team.appendChild(avatarEl(name, 'avatar--sm avatar--stacked', name + (profile ? ' · ' + profile : '')));
       }
       if (members.length > shown.length) {

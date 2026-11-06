@@ -7,6 +7,7 @@ import { h } from '../util.js';
 import { sectionHeader, errorBanner, copyText } from '../ui.js';
 import { icon } from '../icons.js';
 import { errorText } from '../text-ru.js';
+import { participantLabel } from '../participant-label.js';
 
 /** Первая непустая строка текста, обрезанная до 140 символов. */
 export function firstLine(text, max = 140) {
@@ -55,6 +56,10 @@ export function profileName(profile, room) {
   if (!raw) return '';
   if (raw === 'system') return 'Система';
   if (raw === 'mikhail') return 'Михаил';
+  // WAVE13 §11: одна подпись везде — имя из описания профиля («Анна»), иначе
+  // прежнее правило (подпись роли из комнаты, затем слаг → русское слово).
+  const label = participantLabel(raw, { room });
+  if (label.source !== 'role') return label.short;
   const members = room && Array.isArray(room.members) ? room.members : [];
   const hit = members.find((m) => m && String(m.profile || m.id || '') === raw);
   const note = hit ? String(hit.note || '').split(':')[0].trim() : '';

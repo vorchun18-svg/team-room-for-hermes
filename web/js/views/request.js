@@ -22,6 +22,7 @@ import { icon } from '../icons.js';
 import { poll as apiPoll } from '../api.js';
 import { skeleton, confirmDialog, ensureCss } from '../ui.js';
 import { firstLine, synthesisOf, versionsOf, latestVersion, safePart, requestErrorBanner, errorToast } from './request-util.js';
+import { ensureProfileDirectory } from '../participant-label.js';
 import { createHeader } from './request-header.js';
 import { createAnswer } from './request-answer.js';
 import { createAside } from './request-aside.js';
@@ -195,6 +196,9 @@ export async function mount(el, ctx) {
     if (initial || force) {
       await loadBacklog();
       await loadRoom();
+      // WAVE13 §11: подписи участников в дереве и чипах — из общего справочника
+      // (один запрос на страницу, из памяти; без него покажем роль, как раньше).
+      await ensureProfileDirectory(ctx.api);
     }
     // Брифу нужна карта для плашки, направлению — для крошки «Бриф › Направление».
     if (isBrief(detail) || (detail && detail.plan_link)) await loadPlan({ force: initial || force });

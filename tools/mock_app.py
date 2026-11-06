@@ -22,7 +22,8 @@ from mock_notes import MockNotes
 from mock_read import MockRead
 from mock_thread import MockThread
 from mock_versions import normalize_v2, phase_at, phase_start, total_seconds
-from mock_write import MockWrite
+from mock_write import (MockWrite, answers_mod_apply, apply_step_overrides,
+                        enrich_answers)
 import mock_backlog
 import mock_demo as demo
 
@@ -30,6 +31,16 @@ REASON = {"queued": None, "working": None,
           "reviewing": "Критик проверяет свод (раунд 1)",
           "synthesizing": "Руководитель комнаты дорабатывает свод по замечаниям критика",
           "done": None}
+
+
+def mock_critic_progress(round_no: int, issues_before: int, closed: int) -> dict:
+    """Ход цикла для демо-мока: те же ключи, что отдаёт critic_loop.progress()."""
+    before = max(int(issues_before or 0), 0)
+    done = min(max(int(closed or 0), 0), before)
+    return {"round": int(round_no or 0), "rounds": int(round_no or 0),
+            "issues_before": before, "closed": done, "open": before - done,
+            "closed_items": ["проверено: срез себестоимости"][:done],
+            "open_items": [], "verdict": "", "stop": None}
 
 
 class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
@@ -85,6 +96,8 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
                 "orchestrator": room["orchestrator"], "critic": room["critic"],
                 "members_count": len(room["members"]), "mode_default": room["mode_default"],
                 "critic_pass": room["critic_pass"], "max_rounds": int(room.get("max_rounds") or 1),
+                "critic_mode": str(room.get("critic_mode") or "rounds"),
+                "critic_round_cap": int(room.get("critic_round_cap") or 12),
                 "counters": {"working": sum(1 for s in live if s["status"] in ("working", "reviewing", "synthesizing")),
                              "needs_you": sum(1 for s in live if counts_as_waiting(s)),
                              "done_today": sum(1 for s in live if s["status"] == "done"
@@ -109,6 +122,10 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
             raise ApiError(404, "not_found", "Запрос не найден", {"rid": rid})
         detail["thread"] = self.thread_for(rid, detail)
         self.plan_meta(rid, detail)                # brief/streams_summary/plan_link (WAVE9 §4)
+        enrich_answers(detail)                     # W14-D: статусы ответов и метки шагов
+        # W14-H §12: шаги пересобираются на каждый GET — действия пользователя
+        # («Согласен», «Убрать», …) накладываем заново, как реестр бэкенда.
+        apply_step_overrides(detail, rid, self.step_overrides_for(rid))
         return detail
 
     # --- бэклог комнаты ----------------------------------------------------
@@ -274,19 +291,26 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
                                        else "Руководитель комнаты собирает финальный ответ")
 
         critic_id = next((n["id"] for n in tree if n.get("role") == "critic"), None)
-        max_rounds = int(room.get("max_rounds") or 1)
+        max_rounds = int(req.get("max_rounds") or room.get("max_rounds") or 1)
+        mode = str(req.get("critic_mode") or room.get("critic_mode") or "rounds")
+        round_cap = int(room.get("critic_round_cap") or 12)
+        base = {"max_rounds": max_rounds, "mode": mode, "round_cap": round_cap,
+                "progress": {}, "paused": None, "stopped": None, "rounds_history": []}
         if not req["critic"]:
             critic = {"enabled": False, "round": 0, "max_rounds": max_rounds, "state": "off",
-                      "verdict": None, "task_id": None, "issues": []}
+                      "verdict": None, "task_id": None, "issues": [], **base}
         elif phase in ("queued", "working"):
             critic = {"enabled": True, "round": 0, "max_rounds": max_rounds, "state": "waiting",
-                      "verdict": None, "task_id": None, "issues": []}
+                      "verdict": None, "task_id": None, "issues": [], **base}
         elif phase == "reviewing":
             critic = {"enabled": True, "round": 1, "max_rounds": max_rounds, "state": "reviewing",
-                      "verdict": None, "task_id": critic_id, "issues": []}
+                      "verdict": None, "task_id": critic_id, "issues": [], **base}
+            critic["progress"] = mock_critic_progress(1, 2, 0)
         else:
             critic = {"enabled": True, "round": 1, "max_rounds": max_rounds, "state": "approved",
-                      "verdict": "approve", "task_id": critic_id, "issues": []}
+                      "verdict": "approve", "task_id": critic_id, "issues": [], **base}
+            critic["progress"] = mock_critic_progress(1, 2, 2)
+            critic["rounds_history"] = [{"round": 1, "verdict": "approve", "issues": [], "at": created}]
         detail["critic"] = critic
 
         detail["open_questions"] = []
@@ -295,7 +319,11 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
             answers = req.get("answers") or {}
             if question["id"] in answers:
                 saved = answers[question["id"]]
-                question.update({"answered": True, "answer": saved["text"], "answered_at": saved["at"]})
+                # W14-D: ответ может быть просьбой пояснить — тогда вопрос НЕ закрыт
+                record = {"text": saved.get("text"), "at": saved.get("at"),
+                          "answered": saved.get("answered", True),
+                          "status": saved.get("status") or "sent"}
+                question = answers_mod_apply(question, record)
             detail["open_questions"] = [question]
             detail["next_steps"] = demo.next_steps(req["title"])
 
@@ -324,7 +352,8 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
         return detail
 
     def new_live_request(self, room_id: str, text: str, title: str | None = None,
-                         critic: bool = True, seed: str = "t_2a6f5c93") -> dict:
+                         critic: bool = True, seed: str = "t_2a6f5c93",
+                         critic_mode: str | None = None, max_rounds: int | None = None) -> dict:
         room = self.room(room_id)
         with self.lock:
             self.counter += 1
@@ -335,6 +364,8 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
             self.live[rid] = {"id": rid, "t0": time.monotonic(), "created_at": now(), "room": room_id,
                               "title": (title or clean or "Новый запрос")[:120], "text": text,
                               "mode": "auto", "critic": bool(critic), "seed_rid": seed,
+                              "critic_mode": critic_mode or room.get("critic_mode") or "rounds",
+                              "max_rounds": max_rounds,
                               "author": room["orchestrator"], "extra_versions": 0,
                               "revision_notes": [], "answers": {},
                               "jump_phase": None, "jump_t0": None}

@@ -138,3 +138,122 @@
   .agent-note__toggle { margin-left: 0; }
   .agent-notes-line__item { flex-direction: column; gap: 0; }
 }
+
+/* ── записи (WAVE14 §13): список особенностей + поле «Добавить» ─────────── */
+.notes-entries { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.notes-entries__intro { margin: 0; }
+.notes-entries__list { display: flex; flex-direction: column; gap: var(--space-1); }
+.notes-entries__empty { padding: var(--space-1) 0; }
+
+.notes-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "text del" "meta del";
+  gap: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-tertiary);
+}
+.notes-entry--pinned { border-left-color: var(--link); }
+.notes-entry__text {
+  grid-area: text;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: var(--text-sm);
+  color: var(--ui-base);
+}
+.notes-entry__meta { grid-area: meta; }
+.notes-entries__del {
+  grid-area: del;
+  align-self: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  border-radius: var(--radius-sm);
+  padding: 2px 4px;
+  cursor: pointer;
+}
+.notes-entries__del:hover { color: var(--danger-ink); border-color: var(--border-soft); }
+.notes-entries__del:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+
+.notes-entries__add { display: flex; flex-direction: column; gap: var(--space-1); }
+.notes-entries__addrow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+/* Поле — на всю ширину строки, кнопки («Надиктовать» и «Добавить») — отдельной
+   строкой справа, в потоке: микрофон не накладывается на поле и не обрезается. */
+.notes-entries__addrow > .notes-entries__area { flex: 1 1 100%; min-width: 0; }
+.notes-entries__addrow > .btn, .notes-entries__addrow > .mic-btn { flex: none; }
+.notes-entries__addfoot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
+.notes-entries__count { font-size: var(--text-sm); color: var(--muted-foreground); }
+.notes-entries__status { min-height: 1em; }
+.notes-entries__tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.notes-entries__journal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-primary);
+}
+.notes-entries__journal.hidden { display: none; }
+.notes-journal__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border-soft);
+}
+.notes-journal__row:last-child { border-bottom: 0; padding-bottom: 0; }
+.notes-journal__head { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; }
+.notes-journal__who { font-weight: 600; color: var(--ui-base); }
+.notes-journal__act { color: var(--link); }
+.notes-journal__text { overflow-wrap: anywhere; }
+.notes-entries--compact .notes-entries__list { max-height: 260px; overflow-y: auto; }
+
+/* ── блок на карточке участника («Команда») ─────────────────────────────── */
+.tm-card__notes {
+  border-top: 1px solid var(--border-soft);
+  padding-top: var(--space-2);
+  margin-top: var(--space-2);
+}
+.tm-card__notessum {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tm-card__notessum::-webkit-details-marker { display: none; }
+.tm-card__notessum:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.tm-card__notescount {
+  color: var(--muted-foreground);
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+.tm-card__notes[open] .tm-card__notessum { text-decoration: none; color: var(--ui-base); }
+.tm-card__notesbody { padding-top: var(--space-1); }

@@ -72,6 +72,16 @@
 .cmp-toggle.is-on .cmp-toggle__knob { transform: translateX(10px); background: var(--primary); }
 .cmp-toggle.is-on .cmp-toggle__label { color: var(--ui-text-secondary); }
 
+/* Режим проверки рядом с «С критиком» (W13-E §9): компактный select в панели. */
+.cmp-critic-mode {
+  height: var(--control-sm); min-width: 0; max-width: 220px; flex: 0 1 auto;
+  font-size: var(--text-sm); padding: 0 var(--space-2);
+}
+.cmp-critic-mode.hidden { display: none; }
+@media (max-width: 899px) {
+  .cmp-critic-mode { max-width: 170px; }
+}
+
 .cmp-count { font-size: var(--text-sm); color: var(--muted-foreground); white-space: nowrap; }
 .cmp-count--warn { color: var(--warn-ink); }
 

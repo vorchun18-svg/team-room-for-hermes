@@ -17,6 +17,7 @@ import {
 import { buildTree, nodeActions, errorReason, isFailedRun } from './request-parts-model.js';
 import { toast, changed, postAction, button, lock } from './rp-shared.js';
 import { personName, profileName, devDetails, blockHead } from './request-util.js';
+import { participantLabel } from '../participant-label.js';
 import { countNoun } from '../text-ru.js';
 
 /* ─────────────────────────────────────────────────────────── дерево работ */
@@ -91,8 +92,11 @@ function reassignPanel(node, ctx, detail, onDone) {
       select.appendChild(h('option', { value: current }, `${current} — вне состава`));
     }
     for (const m of list) {
+      // WAVE13 §11: в списке — имя и должность, техническое имя профиля в подсказке.
       const suffix = m.role && m.role !== 'worker' ? ` · ${ROLE_RU[m.role] || m.role}` : '';
-      select.appendChild(h('option', { value: m.profile }, `${m.profile}${suffix}`));
+      const label = participantLabel(m.profile, { member: m, role: m.role });
+      select.appendChild(h('option', { value: m.profile, title: 'Профиль Hermes: ' + m.profile },
+        `${label.title}${suffix}`));
     }
     select.value = current || (list[0] ? list[0].profile : '');
     apply.disabled = !select.value || select.value === current;
@@ -317,6 +321,22 @@ function nodeRow(row, ctx, detail, onChanged) {
   const modelLabel = String(node.model_label || '').trim();
   if (modelLabel) {
     sub.appendChild(h('span', { class: 'rp-node__model', title: 'Модель и мышление этой задачи' }, modelLabel));
+  }
+  // W13-A: «ушло на: …» — фактическая модель запуска (из сессии воркера), а не только выбор.
+  const sent = node.model_sent && typeof node.model_sent === 'object' ? node.model_sent : null;
+  const sentText = sent ? String(sent.text || '').trim() : '';
+  if (sentText) {
+    const why = sent.confirmed ? 'фактическая модель запуска' : 'записано в карточке, запуск ещё не подтверждён';
+    sub.appendChild(h('span', {
+      class: 'rp-node__model',
+      title: 'Что реально ушло (' + why + ')',
+    }, sentText));
+    if (sent.mismatch) {
+      sub.appendChild(h('span', {
+        class: 'chip chip--warn',
+        title: 'Модель карточки не совпала с выбором комнаты',
+      }, 'расходится с выбором комнаты'));
+    }
   }
   main.appendChild(sub);
   head.appendChild(main);

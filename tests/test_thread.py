@@ -179,10 +179,12 @@ class ThreadReadTests(_Base):
         self.assertTrue(items, "лента не должна быть пустой у запроса в работе")
         keys = {"id", "at", "author_kind", "author", "author_label", "text", "task_id", "kind"}
         for item in items:
-            self.assertEqual(set(item), keys, item)
+            # W14-D: у записи «ответ на вопрос» есть дополнительные поля
+            # (question_id/question_text/answer_kind/text_mark) и свой kind
+            self.assertTrue(keys <= set(item), item)
             self.assertIsInstance(item["at"], int)
             self.assertIn(item["author_kind"], ("mikhail", "agent", "system"))
-            self.assertIn(item["kind"], ("message", "comment", "event"))
+            self.assertIn(item["kind"], ("message", "comment", "event", "answer"))
         stamps = [item["at"] for item in items]
         self.assertEqual(stamps, sorted(stamps), "лента должна идти по времени")
 

@@ -21,7 +21,9 @@
         "status": "active"
       },
       "updated_at": 1793171850,
-      "max_rounds": 1
+      "max_rounds": 1,
+      "critic_mode": "rounds",
+      "critic_round_cap": 12
     },
     {
       "id": "fn",
@@ -44,7 +46,9 @@
         "status": "active"
       },
       "updated_at": 1793171850,
-      "max_rounds": 1
+      "max_rounds": 1,
+      "critic_mode": "rounds",
+      "critic_round_cap": 12
     }
   ],
   "engine": {

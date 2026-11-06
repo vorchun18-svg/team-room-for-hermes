@@ -67,8 +67,12 @@ class ConformanceSemanticsTest(unittest.TestCase):
         payload = self.get("/api/profiles")
         self.assertEqual(payload["count"], len(payload["items"]))
         self.assertTrue(payload["items"], "ростер песочницы пуст")
+        # WAVE13 §11: к подписи профиля добавлены name/job/label/label_source (+ custom_label,
+        # label_pending — общая форма с TeamMember, см. docs/API.md §3.5).
         for item in payload["items"]:
-            self.assertEqual(set(item), {"profile", "title", "description", "tags", "kind", "available"})
+            self.assertEqual(set(item), {"profile", "title", "description", "tags", "kind", "available",
+                                          "name", "job", "label", "label_source", "custom_label",
+                                          "label_pending"})
             self.assertIn(item["kind"], ("director", "worker", "critic", "utility"))
             self.assertIsInstance(item["tags"], list)
             self.assertIsInstance(item["available"], bool)

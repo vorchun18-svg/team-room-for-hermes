@@ -43,7 +43,9 @@ export function peopleIndex(people) {
     const profile = typeof item === 'string' ? item : String(item.profile || item.id || '').trim();
     if (!profile) return;
     const prev = out.get(profile) || { title: '', role: '' };
-    const title = typeof item === 'string' ? '' : String(item.title || item.name || item.display_name || '').trim();
+    // WAVE13 §11: у участника из /team уже есть готовая подпись «Имя — должность».
+    const title = typeof item === 'string' ? ''
+      : String(item.label || item.title || item.name || item.display_name || '').trim();
     const role = typeof item === 'string' ? '' : String(item.role || '').trim();
     out.set(profile, { title: title || prev.title, role: role || prev.role });
   };

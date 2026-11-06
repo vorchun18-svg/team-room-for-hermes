@@ -10,6 +10,10 @@
 Тяжёлого здесь нет: faster-whisper живёт в отдельном процессе
 (``server/stt_worker.py``), сервер остаётся stdlib. В журнал пишутся только
 длины и тайминги — тексты диктовки не попадают никуда, кроме ответа.
+
+Исключение — **аудио длинной записи** (WAVE13 §2): чтобы обрыв окна или сети не
+унёс наговоренное, части записи кладутся на диск (``data/stt-recordings/<rid>/``)
+и живут там до 72 часов (не больше 30 записей), после чего убираются сами.
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ import atexit
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -32,6 +37,14 @@ except ImportError:  # pragma: no cover
     import stt_worker  # type: ignore
 
 MAX_AUDIO = 64 * 1024 * 1024        # лимит тела POST /api/stt/transcribe
+MAX_PART_BYTES = 64 * 1024 * 1024   # лимит тела одной части длинной записи
+MAX_RECORDING_BYTES = 256 * 1024 * 1024   # суммарный размер одной записи
+MAX_PARTS = 64                      # частей в одной записи (2 мин × 64 = 2 ч)
+MIN_RECORD_SECONDS = 600            # меньше 10 минут лимит записи не опускаем
+DEFAULT_RECORD_SECONDS = 600        # запасной лимит, если в Hermes значения нет
+DEFAULT_PART_SECONDS = 120          # длина части длинной записи (2 минуты)
+RECORDING_TTL_HOURS = 72            # сколько храним аудио незавершённых записей
+MAX_RECORDINGS = 30                 # сколько записей держим одновременно
 MAX_TERMS = 300                     # терминов в словаре
 MAX_TERM_LEN = 60                   # символов в термине
 MAX_REPLACEMENTS = 200              # записей замен
@@ -91,16 +104,17 @@ def _scalar(text: str):
     return text
 
 
-def parse_stt_block(text: str) -> dict:
-    """Минимальный разбор блока ``stt:`` без PyYAML (запасной путь).
+def parse_simple_block(text: str, name: str = "stt") -> dict:
+    """Минимальный разбор блока ``stt:`` (или другого, ``name``) без PyYAML.
 
     Понимает вложенность по отступам, кавычки и true/false — ровно то, что
-    встречается в ``stt:`` у Hermes. Нужен, если сервер запущен на stdlib-interpreter.
+    встречается в конфиге Hermes. Нужен, если сервер запущен на stdlib-interpreter.
     """
     lines = (text or "").lstrip("\ufeff").splitlines()
+    head = re.compile(r"^%s:\s*(#.*)?$" % re.escape(str(name)))
     start = None
     for index, line in enumerate(lines):
-        if re.match(r"^stt:\s*(#.*)?$", line):
+        if head.match(line):
             start = index + 1
             break
     if start is None:
@@ -137,24 +151,103 @@ def parse_stt_block(text: str) -> dict:
     return parse(0, items[0][0])[0] if items else {}
 
 
-def read_settings(cfg) -> dict:
-    """Настройки распознавания из config.yaml: model/device/compute_type/prompt/vad/language."""
+def parse_stt_block(text: str) -> dict:
+    """Блок ``stt:`` из config.yaml Hermes (запасной разбор, без PyYAML)."""
+    return parse_simple_block(text, "stt")
+
+
+_CONFIG_CACHE: dict = {"key": None, "doc": {}}
+
+
+def _config_doc(cfg) -> dict:
+    """Весь config.yaml Hermes как словарь — только чтение, с кешем по mtime.
+
+    Нужен для настроек вне блока ``stt:`` (например ``voice.max_recording_seconds``).
+    Битый или отсутствующий файл — пустой словарь, а не исключение.
+    """
     path = hermes_config_path(cfg)
-    data: dict = {}
+    try:
+        stat = path.stat()
+        key = (str(path), int(stat.st_mtime_ns), int(stat.st_size))
+    except OSError:
+        return {}
+    if _CONFIG_CACHE.get("key") == key:
+        return dict(_CONFIG_CACHE.get("doc") or {})
     try:
         with open(path, "r", encoding="utf-8-sig") as handle:
             text = handle.read()
     except OSError:
-        text = ""
+        return {}
+    data: dict = {}
     if text:
         try:
-            import yaml                                   # noqa: PLC0415 - необязательный
+            import yaml                                       # noqa: PLC0415 - необязательный
             loaded = yaml.safe_load(text)
             data = loaded if isinstance(loaded, dict) else {}
-        except Exception:                                  # noqa: BLE001 - нет PyYAML/битый файл
+        except Exception:                                      # noqa: BLE001 - нет PyYAML
             data = {}
         if not data:
-            data = parse_stt_block(text)
+            # запасной путь: два блока верхнего уровня, которых достаточно диктовке
+            data = {"stt": parse_simple_block(text, "stt"),
+                    "voice": parse_simple_block(text, "voice")}
+            data = {key_: value for key_, value in data.items() if value}
+    _CONFIG_CACHE["key"], _CONFIG_CACHE["doc"] = key, data
+    return dict(data)
+
+
+def part_seconds() -> float:
+    """Длина одной части длинной записи (секунды).
+
+    Своих настроек не заводим: значение задаётся переменной окружения
+    ``TEAMROOM_STT_PART_SECONDS`` (стенды и проверки), по умолчанию — 2 минуты.
+    Короткие части дают две вещи: каждая часть — самостоятельный файл, который
+    распознаётся отдельно (обрыв одной не убивает остальные), и прогресс.
+    """
+    raw = str(os.environ.get("TEAMROOM_STT_PART_SECONDS") or "").strip()
+    try:
+        value = float(raw.replace(",", ".")) if raw else DEFAULT_PART_SECONDS
+    except ValueError:
+        value = DEFAULT_PART_SECONDS
+    if value <= 0:
+        value = DEFAULT_PART_SECONDS
+    return float(min(600.0, max(10.0, value)))
+
+
+def record_limit(cfg) -> dict:
+    """Лимит одной записи — из настроек Hermes, а не из своих констант.
+
+    Читаем ``voice.max_recording_seconds`` (у Hermes это «лимит диктовки»), при
+    отсутствии — ``stt.max_recording_seconds``. Значение только на чтение: файлы
+    Hermes не меняются. Меньше 10 минут лимит не опускаем (WAVE13, пункт 2:
+    «лимит длины записи — минимум 10 минут»), иначе поле комнаты окажется короче,
+    чем требует Михаил. Нет значения вовсе — 600 с.
+    """
+    doc = _config_doc(cfg)
+    voice = doc.get("voice") if isinstance(doc.get("voice"), dict) else {}
+    stt_block = doc.get("stt") if isinstance(doc.get("stt"), dict) else {}
+    raw = voice.get("max_recording_seconds")
+    where = "voice.max_recording_seconds"
+    if raw is None:
+        raw = stt_block.get("max_recording_seconds")
+        where = "stt.max_recording_seconds"
+    seconds = 0
+    try:
+        if raw is not None and not isinstance(raw, bool):
+            seconds = int(round(float(raw)))
+    except (TypeError, ValueError):
+        seconds = 0
+    source = "hermes" if seconds > 0 else "fallback"
+    if seconds <= 0:
+        seconds = DEFAULT_RECORD_SECONDS
+    return {"seconds": max(MIN_RECORD_SECONDS, seconds),
+            "hermes_seconds": seconds if source == "hermes" else None,
+            "source": source, "setting": where if source == "hermes" else None,
+            "minimum": MIN_RECORD_SECONDS, "part_seconds": part_seconds()}
+
+
+def read_settings(cfg) -> dict:
+    """Настройки распознавания из config.yaml: model/device/compute_type/prompt/vad/language."""
+    data = _config_doc(cfg)
     stt = data.get("stt") if isinstance(data.get("stt"), dict) else {}
     local = stt.get("local") if isinstance(stt.get("local"), dict) else {}
     vad = local.get("vad", True)
@@ -705,6 +798,259 @@ def reset_worker() -> None:
     stt_worker.reset_lookup()
 
 
+# --- длинные записи: части на диск (ничего не теряется при обрыве) --------
+RECORDING_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{5,40}$")
+
+
+def recordings_root(cfg) -> Path:
+    """``data/stt-recordings`` — аудио длинных записей (по одной папке на запись)."""
+    return Path(cfg.data_dir) / "stt-recordings"
+
+
+def valid_recording_id(rid) -> bool:
+    """Номер записи приходит от браузера — только буквы, цифры, дефис."""
+    return bool(RECORDING_ID_RE.fullmatch(str(rid or "")))
+
+
+def recording_dir(cfg, rid) -> Path:
+    """Папка записи; некорректный номер — 400, а не путь наружу."""
+    if not valid_recording_id(rid):
+        raise SttError("bad_request", 400, "Некорректный номер записи",
+                       {"field": "rid", "value": str(rid)[:40]})
+    return recordings_root(cfg) / str(rid)
+
+
+def _recording_meta(cfg, rid) -> dict:
+    """Метаданные записи: время, тип, части. Битый файл — как пустой."""
+    path = recording_dir(cfg, rid) / "recording.json"
+    try:
+        with open(path, "r", encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    parts = data.get("parts")
+    meta = {"rid": str(rid), "created_at": int(data.get("created_at") or 0),
+            "updated_at": int(data.get("updated_at") or 0),
+            "mime": str(data.get("mime") or "audio/webm"), "parts": {}}
+    if isinstance(parts, dict):
+        for key, item in parts.items():
+            try:
+                number = int(key)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(item, dict) and 1 <= number <= MAX_PARTS:
+                meta["parts"][str(number)] = item
+    return meta
+
+
+def _write_recording_meta(cfg, rid, meta: dict) -> None:
+    """Атомарно записать метаданные записи (читатель видит целый файл)."""
+    directory = recording_dir(cfg, rid)
+    directory.mkdir(parents=True, exist_ok=True)
+    meta = dict(meta)
+    meta["updated_at"] = int(time.time())
+    _atomic_write(directory / "recording.json",
+                  json.dumps(meta, ensure_ascii=False, indent=2))
+
+
+_PRUNED: dict = {}   # {каталог: время последней уборки}
+
+
+def prune_recordings(cfg, keep_hours: float = RECORDING_TTL_HOURS,
+                     max_count: int = MAX_RECORDINGS, force: bool = False) -> int:
+    """Убрать старые записи: старше ``keep_hours`` и сверх ``max_count``.
+
+    Уборка ленивая (при обращении) и не чаще раза в минуту: отдельного таймера
+    в сервере нет. Возвращает число удалённых записей.
+    """
+    root = recordings_root(cfg)
+    key = str(root)
+    now = time.time()
+    if not force and now - float(_PRUNED.get(key) or 0) < 60.0:
+        return 0
+    _PRUNED[key] = now
+    try:
+        dirs = [item for item in root.iterdir() if item.is_dir()]
+    except OSError:
+        return 0
+    rows = []
+    for directory in dirs:
+        try:
+            rows.append((directory.stat().st_mtime, directory))
+        except OSError:
+            continue
+    rows.sort(reverse=True)
+    removed = 0
+    for index, (mtime, directory) in enumerate(rows):
+        too_old = keep_hours > 0 and (now - mtime) > keep_hours * 3600.0
+        too_many = max_count > 0 and index >= max_count
+        if not (too_old or too_many):
+            continue
+        if drop_recording(cfg, directory.name):
+            removed += 1
+    return removed
+
+
+def save_part(cfg, rid, number, data: bytes, content_type: str = "audio/webm") -> dict:
+    """Сохранить одну часть записи на диск и вернуть её размер/оценку длительности.
+
+    Части пишутся по мере записи (каждые ``part_seconds``), поэтому обрыв
+    браузера, обновление страницы или ошибка сети не уносят уже наговоренное.
+    """
+    try:
+        part_no = int(number)
+    except (TypeError, ValueError):
+        raise SttError("bad_request", 400, "Номер части должен быть числом",
+                       {"field": "part"}) from None
+    if not (1 <= part_no <= MAX_PARTS):
+        raise SttError("bad_request", 400, "Номер части вне диапазона 1…%d" % MAX_PARTS,
+                       {"field": "part", "limit": MAX_PARTS, "value": part_no})
+    payload = bytes(data or b"")
+    if not payload:
+        raise SttError("audio_empty", 400, "Пустая часть записи",
+                       {"field": "body", "length": 0})
+    if len(payload) > MAX_PART_BYTES:
+        raise SttError("audio_too_big", 413,
+                       "Часть записи больше %d МиБ — уменьшите длину части" %
+                       (MAX_PART_BYTES // (1024 * 1024)),
+                       {"length": len(payload), "limit": MAX_PART_BYTES})
+    base_type = str(content_type or "").split(";")[0].strip().lower() or "audio/webm"
+    if base_type not in AUDIO_TYPES:
+        raise SttError("bad_request", 400, "Ожидается аудио: webm, ogg, wav или mp4",
+                       {"field": "content_type", "allowed": list(AUDIO_TYPES)})
+    suffix = AUDIO_SUFFIX.get(base_type, ".webm")
+    meta = _recording_meta(cfg, rid)
+    total = sum(int((item or {}).get("bytes") or 0) for item in meta["parts"].values())
+    if total + len(payload) > MAX_RECORDING_BYTES:
+        raise SttError("audio_too_big", 413,
+                       "Запись больше %d МиБ — разбейте её на части покороче" %
+                       (MAX_RECORDING_BYTES // (1024 * 1024)),
+                       {"limit": MAX_RECORDING_BYTES, "length": total + len(payload)})
+    directory = recording_dir(cfg, rid)
+    directory.mkdir(parents=True, exist_ok=True)
+    # Прошлая часть могла быть с другим типом (webm → wav) — старый файл убираем.
+    for stale in directory.glob("part-%04d.*" % part_no):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+    path = directory / ("part-%04d%s" % (part_no, suffix))
+    tmp = path.with_name(".%s.%s.tmp" % (path.name, uuid.uuid4().hex[:8]))
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_with_retry(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+    seconds = round(_estimate_duration(len(payload), suffix), 2)
+    now = int(time.time())
+    if not meta["created_at"]:
+        meta["created_at"] = now
+    meta["mime"] = base_type
+    meta["parts"][str(part_no)] = {"n": part_no, "bytes": len(payload), "mime": base_type,
+                                   "seconds_est": seconds, "saved_at": now}
+    _write_recording_meta(cfg, rid, meta)
+    prune_recordings(cfg)          # диск не растёт: старше 72 ч и сверх 30 записей — вон
+    return {"rid": str(rid), "part": part_no, "bytes": len(payload),
+            "seconds_est": seconds, "parts_total": len(meta["parts"])}
+
+
+def list_parts(cfg, rid) -> list[dict]:
+    """Части записи по порядку: ``[{n, bytes, mime, seconds_est, path}]``."""
+    directory = recording_dir(cfg, rid)
+    meta = _recording_meta(cfg, rid)
+    found = []
+    for key, item in meta["parts"].items():
+        number = int(key)
+        suffix = AUDIO_SUFFIX.get(str(item.get("mime") or "audio/webm"), ".webm")
+        path = directory / ("part-%04d%s" % (number, suffix))
+        if not path.is_file():
+            continue
+        found.append({"n": number, "bytes": int(item.get("bytes") or path.stat().st_size),
+                      "mime": str(item.get("mime") or "audio/webm"),
+                      "seconds_est": float(item.get("seconds_est") or 0.0),
+                      "saved_at": int(item.get("saved_at") or 0), "path": str(path)})
+    found.sort(key=lambda row: row["n"])
+    return found
+
+
+def read_part(cfg, rid, number) -> tuple[bytes, str]:
+    """Байты части и её тип (для повторного распознавания)."""
+    try:
+        part_no = int(number)
+    except (TypeError, ValueError):
+        raise SttError("bad_request", 400, "Номер части должен быть числом",
+                       {"field": "part"}) from None
+    for row in list_parts(cfg, rid):
+        if row["n"] == part_no:
+            try:
+                with open(row["path"], "rb") as handle:
+                    return handle.read(), row["mime"]
+            except OSError as exc:
+                raise SttError("stt_failed", 500, "Не удалось прочитать часть записи",
+                               {"reason": "read_failed", "error": str(exc)[:200]}) from exc
+    raise SttError("bad_request", 404,
+                   "Часть записи не найдена" if str(rid) else "Нет такой записи",
+                   {"field": "part", "value": part_no})
+
+
+def recording_view(cfg, rid) -> dict:
+    """Состояние записи для интерфейса: части, размеры, оценка длительности."""
+    meta = _recording_meta(cfg, rid)
+    parts = list_parts(cfg, rid)
+    seconds = round(sum(row["seconds_est"] for row in parts), 2)
+    return {"rid": str(rid), "created_at": int(meta.get("created_at") or 0),
+            "updated_at": int(meta.get("updated_at") or 0),
+            "mime": str(meta.get("mime") or "audio/webm"),
+            "parts": [{"n": row["n"], "bytes": row["bytes"], "seconds_est": row["seconds_est"]}
+                      for row in parts],
+            "parts_total": len(parts), "bytes": sum(row["bytes"] for row in parts),
+            "seconds_est": seconds}
+
+
+def list_recordings(cfg, limit: int = 20) -> list[dict]:
+    """Последние записи (для восстановления нерасшифрованного)."""
+    prune_recordings(cfg)
+    root = recordings_root(cfg)
+    try:
+        dirs = [item for item in root.iterdir() if item.is_dir()]
+    except OSError:
+        return []
+    dirs.sort(key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True)
+    rows = []
+    for directory in dirs[:max(1, int(limit))]:
+        if not valid_recording_id(directory.name):
+            continue
+        try:
+            rows.append(recording_view(cfg, directory.name))
+        except SttError:
+            continue
+        except OSError:
+            continue
+    return rows
+
+
+def drop_recording(cfg, rid) -> bool:
+    """Удалить запись целиком (после успешной вставки текста)."""
+    directory = recording_dir(cfg, rid)
+    if not directory.is_dir():
+        return False
+    try:
+        shutil.rmtree(directory)
+        return True
+    except OSError:
+        return False
+
+
+
+
 # --- публичный контракт ---------------------------------------------------
 _MODE_LOGGED: dict = {}      # {(cfg.data_dir, mode, provider): True} — пишем только смену
 
@@ -732,11 +1078,16 @@ def _log_mode(cfg, mode: str, source: str, provider: str) -> None:
 def status(cfg) -> dict:
     """``{available, loaded, loading, model, device, mode, source, provider, reason}``.
 
+    Плюс лимит записи (``max_recording_s``) из настроек Hermes и длина части
+    длинной записи (``part_seconds``) — их берёт интерфейс, своих настроек
+    диктовка не заводит.
+
     Режим выбирается по возможностям системы, а не по нашим ожиданиям:
     ``local`` — есть faster-whisper; ``provider`` — в Hermes настроен облачный STT
     и есть ключ; ``none`` — ничего нет, диктовка недоступна (остальное работает).
     """
     settings = read_settings(cfg)
+    limit = record_limit(cfg)
     python = stt_worker.find_python()
     state = _CLIENT.snapshot()
     loaded = bool(state.get("loaded")) and _CLIENT.alive()
@@ -769,7 +1120,13 @@ def status(cfg) -> dict:
     return {"available": bool(available), "loaded": loaded,
             "loading": bool(state.get("loading")) and _CLIENT.alive(),
             "model": model, "device": device, "mode": mode, "source": source,
-            "provider": provider, "reason": reason}
+            "provider": provider, "reason": reason,
+            "max_recording_s": int(limit["seconds"]),
+            "max_recording_source": limit["source"],
+            "max_recording_setting": limit["setting"],
+            "max_recording_hermes_s": limit["hermes_seconds"],
+            "max_recording_min_s": int(limit["minimum"]),
+            "part_seconds": float(limit["part_seconds"])}
 
 
 def transcribe(cfg, audio: bytes, content_type: str = "audio/webm", *, language=None) -> dict:
@@ -851,4 +1208,8 @@ __all__ = ["SttError", "MAX_AUDIO", "MAX_TERMS", "MAX_REPLACEMENTS", "PROMPT_LIM
            "status", "transcribe", "get_dictionary", "put_dictionary", "learn",
            "apply_replacements", "build_prompt", "normalise_dictionary", "load_dictionary",
            "save_dictionary", "read_settings", "parse_stt_block", "dict_path", "shutdown",
-           "reset_worker", "stt_cloud"]
+           "reset_worker", "stt_cloud",
+           # длинная запись: лимит из Hermes и части на диск
+           "record_limit", "part_seconds", "save_part", "list_parts", "read_part",
+           "recording_view", "list_recordings", "drop_recording", "prune_recordings",
+           "valid_recording_id", "recordings_root", "MIN_RECORD_SECONDS"]

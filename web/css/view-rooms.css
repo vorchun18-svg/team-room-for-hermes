@@ -144,6 +144,34 @@
 .roomdlg__hint { font-size: var(--text-sm); color: var(--muted-foreground); }
 .roomdlg__hint code { font-size: 0.95em; }
 
+/* Критик: раунды, подсказка «?» и страховочный потолок (W13-E §7, §9) */
+.roomdlg__field-mini { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.roomdlg__critic-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; flex-wrap: nowrap; }
+.roomdlg__critic-row .select { flex: 1 1 auto; min-width: 0; }
+.roomdlg__label--inline { flex: 0 0 auto; }
+.roomdlg__help { flex: none; color: var(--muted-foreground); }
+.roomdlg__help[aria-expanded='true'] { color: var(--foreground); background: var(--accent); }
+.roomdlg__hint--help {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  border: 1px solid var(--border-soft); background: var(--ui-bg-input);
+}
+.roomdlg__hint--help p { margin: 0; }
+.roomdlg__hint--help { color: var(--ui-text-secondary); }
+.roomdlg__hint--help.hidden { display: none; }
+.roomdlg__cap-box {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  flex-wrap: nowrap; white-space: nowrap;
+  font-size: var(--text-sm); color: var(--muted-foreground);
+}
+.roomdlg__cap-box > .small { white-space: nowrap; }
+.roomdlg__cap-box.hidden { display: none; }
+.roomdlg__cap { width: 64px; min-width: 64px; flex: 0 0 auto; color: var(--foreground); }
+.tm-settings__note { margin: 0; max-width: 70ch; }
+.rp-critic__progress { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0 0 var(--space-2); }
+.rp-critic__progress .codicon { color: var(--ui-text-tertiary); }
+.rp-critic__banner { margin-bottom: var(--space-2); }
+
 .roomdlg__foot-note { margin-right: auto; font-size: var(--text-sm); color: var(--muted-foreground); }
 
 /* ── Сноска ──────────────────────────────────────────────────────────────── */

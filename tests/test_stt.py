@@ -355,8 +355,12 @@ class TestStatusAndErrors(unittest.TestCase):
 
     def test_status_shape(self):
         status = stt.status(self.cfg)
-        self.assertEqual(set(status), {"available", "loaded", "loading", "model", "device",
-                                     "mode", "source", "provider", "reason"})
+        # WAVE13 §2: лимит записи и длина части приходят из настроек Hermes
+        limit_keys = {"max_recording_s", "max_recording_source", "max_recording_setting",
+                      "max_recording_hermes_s", "max_recording_min_s", "part_seconds"}
+        self.assertEqual(set(status) - limit_keys,
+                         {"available", "loaded", "loading", "model", "device",
+                          "mode", "source", "provider", "reason"})
         self.assertIsInstance(status["available"], bool)
         self.assertFalse(status["loaded"])
         self.assertEqual(status["model"], "large-v3-turbo")
@@ -455,8 +459,11 @@ class SttHttpCase(unittest.TestCase):
     def test_status_ok(self):
         status, payload, headers = self.call("GET", "/api/stt/status")
         self.assertEqual(status, 200)
-        self.assertEqual(set(payload), {"available", "loaded", "loading", "model", "device",
-                                        "mode", "source", "provider", "reason"})
+        self.assertEqual(set(payload) - {"max_recording_s", "max_recording_source",
+                                        "max_recording_setting", "max_recording_hermes_s",
+                                        "max_recording_min_s", "part_seconds"},
+                         {"available", "loaded", "loading", "model", "device",
+                          "mode", "source", "provider", "reason"})
         self.assertEqual(headers.get("Cache-Control"), "no-store")
 
     # --- распознавание

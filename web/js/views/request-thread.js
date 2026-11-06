@@ -170,6 +170,15 @@ function isSystem(item) {
   return item.author_kind === 'system' || item.kind === 'event';
 }
 
+/**
+ * Запись «ответ на конкретный вопрос» (W14-D §1). В ленте это НЕ обычное
+ * сообщение: сверху цитата вопроса, ниже ответ, и кнопка «К вопросу» —
+ * ответ живёт у своего вопроса, а не россыпью в общем чате (W15-C, п. 5).
+ */
+export function isAnswer(item) {
+  return Boolean(item) && String(item.kind || '') === 'answer';
+}
+
 function isMine(item) {
   return item.author_kind === 'mikhail' || item.author === 'mikhail';
 }
@@ -281,6 +290,46 @@ export function mountThread(container, ctx, opts = {}) {
       h('span', { class: 'thr-ev__text' }, String(item.text || '')));
   }
 
+  /** Показать вопрос в колонке справа (там ответ и реакция руководителя). */
+  function revealQuestion(qid) {
+    const id = String(qid || '');
+    let host = null;
+    try {
+      host = id ? document.querySelector('[data-mic-anchor="q:' + id.replace(/["\\]/g, '\\$&') + '"]') : null;
+      if (!host) host = document.getElementById('questions');
+    } catch { host = null; }
+    if (!host || typeof host.scrollIntoView !== 'function') return;
+    try { host.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* без плавности */ }
+    host.classList.add('is-flash');
+    setTimeout(() => { try { host.classList.remove('is-flash'); } catch { /* узел уже другой */ } }, 1400);
+  }
+
+  /**
+   * Ответ на вопрос: «Ответ на вопрос «…»» + сам ответ + переход к вопросу.
+   * Так он не читается как ещё одно сообщение в общем чате.
+   */
+  function answerNode(item) {
+    const qid = String(item.question_id || '');
+    const qtext = String(item.question_text || '').trim();
+    const ask = String(item.answer_kind || '') === 'explanation_request';
+    const go = h('button', {
+      class: 'btn btn--ghost btn--sm req-ans__go', type: 'button',
+      title: 'Показать этот вопрос и статус ответа в колонке справа',
+      onclick: () => revealQuestion(qid),
+    }, icon('arrow-right', { size: 11 }), ask ? 'К пояснению' : 'К вопросу');
+    return h('div', {
+      class: 'thr-msg thr-msg--mine req-ans' + (ask ? ' req-ans--ask' : ''),
+      'data-id': String(item.id || ''), 'data-kind': 'answer', 'data-question': qid,
+    }, h('div', { class: 'thr-msg__body' },
+      h('div', { class: 'thr-msg__head' },
+        h('span', { class: 'thr-msg__who' }, authorTitle(item, ctx && ctx.room)),
+        h('span', { class: 'req-ans__kind' }, ask ? 'просит пояснить' : 'ответ на вопрос'),
+        h('span', { class: 'thr-msg__time tnum', title: fmtDateTime(item.at) }, clock(item.at))),
+      qtext ? h('div', { class: 'req-ans__quote' }, '«' + qtext + '»') : null,
+      h('div', { class: 'thr-msg__text' }, String(item.text || '')),
+      h('div', { class: 'req-ans__foot' }, go)));
+  }
+
   function paintFeed() {
     const list = Array.isArray(st.thread) ? st.thread : [];
     if (!list.length) {
@@ -297,7 +346,7 @@ export function mountThread(container, ctx, opts = {}) {
         day = k;
         nodes.push(h('div', { class: 'thr__day' }, h('span', null, dayLabel(item.at))));
       }
-      nodes.push(isSystem(item) ? systemNode(item) : messageNode(item));
+      nodes.push(isAnswer(item) ? answerNode(item) : (isSystem(item) ? systemNode(item) : messageNode(item)));
     }
     setChildren(feed, ...nodes);
   }

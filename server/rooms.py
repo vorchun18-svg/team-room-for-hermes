@@ -30,15 +30,26 @@ MIN_PARALLEL_STREAMS = 1
 MAX_PARALLEL_STREAMS = 4
 UPDATABLE = ("title", "icon", "orchestrator", "critic", "context_files", "project_dir",
              "mode_default", "critic_pass", "max_rounds",
+             # Режим критика (W13-E §9): «N раундов» либо «до полного одобрения».
+             "critic_mode", "critic_round_cap",
              "launch_mode", "max_parallel_streams", "project_mode",
              # Особые указания участникам этой комнаты (WAVE9 §9): только реестр комнаты,
              # файлы профилей (SOUL.md/config.yaml/skills) не меняются никогда.
              "agent_notes",
+             # Журнал указаний (WAVE14 §13): кто/что/зачем/источник + откат изменения.
+             "agent_notes_log",
              # Модель/провайдер/мышление участника ТОЛЬКО в этой комнате (WAVE10 §«Интерфейсы»).
              "agent_models")
 IMMUTABLE = ("id", "board", "tenant")
 DEFAULT_BOARD = "team"
 DEFAULT_MAX_ROUNDS = 1
+# Режим критика (W13-E §9): «rounds» — N раундов, «until_approved» — до полного
+# одобрения критиком. Мягкий потолок страхует ночной цикл от бесконечности.
+CRITIC_MODES = ("rounds", "until_approved")
+DEFAULT_CRITIC_MODE = "rounds"
+DEFAULT_CRITIC_ROUND_CAP = 12
+MIN_CRITIC_ROUND_CAP = 2
+MAX_CRITIC_ROUND_CAP = 30
 
 # --- транслитерация (id комнаты из русского названия) ----------------------
 
@@ -170,6 +181,53 @@ def _check_rounds(value) -> int:
     return int(value)
 
 
+def _check_critic_mode(value) -> str:
+    """Режим критика: «rounds» (N раундов) или «until_approved» (до одобрения).
+
+    Пустое значение — прежнее поведение («rounds»): старые комнаты и клиенты
+    продолжают работать без правок.
+    """
+    mode = str(value or "").strip()
+    if not mode:
+        return DEFAULT_CRITIC_MODE
+    if mode not in CRITIC_MODES:
+        raise RoomsError(
+            "Режим критика: «rounds» (число раундов) или «until_approved» (до полного одобрения)",
+            "bad_request",
+            {"field": "critic_mode", "value": value, "allowed": list(CRITIC_MODES)},
+        )
+    return mode
+
+
+def _norm_critic_mode(value) -> str:
+    mode = str(value or "").strip()
+    return mode if mode in CRITIC_MODES else DEFAULT_CRITIC_MODE
+
+
+def _check_critic_cap(value) -> int:
+    """Мягкий потолок раундов для режима «до одобрения»: целое 2..30."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RoomsError("critic_round_cap: целое число %d..%d"
+                         % (MIN_CRITIC_ROUND_CAP, MAX_CRITIC_ROUND_CAP), "bad_request",
+                         {"field": "critic_round_cap", "value": value})
+    if value < MIN_CRITIC_ROUND_CAP or value > MAX_CRITIC_ROUND_CAP:
+        raise RoomsError("critic_round_cap: от %d до %d"
+                         % (MIN_CRITIC_ROUND_CAP, MAX_CRITIC_ROUND_CAP), "bad_request",
+                         {"field": "critic_round_cap", "value": value,
+                          "min": MIN_CRITIC_ROUND_CAP, "max": MAX_CRITIC_ROUND_CAP})
+    return int(value)
+
+
+def _norm_critic_cap(value) -> int:
+    try:
+        cap = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_CRITIC_ROUND_CAP
+    if isinstance(value, bool) or cap < MIN_CRITIC_ROUND_CAP or cap > MAX_CRITIC_ROUND_CAP:
+        return DEFAULT_CRITIC_ROUND_CAP
+    return cap
+
+
 def _check_launch_mode(value) -> str:
     """«Сначала план» (plan_first) или «сразу без подтверждения» (auto).
 
@@ -268,6 +326,17 @@ def _norm_agent_notes(value) -> dict:
         return {}
 
 
+def _norm_notes_log(value) -> list:
+    """Журнал изменений указаний (WAVE14 §13): список событий, новые сверху."""
+    try:
+        mod = _agent_notes_mod()
+        raw = value if isinstance(value, list) else []
+        limit = getattr(mod, "MAX_LOG", 200)
+        return [dict(one) for one in raw if isinstance(one, dict)][:int(limit)]
+    except Exception:  # noqa: BLE001 - журнал не должен ронять реестр
+        return []
+
+
 def _agent_models_mod():
     """Модуль моделей (лениво: rooms ← agent_models, обратной зависимости нет)."""
     try:
@@ -355,6 +424,18 @@ def _check_profile(value, field: str) -> str | None:
     return value.strip()
 
 
+def _norm_member_label(value) -> str:
+    """Ручная подпись участника (WAVE13 §11): одна строка без управляющих символов.
+
+    120 знаков достаточно для «Имя — должность»; пустое значение — сброс к
+    описанию профиля Hermes.
+    """
+    if value is None:
+        return ""
+    text = " ".join(str(value).split())
+    return text[:120]
+
+
 def _norm_member(member: dict, now: int | None = None) -> dict:
     if not isinstance(member, dict) or not str(member.get("profile") or "").strip():
         raise RoomsError("У участника должен быть profile", "bad_request", {"field": "profile"})
@@ -367,6 +448,9 @@ def _norm_member(member: dict, now: int | None = None) -> dict:
         "note": str(member.get("note") or ""),
         "pinned": bool(member.get("pinned")),
         "added_at": int(member.get("added_at") or now or _now()),
+        # WAVE13 §11: подпись участника в этой комнате («Анна — финансы (CFO)»).
+        # Пустая — значит «взять из описания профиля Hermes». Профиль не меняется.
+        "label": _norm_member_label(member.get("label")),
     }
 
 
@@ -397,18 +481,25 @@ def _norm_room(room: dict) -> dict:
         "tenant": str(room.get("tenant") or f"room:{room.get('id') or ''}"),
         "orchestrator": str(room.get("orchestrator") or ""),
         "critic": (str(room["critic"]) if room.get("critic") else None),
-        "members": [m for m in (room.get("members") or []) if isinstance(m, dict)],
+        # WAVE13 §11: у участника всегда есть поле подписи (`""` — из описания профиля).
+        "members": [dict(m, label=str(m.get("label") or ""))
+                    for m in (room.get("members") or []) if isinstance(m, dict)],
         "context_files": _norm_paths(room.get("context_files")),
         "project_dir": str(room.get("project_dir") or ""),
         "mode_default": str(room.get("mode_default") or "auto"),
         "critic_pass": bool(room.get("critic_pass")),
         "max_rounds": _norm_rounds(room.get("max_rounds")),
+        # Режим критика (W13-E §9): нет поля — прежние «1–2 раунда».
+        "critic_mode": _norm_critic_mode(room.get("critic_mode")),
+        "critic_round_cap": _norm_critic_cap(room.get("critic_round_cap")),
         # Проектный режим: у старых записей полей нет — выключен, ждёт включения (A1).
         "launch_mode": _norm_launch_mode(room.get("launch_mode")),
         "max_parallel_streams": _norm_parallel_streams(room.get("max_parallel_streams")),
         "project_mode": _norm_project_mode(room.get("project_mode")),
         # Особые указания участникам (WAVE9 §9): нет поля — пусто.
         "agent_notes": _norm_agent_notes(room.get("agent_notes")),
+        # Журнал изменений указаний (WAVE14 §13): кто/что/зачем/источник, новые сверху.
+        "agent_notes_log": _norm_notes_log(room.get("agent_notes_log")),
         # Модель/провайдер/мышление участников (WAVE10): нет записи — «как у агента».
         "agent_models": _norm_agent_models(room.get("agent_models")),
         "created_at": int(room.get("created_at") or 0),
@@ -479,6 +570,9 @@ def create_room(cfg, data: dict) -> dict:
         "mode_default": _check_mode(data.get("mode_default")),
         "critic_pass": _check_bool(data["critic_pass"], "critic_pass") if "critic_pass" in data else False,
         "max_rounds": _check_rounds(data["max_rounds"]) if "max_rounds" in data else DEFAULT_MAX_ROUNDS,
+        "critic_mode": _check_critic_mode(data.get("critic_mode")),
+        "critic_round_cap": (_check_critic_cap(data["critic_round_cap"])
+                             if "critic_round_cap" in data else DEFAULT_CRITIC_ROUND_CAP),
         # Новая комната сразу работает в проектном режиме; режим запуска — «сначала план».
         "launch_mode": _check_launch_mode(data.get("launch_mode")),
         "max_parallel_streams": (_check_parallel_streams(data["max_parallel_streams"])
@@ -543,6 +637,10 @@ def update_room(cfg, room_id: str, patch: dict) -> dict:
                     room["critic_pass"] = _check_bool(value, "critic_pass")
                 elif key == "max_rounds":
                     room["max_rounds"] = _check_rounds(value)
+                elif key == "critic_mode":
+                    room["critic_mode"] = _check_critic_mode(value)
+                elif key == "critic_round_cap":
+                    room["critic_round_cap"] = _check_critic_cap(value)
                 elif key == "icon":
                     room["icon"] = _check_icon(value)
                 elif key == "title":
@@ -573,6 +671,10 @@ def update_room(cfg, room_id: str, patch: dict) -> dict:
                                                 for m in (room.get("members") or [])
                                                 if isinstance(m, dict)]
                     room["agent_notes"] = _check_agent_notes(value, [m for m in members if m])
+                elif key == "agent_notes_log":
+                    # Журнал ведёт приложение (agent_notes) и API — не интерфейс комнаты;
+                    # поле нужно, чтобы запись прошла через update_room.
+                    room["agent_notes_log"] = _norm_notes_log(value)
                 elif key == "agent_models":
                     # Состав для сверки — тот же, что у указаний: текущий + правки этого патча.
                     lead = str(patch.get("orchestrator") or room.get("orchestrator") or "").strip()
@@ -612,6 +714,41 @@ def add_member(cfg, room_id: str, member: dict) -> dict:
             data["rooms"][idx] = room
             _save(cfg, data)
             return {"member": new_member, "members": members}
+    raise RoomsError("Комната не найдена", "not_found", {"room": str(room_id)})
+
+
+def set_member_label(cfg, room_id: str, profile: str, label: str) -> dict:
+    """Подпись участника в комнате (WAVE13 §11): `«Имя — должность»` или сброс.
+
+    Хранится только в реестре комнаты (`rooms.json`), файлы профиля Hermes не
+    меняются. Пустая подпись — вернуться к описанию профиля. Возвращает
+    `{profile, label, members}` — как ждёт app.py (PUT …/agents/{profile}/label).
+    """
+    profile = str(profile or "").strip()
+    text = _norm_member_label(label)
+    path = _rooms_path(cfg)
+    with sf.lock_for(path):
+        data = _load(cfg)
+        for idx, room in enumerate(data["rooms"]):
+            if str(room.get("id")) != str(room_id):
+                continue
+            members = list(room.get("members") or [])
+            for pos, member in enumerate(members):
+                if str(member.get("profile")) != profile:
+                    continue
+                fresh = dict(member)
+                fresh["label"] = text
+                members[pos] = fresh
+                room["members"] = members
+                data["rooms"][idx] = room
+                _save(cfg, data)
+                return {"profile": profile, "label": text, "members": members}
+            if profile in (str(room.get("orchestrator") or ""), str(room.get("critic") or "")):
+                raise RoomsError(
+                    "Руководитель комнаты и критик задаются настройками комнаты — "
+                    "подпись меняется там же (в составе участников)",
+                    "bad_request", {"profile": profile, "reason": "room_lead"})
+            raise RoomsError("Участник не найден", "not_found", {"profile": profile})
     raise RoomsError("Комната не найдена", "not_found", {"room": str(room_id)})
 
 

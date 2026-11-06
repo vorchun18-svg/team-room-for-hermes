@@ -1,0 +1,414 @@
+/**
+ * view-steps.css — блок «Следующие шаги» и окно шага (WAVE14, пакет H, п. 12).
+ *
+ * Правило блока: это ПЛАН РУКОВОДИТЕЛЯ, а не чек-лист пользователя. Поэтому
+ * галочек нет — статус (предстоит / в работе / сделано / снят) рисуем чипом,
+ * а сама строка шага кликабельна и открывает окно действий.
+ *
+ * Файл отдельный: view-request.css принадлежит другому пакету (вопросы), и
+ * старые правила `.req-step` (сетка под чекбокс) здесь аккуратно перекрываются
+ * под `.req-steps`.
+ */
+
+/* ── блок «Следующие шаги» ───────────────────────────────────────────────── */
+
+.req-steps .req-step {
+  display: block;
+  gap: 0;
+  padding: 0;
+  border-top: 0;
+  border-radius: var(--radius-sm);
+}
+
+.req-steps__group + .req-steps__group,
+.req-steps__group + .req-steps__fold,
+.req-steps__fold + .req-steps__fold {
+  margin-top: var(--space-2);
+}
+
+.req-steps__title {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 0 0 var(--space-1);
+}
+
+.req-steps__list .req-step + .req-step {
+  border-top: 1px solid var(--border-soft);
+}
+
+.req-step__open {
+  display: block;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.req-step__open:hover {
+  background: var(--ui-control-hover-background);
+}
+
+.req-step__open:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--primary));
+  outline-offset: 1px;
+}
+
+.req-steps .req-step__text {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+.req-step__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin-top: 5px;
+}
+
+.req-step__owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  font-size: var(--text-2xs);
+  color: var(--ui-text-secondary);
+}
+
+.req-step__owner-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.req-step__owner--empty {
+  font-style: italic;
+}
+
+.req-step__due {
+  cursor: default;
+}
+
+.req-step__state {
+  font-size: var(--text-2xs);
+}
+
+.req-step--done .req-step__text {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+  text-decoration-color: var(--ui-stroke-tertiary);
+}
+
+.req-step--dismissed .req-step__text,
+.req-step--cancelled .req-step__text {
+  color: var(--muted-foreground);
+}
+
+.req-step--conflict {
+  border-left: 2px solid var(--warn, var(--danger));
+  background: color-mix(in srgb, var(--warn, var(--danger)) 6%, transparent);
+}
+
+.req-step__reaction {
+  margin-top: 4px;
+  font-size: var(--text-2xs);
+  color: var(--ui-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.req-step__reaction--pending .req-step__reaction-label {
+  color: var(--warn-ink, var(--danger-ink));
+}
+
+.req-step__reaction--reaction .req-step__reaction-label {
+  color: var(--ok-ink, var(--ui-text-secondary));
+  font-weight: 600;
+}
+
+.req-step__warn {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  padding: 0 var(--space-2) var(--space-2);
+  color: var(--danger-ink);
+  font-size: var(--text-2xs);
+}
+
+.req-step__warn-text {
+  font-weight: 600;
+}
+
+.req-step__remove {
+  margin-left: auto;
+  color: var(--danger-ink);
+}
+
+/* «Сделано» / «Снято» — свёрнутые группы: выполненные шаги отделены */
+.req-steps__fold {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--border-soft);
+  padding-top: var(--space-2);
+}
+
+.req-steps__fold-head {
+  cursor: pointer;
+  font-size: var(--text-2xs);
+  color: var(--ui-text-tertiary);
+  list-style: none;
+  padding: var(--space-1) 0;
+}
+
+.req-steps__fold-head::-webkit-details-marker {
+  display: none;
+}
+
+.req-steps__fold-head::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 4px;
+  transition: transform 120ms ease;
+}
+
+.req-steps__fold[open] > .req-steps__fold-head::before {
+  transform: rotate(90deg);
+}
+
+/* ── окно шага ───────────────────────────────────────────────────────────── */
+
+.stepdlg .dialog__body,
+.stepdlg__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: min(70vh, 640px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.stepdlg__text {
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+.stepdlg__meta {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.stepdlg__row {
+  display: contents;
+}
+
+.stepdlg__k {
+  color: var(--ui-text-tertiary);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-top: 2px;
+}
+
+.stepdlg__v {
+  margin: 0;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.stepdlg__owner {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.stepdlg__owner-name {
+  font-weight: 600;
+}
+
+.stepdlg__why {
+  border-left: 2px solid var(--border);
+  padding-left: var(--space-2);
+}
+
+.stepdlg__why-v {
+  margin-top: 2px;
+}
+
+.stepdlg__reaction {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-secondary, transparent);
+  font-size: var(--text-sm);
+}
+
+.stepdlg__pending {
+  padding: var(--space-2);
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.stepdlg__history {
+  border-top: 1px solid var(--border-soft);
+  padding-top: var(--space-2);
+}
+
+.stepdlg__history > summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--ui-text-secondary);
+}
+
+.stepdlg__history-list {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+  font-size: var(--text-2xs);
+  color: var(--ui-text-secondary);
+}
+
+.stepdlg__history-item {
+  margin-bottom: 2px;
+}
+
+.stepdlg__history-label {
+  font-weight: 600;
+  color: var(--ui-text-primary, var(--foreground));
+}
+
+.stepdlg__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-secondary, transparent);
+}
+
+.stepdlg__form-foot {
+  align-items: center;
+}
+
+.stepdlg__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stepdlg__field-k {
+  font-size: var(--text-2xs);
+  color: var(--ui-text-tertiary);
+}
+
+.stepdlg__comment {
+  min-height: 72px;
+}
+
+.stepdlg__result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-tertiary, transparent);
+  font-size: var(--text-sm);
+}
+
+.stepdlg__foot {
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.stepdlg__act[data-step-action='drop'] {
+  margin-left: auto;
+  color: var(--danger-ink);
+}
+
+/* ── шаг во вкладке «Дальше»: кликабельная строка вместо галочки (п. 12) ──── */
+
+/* Сетка прежней строки была под чекбокс: первая колонка больше не нужна. */
+.step-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.step-row__open {
+  display: block;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.step-row__open:hover {
+  background: var(--ui-control-hover-background);
+}
+
+.step-row__open:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--primary));
+  outline-offset: 1px;
+}
+
+.step-row--done .step-row__text {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+  text-decoration-color: var(--ui-stroke-tertiary);
+}
+
+/* Шаг в «Карте проекта»: та же кнопка, что на странице запроса */
+.rm-related__step {
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 2px;
+}
+
+.rm-related__step:hover {
+  text-decoration-color: var(--primary);
+}
+
+.rm-related__step:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--primary));
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .step-row { grid-template-columns: minmax(0, 1fr); }
+  .step-row__actions { padding-top: 2px; }
+}
+
+/* ── адаптив: от 900 px без горизонтальной прокрутки ─────────────────────── */
+
+@media (max-width: 900px) {
+  .stepdlg__meta {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .stepdlg__k {
+    padding-top: var(--space-1);
+  }
+
+  .stepdlg__act[data-step-action='drop'] {
+    margin-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .req-steps__fold-head::before {
+    transition: none;
+  }
+}

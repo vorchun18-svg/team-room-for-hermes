@@ -24,7 +24,8 @@
         "provider": "oblako-a",
         "model": "dilizhans-pro",
         "reasoning": "high"
-      }
+      },
+      "label": ""
     },
     {
       "profile": "coder",
@@ -43,7 +44,8 @@
         "provider": "oblako-b",
         "model": "vektor-5",
         "reasoning": "medium"
-      }
+      },
+      "label": ""
     },
     {
       "profile": "surveyor",
@@ -62,7 +64,8 @@
         "provider": "lokal",
         "model": "dilizhans-home-2",
         "reasoning": "low"
-      }
+      },
+      "label": ""
     }
   ],
   "context_files": [
@@ -106,5 +109,7 @@
       "reasoning": "high",
       "updated_at": 1793171750
     }
-  }
+  },
+  "critic_mode": "rounds",
+  "critic_round_cap": 12
 }

@@ -25,6 +25,7 @@ import {
   mirrorPathOf, isEmptyRoadmap, stageMeta, updatedLabel, lastWorkLabel, plural,
 } from './team-roadmap-model.js';
 import { requestTitle, sourceTitle, sourceHint } from '../scope.js';
+import { openStepDialog } from './step-dialog.js';
 import {
   renderStreams, projectModeHint, openStreamEditor, launchConfirm,
   streamsSummary, humanError, planBlockVisible, peopleIndex,
@@ -48,6 +49,8 @@ function looksLikeId(text) {
 export async function mount(el, ctx) {
   ensureCss('css/view-roadmap.css');
   ensureCss('css/view-plan.css');
+  // W14-H §12: шаги на карте открываются тем же окном (согласен/убрать/поправить).
+  ensureCss('css/view-steps.css');
 
   const roomId = String((ctx.route && ctx.route.roomId) || (ctx.room && ctx.room.id) || '');
   if (!roomId) {
@@ -495,6 +498,33 @@ export async function mount(el, ctx) {
 
   /* ---------------------------------------------------- панель деталей */
 
+  /**
+   * Окно шага из «Карты проекта» (W14-H §12): то же окно, что на странице
+   * запроса — план руководителя можно согласовать, убрать или поправить.
+   * После действия бэклог комнаты перечитываем: срок/статус шага меняются.
+   */
+  function openStepWindow(requestId, itemId) {
+    const rid = String(requestId || '').trim();
+    const stepId = String(itemId || '').includes(':')
+      ? String(itemId).split(':').pop() : String(itemId || '');
+    if (!rid) {
+      toast('У шага нет запроса-источника — открыть окно нельзя', 'warn');
+      return;
+    }
+    openStepDialog({
+      requestId: rid,
+      stepId,
+      room: state.room || null,
+      roomId,
+      api,
+      toast,
+      onDone: async () => {
+        state.backlogLoaded = false;
+        try { await load({ silent: true }); } catch { /* карта обновится по таймеру */ }
+      },
+    });
+  }
+
   function renderDetail() {
     const roadmap = state.roadmap || {};
     const phases = Array.isArray(roadmap.phases) ? roadmap.phases : [];
@@ -542,7 +572,16 @@ export async function mount(el, ctx) {
             ? h('ul', { class: 'rm-related-list' }, steps.map((item) => h('li', { class: 'rm-related' },
               h('span', { class: 'chip chip--' + (item.status === 'done' ? 'ok' : 'outline') },
                 item.kind === 'future_question' ? 'вопрос' : 'шаг'),
-              h('span', { class: 'rm-related__text' }, item.text))))
+              // W14-H §12: тот же принцип «план руководителя ↔ реакция пользователя»,
+              // что на странице запроса: клик по шагу открывает окно действий.
+              item.kind === 'future_question'
+                ? h('span', { class: 'rm-related__text' }, item.text)
+                : h('button', {
+                  class: 'rm-related__text rm-related__step', type: 'button',
+                  'aria-haspopup': 'dialog',
+                  title: 'Открыть шаг: согласовать, убрать или поправить',
+                  onclick: () => openStepWindow(source.requestId, item.id),
+                }, item.text))))
             : h('div', { class: 'small muted' },
               source ? 'В запросе-источнике нет связанных шагов.' : 'Сначала нужен источник этапа.'))));
   }

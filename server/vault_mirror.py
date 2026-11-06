@@ -833,7 +833,7 @@ def _notes_section(room: dict) -> str:
 
 
 def _notes_file_text(cfg, room: dict) -> tuple:
-    """Содержимое `Указания участникам.md`: полный текст каждого участника."""
+    """Содержимое `Указания участникам.md`: записи каждого участника + журнал изменений."""
     room_id = str(room.get("id") or "")
     title = str(room.get("title") or room_id)
     notes, people = _notes_room(room)
@@ -845,16 +845,65 @@ def _notes_file_text(cfg, room: dict) -> tuple:
     if not notes:
         body.append("_Особых указаний пока нет. Добавьте их в настройках комнаты — "
                     "они будут действовать только в этой комнате._")
+
+    def _entries(item: dict) -> list:
+        try:
+            return list(_import("agent_notes").entries_of(item))
+        except Exception:  # noqa: BLE001 - без модуля печатаем сплошной текст
+            return []
+
+    def _who(entry: dict) -> str:
+        marks = []
+        marks.append("закреплено" if entry.get("pinned") else
+                     {"user": "Михаил", "leader": "руководитель комнаты",
+                      "auto": "автоматически"}.get(str(entry.get("source") or ""), "руководитель"))
+        if entry.get("origin"):
+            marks.append("источник: %s" % _clean(entry["origin"]))
+        stamp = _fmt_dt(entry.get("created_at"))
+        if stamp:
+            marks.append(stamp)
+        used = int(entry.get("used_count") or 0)
+        if used:
+            marks.append("пригодилось %d раз" % used)
+        return " · ".join(marks)
+
     for profile, role in people:
         item = notes.get(profile)
         if not item:
             continue
         stamp = _fmt_dt(item.get("updated_at"))
         body += ["### %s (%s)" % (role.capitalize(), _clean(profile)),
-                 ("_обновлено: %s_" % stamp) if stamp else "", "", _mask_notes(item.get("text")), ""]
+                 ("_обновлено: %s_" % stamp) if stamp else "", ""]
+        entries = _entries(item)
+        if not entries:
+            body += [_mask_notes(item.get("text")), ""]
+            continue
+        for entry in entries:
+            body += ["- %s" % _mask_notes(entry.get("text")),
+                     "  _%s_" % _who(entry), ""]
     for profile in [p for p in notes if p not in {name for name, _r in people}]:
         item = notes[profile]
         body += ["### %s" % _clean(profile), "", _mask_notes(item.get("text")), ""]
+    events = []
+    try:
+        raw = room.get("agent_notes_log")
+        events = [e for e in (raw if isinstance(raw, list) else []) if isinstance(e, dict)][:20]
+    except Exception:  # noqa: BLE001 - журнал не обязателен
+        events = []
+    if events:
+        body += ["## Журнал изменений (последние %d)" % len(events), ""]
+        for event in events:
+            stamp = _fmt_dt(event.get("at"))
+            action = {"add": "добавлено", "update": "изменено", "remove": "удалено",
+                      "merge": "объединено", "review": "переоценка", "replace": "заменено",
+                      "rollback": "откат", "pinned": "закреплено",
+                      "unpin": "снято закрепление"}.get(str(event.get("action")),
+                                                        str(event.get("action") or ""))
+            head = "- %s · %s · %s" % (stamp or "—", _clean(event.get("profile")) or "—", action)
+            tail = " — %s" % _mask_notes(event.get("text") or "") if event.get("text") else ""
+            note = (" (%s)" % _clean(event.get("note"))) if event.get("note") else ""
+            flag = " · _откачено_" if event.get("rolled_back") else ""
+            body += [head + tail + note + flag, ""]
     body += ["---", "",
              "Указания действуют только в комнате «%s»: они дописываются к роли "
              "участника и не меняют его SOUL.md." % title]

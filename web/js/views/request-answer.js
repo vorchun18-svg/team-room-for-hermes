@@ -15,6 +15,9 @@ import {
 } from './request-util.js';
 import { failureInfo } from './request-parts-model.js';
 import { countNoun } from '../text-ru.js';
+import {
+  KICK_LABEL, KICK_HINT, kickStateFromTree, kickUsefulness, kickWhyNot, kickPanel, kickNow,
+} from './kick-panel.js';
 
 export function createAnswer(R) {
   const { ctx, rid, root, state, render, runAction, cloneRequest, decompose } = R;
@@ -42,6 +45,49 @@ export function createAnswer(R) {
     } catch {
       ctx.toast('Не удалось скопировать — выделите текст вручную', 'danger');
     }
+  }
+
+  /* ── «Проверить доску сейчас» (W13-F §8) ───────────────────── */
+
+  let kickBusy = false;
+
+  /** Запустить проход диспетчера по клику и показать итог панелью, не тостом. */
+  async function runKick(btn) {
+    if (kickBusy) return;
+    kickBusy = true;
+    if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+    state.kick = await kickNow(ctx.api, rid);
+    kickBusy = false;
+    if (btn) { btn.disabled = false; btn.classList.remove('is-busy'); }
+    await R.refresh({ force: true });
+    render();
+  }
+
+  function dismissKick() {
+    state.kick = null;
+    render();
+  }
+
+  /** Подписи исполнителей в итоге: имя из состава комнаты, иначе профиль. */
+  const kickLabelOf = (profile) => profileName(profile, ctx.room) || String(profile || '');
+
+  /** Итог прохода — сразу под заголовком «Свод команды», в любом состоянии. */
+  function kickBlock() {
+    if (!state.kick) return null;
+    return h('div', { style: { marginBottom: 'var(--space-3)' } },
+      kickPanel(state.kick, {
+        labelOf: kickLabelOf,
+        scopeIds: new Set((R.detail.tree || []).map((n) => String(n && n.id)).filter(Boolean)),
+        onClose: dismissKick,
+      }));
+  }
+
+  /** Кнопка «Проверить доску сейчас» — только когда есть что запускать. */
+  function kickButton() {
+    return h('button', {
+      type: 'button', class: 'btn btn--ghost btn--sm', title: KICK_HINT, 'data-kick': 'button',
+      onclick: (e) => runKick(e.currentTarget),
+    }, icon('zap', { size: 12 }), KICK_LABEL);
   }
 
   /* ── ответ ─────────────────────────────────────────────────── */
@@ -98,6 +144,9 @@ export function createAnswer(R) {
       s.legacy ? h('span', { class: 'chip chip--muted', title: 'Ответ получен из старого формата metadata' }, 'старый формат') : null,
       h('div', { class: 'spacer' }),
       versionSwitch(s, cur)));
+
+    const kickBox = kickBlock();
+    if (kickBox) card.append(kickBox);
 
     if (d.status === 'failed') {
       const f = failureInfo(d);
@@ -216,12 +265,15 @@ export function createAnswer(R) {
           ? 'Руководитель комнаты ещё не разложил запрос по команде. Обычно это происходит само, когда движок запущен.'
           : (who.length ? 'Сейчас: ' + who.join(', ') : 'Движок раздаёт задачи команде.')));
         body.append(h('div', { class: 'req-pending__skel' }, skeleton(4)));
+        const kstate = kickStateFromTree(d.tree);
+        const kuse = kickUsefulness(kstate);
         body.append(h('div', { class: 'row', style: { marginTop: '4px' } },
           queued
             ? h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: (e) => decompose(e.currentTarget) },
               icon('split-horizontal', { size: 12 }), 'Разложить сейчас')
-            : h('button', { type: 'button', class: 'btn btn--ghost btn--sm', onclick: () => runAction('dispatch', {}, { toast: 'Движок подтолкнут' }) },
-              icon('zap', { size: 12 }), 'Подтолкнуть движок')));
+            : (kuse.useful
+              ? kickButton()
+              : h('span', { class: 'small muted' }, kickWhyNot(kstate)))));
       }
 
       card.append(body);

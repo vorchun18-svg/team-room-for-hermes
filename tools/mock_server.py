@@ -79,6 +79,9 @@ class Handler(BaseHTTPRequestHandler):
                                {"method": method, "allowed": list(allowed)})
             if method == "POST" and path == "/api/stt/transcribe":
                 return self._respond(self._stt_transcribe(query))
+            m = re.fullmatch(r"/api/stt/recordings/([a-z0-9][a-z0-9_-]{5,40})/parts/(\d{1,3})", path)
+            if m and method in ("PUT", "POST"):
+                return self._respond(self._stt_part_save(m.group(1), int(m.group(2))))
             if method == "GET":
                 body = app.get(path, query)
                 return self._respond(body)
@@ -162,6 +165,27 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "audio_empty", "Аудио не получено", {"got": len(audio), "length": length})
         language = (query.get("language", [""])[0] or "").strip() or None
         return 200, mock_stt.transcribe(audio, ctype, language)
+
+    def _stt_part_save(self, rid: str, part: int) -> tuple:
+        """PUT/POST /api/stt/recordings/{rid}/parts/{n}: тело — байты части.
+
+        Демо хранит части в памяти: диск не трогаем (как и весь мок).
+        """
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype not in mock_stt.ALLOWED_AUDIO:
+            raise ApiError(400, "bad_request", "Формат аудио не поддерживается",
+                           {"content_type": ctype, "allowed": list(mock_stt.ALLOWED_AUDIO)})
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ApiError(400, "bad_request", "Некорректный Content-Length", {})
+        if length <= 0:
+            raise ApiError(400, "audio_empty", "Пустая часть записи", {})
+        if length > mock_stt.STT_MAX_BODY:
+            raise ApiError(413, "audio_too_big", "Часть записи больше 64 МиБ",
+                           {"length": length, "max": mock_stt.STT_MAX_BODY})
+        audio = self.rfile.read(length)
+        return 200, mock_stt.save_part(rid, part, audio, ctype)
 
     def _respond(self, result):
         status, payload = result

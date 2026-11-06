@@ -15,6 +15,27 @@ from mock_core import (ALLOWED_EXT, DENY_NAME_PARTS, FILE_ROOTS, MIME, MOCK, MOC
 import mock_demo as demo
 import mock_stt
 
+_LABEL_DASH = re.compile("\\s*[\u2014\u2013\u2015\u2012\u2212-]{1,2}\\s*")
+
+
+def split_label(text: str):
+    """«Анна — финансы (CFO)» → («Анна», «финансы (CFO)»).
+
+    То же правило, что в `server/profile_info.parse_description`: демо-мок живёт
+    отдельно от сервера, но подпись в демо должна выглядеть одинаково.
+    """
+    raw = " ".join(str(text or "").split())
+    if not raw:
+        return "", ""
+    match = _LABEL_DASH.search(raw)
+    if match:
+        left = raw[:match.start()].strip(" .,:;")
+        right = raw[match.end():].strip(" .,:;")
+        if left and len(left) <= 60 and len(left.split()) <= 4:
+            return left, right
+    return "", raw
+
+
 class MockRead:
     def get(self, path: str, query: dict) -> tuple:
         if path == "/api/health":
@@ -23,6 +44,20 @@ class MockRead:
             return 200, mock_stt.status()
         if path == "/api/stt/dictionary":
             return 200, mock_stt.get_dictionary()
+        if path == "/api/stt/recordings":
+            raw = (query.get("limit") or ["20"])[0]
+            try:
+                limit = max(1, min(50, int(raw)))
+            except (TypeError, ValueError):
+                raise ApiError(400, "bad_request", "limit: целое число 1…50", {"field": "limit"})
+            return 200, mock_stt.recordings(limit)
+        m = re.fullmatch(r"/api/stt/recordings/([a-z0-9][a-z0-9_-]{5,40})", path)
+        if m:
+            return 200, mock_stt.recording(m.group(1))
+        m = re.fullmatch(r"/api/stt/recordings/([a-z0-9][a-z0-9_-]{5,40})/parts/(\d{1,3})", path)
+        if m:
+            data, ctype = mock_stt.part(m.group(1), m.group(2))
+            return 200, Raw(data, ctype, {"Cache-Control": "no-store"})
         if path == "/api/config":
             return 200, self.fixture("config.json")
         if path == "/api/models":
@@ -34,6 +69,20 @@ class MockRead:
             rooms = [self.room_summary(rid) for rid in self.room_details if include or not self.room(rid)["archived"]]
             return 200, {"rooms": rooms, "engine": {"ok": True, "board": "team", "warning": None},
                          "updated_at": now()}
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/notes", path)
+        if m:
+            return 200, self.room_notes(m.group(1))          # WAVE14 §13
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/notes/journal", path)
+        if m:
+            raw = (query.get("limit") or ["50"])[0]
+            try:
+                limit = int(raw)
+            except (TypeError, ValueError):
+                limit = 50
+            return 200, self.notes_journal(m.group(1), limit)
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes", path)
+        if m:
+            return 200, self.get_notes_entries(m.group(1), m.group(2))
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/plan", path)
         if m:
             return 200, self.get_plan(m.group(1))
@@ -150,17 +199,47 @@ class MockRead:
         return {"room": room_id, "generated_at": data.get("generated_at") or now(),
                 "count": len(items), "items": items}
 
+    def label_fields(self, profile: str, custom: str = "") -> dict:
+        """Поля подписи участника в демо (WAVE13 §11) — как отдаёт живой сервер."""
+        known = {p.get("profile"): p for p in self.fx.get("profiles.json", {}).get("items", [])}
+        item = known.get(profile) or {}
+        if custom:
+            name, job = split_label(custom)
+            text = " — ".join(x for x in (name, job) if x)
+            return {"name": name, "job": job, "label": text or custom, "label_source": "member",
+                    "custom_label": custom, "label_pending": False}
+        return {"name": str(item.get("name") or ""), "job": str(item.get("job") or ""),
+                "label": str(item.get("label") or ""),
+                "label_source": str(item.get("label_source") or "role"),
+                "custom_label": "", "label_pending": False}
+
+    def member_label(self, room: dict, profile: str) -> str:
+        """Ручная подпись участника из реестра комнаты демо."""
+        for member in room.get("members") or []:
+            if str(member.get("profile") or "") == str(profile):
+                return str(member.get("label") or "")
+        return ""
+
     def team(self, room_id: str) -> dict:
         room = self.room(room_id)
         if room["id"] not in ("cafe", "fn"):
-            members = [{"profile": m["profile"], "title": m["profile"], "role": m["role"], "note": m["note"],
+            members = []
+            for m in room["members"]:
+                item = {"profile": m["profile"], "title": m["profile"], "role": m["role"], "note": m["note"],
                         "pinned": m["pinned"], "state": "idle", "current": None, "last": None,
-                        "counts": {"done": 0, "blocked": 0, "active": 0}} for m in room["members"]]
+                        "counts": {"done": 0, "blocked": 0, "active": 0}}
+                item.update(self.label_fields(m["profile"], self.member_label(room, m["profile"])))
+                members.append(item)
             return {"room": room["id"], "generated_at": now(),
                     "dispatcher": {"ok": True, "state": "running", "pid": 9608, "warning": None},
                     "members": members}
         data = self.fixture("team_%s.json" % room["id"])
         data["generated_at"] = now()
+        # Подпись, заданная в демо кнопкой «Подпись», должна быть видна в «Команде».
+        for member in data.get("members") or []:
+            custom = self.member_label(room, member.get("profile"))
+            if custom:
+                member.update(self.label_fields(member.get("profile"), custom))
         return data
 
     def roadmap(self, room_id: str) -> dict:

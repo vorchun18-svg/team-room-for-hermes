@@ -19,7 +19,7 @@ import {
 } from '../ui.js';
 import {
   pipeline, warningItems, criticInfo, artifactKindMeta, formatBytes,
-  timelineMeta, timelineRows,
+  timelineMeta, timelineRows, criticRoundLabel, criticProgressLabel,
 } from './request-parts-model.js';
 import { toast, changed, postAction, button, lock, focusTreeTask } from './rp-shared.js';
 import { renderTree } from './request-parts-tree.js';
@@ -165,7 +165,11 @@ export function renderCritic(detail, ctx) {
   card.appendChild(sectionHeader('Проверка критика', { actions: [chip] }));
 
   const meta = h('div', { class: 'row row--wrap row--tight rp-critic__meta small muted' });
-  meta.appendChild(h('span', { class: 'tnum' }, `раунд ${Math.max(c.round, 0)} из ${c.maxRounds}`));
+  meta.appendChild(h('span', { class: 'tnum' }, criticRoundLabel(c)));
+  if (c.mode === 'until_approved' && c.state !== 'approved') {
+    meta.appendChild(h('span', { class: 'rp-critic__sep', 'aria-hidden': 'true' }, '·'));
+    meta.appendChild(h('span', {}, 'ответ выдаётся после одобрения'));
+  }
   if (c.taskId) {
     // В тексте — человекопонятное название задачи, номер — в подсказке и «Копировать» (D6).
     const node = (Array.isArray(detail && detail.tree) ? detail.tree : []).find((n) => n && n.id === c.taskId);
@@ -194,6 +198,33 @@ export function renderCritic(detail, ctx) {
   card.appendChild(meta);
   if (c.note) card.appendChild(h('p', { class: 'rp-critic__note small' }, c.note));
 
+  // Ход цикла (W13-E §9д): «раунд N, замечаний было K, закрыто M, осталось R».
+  const progressLine = criticProgressLabel(c);
+  if (progressLine) {
+    card.appendChild(h('p', { class: 'rp-critic__progress small', 'data-rp': 'critic-progress' },
+      icon('pulse', { size: 12 }), h('span', {}, progressLine),
+      Number(c.progress && c.progress.closed) > 0
+        ? h('span', { class: 'muted' }, ' · закрыто: ' + (c.progress.closed_items || [])
+          .slice(0, 3).join('; '))
+        : null));
+  }
+  // Страховки: пауза на лимите провайдера и стоп (нет прогресса / потолок раундов).
+  if (c.state === 'paused') {
+    card.appendChild(h('div', { class: 'banner banner--warn rp-critic__banner' },
+      icon('clock', { size: 14 }),
+      h('div', { class: 'banner__text' }, 'Лимит провайдера: цикл на паузе и продолжится сам. '
+        + 'Ничего делать не нужно.')));
+  }
+  if (c.stop) {
+    card.appendChild(h('div', { class: 'banner banner--warn rp-critic__banner', role: 'status' },
+      icon('warning', { size: 14 }),
+      h('div', { class: 'banner__text' },
+        h('strong', {}, 'Цикл проверки остановлен. '),
+        String(c.stop.message || ''),
+        c.stop.needs_user === false ? '' : ' Ответ показан как есть — нужно ваше решение: '
+          + 'отправить на доработку с замечанием или принять.')));
+  }
+
   if (c.issues.length) {
     card.appendChild(h('div', { class: 'rp-critic__issues-title' },
       `Замечания: ${c.issues.length}`,
@@ -208,8 +239,8 @@ export function renderCritic(detail, ctx) {
       variant: 'secondary', size: 'sm', icon: 'shield',
       onclick: (ev) => runCritique(detail, ctx, ev && ev.currentTarget),
     }));
-  } else if (c.state === 'failed') {
-    actions.appendChild(button('Запустить снова', {
+  } else if (['failed', 'stalled', 'capped'].includes(c.state)) {
+    actions.appendChild(button(c.stop ? 'Продолжить проверку' : 'Запустить снова', {
       variant: 'secondary', size: 'sm', icon: 'refresh',
       onclick: (ev) => runCritique(detail, ctx, ev && ev.currentTarget),
     }));

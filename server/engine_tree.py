@@ -192,6 +192,28 @@ def _model_label(task: dict):
     return " · ".join(parts)
 
 
+def _model_sent(cfg, room, task: dict, runs: list, board: str | None = None):
+    """«Ушло на: …» карточки по факту запуска (W13-A). None — сказать нечего/модуля нет.
+
+    Модель берётся из сессии воркера профиля (её id лежит в `task_runs.metadata`), а не
+    из подписи карточки: подпись показывает выбор, факт — только запуск. Если в metadata
+    прогона id сессии нет (старые записи), `sent_of` берёт его из события `owner_admitted`
+    — поэтому доска передаётся дальше.
+    """
+    if cfg is None or not isinstance(task, dict):
+        return None
+    try:
+        try:
+            from . import agent_models as models_mod
+        except ImportError:  # pragma: no cover - «плоский» импорт
+            import agent_models as models_mod  # type: ignore
+        last = next((r for r in reversed(runs or []) if r.get("id") is not None), None)
+        value = models_mod.sent_of(cfg, room, task, run=last, board=board)
+        return value or None
+    except Exception:  # noqa: BLE001 - подпись модели не должна ронять дерево
+        return None
+
+
 def _roles(ctx: dict, extra_cards: list) -> dict:
     extra = {c["id"]: c for c in extra_cards if c.get("id")}
     roles, rounds = {}, {}
@@ -226,7 +248,7 @@ def _room_dict(cfg, room):
     return None
 
 
-def _tree(ctx: dict, room, extra_cards: list) -> list:
+def _tree(ctx: dict, room, extra_cards: list, cfg=None, board=None) -> list:
     meta = _roles(ctx, extra_cards)
     allowed = set()
     if isinstance(room, dict):
@@ -258,6 +280,7 @@ def _tree(ctx: dict, room, extra_cards: list) -> list:
                 "metadata": raw_meta, "comments": ctx["comments"].get(tid, []),
                 "runs": runs, "needs_human": _needs_human_node(task, ctx, tid), "error": _node_error(runs),
                 "model_label": _model_label(task),
+                "model_sent": _model_sent(cfg, room, task, runs, board),
                 "outside_room": bool(allowed) and bool(task.get("assignee")) and task.get("assignee") not in allowed}
         if meta["rounds"].get(tid) is not None:
             node["round"] = meta["rounds"][tid]

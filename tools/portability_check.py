@@ -39,7 +39,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 BOARD = "team"
-MAX_COPY_BYTES = 1024 * 1024          # 1 МиБ: больше — не копируем живую доску
+MAX_COPY_BYTES = 256 * 1024 * 1024   # 256 МиБ: живая доска растёт; сверх этого не копируем
 START_TIMEOUT = 40.0
 SECRET_LINE = re.compile(r"(?i)^(\s*[\w.\-]*(?:key|token|secret|password|auth)[\w.\-]*\s*:\s*)(.+)$")
 

@@ -270,7 +270,21 @@ export function agentModelLine(room, profile, member, opts = {}) {
     onclick: () => { if (typeof o.onEdit === 'function') o.onEdit(profile); },
   }, icon('edit', { size: 11 }), h('span', null, 'Изменить'));
 
-  return h('div', { class: 'agent-model__line', dataset: { profile: String(profile || '') } }, chip, btn);
+  // W13-A: «ушло на: …» — факт последнего запуска участника (W13-A). Если он расходится
+  // с выбором комнаты, рядом стоит пометка: интерфейс не должен обещать выбранное.
+  const sent = member && member.model_sent && typeof member.model_sent === 'object'
+    ? member.model_sent : null;
+  const sentText = sent ? String(sent.text || '').trim() : '';
+  const sentChip = sentText
+    ? h('span', {
+      class: 'chip chip--outline agent-model__line-chip' + (sent.mismatch ? ' chip--warn' : ''),
+      title: (sent.confirmed ? 'Фактическая модель последнего запуска' : 'Записано в карточке')
+        + (sent.mismatch ? ' · расходится с выбором комнаты' : ''),
+    }, sentText + (sent.mismatch ? ' · расходится с выбором комнаты' : ''))
+    : null;
+
+  return h('div', { class: 'agent-model__line', dataset: { profile: String(profile || '') } },
+    chip, sentChip, btn);
 }
 
 /**

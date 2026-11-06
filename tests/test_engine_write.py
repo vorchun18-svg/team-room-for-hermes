@@ -105,7 +105,10 @@ class EngineWriteTest(unittest.TestCase):
         expected = contract.build_request_body(ROOM, REQUEST, "wb-20261028-0001", self.cfg)
         # WAVE 8, Блок D: create_request дописывает в тело блок «КОНТЕКСТ КОМНАТЫ»
         expected = ew.with_context_pack(self.cfg, ROOM, expected)
+        # W13-A: и блок «МОДЕЛИ ИСПОЛНИТЕЛЕЙ» — чтобы руководитель создавал карточки с флагами
+        expected = ew._with_models_block(self.cfg, ROOM, expected)
         self.assertEqual(body, expected.replace("\r\n", "\n"))
+        self.assertIn("МОДЕЛИ ИСПОЛНИТЕЛЕЙ", body)
         self.assertIn("КОНТЕКСТ КОМНАТЫ", body)
         self.assertTrue(body.startswith(REQUEST.replace("\r\n", "\n")))
         self.assertIn("«Алвара Sanitário»", body)

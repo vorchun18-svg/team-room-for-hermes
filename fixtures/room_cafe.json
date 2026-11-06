@@ -24,7 +24,8 @@
         "provider": "oblako-a",
         "model": "dilizhans-midi",
         "reasoning": "medium"
-      }
+      },
+      "label": ""
     },
     {
       "profile": "biz-ops",
@@ -43,7 +44,8 @@
         "provider": "lokal",
         "model": "dilizhans-home",
         "reasoning": "medium"
-      }
+      },
+      "label": ""
     },
     {
       "profile": "biz-strategy",
@@ -62,7 +64,8 @@
         "provider": "oblako-b",
         "model": "vektor-3",
         "reasoning": "high"
-      }
+      },
+      "label": ""
     },
     {
       "profile": "biz-marketing",
@@ -81,7 +84,8 @@
         "provider": "oblako-a",
         "model": "dilizhans-midi",
         "reasoning": "low"
-      }
+      },
+      "label": ""
     },
     {
       "profile": "biz-cfo",
@@ -100,7 +104,8 @@
         "provider": "oblako-a",
         "model": "dilizhans-ultra",
         "reasoning": "xhigh"
-      }
+      },
+      "label": ""
     },
     {
       "profile": "biz-runner",
@@ -119,7 +124,8 @@
         "provider": "lokal",
         "model": "dilizhans-kompakt",
         "reasoning": "minimal"
-      }
+      },
+      "label": ""
     },
     {
       "profile": "biz-critic",
@@ -138,7 +144,8 @@
         "provider": "oblako-b",
         "model": "vektor-4",
         "reasoning": "high"
-      }
+      },
+      "label": ""
     }
   ],
   "context_files": [
@@ -172,12 +179,62 @@
   "seeded": true,
   "agent_notes": {
     "biz-ops": {
-      "text": "Отвечай коротко и только цифрами, когда речь о поставщиках: цена, MOQ, срок. Всегда указывай источник и дату котировки — без них ответ не принимаю.",
-      "updated_at": 1793155000
+      "text": "Отвечай коротко и только цифрами, когда речь о поставщиках: цена, MOQ, срок.\nВсегда указывай источник и дату котировки — без них ответ не принимаю.",
+      "updated_at": 1793155000,
+      "entries": [
+        {
+          "id": "n_demo01",
+          "text": "Отвечай коротко и только цифрами, когда речь о поставщиках: цена, MOQ, срок.",
+          "source": "user",
+          "origin": "правка в интерфейсе",
+          "created_at": 1793155000,
+          "used_count": 3,
+          "pinned": true
+        },
+        {
+          "id": "n_demo02",
+          "text": "Всегда указывай источник и дату котировки — без них ответ не принимаю.",
+          "source": "leader",
+          "origin": "комментарий Михаила, 04.11",
+          "created_at": 1793155400,
+          "used_count": 1,
+          "pinned": false
+        }
+      ],
+      "review": {
+        "count_at_review": 2,
+        "reviewed_at": 1793155400,
+        "due": false
+      }
     },
     "biz-cfo": {
-      "text": "Считай в ₽ и отдельно показывай долю каждого расхода. Не предлагай цену с маржой ниже 35% — это наше правило.",
-      "updated_at": 1793155400
+      "text": "Считай в ₽ и отдельно показывай долю каждого расхода.\nНе предлагай цену с маржой ниже 35% — это наше правило.",
+      "updated_at": 1793155400,
+      "entries": [
+        {
+          "id": "n_demo03",
+          "text": "Считай в ₽ и отдельно показывай долю каждого расхода.",
+          "source": "user",
+          "origin": "",
+          "created_at": 1793155000,
+          "used_count": 2,
+          "pinned": true
+        },
+        {
+          "id": "n_demo04",
+          "text": "Не предлагай цену с маржой ниже 35% — это наше правило.",
+          "source": "leader",
+          "origin": "комментарий Михаила, 05.11",
+          "created_at": 1793155400,
+          "used_count": 0,
+          "pinned": false
+        }
+      ],
+      "review": {
+        "count_at_review": 2,
+        "reviewed_at": 1793155400,
+        "due": false
+      }
     }
   },
   "agent_models": {
@@ -187,5 +244,37 @@
       "reasoning": "high",
       "updated_at": 1793171700
     }
-  }
+  },
+  "critic_mode": "rounds",
+  "critic_round_cap": 12,
+  "agent_notes_log": [
+    {
+      "id": "j_demo0002",
+      "at": 1793155400,
+      "action": "add",
+      "profile": "biz-cfo",
+      "entry_id": "n_demo04",
+      "text": "Не предлагай цену с маржой ниже 35% — это наше правило.",
+      "why": "правило комнаты",
+      "origin": "комментарий Михаила, 05.11",
+      "actor": "biz-director",
+      "source": "leader",
+      "note": "",
+      "rolled_back": false
+    },
+    {
+      "id": "j_demo0001",
+      "at": 1793155000,
+      "action": "add",
+      "profile": "biz-ops",
+      "entry_id": "n_demo01",
+      "text": "Отвечай коротко и только цифрами, когда речь о поставщиках: цена, MOQ, срок.",
+      "why": "ручная запись",
+      "origin": "правка в интерфейсе",
+      "actor": "Михаил",
+      "source": "user",
+      "note": "",
+      "rolled_back": false
+    }
+  ]
 }

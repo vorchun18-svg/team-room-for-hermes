@@ -24,12 +24,14 @@ import time
 from pathlib import Path
 
 try:  # пакетный и «плоский» импорт (python server/app.py)
+    from . import answers
     from .app_common import MAX_TEXT
     from .config import path_allowed
     from .engine_cli import EngineWriteError, _run, _run_json, opt
     from .engine_write import CREATED_BY, _write_body
     from .engine_write_guard import assert_task_id, no_nul, tree_ids
 except ImportError:  # pragma: no cover
+    import answers  # type: ignore
     from app_common import MAX_TEXT  # type: ignore
     from config import path_allowed  # type: ignore
     from engine_cli import EngineWriteError, _run, _run_json, opt  # type: ignore
@@ -239,12 +241,24 @@ def _open_note(cfg, board: str, root_id: str, tenant: str) -> dict:
 def _comment_item(cfg, room: dict, row, roster: dict) -> dict:
     author = str(row["author"] or "mikhail")
     mikhail = author in ("mikhail", "Михаил")
-    return {"id": "c%d" % int(row["id"]), "at": int(row["created_at"] or 0),
+    body = str(row["body"] or "")
+    item = {"id": "c%d" % int(row["id"]), "at": int(row["created_at"] or 0),
             "author_kind": "mikhail" if mikhail else "agent",
             "author": "mikhail" if mikhail else author,
             "author_label": "Михаил" if mikhail else author_label(cfg, room, author, roster),
-            "text": str(row["body"] or ""), "task_id": str(row["task_id"] or "") or None,
+            "text": body, "task_id": str(row["task_id"] or "") or None,
             "kind": "message" if mikhail else "comment"}
+    # W14-D §1: ответ на вопрос — ОТДЕЛЬНЫЙ тип записи со ссылкой на вопрос,
+    # а не обычное сообщение в общем чате.
+    kind = answers.answer_kind_of(body) if mikhail else ""
+    if kind:
+        item["kind"] = "answer"
+        item["answer_kind"] = kind
+        item["question_id"] = answers.question_id_of(body) or None
+        item["question_text"] = answers.question_text_of(body) or None
+        item["text"] = answers.answer_text_of(body)
+        item["text_mark"] = body
+    return item
 
 
 _EVENT_TEXT = {
@@ -484,10 +498,11 @@ def _comment(cfg, board: str, task_id: str, text: str, author: str = "mikhail") 
 
 
 def _create_note(cfg, room: dict, board: str, root: str, row: dict, text: str, attach,
-                  lead: str, urgent: bool) -> str:
-    body = build_note_body(cfg, room, root, row, text, attach, lead, urgent)
+                  lead: str, urgent: bool, body: str | None = None,
+                  key_seed: str = "") -> str:
+    body = body or build_note_body(cfg, room, root, row, text, attach, lead, urgent)
     key = NOTE_KEY_PREFIX + root + "-" + hashlib.sha1(
-        (text + "|" + str(int(urgent))).encode("utf-8")).hexdigest()[:10]
+        (text + "|" + str(int(urgent)) + "|" + key_seed).encode("utf-8")).hexdigest()[:10]
     path = _write_body(cfg, body, "note-" + root)
     try:
         args = ["create", NOTE_TITLE, opt("assignee", lead), opt("tenant", _tenant(room)),
@@ -615,6 +630,147 @@ def post_message(cfg, room, rid, text, attach=None, urgent: bool = False) -> dic
     return result
 
 
+def build_answer_body(cfg, room: dict, root: str, row: dict, question: dict, text: str,
+                      lead: str, need_explanation: bool = False) -> str:
+    """Тело карточки «Уточнение» для ОТВЕТА НА ВОПРОС (W14-D §1–§3).
+
+    Отличие от обычного уточнения: руководитель обязан ответить короткой реакцией
+    в ветке (её видит Михаил у вопроса) и учесть ответ в работе; встречный вопрос
+    ответом не считается.
+    """
+    qid = str((question or {}).get("id") or "").strip() or "q_0"
+    qtext = _short((question or {}).get("text") or "", 200)
+    title = str(row.get("title") or "")
+    status = _STATUS_RU.get(str(row.get("status") or ""), str(row.get("status") or ""))
+    marker, caption = (("<<<ПРОСЬБА ПОЯСНИТЬ>>>", "МАКСИМ ПРОСИТ ПОЯСНЕНИЕ (это НЕ ответ)")
+                       if need_explanation else
+                       ("<<<ОТВЕТ>>>", "ОТВЕТ МАКСИМА НА ВОПРОС (отвечено именно на этот вопрос)"))
+    lines = [
+        "СООБЩЕНИЕ МАКСИМА (дословно, передано приложением «Комната команды»):",
+        caption + ":",
+        "Вопрос: %s «%s»" % (qid, qtext),
+        marker, text, "<<<КОНЕЦ>>>", "",
+        "Запрос: %s «%s» (сейчас %s)." % (root, _short(title, 120), status or "неизвестно"),
+        "",
+        "Ты — руководитель комнаты «%s» (%s). Ответ пришёл ТЕБЕ; остальные участники "
+        "его не получали." % (str(room.get("title") or room.get("id") or "комната"), lead),
+    ]
+    if need_explanation:
+        lines += [
+            "Что сделать (по шагам):",
+            "а) Вопрос %s ОСТАЁТСЯ ОТКРЫТЫМ: Михаил просит пояснить, а не ответил. Не считай "
+            "его решённым и не выбирай за него." % qid,
+            "б) Ответь ПОЯСНЕНИЕМ в ветке простым русским языком, 2–4 предложения, без жаргона: "
+            "kanban_comment(task_id=\"%s\", body=\"[Руководитель · пояснение по вопросу %s] …\") — "
+            "что это такое, зачем нужно и какие есть варианты выбора." % (root, qid),
+            "в) После пояснения снова жди решения Михаила; остальную работу не останавливай.",
+            "г) Заверши свою карточку: kanban_complete(summary=<что пояснил и по-русски>, "
+            "metadata={\"explained\":[\"%s\"]})." % qid,
+        ]
+    else:
+        lines += [
+            "Что сделать (по шагам):",
+            "а) Перечитай корень и все карточки запроса: kanban_show(task_id=\"%s\") — статусы, "
+            "тела, комментарии." % root,
+            "б) СРАЗУ ответь короткой РЕАКЦИЕЙ на корне — её Михаил видит у вопроса "
+            "(один из трёх вариантов):",
+            "   • принял, ничего не меняем: kanban_comment(task_id=\"%s\", "
+            "body=\"%s %s] Принято: <что именно>; ничего менять не нужно\")"
+            % (root, answers.REACTION_MARK, qid),
+            "   • принял, работа пересматривается: kanban_comment(task_id=\"%s\", "
+            "body=\"%s %s] Работа пересмотрена: карточки t_… — <что переделать>\")"
+            % (root, answers.REACTION_MARK, qid),
+            "   • принял и уже учёл: «%s %s] Принято: <что>; учтено в карточках t_…»"
+            % (answers.REACTION_MARK, qid),
+            "в) Учти ответ в работе: комментарии на карточки участников, при необходимости — "
+            "новые карточки (kanban_create) и доработка уже сделанного. Если ответ меняет "
+            "готовое — поставь доработку сразу, это должно быть видно в карточках.",
+            "г) СНАЧАЛА сверься с ответом, потом создавай шаги: шаг, противоречащий ответу "
+            "(по этому вопросу), создавать нельзя; при ответе «нет/не нужно» связанные шаги "
+            "снимаются приложением автоматически.",
+            "д) В своде укажи блок «Учтено из ответов»: вопрос → что сделано.",
+            "е) Заверши СВОЮ карточку: kanban_complete(summary=<короткий свод по-русски>, "
+            "metadata={\"answer_reaction\":{\"question_id\":\"%s\",\"status\":"
+            "\"received|applied|no_change\"},\"acknowledged\":[\"…\"]})." % qid,
+        ]
+    if bool(room.get("project_mode")):
+        lines += [
+            "ж) Проектный режим: если ответ меняет карту проекта, приложи блок plan_patch "
+            "(add/change/drop) и кратко объясни причину; у нового направления укажи "
+            "\"from_question\":\"%s\"." % qid,
+        ]
+    lines += [
+        "",
+        "Твой комментарий-реакция и свод попадут в диалог запроса автоматически. Работать "
+        "можно только инструментами канбана (%s) и своими обычными навыками Hermes."
+        % ", ".join(LEAD_TOOLS),
+    ]
+    return "\n".join(lines)
+
+
+def post_answer_note(cfg, room, rid, question: dict, text: str,
+                     need_explanation: bool = False) -> dict:
+    """Передать ответ руководителю карточкой «Уточнение» с контрактом реакции.
+
+    Комментарий в ветке пишет вызывающий (``engine_write.act("answer")`` — он же
+    разблокирует карточки); здесь только рабочая карточка руководителю: одна на
+    запрос, повторный ответ дописывается комментарием (``merged``).
+    """
+    root = assert_task_id(rid, "rid")
+    room = _room(cfg, room)
+    if not room:
+        raise EngineWriteError("not_found", "Комната запроса не найдена.",
+                              detail={"reason": "room_not_found"}, http_status=404)
+    board = _board_of(room)
+    row = card_row(cfg, board, root)
+    if not row:
+        raise EngineWriteError("not_found", "Запрос не найден на доске комнаты.",
+                              detail={"reason": "no_card", "rid": root}, http_status=404)
+    lead = _lead(room, row)
+    value = _validate_text(text)
+    qid = str((question or {}).get("id") or "").strip() or "q_0"
+    mark = (answers.explanation_comment(qid, (question or {}).get("text") or "", value)
+            if need_explanation else answers.answer_comment(qid, (question or {}).get("text") or "", value))
+    note = _open_note(cfg, board, root, _tenant(room))
+    if note:
+        card_id = assert_task_id(str(note["id"]), "task_id")
+        _comment(cfg, board, card_id, mark)
+        merged = True
+    else:
+        body = build_answer_body(cfg, room, root, row, question or {}, value, lead, need_explanation)
+        card_id = _create_note(cfg, room, board, root, row, value, None, lead, False,
+                               body=body, key_seed=qid)
+        merged = False
+    return {"task_id": card_id, "merged": merged, "routed_to": lead, "question_id": qid}
+
+
+def remind_lead(cfg, room, rid, question: dict, ago_min: int = 0) -> dict:
+    """«Напомнить руководителю»: короткий сигнал в ветке, что ждём реакцию на ответ.
+
+    Ответ уже записан, реакции нет — Михаил напоминает. Комментарий идёт и на
+    корень, и в открытую карточку «Уточнение» (если она есть), чтобы руководитель
+    увидел его при следующем проходе.
+    """
+    root = assert_task_id(rid, "rid")
+    room = _room(cfg, room)
+    if not room:
+        raise EngineWriteError("not_found", "Комната запроса не найдена.",
+                              detail={"reason": "room_not_found"}, http_status=404)
+    board = _board_of(room)
+    row = card_row(cfg, board, root)
+    if not row:
+        raise EngineWriteError("not_found", "Запрос не найден на доске комнаты.",
+                              detail={"reason": "no_card", "rid": root}, http_status=404)
+    lead = _lead(room, row)
+    qid = str((question or {}).get("id") or "").strip() or "q_0"
+    text = answers.remind_text(qid, (question or {}).get("text") or "", int(ago_min or 0))
+    _comment(cfg, board, root, text)
+    note = _open_note(cfg, board, root, _tenant(room))
+    if note:
+        _comment(cfg, board, assert_task_id(str(note["id"]), "task_id"), text)
+    return {"task_id": root, "routed_to": lead, "text": text, "question_id": qid}
+
+
 def _sync_vault(cfg, room: dict, root: str) -> None:
     """Зеркало Obsidian (модуль соседа может быть не готов — молча пропускаем)."""
     try:
@@ -631,4 +787,6 @@ def _sync_vault(cfg, room: dict, root: str) -> None:
 
 __all__ = ["NOTE_MARK", "LEAD_MARK", "NOTE_TITLE", "URGENT_LINE", "LEAD_TOOLS", "ROLE_RU",
            "get_thread", "post_message", "build_note_body", "author_label", "role_label",
-           "card_row", "NOTE_KEY_PREFIX"]
+           "card_row", "NOTE_KEY_PREFIX",
+           # W14-D: ответ на вопрос — своя метка, свой бриф, своя карточка руководителю
+           "build_answer_body", "post_answer_note", "remind_lead"]

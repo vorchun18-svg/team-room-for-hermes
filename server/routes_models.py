@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re as _re
+import time as _time
 
 try:  # пакетный и «плоский» импорт
     from .app_common import err
@@ -28,6 +29,9 @@ ROUTES = [
     ("PUT", r"/api/rooms/" + ROOM_RE + r"/agents/" + PROFILE_RE + r"/model", "h_agent_model_put"),
     ("POST", r"/api/rooms/" + ROOM_RE + r"/agents/" + PROFILE_RE + r"/restart",
      "h_agent_model_restart"),
+    # W13-A: «что реально ушло» и проверка по факту запусков
+    ("GET", r"/api/rooms/" + ROOM_RE + r"/models/sent", "h_models_sent"),
+    ("POST", r"/api/rooms/" + ROOM_RE + r"/models/check", "h_models_check"),
 ]
 
 #: что принимаем в теле PUT (всё остальное — ошибка, а не тихо игнорируется)
@@ -157,6 +161,67 @@ class ModelRoutes:
         return 200, {"ok": True, "restarted": int(res.get("restarted") or 0),
                      "cards": res.get("cards") or [],
                      "warnings": res.get("warnings") or []}, {}
+
+
+    # --- «ушло на» ---------------------------------------------------------
+    def h_models_sent(self, query, body, room_id):
+        """``GET /api/rooms/{id}/models/sent`` — выбрано комнатой ↔ реально ушло.
+
+        Для каждого участника: ``model_settings`` (выбор) и ``model_sent`` (факт по его
+        последнему запуску из сессии воркера) с пометкой расхождения. Плюс ``cards`` —
+        карточки комнаты, где факт уже известен или запись расходится с выбором.
+        """
+        room = self._models_room(room_id)
+        mod = self._models_mod()
+        members = []
+        try:
+            from .agent_models import participants  # noqa: PLC0415 - ленивый импорт
+        except ImportError:
+            from agent_models import participants  # type: ignore
+        for profile, role in participants(room):
+            item = {"profile": profile, "role": role,
+                    "model_settings": mod.model_settings(self.cfg, room, profile)}
+            try:
+                item["model_sent"] = mod.member_sent(self.cfg, room, profile)
+            except Exception:  # noqa: BLE001 - «ушло на» вторично
+                item["model_sent"] = {}
+            members.append(item)
+        cards = []
+        try:
+            for card in (mod.card_map(self.cfg, room) or {}).values():
+                sent = mod.sent_of(self.cfg, room, card,
+                                   board=room.get("board") or self.board)
+                if not sent:
+                    continue
+                if not (sent.get("confirmed") or sent.get("mismatch")):
+                    continue
+                cards.append({"id": card["id"], "assignee": card["assignee"],
+                              "status": card["status"], "model_label": sent["label"],
+                              "model_sent": sent})
+        except Exception:  # noqa: BLE001 - карточки вторичны для ответа
+            cards = []
+        cards.sort(key=lambda c: (not c["model_sent"].get("mismatch"), c["id"]))
+        return 200, {"room": room_id, "generated_at": int(_time.time()),
+                     "members": members, "cards": cards[:50]}, {"Cache-Control": "no-store"}
+
+    def h_models_check(self, query, body, room_id):
+        """``POST /api/rooms/{id}/models/check`` — сверить факт запусков и вернуть «не ту».
+
+        ``fix=false`` — только отчёт (ничего не останавливать). Это та же проверка, что
+        сторож делает каждый тик; кнопка нужна, чтобы не ждать минуту.
+        """
+        room = self._models_room(room_id)
+        data = body if isinstance(body, dict) else {}
+        fix = data.get("fix")
+        fix = True if fix is None else bool(fix)
+        res = self._models_call("verify_started", (self.cfg, room_id), {"fix": fix})
+        return 200, {"ok": True, "room": room_id, "fix": bool(fix),
+                     "checked": int(res.get("checked") or 0),
+                     "confirmed": int(res.get("confirmed") or 0),
+                     "mismatched": res.get("mismatched") or [],
+                     "fixed": res.get("fixed") or [],
+                     "failed": res.get("failed") or [],
+                     "unknown": int(res.get("unknown") or 0)}, {}
 
 
 def install_model_routes(app_cls, routes: list) -> None:

@@ -16,6 +16,104 @@ import mock_paths
 import mock_plan
 import mock_stt
 
+# W14-D: тот же модуль, что у бэкенда — статусы ответа и связка вопрос↔шаг
+import sys as _sys
+from pathlib import Path as _Path
+
+_SERVER_DIR = _Path(__file__).resolve().parent.parent / "server"
+if str(_SERVER_DIR) not in _sys.path:
+    _sys.path.insert(0, str(_SERVER_DIR))
+import answers as mock_answers            # noqa: E402  (server/answers.py, чистые функции)
+
+
+def answers_mod_apply(question: dict, record: dict) -> dict:
+    """Наложить запись ответа на вопрос демо-данных (как бэкенд, без реестра).
+
+    Мутирует переданный вопрос и возвращает его же — вызывающий код ждёт изменения
+    на месте (в отличие от бэкенда, где вопрос копируется под запись).
+    """
+    return mock_answers.apply_question(question if isinstance(question, dict) else {}, record)
+
+
+def apply_step_overrides(detail: dict, rid: str, overrides: dict) -> dict:
+    """Наложить запомненные действия пользователя на шаги собранной детали.
+
+    Шаги демо-запроса пересобираются на каждый GET (`live_detail`) и фикстуры
+    отдаются копией, поэтому без этого действия «Согласен»/«Убрать» пропадали бы
+    после первого же обновления — в бэкенде они лежат в реестре (W14-H §12).
+    """
+    if not isinstance(detail, dict) or not isinstance(overrides, dict):
+        return detail
+    steps = detail.get("next_steps")
+    if not isinstance(steps, list):
+        return detail
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        saved = overrides.get(str(step.get("id") or ""))
+        if not isinstance(saved, dict):
+            continue
+        if saved.get("drop"):
+            step.update({"state": "dismissed", "state_label": "убран", "can_remove": False,
+                         "can_agree": False, "can_drop": False, "reaction_pending": False,
+                         "reaction_label": "шаг убран"})
+        elif isinstance(saved.get("action"), dict):
+            mock_answers.apply_step(step, saved["action"], None)
+    return detail
+
+
+def enrich_answers(detail: dict) -> dict:
+    """W14-D: добавить к вопросам и шагам демо-запроса поля ответов и меток.
+
+    Демо-мок отдаёт фикстуры как есть; здесь они догоняются до формы API, чтобы
+    интерфейс работал одинаково в обоих режимах (фикстуры и живой запрос).
+    """
+    if not isinstance(detail, dict):
+        return detail
+    questions = detail.get("open_questions")
+    if isinstance(questions, list):
+        for question in questions:
+            if isinstance(question, dict) and "answer_state" not in question:
+                record = ({"text": question.get("answer"), "at": question.get("answered_at")}
+                          if question.get("answered") and question.get("answer") else {})
+                mock_answers.apply_question(question, record)
+    steps = detail.get("next_steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict) or "state_label" in step:
+                continue
+            step.setdefault("from_question", None)
+            step.setdefault("question", None)
+            step.setdefault("question_link", None)
+            step.setdefault("answer", None)
+            step.setdefault("cancelled_by_answer", False)
+            step.setdefault("cancelled_reason", None)
+            step.setdefault("conflicts_with_answer", False)
+            step.setdefault("can_remove", True)
+            # W14-H §12: у шага нет галочки — есть действия и реакция руководителя
+            step.setdefault("can_agree", True)
+            step.setdefault("can_drop", True)
+            step.setdefault("user_action", None)
+            step.setdefault("user_action_label", None)
+            step.setdefault("reaction", None)
+            step.setdefault("reaction_label", "предстоит")
+            step.setdefault("reaction_pending", False)
+            step.setdefault("history", [])
+            state = str(step.get("state") or "open")
+            step["state_label"] = {"done": "сделано", "dismissed": "убран",
+                                   "cancelled": mock_answers.CANCELLED_RU}.get(state, "предстоит")
+    if "answers" not in detail and isinstance(questions, list):
+        detail["answers"] = {
+            "items": [mock_answers.answer_item(q) for q in questions
+                      if isinstance(q, dict) and q.get("answer_state") not in (None, "", "open")],
+            "summary": mock_answers.summary(questions, steps if isinstance(steps, list) else []),
+            "pending_label": mock_answers.PENDING_RU,
+            "waiting_label": mock_answers.STATE_RU["waiting_explanation"],
+            "conflict_label": mock_answers.CONFLICT_RU,
+            "cancelled_label": mock_answers.CANCELLED_RU,
+        }
+    return detail
+
 MODES = ("auto",)
 ROLES = ("worker", "critic", "observer")
 
@@ -106,6 +204,35 @@ def check_mode(value, field: str = "mode") -> str:
 
 
 class MockWrite:
+    # W14-H §12: действия пользователя по шагам — в памяти демо, как реестр бэкенда.
+    def _remember_step(self, rid: str, step_id: str, saved: dict) -> None:
+        store = getattr(self, "step_overrides", None)
+        if not isinstance(store, dict):
+            store = {}
+            self.step_overrides = store
+        store.setdefault(str(rid), {})[str(step_id)] = dict(saved or {})
+
+    def step_overrides_for(self, rid: str) -> dict:
+        store = getattr(self, "step_overrides", None)
+        return (store or {}).get(str(rid)) or {}
+
+    # W13-F (§8): итог «Проверить доску сейчас» для демо — вымышленные карточки
+    def kick_report(self, preview: bool = False) -> dict:
+        ready_card = {"id": "t_demo0001", "title": "Срез 02-Ops: смета упаковки", "assignee": "biz-ops",
+                      "status": "ready", "reason_code": "ready", "reason": "готова к запуску",
+                      "tenant": "room:cafe"}
+        running_card = {"id": "t_demo0002", "title": "Срез 03-CFO: юнит-экономика набора",
+                        "assignee": "biz-cfo", "status": "running", "reason_code": "running",
+                        "reason": "уже идёт", "tenant": "room:cafe"}
+        counts = {"ready": 1, "stuck": 0, "running": 1, "review": 0, "input": 0, "blocked": 1,
+                  "deps": 1, "triage": 0, "scheduled": 0, "queued": 0, "done": 5, "total": 9}
+        return {"ok": True, "kind": "preview" if preview else "started", "preview": preview,
+                "spawned": 0 if preview else 1, "reclaimed": 0, "promoted": 0, "max": 3,
+                "started": [] if preview else [{"id": ready_card["id"], "assignee": "biz-ops",
+                                                "title": ready_card["title"]}],
+                "counts": counts, "cards": [ready_card, running_card], "useful": True,
+                "error": None, "at": now()}
+
     def post(self, path: str, query: dict, body: dict) -> tuple:
         if path == "/api/stt/learn":
             raw = check_str(body, "raw", required=True, maxlen=MAX_NOTE)
@@ -113,10 +240,25 @@ class MockWrite:
             apply = check_bool(body, "apply", default=False)
             return 200, mock_stt.learn(raw, final, apply=bool(apply))
         if path == "/api/dispatcher/kick":
-            return 200, {"ok": True, "spawned": 1, "reclaimed": 0, "promoted": 0,
+            # W13-F (§8): {preview:true} — только состояние доски, ничего не запускаем
+            preview = isinstance(body, dict) and body.get("preview") is True
+            report = self.kick_report(preview)
+            if preview:
+                return 200, {"ok": True, "preview": True, "report": report, "at": now()}
+            return 200, {"ok": True, "spawned": report["spawned"], "reclaimed": 0, "promoted": 0,
+                         "planned": [], "max": report["max"], "report": report,
                          "dispatcher": {"ok": True, "state": "running", "warning": None}, "at": now()}
         if path == "/api/rooms/check-dir":
             return 200, self.check_dir(body)
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/entries", path)
+        if m:
+            return 201, self.post_note_entry(m.group(1), m.group(2), body or {})
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/review", path)
+        if m:
+            return 200, self.review_notes(m.group(1), m.group(2), body or {})
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/notes/journal/([A-Za-z0-9_-]{2,40})/rollback", path)
+        if m:
+            return 200, self.rollback_note_event(m.group(1), m.group(2), body or {})
         m = re.fullmatch(r"/api/requests/(t_[0-9a-f]{8})/messages", path)
         if m:
             return 201, self.post_message(m.group(1), body)
@@ -182,9 +324,19 @@ class MockWrite:
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/model", path)
         if m:
             return 200, self.put_model(m.group(1), m.group(2), body)   # WAVE10 §19
+
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/label", path)
+        if m:
+            return 200, self.put_label(m.group(1), m.group(2), body)   # WAVE13 §11
         raise ApiError(404, "not_found", "Неизвестный эндпоинт", {"path": path})
 
     def patch(self, path: str, query: dict, body: dict) -> tuple:
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/entries/([A-Za-z0-9_-]{2,40})", path)
+        if m:
+            return 200, self.patch_note_entry(m.group(1), m.group(2), m.group(3), body or {})
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/notes/journal/([A-Za-z0-9_-]{2,40})/rollback", path)
+        if m:
+            return 200, self.rollback_note_event(m.group(1), m.group(2), body or {})
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})", path)
         if m:
             return 200, self.patch_room(m.group(1), body)
@@ -194,6 +346,18 @@ class MockWrite:
         raise ApiError(404, "not_found", "Неизвестный эндпоинт", {"path": path})
 
     def delete(self, path: str, query: dict, body: dict) -> tuple:
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/entries/([A-Za-z0-9_-]{2,40})", path)
+        if m:
+            data = dict(body or {})
+            raw_force = (query or {}).get("force")
+            if isinstance(raw_force, (list, tuple)):
+                raw_force = raw_force[0] if raw_force else ""
+            if str(raw_force or "").lower() in ("1", "true", "yes"):
+                data["force"] = True
+            return 200, self.delete_note_entry(m.group(1), m.group(2), m.group(3), data)
+        m = re.fullmatch(r"/api/stt/recordings/([a-z0-9][a-z0-9_-]{5,40})", path)
+        if m:
+            return 200, mock_stt.drop(m.group(1))
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/members/([a-z0-9_.-]{2,40})", path)
         if m:
             return 200, self.remove_member(m.group(1), m.group(2))
@@ -201,6 +365,28 @@ class MockWrite:
         if m:
             return self.drop_stream(m.group(1), m.group(2))
         raise ApiError(404, "not_found", "Неизвестный эндпоинт", {"path": path})
+
+    def put_label(self, room_id: str, profile: str, body: dict) -> dict:
+        """`PUT /api/rooms/{id}/agents/{profile}/label` — подпись участника (WAVE13 §11).
+
+        Демо хранит подпись в реестре комнаты в памяти: карточка в «Команде» сразу
+        показывает «Имя — должность». Файлы профилей не меняются.
+        """
+        room = self.room(room_id)
+        label = body.get("label")
+        if label is not None and not isinstance(label, str):
+            raise ApiError(400, "bad_request", "Подпись: нужен текст строкой", {"field": "label"})
+        members = room.get("members") or []
+        for member in members:
+            if str(member.get("profile") or "") != profile:
+                continue
+            member["label"] = " ".join(str(label or "").split())[:120]
+            return {"ok": True, "profile": profile, "label": member["label"], "members": members}
+        if profile in (room.get("orchestrator"), room.get("critic")):
+            raise ApiError(400, "bad_request",
+                           "Руководитель комнаты и критик задаются настройками комнаты",
+                           {"profile": profile, "reason": "room_lead"})
+        raise ApiError(404, "not_found", "Участника нет в комнате", {"profile": profile})
 
     def put_notes(self, room_id: str, profile: str, body: dict) -> dict:
         """`PUT /api/rooms/{id}/agents/{profile}/notes` — особые указания участнику (§9)."""
@@ -275,6 +461,11 @@ class MockWrite:
         members = check_list(body, "members", default=[])
         mode = check_mode(check_str(body, "mode_default", default="auto", maxlen=16), "mode_default")
         max_rounds = check_int(body, "max_rounds", default=1, lo=1, hi=2)
+        critic_mode = check_str(body, "critic_mode", maxlen=32) or "rounds"
+        if critic_mode not in ("rounds", "until_approved"):
+            raise ApiError(400, "bad_request", "Режим критика: rounds | until_approved",
+                           {"field": "critic_mode", "allowed": ["rounds", "until_approved"]})
+        critic_round_cap = check_int(body, "critic_round_cap", default=12, lo=2, hi=30)
         critic_pass = check_bool(body, "critic_pass", default=False)
         settings = self.clean_settings(body, {"orchestrator": orchestrator, "critic": critic,
                                               "members": members, "title": title, "id": rid})
@@ -285,6 +476,7 @@ class MockWrite:
                 "members": [], "context_files": list(context_files),
                 "project_dir": project_dir, "mode_default": mode,
                 "critic_pass": critic_pass, "max_rounds": max_rounds,
+                "critic_mode": critic_mode, "critic_round_cap": critic_round_cap,
                 "launch_mode": settings.get("launch_mode", "plan_first"),
                 "max_parallel_streams": settings.get("max_parallel_streams", 2),
                 "project_mode": settings.get("project_mode", True),
@@ -317,7 +509,8 @@ class MockWrite:
         room = self.room(room_id)
         allowed = {"title", "icon", "orchestrator", "critic", "context_files", "project_dir",
                    "mode_default", "critic_pass", "max_rounds", "launch_mode", "max_parallel_streams",
-                   "project_mode", "agent_notes", "agent_models"}
+                   "project_mode", "agent_notes", "agent_models",
+                   "critic_mode", "critic_round_cap"}
         bad = sorted(set(body) - allowed)
         if bad:
             raise ApiError(400, "bad_request", "Поля нельзя менять", {"fields": bad, "allowed": sorted(allowed)})
@@ -330,6 +523,14 @@ class MockWrite:
                 room[key] = check_mode(check_str(body, key, default="auto", maxlen=16), key)
             elif key == "max_rounds":
                 room[key] = check_int(body, key, lo=1, hi=2)
+            elif key == "critic_mode":
+                value = check_str(body, key, default="rounds", maxlen=32) or "rounds"
+                if value not in ("rounds", "until_approved"):
+                    raise ApiError(400, "bad_request", "Режим критика: rounds | until_approved",
+                                   {"field": key, "allowed": ["rounds", "until_approved"]})
+                room[key] = value
+            elif key == "critic_round_cap":
+                room[key] = check_int(body, key, lo=2, hi=30)
             elif key == "critic_pass":
                 room[key] = check_bool(body, key, default=False)
             elif key == "context_files":
@@ -360,7 +561,8 @@ class MockWrite:
         for r in self.rooms:
             if r["id"] == room_id:
                 for key in ("title", "icon", "orchestrator", "critic", "mode_default", "critic_pass",
-                            "max_rounds", "archived", "launch_mode", "max_parallel_streams", "project_mode"):
+                            "max_rounds", "archived", "launch_mode", "max_parallel_streams", "project_mode",
+                            "critic_mode", "critic_round_cap"):
                     r[key] = room[key]
         summary = self.room_summary(room_id)
         return {**self.with_models(room), "counters": summary["counters"], "phase": summary["phase"],
@@ -401,9 +603,20 @@ class MockWrite:
         title = check_str(body, "title", maxlen=120, allow_empty=True)
         check_mode(check_str(body, "mode", default="auto", maxlen=16), "mode")
         critic = check_bool(body, "critic", default=room["critic_pass"])
+        critic_mode = check_str(body, "critic_mode", maxlen=32)
+        if critic_mode is not None and critic_mode not in ("rounds", "until_approved"):
+            raise ApiError(400, "bad_request", "Режим критика: rounds | until_approved",
+                           {"field": "critic_mode", "allowed": ["rounds", "until_approved"]})
+        req_rounds = body.get("max_rounds")
+        if req_rounds is not None and (isinstance(req_rounds, bool)
+                                       or not isinstance(req_rounds, int)
+                                       or not 1 <= req_rounds <= 5):
+            raise ApiError(400, "bad_request", "max_rounds: целое от 1 до 5",
+                           {"field": "max_rounds"})
         attach = check_list(body, "attach", default=[], maxlen=10, of_str=True)
         brief = check_bool(body, "brief", default=False)
-        detail = self.new_live_request(room_id, text, title, critic)
+        detail = self.new_live_request(room_id, text, title, critic,
+                                       critic_mode=critic_mode, max_rounds=req_rounds)
         if brief:
             self.mark_brief(detail["id"], room_id)
         summary = detail_to_summary(detail)
@@ -473,7 +686,10 @@ class MockWrite:
         detail = self.detail(rid)
         action = body.get("action")
         allowed = ["dispatch", "comment", "answer", "unblock", "reassign", "rework", "retry", "archive", "clone",
-                   "decompose", "revise", "critique"]
+                   "decompose", "revise", "critique",
+                   # W14-D §2/§4: «Напомнить руководителю» и «Убрать» шаг
+                   # W14-H §12: действия пользователя по шагу
+                   "answer_remind", "step_drop", "step_agree", "step_comment", "step_move"]
         if action not in allowed:
             raise ApiError(400, "bad_request", "Неизвестное действие", {"action": action, "allowed": allowed})
         extra = {"ok": True, "action": action}
@@ -481,7 +697,15 @@ class MockWrite:
         root = self._root(tree)
 
         if action == "dispatch":
-            extra.update({"spawned": 1, "promoted": 0,
+            # W13-F (§8): итог показывает карточку ИМЕННО этого запроса, если она готова
+            report = self.kick_report(False)
+            ready = next((n for n in tree if isinstance(n, dict)
+                          and n.get("status") == "ready" and n.get("assignee")), None)
+            if ready:
+                report["started"] = [{"id": ready.get("id"), "assignee": ready.get("assignee"),
+                                      "title": ready.get("title") or ""}]
+                report["counts"] = dict(report["counts"], ready=0)
+            extra.update({"spawned": 1, "promoted": 0, "report": report,
                           "dispatcher": {"ok": True, "state": "running", "warning": None}})
         elif action == "comment":
             text = (check_str(body, "text", required=True, maxlen=MAX_NOTE) or "").strip()
@@ -501,7 +725,12 @@ class MockWrite:
                 raise ApiError(404, "not_found", "Вопрос не найден", {"question_id": qid})
             if question.get("answered"):
                 raise ApiError(409, "conflict", "Вопрос уже отвечен", {"question_id": qid})
-            question.update({"answered": True, "answer": text, "answered_at": now()})
+            # W14-D §3: встречный вопрос вопрос НЕ закрывает (кнопка надёжнее эвристики)
+            need_explanation = bool(body.get("need_explanation")) or mock_answers.is_counter_question(text)
+            state = "waiting_explanation" if need_explanation else "sent"
+            question.update(answers_mod_apply(question, {
+                "text": text, "at": now(), "answered": not need_explanation, "status": state}))
+            question["answer_at"] = now()
             unblocked = []
             for node in tree:
                 if node.get("status") == "blocked" and node.get("needs_human"):
@@ -514,7 +743,113 @@ class MockWrite:
                 detail["status"] = "working"          # ждали только этот ответ
             detail["status_reason"] = None
             detail["needs_you"] = compute_needs_you(detail)   # остальные открытые вопросы продолжают ждать
-            extra.update({"question": question, "unblocked": unblocked})
+            # §4: ответ «нет/не нужно» снимает связанные шаги
+            cancelled = []
+            if not need_explanation and mock_answers.is_negation(text):
+                for step in detail.get("next_steps") or []:
+                    linked, _how = mock_answers.link_question(
+                        step, [{"id": question["id"], "text": question.get("text") or ""}],
+                        mock_answers.ACTION_MIN_SCORE)
+                    if linked and str(step.get("state") or "open") not in ("done", "dismissed", "cancelled"):
+                        step["state"] = "cancelled"
+                        step["state_label"] = mock_answers.CANCELLED_RU
+                        step["cancelled_by_answer"] = True
+                        step["cancelled_reason"] = mock_answers.CANCELLED_RU
+                        step["from_question"] = question["id"]
+                        cancelled.append(step.get("id"))
+            extra.update({"question": question, "unblocked": unblocked,
+                          "answer": {"question_id": qid, "text": text, "at": now(), "state": state,
+                                     "label": mock_answers.STATE_RU.get(state),
+                                     "needs_explanation": need_explanation},
+                          "steps": {"cancelled": cancelled,
+                                    "cancelled_label": mock_answers.CANCELLED_RU}})
+            # W14-D §1 / W15-C §5: в ленте ответ — ОТДЕЛЬНАЯ запись со ссылкой
+            # на вопрос (как в бэкенде), иначе в демо он неотличим от сообщения.
+            self.thread_seq = getattr(self, "thread_seq", 0) + 1
+            mark = ("[Михаил · %s] %s" % (
+                "просит пояснить по вопросу %s «%s»" % (qid, (question.get("text") or "")[:120])
+                if need_explanation else
+                "ответ на вопрос %s «%s»" % (qid, (question.get("text") or "")[:120]), text))
+            item = {"id": "c%d" % self.thread_seq, "at": now(), "author_kind": "mikhail",
+                    "author": "mikhail", "author_label": "Михаил", "task_id": None,
+                    "kind": "answer", "answer_kind": "explanation_request" if need_explanation else "answer",
+                    "question_id": qid, "question_text": question.get("text") or "",
+                    "text": text, "text_mark": mark}
+            store = getattr(self, "thread_store", None)
+            if isinstance(store, dict):
+                store.setdefault(rid, []).append(item)
+                extra["message"] = item
+        elif action == "answer_remind":
+            qid = (check_str(body, "question_id", required=True, maxlen=40) or "").strip()
+            question = next((q for q in detail.get("open_questions", []) if q["id"] == qid), None)
+            if question is None or not question.get("answer"):
+                raise ApiError(404, "not_found", "Ответ на этот вопрос не найден", {"question_id": qid})
+            if question.get("reaction"):
+                raise ApiError(409, "conflict", "Руководитель уже ответил на этот вопрос",
+                               {"question_id": qid})
+            question["leader_pending"] = True
+            question["reminded_at"] = now()
+            question["can_remind"] = True
+            self.comment_seq = getattr(self, "comment_seq", 0) + 1
+            text = mock_answers.remind_text(qid, question.get("text") or "")
+            if root is not None:
+                root.setdefault("comments", []).append(
+                    {"id": self.comment_seq, "author": "mikhail", "text": text, "at": now()})
+            extra.update({"question_id": qid, "reminded_at": question["reminded_at"],
+                          "reminders": 1, "text": text, "question": question})
+        elif action == "step_drop":
+            step_id = (check_str(body, "step_id", required=True, maxlen=64) or "").strip()
+            step = next((s for s in detail.get("next_steps") or [] if s.get("id") == step_id), None)
+            if step is None:
+                raise ApiError(404, "not_found", "Шаг не найден", {"step_id": step_id})
+            step.update({"state": "dismissed", "state_label": "убран", "can_remove": False,
+                         "can_agree": False, "can_drop": False, "reaction_pending": False,
+                         "reaction_label": "шаг убран"})
+            self._remember_step(rid, step_id, {"drop": True})
+            extra.update({"step_id": step_id, "step": step, "dropped": [step_id],
+                          "reaction_label": "шаг убран",
+                          "message": "[Михаил · убрать шаг %s «%s»]" % (step_id, (step.get("text") or "")[:120])})
+        elif action in ("step_agree", "step_comment", "step_move"):
+            # W14-H §12: действие по шагу = ответ на ЭТОТ шаг (как ответ на вопрос).
+            kind = action[len("step_"):]
+            step_id = (check_str(body, "step_id", required=True, maxlen=64) or "").strip()
+            if ":" in step_id:
+                step_id = step_id.split(":", 1)[1]
+            step = next((s for s in detail.get("next_steps") or [] if s.get("id") == step_id), None)
+            if step is None:
+                raise ApiError(404, "not_found", "Шаг не найден", {"step_id": step_id})
+            act = {"kind": kind, "at": now()}
+            if kind == "comment":
+                act["text"] = (check_str(body, "text", required=True, maxlen=MAX_NOTE) or "").strip()
+            if kind == "move":
+                if "due" in body:
+                    act["due"] = body.get("due")
+                if body.get("owner"):
+                    act["owner"] = str(body.get("owner")).strip()
+                if body.get("direction") in ("up", "down"):
+                    act["direction"] = body["direction"]
+                if not any(key in act for key in ("due", "owner", "direction")):
+                    raise ApiError(400, "bad_request", "Перемещение без изменений",
+                                   {"allowed": ["due", "owner", "direction"]})
+                order = [s.get("id") for s in detail.get("next_steps") or []]
+                if act.get("direction") in ("up", "down") and step_id in order:
+                    index = order.index(step_id)
+                    swap = index - 1 if act["direction"] == "up" else index + 1
+                    if 0 <= swap < len(order):
+                        steps_list = detail["next_steps"]
+                        steps_list[index], steps_list[swap] = steps_list[swap], steps_list[index]
+            mock_answers.apply_step(step, act, None)
+            # Демо живёт пересборкой деталей: шаги живого запроса и фикстура
+            # собираются заново на каждый GET, поэтому действие надо запомнить,
+            # иначе после ответа строка шага остаётся «предстоит» (в бэкенде так
+            # не бывает — там действие лежит в реестре).
+            self._remember_step(rid, step_id, {"action": act})
+            extra.update({"step_id": step_id, "step": step,
+                          "reaction_label": step.get("reaction_label"),
+                          "pending_label": mock_answers.PENDING_RU,
+                          "message": mock_answers.step_comment(
+                              kind, step_id, step.get("text") or "", act.get("text") or "",
+                              act.get("due"), act.get("owner"), act.get("direction"))})
         elif action == "unblock":
             task_id = check_str(body, "task_id", maxlen=40)
             blocked = [n for n in tree if n["status"] == "blocked" and (not task_id or n["id"] == task_id)]
@@ -634,8 +969,10 @@ class MockWrite:
                 live["archived"] = True
             elif action == "answer":
                 question = extra["question"]
-                live.setdefault("answers", {})[question["id"]] = {"text": question["answer"],
-                                                                 "at": question["answered_at"]}
+                live.setdefault("answers", {})[question["id"]] = {
+                    "text": question.get("answer"), "at": question.get("answered_at") or question.get("answer_at"),
+                    "answered": bool(question.get("answered")),
+                    "status": question.get("answer_state") or "sent"}
             elif action in ("unblock", "rework", "retry"):
                 live["force_status"] = "working"
             elif action == "reassign":

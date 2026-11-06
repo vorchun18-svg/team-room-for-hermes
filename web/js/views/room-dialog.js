@@ -15,12 +15,14 @@ import {
   ensureCss, field, iconButton, pathChip, confirmDialog,
 } from '../ui.js';
 import { displayName, profileOptionLabel, humanApiMessage } from '../shell-labels.js';
+// WAVE13 §11: единая подпись участника — «Имя — должность», тех. имя профиля мелко.
+import { setProfileDirectory, participantLabel } from '../participant-label.js';
 import { countNoun } from '../text-ru.js';
 import {
   projectDirButton, CHECK_DELAY_MS, dirVerdict, suggestProjectDir, MOVE_NOTE,
 } from '../project-dir-button.js';
-// Особые указания участникам этой комнаты (WAVE9 §9): одна точка монтирования.
-import { mountAgentNotes, notesOf } from '../agent-notes-ui.js';
+// Особенности для этой комнаты (WAVE9 §9 → WAVE14 §13): записи, журнал, откат.
+import { mountAgentNotes, mountNotesLive, notesOf } from '../agent-notes-ui.js';
 // Модель, провайдер и мышление участников (WAVE10): одна точка монтирования.
 import { mountAgentModel, normalizeReasoning } from '../agent-model-ui.js';
 
@@ -120,6 +122,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   try {
     const data = await api.get('/api/profiles');
     profiles = Array.isArray(data) ? data : (data && Array.isArray(data.items) ? data.items : []);
+    setProfileDirectory(profiles);       // подписи берём оттуда же, где ростер
   } catch (err) {
     toast(err && err.message ? err.message : 'Список профилей недоступен', 'danger');
   }
@@ -201,8 +204,10 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     for (const p of list) {
       const name = profileName(p);
       if (!name) continue;
-      // Без дубля «default · default»: если подпись — это тот же id, она не нужна (D8).
-      sel.appendChild(h('option', { value: name, title: name }, profileOptionLabel(p)));
+      // WAVE13 §11: «Имя — должность · профиль»; без дубля «default · default» (D8).
+      const label = participantLabel(name, { role: String(p.kind || 'worker'), entry: p });
+      sel.appendChild(h('option', { value: name, title: label.title + ' · ' + name },
+        profileOptionLabel(Object.assign({}, p, { title: label.title }))));
     }
     if (current && !Array.from(sel.options).some((o) => o.value === current)) {
       sel.appendChild(h('option', { value: current }, current + ' (нет в списке профилей)'));
@@ -262,11 +267,59 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   criticPassInput.addEventListener('change', () => { criticPassTouched = true; });
   const criticPassBox = h('label', { class: 'checkbox' }, criticPassInput, h('span', null, 'Проверять ответ критиком по умолчанию'));
 
-  const roundsSelect = h('select', { class: 'select', 'aria-label': 'Раундов проверки критика' },
-    h('option', { value: '1' }, '1 раунд'),
-    h('option', { value: '2' }, '2 раунда'),
+  /* Раунды критика: 1 / 2 / до полного одобрения (W13-E §7, §9).
+     Значение «approve» в select соответствует critic_mode="until_approved". */
+  const roundsSelect = h('select', { class: 'select', id: 'roomdlg-critic-rounds', 'aria-label': 'Раундов проверки критика' },
+    h('option', { value: '1' }, '1 раунд — быстро'),
+    h('option', { value: '2' }, '2 раунда — тщательнее'),
+    h('option', { value: 'approve' }, 'До полного одобрения критиком'),
   );
-  roundsSelect.value = String(Math.min(2, Math.max(1, Number((full && full.max_rounds) || 1))));
+  const savedMode = String((full && full.critic_mode) || 'rounds');
+  roundsSelect.value = savedMode === 'until_approved'
+    ? 'approve'
+    : String(Math.min(2, Math.max(1, Number((full && full.max_rounds) || 1))));
+
+  const capInput = h('input', {
+    class: 'input roomdlg__cap', type: 'number', min: '2', max: '30', step: '1',
+    id: 'roomdlg-critic-cap', 'aria-label': 'Потолок раундов критика',
+    inputmode: 'numeric',
+  });
+  capInput.value = String(Math.min(30, Math.max(2, Number((full && full.critic_round_cap) || 12))));
+  const capBox = h('label', { class: 'roomdlg__cap-box' },
+    h('span', { class: 'small muted' }, 'Страховка: остановиться после'),
+    capInput,
+    h('span', { class: 'small muted' }, 'раундов'));
+
+  // «?» — короткое объяснение простым языком, чтобы не догадываться по названию.
+  const roundsHelp = h('div', { class: 'roomdlg__hint roomdlg__hint--help hidden', id: 'roomdlg-critic-help' },
+    h('p', null, 'Критик — отдельный участник: он читает сводный ответ команды и говорит, '
+      + 'можно ли отдавать его вам.'),
+    h('p', null, 'Раунд — один цикл «критик проверил → если нашёл замечания, исполнители '
+      + 'доработали → снова проверили». Один раунд — быстрее: у команды одна попытка исправить '
+      + 'замечания, дальше ответ придёт с пометками. Два раунда — тщательнее.'),
+    h('p', null, '«До полного одобрения» — цикл идёт, пока критик не скажет «принято»: удобно '
+      + 'оставить на ночь и утром получить готовое. Чтобы это не крутилось бесконечно, есть '
+      + 'страховки: остановка, если замечания повторяются три раунда подряд, пауза при лимите '
+      + 'провайдера и потолок раундов.'));
+  const roundsHelpBtn = h('button', {
+    class: 'btn btn--ghost btn--sm btn--icon roomdlg__help', type: 'button',
+    'aria-expanded': 'false', 'aria-controls': 'roomdlg-critic-help',
+    title: 'Что такое критик и раунд',
+  }, icon('info', { size: 13 }), h('span', { class: 'sr-only' }, 'Что такое раунд'));
+  roundsHelpBtn.addEventListener('click', () => {
+    const open = roundsHelp.classList.toggle('hidden') === false;
+    roundsHelpBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+
+  function modeValue() {
+    return roundsSelect.value === 'approve' ? 'until_approved' : 'rounds';
+  }
+
+  function renderRoundsState() {
+    const until = modeValue() === 'until_approved';
+    capBox.classList.toggle('hidden', !until);
+  }
+  roundsSelect.addEventListener('change', renderRoundsState);
 
   const boardInput = h('input', {
     class: 'input', type: 'text', value: BOARD, disabled: true,
@@ -460,6 +513,9 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     const hasCritic = Boolean(criticSelect.value);
     criticPassBox.classList.toggle('hidden', !hasCritic);
     roundsSelect.disabled = !hasCritic;
+    roundsHelpBtn.disabled = !hasCritic;
+    capInput.disabled = !hasCritic;
+    capBox.classList.toggle('hidden', !hasCritic || modeValue() !== 'until_approved');
     criticPassInput.disabled = !hasCritic;
     // Галочка «проверять критиком» не может быть включена, когда критика нет.
     if (!hasCritic) criticPassInput.checked = false;
@@ -490,13 +546,17 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
         if (notesUi) notesUi.refresh();          // указания — только у выбранных
         if (modelUi) modelUi.refresh();          // модель — тоже
       });
-      const note = String(p.title || p.description || '');
-      // Имя — человеческое, системный id — только в подсказке (D8).
-      const human = displayName(name, String(p.kind || 'worker'), p.title);
+      // WAVE13 §11: заголовок — имя и должность («Анна — финансы и экономика (CFO)»),
+      // техническое имя профиля — мелко справа, полное описание — в подсказке.
+      const note = String(p.description || p.title || '');
+      const label = participantLabel(name, { role: String(p.kind || 'worker'), entry: p });
       membersHost.appendChild(h('div', { class: 'roomdlg__member' },
-        h('label', { class: 'checkbox', for: input.id, title: 'Профиль: ' + name }, input,
-          h('span', null, human)),
-        h('span', { class: 'roomdlg__member-note', title: String(p.description || note) }, note || 'исполнитель'),
+        h('label', {
+          class: 'checkbox', for: input.id,
+          title: note ? 'Профиль Hermes: ' + name + ' · ' + note : 'Профиль Hermes: ' + name,
+        }, input,
+          h('span', { class: 'roomdlg__member-name' }, label.title)),
+        h('span', { class: 'roomdlg__member-note mono small muted', title: 'Профиль Hermes: ' + name }, name),
       ));
     }
     if (modelUi) modelUi.refresh();
@@ -518,7 +578,12 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     h('div', { class: 'roomdlg__section' },
       field({ label: 'Критик', control: criticSelect }),
       criticHint,
-      h('div', { class: 'row row--wrap' }, criticPassBox, roundsSelect),
+      h('div', { class: 'roomdlg__field-mini' },
+        h('span', { class: 'field__label' }, 'Раунды проверки'),
+        h('div', { class: 'roomdlg__critic-row' }, roundsSelect, roundsHelpBtn)),
+      h('div', { class: 'row row--wrap' }, criticPassBox),
+      capBox,
+      roundsHelp,
     ),
     h('div', { class: 'roomdlg__section' },
       field({ label: 'Доска', control: boardInput, hint: 'Одна доска на все комнаты — поле не меняется.' }),
@@ -539,21 +604,35 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     membersHost,
   ));
 
-  /* ── ЕДИНСТВЕННАЯ точка монтирования указаний (WAVE9 §9) ──────────────── */
+  /* ── ЕДИНСТВЕННАЯ точка монтирования особенностей (WAVE9 §9 → WAVE14 §13) ── */
   const notesHost = h('div', { class: 'roomdlg__notes' });
   form.appendChild(h('div', { class: 'roomdlg__section' },
-    h('div', { class: 'roomdlg__label' }, 'Особые указания участникам этой комнаты'),
+    h('div', { class: 'roomdlg__label' }, 'Особенности для этой комнаты'),
     h('div', { class: 'roomdlg__hint' },
-      'Работают только в этой комнате: правила, навыки, на что смотреть особенно. '
-      + 'Собственные настройки участника не меняются.'),
+      'Добавка к роли участника, действует только здесь: его SOUL.md и профиль не меняются. '
+      + 'Руководитель комнаты пополняет записи сам; каждая правка — в журнале с откатом.'),
     notesHost,
   ));
-  mountAgentNotes(notesHost, ctx, {
-    room: full,
-    profiles,
-    values: notesOf(full),
-    participants: currentParticipants,
-  }).then((ui) => { notesUi = ui; }).catch(() => { notesUi = null; });
+  // Существующая комната: записи правятся по одной сразу в реестре (журнал + откат).
+  // Новая комната: черновик полного текста, он уходит вместе с POST /api/rooms.
+  const notesLive = Boolean(full && full.id);
+  const participantsNow = () => currentParticipants().map((p) => ({
+    profile: p.profile,
+    role: p.role,
+    roleLabel: p.role === 'orchestrator' ? 'руководитель комнаты'
+      : (p.role === 'critic' ? 'критик' : 'исполнитель'),
+  }));
+  if (notesLive) {
+    mountNotesLive(notesHost, ctx, { room: full, roomId: String(full.id), live: true },
+      participantsNow).then((ui) => { notesUi = ui; }).catch(() => { notesUi = null; });
+  } else {
+    mountAgentNotes(notesHost, ctx, {
+      room: full,
+      profiles,
+      values: notesOf(full),
+      participants: currentParticipants,
+    }).then((ui) => { notesUi = ui; }).catch(() => { notesUi = null; });
+  }
 
   /* ── ЕДИНСТВЕННАЯ точка монтирования модели (WAVE10) ─────────────────── */
   const modelsHost = h('div', { class: 'roomdlg__models' });
@@ -668,6 +747,9 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       project_dir: pathInput.value.trim(),
       critic_pass: Boolean(criticSelect.value) && criticPassInput.checked,
       max_rounds: Number(roundsSelect.value) || 1,
+      // Режим критика (W13-E §7, §9): 1 / 2 раунда либо «до полного одобрения».
+      critic_mode: modeValue(),
+      critic_round_cap: Math.min(30, Math.max(2, Number(capInput.value) || 12)),
       // Проектный режим этой комнаты (A1/A2): план → «Запустить», лимит направлений.
       project_mode: Boolean(projectModeInput.checked),
       launch_mode: launchMode === 'auto' ? 'auto' : 'plan_first',
@@ -707,8 +789,9 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
         try { await api.del('/api/rooms/' + enc(roomId) + '/members/' + enc(profile)); }
         catch (err) { problems.push(profile + ': ' + (err && err.message ? err.message : 'не убран')); }
       }
-      // Особые указания (WAVE9 §9): сохраняем ПОСЛЕ состава — новый участник уже в комнате.
-      try {
+      // Особенности (WAVE14 §13): у существующей комнаты записи правятся сразу —
+      // полный текст здесь НЕ перезаписываем, иначе слетит структура и журнал.
+      if (!notesLive) try {
         const wasNotes = notesOf(full);
         const nowNotes = notesUi ? notesUi.value() : {};
         for (const [profile, text] of Object.entries(nowNotes)) {

@@ -31,9 +31,15 @@ PATCH_FIELDS = {"title", "icon", "orchestrator", "critic", "context_files", "pro
                 "launch_mode", "max_parallel_streams", "project_mode", "agent_notes",
                 "agent_models"}
 ACTION_ALLOWED = ("dispatch", "comment", "answer", "unblock", "reassign", "rework", "retry",
-                  "archive", "clone", "decompose", "critique", "revise")
-ACTION_REQUIRED = {"answer": ("question_id",), "reassign": ("task_id", "profile")}
-ACTION_TEXT = {"comment", "answer", "rework", "revise"}
+                  "archive", "clone", "decompose", "critique", "revise",
+                  # W14-D §2/§4: «Напомнить руководителю» и «Убрать» шаг
+                  # W14-H §12: действия по шагу — согласен / прокомментировать / переместить
+                  "answer_remind", "step_drop", "step_agree", "step_comment", "step_move")
+ACTION_REQUIRED = {"answer": ("question_id",), "reassign": ("task_id", "profile"),
+                   "answer_remind": ("question_id",), "step_drop": ("step_id",),
+                   "step_agree": ("step_id",), "step_comment": ("step_id",),
+                   "step_move": ("step_id",)}
+ACTION_TEXT = {"comment", "answer", "rework", "revise", "step_comment"}
 # D1: строгие формы значений, которые уходят в argv CLI (см. docs/critic/wave4-backend.md §2.1)
 TASK_ID_RE = re.compile(r"^t_[0-9a-f]{8}$")
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@+-]{0,63}$")

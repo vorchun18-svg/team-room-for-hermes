@@ -219,19 +219,46 @@ def team_line(room: dict) -> str:
     return "Команда комнаты (назначай подзадачи только этим профилям): " + "; ".join(parts)
 
 
+def critic_settings_line(room: dict) -> str:
+    """Строка контракта про критика: настройка комнаты, спрашивать не нужно (W13-E §7).
+
+    Возвращает '' если критика в комнате нет. Руководитель не должен задавать Михаилу
+    вопрос «сколько раундов/прогонов критика делать» — это свойство комнаты.
+    """
+    room = room if isinstance(room, dict) else {}
+    critic = str(room.get("critic") or "").strip()
+    if not critic:
+        return ""
+    mode = str(room.get("critic_mode") or "").strip()
+    if mode == "until_approved":
+        cap = room.get("critic_round_cap") or 12
+        value = "проверяет ответ, пока не одобрит полностью (страховочный потолок — %s раундов)" % cap
+    else:
+        try:
+            rounds = max(1, min(5, int(room.get("max_rounds") or 1)))
+        except (TypeError, ValueError):
+            rounds = 1
+        value = "максимум %d раунд(а) проверки" % rounds
+    return (f"Проверка критиком ({critic}) уже настроена в комнате: {value}. "
+            "Раунд — один цикл «критик проверил → доработали → снова проверили». "
+            "Не спрашивай Михаила, сколько раундов делать, и не добавляй такой вопрос "
+            "в open_questions — значение берётся из настроек комнаты.")
+
+
 def build_contract_block(room: dict, slug: str, cfg) -> str:
     """Огороженный блок КОМНАТА-КОНТРАКТ по ARCH §5 с реальными путями."""
     state = state_path(room, cfg)
     spec = reportkit_spec(cfg)
     rep = reports_dir(room, slug, cfg)
     ctx = [state] + context_files(room)
-    return "\n".join([
+    return "\n".join([line for line in [
         CONTRACT_OPEN,
+        critic_settings_line(room),
         f"Комната: {room_title(room)}. Контекст проекта (читать первым): {', '.join(ctx)}.",
         "Корневая карточка завершается kanban_complete(summary=<готовый ответ Михаилу в Markdown, "
         "по-русски, ОДИН связный текст, а не пересказ отчётов подряд>, metadata={...}).",
         "metadata (все поля необязательны, но заполняй, что знаешь):",
-        '  next_steps:   [{"text","owner"(профиль),"due"(YYYY-MM-DD)}]   # 3–7 конкретных шагов',
+        '  next_steps:   [{"text","owner"(профиль),"due"(YYYY-MM-DD),"from_question"?}]   # 3–7 конкретных шагов; from_question — id вопроса вида q_…, из которого шаг',
         '  open_questions:[{"text","for":"mikhail|<профиль>"}]               # что нужно решить Михаилу',
         '  decisions:    [{"text","why","status":"proposed|accepted"}]',
         '  stage:        {"current":"<id фазы>","phases":[{"id","title","status":"done|active|next|blocked","note"}]}',
@@ -246,7 +273,7 @@ def build_contract_block(room: dict, slug: str, cfg) -> str:
         "как изменился результат).",
         "Отвечай по-русски; один связный ответ; в подзадачи этот контракт не копировать.",
         CONTRACT_CLOSE,
-    ])
+    ] if line])
 
 
 def _join_blocks(*parts: str) -> str:

@@ -21,7 +21,7 @@ import * as SDK from '@hermes/plugin-sdk'
 import * as ReactNS from 'react'
 import * as JSXNS from 'react/jsx-runtime'
 
-export const PLUGIN_VERSION = '1.0.1'
+export const PLUGIN_VERSION = '1.0.2'
 
 const ID = 'team-room'
 const NAME = 'Командные комнаты'

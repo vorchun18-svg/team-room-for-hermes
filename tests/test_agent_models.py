@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import sqlite3
 import subprocess as real_subprocess
 import sys
 import tempfile
@@ -155,8 +156,15 @@ class CliShim:
             title = tail[1] if len(tail) > 1 and not tail[1].startswith("-") else "Карточка"
             assignee = self._flag(argv, "assignee")
             status = "triage" if "--triage" in argv else "todo"
+            body = ""
+            body_file = self._flag(argv, "body-file")
+            if body_file:                      # тело карточки приходит файлом (UTF-8)
+                try:
+                    body = Path(body_file).read_text(encoding="utf-8")
+                except OSError:
+                    body = ""
             card_id = self.sa.card(title=title[:120], assignee=assignee, status=status,
-                                   created_by="Комната команды")
+                                   body=body, created_by="Комната команды")
             model, provider = self._flag(argv, "model"), self._flag(argv, "provider")
             if model:                      # движок ставит переопределение из флагов `create`
                 con = self.sa.connect()
@@ -949,6 +957,382 @@ class DefaultsTest(unittest.TestCase):
         self.assertEqual(models_mod.agent_default(self.cfg, "quoted"),
                          {"provider": "ollama-cloud", "model": "gpt-oss:20b",
                           "reasoning": ""})
+
+
+# ---------------------------------------------------------------- модель реально ушла (W13-A)
+
+class RealModelTests(_Base):
+    """W13-A: карточка комнаты не должна стартовать на чужой модели.
+
+    Проверяются все пути появления карточки: приложение (корень), руководитель через CLI
+    (карточка в tenant без связи с деревом), критик/доработка приложением, перезапуск,
+    retry, и сверка ФАКТА из сессии воркера («ушло на: …»).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._real_state_path = models_mod.state_path
+        self._session_dbs: dict = {}
+        self._state_seq = 0
+        models_mod.state_path = self._state_path
+        models_mod._SESSION_CACHE.clear()
+        # Класс делит одну песочницу: гасим «идущие» карточки прошлых тестов и журнал
+        # перехватов, иначе проверка видит чужие запуски и считает их расхождениями.
+        con = self.sa.connect()
+        try:
+            con.execute("UPDATE tasks SET status='done' WHERE tenant='room:cafe' "
+                        "AND status='running'")
+            con.commit()
+        finally:
+            con.close()
+        try:
+            (Path(self.cfg.state_dir) / ROOM / "model_fixups.json").unlink()
+        except OSError:
+            pass
+
+    def tearDown(self):
+        models_mod.state_path = self._real_state_path
+        models_mod._SESSION_CACHE.clear()
+
+    # --- стенд: хранилище сессий профиля ---------------------------------
+    def _state_path(self, cfg, profile) -> Path:
+        """Свой `state.db` на профиль: реальные сессии Hermes в тестах не читаем."""
+        name = str(profile or "default")
+        path = self._session_dbs.get(name)
+        if path is None:
+            self._state_seq += 1
+            path = Path(self.sb.root) / ("state-%s-%d.db"
+                                         % (name.replace("/", "_"), self._state_seq))
+            con = sqlite3.connect(str(path))
+            try:
+                con.execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, "
+                            "model TEXT, billing_provider TEXT)")
+                con.commit()
+            finally:
+                con.close()
+            self._session_dbs[name] = path
+        return path
+
+    def _make_session(self, profile: str, session_id: str, model: str, provider: str) -> None:
+        con = sqlite3.connect(str(self._state_path(self.cfg, profile)))
+        try:
+            con.execute("INSERT OR REPLACE INTO sessions (id, model, billing_provider) "
+                        "VALUES (?,?,?)", (session_id, model, provider))
+            con.commit()
+        finally:
+            con.close()
+
+    def _run_with_session(self, card_id: str, profile: str, session_id: str,
+                          started_at: int | None = None) -> int:
+        """Запущенный прогон карточки с id сессии воркера (как пишет движок)."""
+        now = int(time.time())
+        started = int(started_at or (now - 120))
+        con = self.sa.connect()
+        try:
+            con.execute("UPDATE tasks SET status='running', started_at=?, assignee=? "
+                        "WHERE id=?", (started, profile, card_id))
+            con.execute("INSERT INTO task_runs (task_id, profile, status, started_at, metadata) "
+                        "VALUES (?,?,?,?,?)",
+                        (card_id, profile, "running", started,
+                         json.dumps({"worker_session_id": session_id})))
+            run_id = con.execute("SELECT max(id) FROM task_runs WHERE task_id = ?",
+                                 (card_id,)).fetchone()[0]
+            con.execute("UPDATE tasks SET current_run_id=? WHERE id=?", (run_id, card_id))
+            con.execute("INSERT INTO task_events (task_id, run_id, kind, payload, created_at) "
+                        "VALUES (?,?,?,?,?)",
+                        (card_id, run_id, "owner_admitted",
+                         json.dumps({"session_id": session_id}), started + 1))
+            con.commit()
+        finally:
+            con.close()
+        return int(run_id)
+
+    def _orchestrator_card(self, title: str, assignee: str, status: str = "ready") -> str:
+        """Карточка, какую создаёт руководитель сам: tenant комнаты, без связи с деревом."""
+        return self.sa.card(title=title, assignee=assignee, status=status, tenant="room:cafe",
+                            created_by="default")
+
+    def _journal(self) -> list:
+        path = Path(self.cfg.state_dir) / ROOM / "journal.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text("utf-8").splitlines() if line.strip()]
+
+    # --- 1. причина: чужая карточка не видна дереву -----------------------
+    def test_orchestrator_card_is_invisible_to_tree_pass(self):
+        """Сторож по ДЕРЕВУ не видит карточку руководителя — ровно причина бага 1.0.1."""
+        self.set_model("biz-cfo")
+        root_id = self.new_root("Дерево запроса")
+        card_id = self._orchestrator_card("Смета от руководителя", "biz-cfo")
+
+        blind = models_mod.apply_to_tree(self.cfg, ROOM, root_id)
+        self.assertNotIn(card_id, blind["updated"])
+        self.assertIsNone(self.card(card_id)["model_override"],
+                          "карточка вне дерева — старая проверка её не видит")
+
+        seen = models_mod.apply_to_room(self.cfg, ROOM)
+        self.assertIn(card_id, seen["updated"], seen)
+        card = self.card(card_id)
+        self.assertEqual((card["model_override"], card["provider_override"],
+                          card["reasoning_effort"]), ("qwen36", "llamacpp", "high"))
+
+    def test_watcher_pins_room_cards_by_tenant(self):
+        """Тик сторожа закрепляет модель на карточке комнаты, созданной не приложением."""
+        self.set_model("biz-cfo")
+        card_id = self._orchestrator_card("Черновик сметы", "biz-cfo")
+        self.app.watcher.tick_once()
+        card = self.card(card_id)
+        self.assertEqual((card["model_override"], card["reasoning_effort"]), ("qwen36", "high"))
+
+    def test_room_pass_is_idempotent(self):
+        self.set_model("biz-cfo")
+        self._orchestrator_card("Раз", "biz-cfo")
+        first = models_mod.apply_to_room(self.cfg, ROOM)
+        second = models_mod.apply_to_room(self.cfg, ROOM)
+        self.assertTrue(first["updated"])
+        self.assertEqual(second["updated"], [], "повторный проход ничего не меняет")
+
+    # --- 2. контракт: модель в теле запроса -------------------------------
+    def test_request_body_lists_models_for_every_executor(self):
+        """Бриф/тело запроса прямо говорит руководителю, с какими флагами создавать детей."""
+        self.set_model("biz-cfo", "ollama-cloud", "glm-5.3", "ultra")
+        status, body, _h = self.app.dispatch(
+            "POST", "/api/rooms/%s/requests" % ROOM, {},
+            {"text": "Посчитать экономику набора из шести моти."})
+        self.assertEqual(status, 201, body)
+        row = self.sb.one("SELECT body FROM tasks WHERE id = ?", (body["root_id"],))
+        text = row["body"]
+        self.assertIn("МОДЕЛИ ИСПОЛНИТЕЛЕЙ", text)
+        self.assertIn("- biz-cfo (исполнитель) — ollama-cloud · glm-5.3 · "
+                      "предельные → при создании карточки: "
+                      "--model=glm-5.3 --provider=ollama-cloud", text)
+        self.assertIn("модель профиля: ", text)
+        self.assertIn("(в комнате не выбиралась) → флаги не нужны", text)
+        self.assertIn("hermes kanban --board=team create", text)
+        # служебный блок не должен всплывать в интерфейсе как текст Михаила
+        from server import contract as contract_mod
+        self.assertNotIn("МОДЕЛИ ИСПОЛНИТЕЛЕЙ", contract_mod.visible_text(text))
+
+    def test_models_block_written_once(self):
+        self.set_model("biz-cfo")
+        room = self.room()
+        block = models_mod.models_block(self.cfg, room)
+        self.assertIn("МОДЕЛИ ИСПОЛНИТЕЛЕЙ", block)
+        body = ew._with_models_block(self.cfg, room, block)      # повторная сборка
+        self.assertEqual(body.count("МОДЕЛИ ИСПОЛНИТЕЛЕЙ"), 2, "второй блок не дописывается")
+
+    # --- 3. пути создания карточки ---------------------------------------
+    def test_child_card_gets_model_and_effort_at_creation(self):
+        """Критик/доработка приложением: флаги в `create` + уровень мышления мостом."""
+        self.set_model("biz-cfo", "llamacpp", "gemma4", "max")
+        room = self.room()
+        root_id = self.new_root("Критика ответа")
+        critic_like = ew.create_child_card(self.cfg, room, "team", root_id, "biz-cfo",
+                                           "Критика ответа (раунд 1)", "тело", "critic")
+        card = self.card(critic_like)
+        self.assertEqual((card["model_override"], card["provider_override"],
+                          card["reasoning_effort"]), ("gemma4", "llamacpp", "max"))
+        argv = [a for a in self.shim.calls if "create" in a][-1]
+        self.assertIn("--model=gemma4", argv)
+        self.assertIn("--provider=llamacpp", argv)
+        self.assertEqual([a for a in argv if a.startswith("--model=")], ["--model=gemma4"])
+
+    def test_tricky_ids_survive_child_card(self):
+        """`:` и `/` в id модели доходят до карточки ребёнка без подмены."""
+        for provider, model in TRICKY_PAIRS:
+            with self.subTest(provider=provider, model=model):
+                status, _body, _h = self.put("biz-cfo", {"provider": provider, "model": model,
+                                                        "reasoning": ""})
+                self.assertEqual(status, 400, "в тестовом каталоге таких моделей нет")
+        self.cfg.model_catalog_override = BIG_CATALOG
+        try:
+            models_mod.catalog(self.cfg, force=True)
+            for provider, model in TRICKY_PAIRS:
+                with self.subTest(provider=provider, model=model):
+                    status, body, _h = self.put("biz-cfo", {"provider": provider, "model": model,
+                                                           "reasoning": "low"})
+                    self.assertEqual(status, 200, body)
+                    root_id = self.new_root("Точная модель ребёнка")
+                    card_id = ew.create_child_card(self.cfg, self.room(), "team", root_id,
+                                                   "biz-cfo", "Доработка", "тело", "revision")
+                    card = self.card(card_id)
+                    self.assertEqual((card["provider_override"], card["model_override"]),
+                                     (provider, model))
+                    argv = [a for a in self.shim.calls if "create" in a][-1]
+                    self.assertIn("--model=%s" % model, argv)
+        finally:
+            self.cfg.model_catalog_override = CATALOG
+            models_mod.catalog(self.cfg, force=True)
+
+    def test_restart_and_retry_keep_room_model(self):
+        self.set_model("biz-cfo", "llamacpp", "gemma4", "medium")
+        card_id = self._orchestrator_card("Идущая карточка", "biz-cfo", status="running")
+        status, body, _h = self.restart("biz-cfo")
+        self.assertEqual(status, 200, body)
+        self.assertIn(card_id, body["cards"])
+        card = self.card(card_id)
+        self.assertEqual((card["status"], card["model_override"], card["reasoning_effort"]),
+                         ("ready", "gemma4", "medium"))
+        # retry: возвращает в очередь и НЕ теряет выбор комнаты
+        retry = ew.act(self.cfg, "team", card_id, "retry", task_id=card_id)
+        self.assertTrue(retry.get("ok"), retry)
+        self.assertEqual(self.card(card_id)["status"], "ready")
+        self.assertEqual(self.card(card_id)["model_override"], "gemma4")
+
+    # --- 4. сверка факта и перехват --------------------------------------
+    def test_verify_finds_wrong_model_and_returns_card(self):
+        """Карточка уже поехала на модели профиля → останавливаем и возвращаем на выбор."""
+        self.set_model("biz-cfo")                       # llamacpp / qwen36 / high
+        card_id = self._orchestrator_card("Считает не на той", "biz-cfo", status="running")
+        sid = "local-wrong-model-1"
+        self._make_session("biz-cfo", sid, "glm-5.3-flash", "ollama-cloud")
+        self._run_with_session(card_id, "biz-cfo", sid)
+
+        res = models_mod.verify_started(self.cfg, ROOM)
+        self.assertEqual(res["checked"], 1, res)
+        self.assertFalse(res["confirmed"])
+        self.assertEqual([m["id"] for m in res["mismatched"]], [card_id])
+        self.assertIn("ollama-cloud · glm-5.3-flash", res["mismatched"][0]["actual"])
+        self.assertEqual(res["fixed"], [card_id], res)
+
+        card = self.card(card_id)
+        self.assertEqual(card["status"], "ready", "после reclaim карточка ждёт нового запуска")
+        self.assertEqual((card["model_override"], card["provider_override"]),
+                         ("qwen36", "llamacpp"))
+        self.assertTrue(any("reassign" in a and "--reclaim" in a for a in self.shim.calls),
+                        "перехват идёт штатным reassign --reclaim")
+        texts = [e["text"] for e in self._journal() if e.get("kind") in
+                 ("model_changed", "model_restarted")]
+        self.assertTrue(any("ушла на ollama-cloud · glm-5.3-flash" in t for t in texts), texts)
+        self.assertTrue(any("остановлена и возвращена" in t for t in texts), texts)
+
+    def test_verify_confirms_correct_model_and_touches_nothing(self):
+        self.set_model("biz-cfo")
+        card_id = self._orchestrator_card("Считает на своей", "biz-cfo", status="running")
+        sid = "local-right-model-1"
+        self._make_session("biz-cfo", sid, "qwen36", "llamacpp")
+        self._run_with_session(card_id, "biz-cfo", sid)
+        before = len(self.shim.calls)
+        res = models_mod.verify_started(self.cfg, ROOM)
+        self.assertEqual((res["checked"], res["confirmed"]), (1, 1), res)
+        self.assertEqual(res["mismatched"], [])
+        self.assertEqual(res["fixed"], [])
+        self.assertEqual(self.card(card_id)["status"], "running", "карточку не трогали")
+        reassigns = [a for a in self.shim.calls[before:] if "reassign" in a]
+        self.assertEqual(reassigns, [])
+
+    def test_verify_stops_after_fixup_limit(self):
+        """Защита от петли: не больше `FIXUP_MAX` перехватов на карточку."""
+        self.set_model("biz-cfo")
+        card_id = self._orchestrator_card("Упрямая карточка", "biz-cfo", status="running")
+        for attempt in range(models_mod.FIXUP_MAX + 1):
+            sid = "local-loop-%d" % attempt
+            self._make_session("biz-cfo", sid, "glm-5.3", "ollama-cloud")
+            self._run_with_session(card_id, "biz-cfo", sid)
+            res = models_mod.verify_started(self.cfg, ROOM)
+            self.assertEqual([m["id"] for m in res["mismatched"]], [card_id])
+            if attempt < models_mod.FIXUP_MAX:
+                self.assertEqual(res["fixed"], [card_id], "первые попытки перехватываем")
+            else:
+                self.assertEqual(res["fixed"], [], "дальше только предупреждение")
+
+    def test_verify_skips_fresh_and_unselected(self):
+        self.set_model("biz-cfo")
+        card_id = self._orchestrator_card("Только что взяли", "biz-cfo", status="running")
+        sid = "local-fresh-1"
+        self._make_session("biz-cfo", sid, "glm-5.3", "ollama-cloud")
+        self._run_with_session(card_id, "biz-cfo", sid, started_at=int(time.time()))
+        res = models_mod.verify_started(self.cfg, ROOM)
+        self.assertEqual(res["mismatched"][0]["id"], card_id, "расхождение видно всегда")
+        self.assertEqual(res["fixed"], [], "только что стартовавшую не снимаем")
+
+    # --- 5. «ушло на» -----------------------------------------------------
+    def test_sent_shows_actual_model_and_mismatch(self):
+        self.set_model("biz-cfo", "ollama-cloud", "glm-5.3", "ultra")
+        card_id = self._orchestrator_card("Куда ушло", "biz-cfo", status="running")
+        sid = "local-sent-1"
+        self._make_session("biz-cfo", sid, "glm-5.3-flash", "ollama-cloud")
+        self._run_with_session(card_id, "biz-cfo", sid)
+        card = models_mod.card_map(self.cfg, self.room())[card_id]
+        sent = models_mod.sent_of(self.cfg, self.room(), card, board="team")
+        self.assertEqual(sent["text"], "ушло на: ollama-cloud · glm-5.3-flash")
+        self.assertTrue(sent["confirmed"])
+        self.assertTrue(sent["mismatch"])
+        self.assertEqual(sent["note"], "расходится с выбором комнаты")
+        self.assertEqual(sent["expected"]["model"], "glm-5.3")
+
+    def test_sent_without_run_falls_back_to_card(self):
+        """Нет подтверждения из запуска — показываем запись карточки, без выдумок."""
+        self.set_model("biz-cfo")
+        card_id = self._orchestrator_card("Ещё не поехала", "biz-cfo")
+        models_mod.apply_to_room(self.cfg, ROOM)
+        card = models_mod.card_map(self.cfg, self.room())[card_id]
+        sent = models_mod.sent_of(self.cfg, self.room(), card, board="team")
+        self.assertFalse(sent["confirmed"])
+        self.assertEqual(sent["text"], "ушло на: llamacpp · qwen36 · высокие")
+        self.assertFalse(sent["mismatch"])
+
+    def test_tree_node_has_model_sent(self):
+        self.set_model("biz-cfo")
+        root_id = self.new_root("Дерево с фактом")
+        kids = self.sa.decompose(root_id, [{"title": "Смета", "assignee": "biz-cfo",
+                                            "status": "running"}])
+        sid = "local-tree-1"
+        self._make_session("biz-cfo", sid, "qwen36", "llamacpp")
+        self._run_with_session(kids[0], "biz-cfo", sid)
+        detail = self.app.call("engine_read", "request_detail",
+                               ((self.cfg, "team", root_id, self.room()), {}))
+        node = next(n for n in detail["tree"] if n["id"] == kids[0])
+        self.assertEqual(node["model_sent"]["text"], "ушло на: llamacpp · qwen36")
+        self.assertTrue(node["model_sent"]["confirmed"])
+        self.assertFalse(node["model_sent"]["mismatch"])
+
+    def test_team_member_has_sent(self):
+        self.set_model("biz-cfo", "ollama-cloud", "glm-5.3", "high")
+        card_id = self._orchestrator_card("Для команды", "biz-cfo", status="running")
+        sid = "local-team-1"
+        self._make_session("biz-cfo", sid, "glm-5.3-flash", "ollama-cloud")
+        self._run_with_session(card_id, "biz-cfo", sid)
+        status, body, _h = self.app.dispatch("GET", "/api/rooms/%s/team" % ROOM, {}, {})
+        self.assertEqual(status, 200)
+        member = next(m for m in body["members"] if m["profile"] == "biz-cfo")
+        self.assertEqual(member["model_settings"]["model"], "glm-5.3")
+        self.assertEqual(member["model_sent"]["text"], "ушло на: ollama-cloud · glm-5.3-flash")
+        self.assertTrue(member["model_sent"]["mismatch"])
+
+    def test_sent_endpoint(self):
+        self.set_model("biz-cfo")
+        card_id = self._orchestrator_card("Эндпоинт", "biz-cfo", status="running")
+        sid = "local-ep-1"
+        self._make_session("biz-cfo", sid, "gemma4", "llamacpp")
+        self._run_with_session(card_id, "biz-cfo", sid)
+        status, body, _h = self.app.dispatch("GET", "/api/rooms/%s/models/sent" % ROOM, {}, {})
+        self.assertEqual(status, 200, body)
+        member = next(m for m in body["members"] if m["profile"] == "biz-cfo")
+        self.assertEqual(member["model_sent"]["text"], "ушло на: llamacpp · gemma4")
+        self.assertIn(card_id, [c["id"] for c in body["cards"]])
+
+    def test_check_endpoint_reports_without_fixing(self):
+        self.set_model("biz-cfo")
+        card_id = self._orchestrator_card("Проверка", "biz-cfo", status="running")
+        sid = "local-check-1"
+        self._make_session("biz-cfo", sid, "glm-5.3", "ollama-cloud")
+        self._run_with_session(card_id, "biz-cfo", sid)
+        status, body, _h = self.app.dispatch("POST", "/api/rooms/%s/models/check" % ROOM, {},
+                                             {"fix": False})
+        self.assertEqual(status, 200, body)
+        self.assertEqual([m["id"] for m in body["mismatched"]], [card_id])
+        self.assertEqual(body["fixed"], [])
+        self.assertEqual(self.card(card_id)["status"], "running")
+
+    def test_no_secrets_in_sent_payload(self):
+        self.set_model("biz-cfo")
+        self._orchestrator_card("Секреты", "biz-cfo", status="running")
+        status, body, _h = self.app.dispatch("GET", "/api/rooms/%s/models/sent" % ROOM, {}, {})
+        self.assertEqual(status, 200)
+        text = json.dumps(body, ensure_ascii=False)
+        for marker in ("sk-", "ghp_", "Bearer ", "api_key"):
+            self.assertNotIn(marker, text)
 
 
 def _real_hermes_home() -> Path | None:

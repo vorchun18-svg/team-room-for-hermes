@@ -29,10 +29,16 @@
     set(cfg, room_id, profile, provider, model, reasoning) -> {...}
     clear(cfg, room_id, profile) -> {...}
     apply_to_tree(cfg, room_id, root_id) -> {updated, skipped, failed}
+    apply_to_room(cfg, room_id) -> {updated, skipped, failed, scanned}   # весь tenant комнаты
+    verify_started(cfg, room_id) -> {checked, confirmed, mismatched, fixed}  # «ушло на» + перехват
     apply_profile(cfg, room_id, profile) -> {cards_updated, pending_running, cards_failed}
     restart_running(cfg, room_id, profile) -> {restarted, cards, warnings}
     decorate_room(cfg, detail) -> RoomDetail с model_settings/agent_default у участников
     label(provider, model, reasoning, providers=None) -> «провайдер · модель · мышление»
+    sent_of(cfg, room, card) -> {provider, model, reasoning, label, text, confirmed, mismatch}
+    member_sent(cfg, room, profile) -> то же по последнему запуску участника
+    actual_model(cfg, board, card_id) -> {provider, model, session_id, run_id}  # факт из сессии
+    models_block(cfg, room) -> str      # блок «МОДЕЛИ ИСПОЛНИТЕЛЕЙ» для тела запроса
 
 Секреты: значения ключей НИКОГДА не читаются и не печатаются — только факт наличия
 провайдера в каталоге Hermes (`configured`).
@@ -57,6 +63,13 @@ MAX_MODEL = 200                          # знаков в имени модел
 CACHE_TTL = 60                           # секунд: каталог меняется только при смене ключей
 BRIDGE_TIMEOUT = 40                      # секунд: импорт hermes_cli ~1 с, запас на диск
 MAX_CARDS = 120                          # карточек за один проход сторожа
+MAX_TENANT_CARDS = 300                   # карточек комнаты за один проход (весь tenant)
+#: сколько раз перехватываем одну карточку, ушедшую не на ту модель (защита от петли)
+FIXUP_MAX = 2
+#: карточку моложе этого возраста не трогаем: воркер ещё поднимается (секунды)
+FIXUP_MIN_AGE = 10
+#: статусы, в которых карточка «уже пошла» на модель
+STARTED_STATUSES = ("running", "review")
 #: статусы, на которых замена ещё «сработает» при следующем запуске
 APPLY_STATUSES = ("triage", "todo", "ready", "blocked", "queued")
 #: статусы, которые сторож НЕ трогает (идущая работа и завершённое)
@@ -70,12 +83,16 @@ EFFORT_SHORT = {"none": "без размышления", "minimal": "миним�
                 "max": "максимальные", "ultra": "предельные"}
 ROLE_RU = {"orchestrator": "руководитель комнаты", "critic": "критик",
            "worker": "исполнитель", "observer": "наблюдатель"}
+#: префикс tenant комнаты: по нему видно ВСЕ её карточки, включая созданные руководителем
+TENANT_PREFIX = "room:"
 
 #: публичная функция `set` (договорённость §«Интерфейсы») занимает имя — конструктор прячем
 _new_set = set
 
 #: каталог: один на процесс, ключ — путь к Hermes (в песочнице меняется редко)
 _CACHE: dict = {"key": None, "at": 0.0, "data": None}
+#: фактические модели сессий: (путь state.db, id сессии) → (время, {provider, model})
+_SESSION_CACHE: dict = {}
 _PYTHON: dict = {}
 
 
@@ -114,6 +131,20 @@ def config_path(cfg, profile) -> Path:
     if name in ("", "default"):
         return root / "config.yaml"
     return root / "profiles" / name / "config.yaml"
+
+
+def state_path(cfg, profile) -> Path:
+    """Хранилище сессий профиля (`state.db`): где движок фиксирует ФАКТИЧЕСКУЮ модель.
+
+    У `default` — корень Hermes, у остальных — `profiles/<name>/state.db`: та же
+    раскладка, что у `config_path`. Файл только читается (`sqlite mode=ro`).
+    """
+    name = _profile(profile)
+    root = _root(cfg)
+    if name in ("", "default"):
+        return root / "state.db"
+    return root / "profiles" / name / "state.db"
+
 
 
 def bridge_path(cfg=None) -> Path:
@@ -916,16 +947,7 @@ def apply_profile(cfg, room_id, profile, *, limit: int = MAX_CARDS) -> dict:
     want = _wanted(cfg, room, name) if effective(cfg, room, name)["source"] == "room" \
         else {"provider": "", "model": "", "reasoning": ""}
     board = _board(cfg, room)
-    con = _connect(cfg, board)
-    if con is None:
-        return out
-    ids: _new_set = _new_set()
-    try:
-        for root in _roots(cfg, room_id):
-            ids |= _tree_ids(cfg, board, root)
-        cards = _cards(con, sorted(ids))
-    finally:
-        con.close()
+    cards = card_map(cfg, room, board=board)      # tenant комнаты, а не только деревья
     todo: list = []
     for card in cards.values():
         if card["assignee"] != name:
@@ -968,22 +990,14 @@ def restart_running(cfg, room_id, profile) -> dict:
         from . import engine_write as ew
     except ImportError:  # pragma: no cover
         import engine_write as ew  # type: ignore
-    # «По умолчанию» (замены комнаты нет) перезапуск не выдумывает модель: пин снимается,
-    # и карточка идёт на настройках профиля.
-    want = _wanted(cfg, room, name) if effective(cfg, room, name)["source"] == "room" \
-        else {"provider": "", "model": "", "reasoning": ""}
-    con = _connect(cfg, board)
-    if con is None:
+    # «По умолчанию» (замены комнаты нет) перезапускать нечего: модель не менялась, а
+    # снятие с работы идущей карточки — потеря работы, а не исправление.
+    if effective(cfg, room, name)["source"] != "room":
+        result["warnings"].append("В комнате модель этого участника не менялась — "
+                                  "перезапускать нечего.")
         return result
-    rows: dict = {}
-    try:
-        cards = {}
-        for root in _roots(cfg, room_id):
-            for cid in _tree_ids(cfg, board, root):
-                cards.setdefault(cid, root)
-        rows = _cards(con, sorted(cards))
-    finally:
-        con.close()
+    want = _wanted(cfg, room, name)
+    rows = card_map(cfg, room, board=board)
     for card_id, card in sorted(rows.items()):
         if card["assignee"] != name or card["status"] != "running":
             continue
@@ -993,14 +1007,511 @@ def restart_running(cfg, room_id, profile) -> dict:
                                                   "модель не закреплена"))
             continue
         try:
-            ew.act(cfg, board, cards.get(card_id) or card_id, "reassign",
-                   task_id=card_id, profile=name)
+            ew.act(cfg, board, card_id, "reassign", task_id=card_id, profile=name)
         except Exception as exc:  # noqa: BLE001 - одна карточка не валит перезапуск
             result["warnings"].append("%s: %s" % (card_id, str(exc)[:160]))
             continue
         result["cards"].append(card_id)
     result["restarted"] = len(result["cards"])
     return result
+
+
+# ---------------------------------------------------------------- «ушло на»
+
+def _tenant(room) -> str:
+    """Tenant комнаты: всё, что создано в её запросах, живёт под ним."""
+    room = room or {}
+    return str(room.get("tenant") or ("%s%s" % (TENANT_PREFIX, room.get("id") or ""))).strip()
+
+
+def _session_id(value) -> str:
+    """id сессии воркера из metadata прогона (`worker_session_id`)."""
+    if isinstance(value, str):
+        try:
+            return _session_id(json.loads(value))
+        except ValueError:
+            return ""
+    if not isinstance(value, dict):
+        return ""
+    for key in ("worker_session_id", "session_id", "session"):
+        text = str(value.get(key) or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _session_model(cfg, profile, session_id) -> dict:
+    """ФАКТИЧЕСКАЯ модель запуска: `sessions.model` + `billing_provider` в `state.db`.
+
+    Движок выбирает модель в момент допуска запуска (`gateway/session_kanban.py`: политика
+    берётся из `tasks.model_override/provider_override/reasoning_effort`) и записывает её
+    в сессию профиля. Поэтому это единственное надёжное место, где видно, на чём карточка
+    реально поехала: `task_runs.metadata` хранит только id этой сессии, а лог воркера —
+    свободный текст. Читаем `mode=ro`, ничего не пишем.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return {}
+    path = state_path(cfg, profile)
+    key = (str(path), sid)
+    now = time.time()
+    hit = _SESSION_CACHE.get(key)
+    if hit and now - float(hit[0] or 0) < 120:
+        return dict(hit[1])
+    out: dict = {}
+    try:
+        import sqlite3
+        if path.exists():
+            con = sqlite3.connect("file:%s?mode=ro" % path.as_posix(), uri=True, timeout=5)
+            try:
+                con.row_factory = sqlite3.Row
+                row = con.execute("SELECT model, billing_provider FROM sessions WHERE id = ?",
+                                  (sid,)).fetchone()
+                if row is not None:
+                    out = {"model": str(row["model"] or "").strip(),
+                           "provider": str(row["billing_provider"] or "").strip()}
+            finally:
+                con.close()
+    except Exception:  # noqa: BLE001 - нет файла/схемы: «неизвестно», а не падение
+        out = {}
+    if len(_SESSION_CACHE) > 400:
+        _SESSION_CACHE.clear()
+    _SESSION_CACHE[key] = (now, dict(out))
+    return out
+
+
+def _run_session(con, card_id) -> tuple[dict, str]:
+    """Последний прогон карточки и id его сессии (из metadata, иначе из события допуска)."""
+    run: dict = {}
+    try:
+        row = con.execute("SELECT id, profile, status, started_at, ended_at, metadata "
+                          "FROM task_runs WHERE task_id = ? ORDER BY id DESC LIMIT 1",
+                          (str(card_id),)).fetchone()
+        run = dict(row) if row is not None else {}
+    except Exception:  # noqa: BLE001 - старая схема
+        run = {}
+    sid = _session_id(run.get("metadata"))
+    if not sid:
+        try:
+            row = con.execute("SELECT payload FROM task_events WHERE task_id = ? "
+                              "AND kind = 'owner_admitted' ORDER BY id DESC LIMIT 1",
+                              (str(card_id),)).fetchone()
+            sid = _session_id((row["payload"] if row is not None else "") or "")
+        except Exception:  # noqa: BLE001
+            sid = ""
+    return run, sid
+
+
+def actual_model(cfg, board: str, card_id: str, *, profile: str = "", run: dict | None = None,
+                 con=None) -> dict:
+    """Что реально ушло у карточки: `{provider, model, session_id, run_id, started_at}`.
+
+    Порядок: подтверждение из сессии воркера → пусто («неизвестно», не выдумываем).
+    `run` можно передать готовым (дерево уже прочитало прогоны) — тогда БД не трогаем.
+    """
+    out = {"provider": "", "model": "", "session_id": "", "run_id": None, "started_at": None,
+           "source": ""}
+    close = False
+    if con is None and card_id:
+        con = _connect(cfg, board)
+        close = con is not None
+    try:
+        if run is None:
+            if con is None:
+                return out
+            run, sid = _run_session(con, card_id)
+        else:
+            sid = _session_id((run or {}).get("metadata"))
+            if not sid and con is not None:
+                _r, sid = _run_session(con, card_id)
+        run = run or {}
+        out["run_id"] = _int(run.get("id")) or None
+        out["started_at"] = _int(run.get("started_at")) or None
+        out["session_id"] = sid
+        row = _session_model(cfg, run.get("profile") or profile, sid)
+        if row.get("model"):
+            out["model"] = row["model"]
+            out["provider"] = row.get("provider") or ""
+            out["source"] = "session"
+    finally:
+        if close:
+            con.close()
+    return out
+
+
+def _pin(card) -> dict:
+    """Переопределение, записанное в САМОЙ карточке (ключи дерева и ключи БД)."""
+    card = card if isinstance(card, dict) else {}
+    return {"provider": str(card.get("provider_override") or card.get("provider") or ""),
+            "model": str(card.get("model_override") or card.get("model") or ""),
+            "reasoning": str(card.get("reasoning_effort") or card.get("reasoning") or "")}
+
+
+def _short_label(provider: str, model: str, reasoning: str) -> str:
+    """«провайдер · модель · мышление» теми же id, что в подписи дерева."""
+    parts = [p for p in (provider, model) if p]
+    if reasoning:
+        parts.append(EFFORT_SHORT.get(str(reasoning).lower(), str(reasoning)))
+    return " · ".join(parts)
+
+
+def sent_of(cfg, room, card, *, board: str | None = None, run: dict | None = None) -> dict:
+    """«Ушло на: …» карточки: факт из запуска (если есть) + запись карточки + расхождение.
+
+    Возвращает ``{}``, когда сказать нечего (нет ни выбора, ни переопределения).
+    `mismatch` — расходится с выбором комнаты (или настройкой агента, если выбора нет).
+    """
+    if not isinstance(card, dict):
+        return {}
+    pin = _pin(card)
+    profile = _profile(card.get("assignee"))
+    want = effective(cfg, room, profile) if profile else {"provider": "", "model": "", "reasoning": ""}
+    run = run if run is not None else None
+    actual = {"model": "", "provider": "", "run_id": None, "started_at": None, "confirmed": False}
+    if card.get("id") and (board is not None or run is not None):
+        got = actual_model(cfg, board or "", str(card.get("id")), profile=profile, run=run)
+        actual = {"model": got.get("model") or "", "provider": got.get("provider") or "",
+                  "run_id": got.get("run_id"), "started_at": got.get("started_at"),
+                  "confirmed": bool(got.get("model"))}
+    provider = actual["provider"] or pin["provider"]
+    model = actual["model"] or pin["model"]
+    reasoning = pin["reasoning"]
+    if not (provider or model or reasoning or want.get("model")):
+        return {}
+    expected = {"provider": want.get("provider") or "", "model": want.get("model") or "",
+                "reasoning": want.get("reasoning") or ""}
+    mismatch = False
+    if expected["model"] and model:
+        mismatch = model != expected["model"] or (bool(provider) and bool(expected["provider"])
+                                                  and provider != expected["provider"])
+    if not mismatch and expected["reasoning"] and reasoning:
+        mismatch = reasoning != expected["reasoning"]
+    label = _short_label(provider, model, reasoning)
+    return {"provider": provider, "model": model, "reasoning": reasoning,
+            "label": label, "text": ("ушло на: " + label) if label else "",
+            "confirmed": bool(actual["confirmed"]), "run_id": actual["run_id"],
+            "at": actual["started_at"], "expected": expected, "pinned": pin,
+            "mismatch": bool(mismatch and label),
+            "note": "расходится с выбором комнаты" if (mismatch and label) else ""}
+
+
+def member_sent(cfg, room, profile, *, board: str | None = None) -> dict:
+    """«Ушло на: …» участника по ЕГО последнему запуску в комнате (для вкладки «Команда»)."""
+    name = _profile(profile)
+    if not name:
+        return {}
+    use = board or _board(cfg, room)
+    tenant = _tenant(room)
+    con = _connect(cfg, use)
+    if con is None or not tenant:
+        return {}
+    try:
+        try:
+            row = con.execute(
+                "SELECT t.id AS id, t.status AS status, t.assignee AS assignee, "
+                "t.model_override AS model_override, t.provider_override AS provider_override, "
+                "t.reasoning_effort AS reasoning_effort "
+                "FROM task_runs r JOIN tasks t ON t.id = r.task_id "
+                "WHERE t.tenant = ? AND t.assignee = ? ORDER BY r.id DESC LIMIT 1",
+                (tenant, name)).fetchone()
+        except Exception:  # noqa: BLE001 - старая схема без model_override
+            row = None
+        if row is None:
+            return {}
+        card = dict(row)
+        return sent_of(cfg, room, card, board=use)
+    finally:
+        con.close()
+
+
+def models_block(cfg, room) -> str:
+    """Блок «МОДЕЛИ ИСПОЛНИТЕЛЕЙ» в тело запроса: что выбрать и как создать карточку.
+
+    Нужен руководителю: карточки детей он создаёт сам через `hermes kanban create`, и
+    если не передать `--model/--provider`, движок возьмёт модель профиля — ровно та
+    ошибка, из-за которой работа уходила на `glm-5.3-flash` вместо выбранной модели
+    комнаты. Уровень мышления в CLI флага не имеет — его ставит приложение по карточке
+    (`kanban_db.set_reasoning_effort`), поэтому руководителю об этом думать не нужно.
+    """
+    room = room or {}
+    selected = settings_of(room)
+    lines: list[str] = []
+    example = ["--model=<модель>", "--provider=<провайдер>"]
+    for profile, role in participants(room):
+        role_ru = ROLE_RU.get(role, role)
+        item = selected.get(profile) or {}
+        flags = _flags_for(cfg, room, profile) if item.get("model") else []
+        if flags:
+            label = _short_label(item.get("provider") or "", item["model"],
+                                 item.get("reasoning") or "")
+            lines.append("- %s (%s) — %s → при создании карточки: %s"
+                         % (profile, role_ru, label, " ".join(flags)))
+            if example == ["--model=<модель>", "--provider=<провайдер>"]:
+                example = list(flags)
+        else:
+            value = effective(cfg, room, profile)
+            own = _short_label(value.get("provider") or "", value.get("model") or "",
+                               value.get("reasoning") or "")
+            lines.append("- %s (%s) — модель профиля%s (в комнате не выбиралась) → "
+                         "флаги не нужны"
+                         % (profile, role_ru, (": " + own) if own else ""))
+    if not lines:
+        return ""
+    board = str(room.get("board") or "") or "<доска>"
+    tenant = _tenant(room)
+    return "\n".join([
+        "<<<МОДЕЛИ ИСПОЛНИТЕЛЕЙ  (обязательно: карточка, созданная без --model/--provider, "
+        "стартует на модели профиля, а не на выбранной в комнате)",
+        "Выбор комнаты — на момент создания карточки:",
+        *lines,
+        "Правило: каждую карточку исполнителю создавай с ЕГО флагами, например:",
+        "  hermes kanban --board=%s create \"<название>\" --assignee=<профиль> "
+        "--parent=<id родителя> --tenant=%s %s" % (board, tenant, " ".join(example)),
+        "Уровень мышления ставить не нужно: приложение проставляет его по карточке сразу "
+        "после создания (у CLI такого флага нет).",
+        "Проверить, что реально ушло: в карточке дерева строка «ушло на: провайдер · модель · "
+        "уровень»; расхождение с выбором комнаты помечается.",
+        "МОДЕЛИ ИСПОЛНИТЕЛЕЙ>>>",
+    ])
+
+
+def _flags_for(cfg, room, profile) -> list[str]:
+    value = effective(cfg, room, profile)
+    if not value.get("model"):
+        return []
+    out = ["--model=%s" % value["model"]]
+    if value.get("provider"):
+        out.append("--provider=%s" % value["provider"])
+    return out
+
+
+# ---------------------------------------------------------------- карточки комнаты
+
+def tenant_cards(cfg, board: str, tenant: str, *, limit: int = MAX_TENANT_CARDS) -> dict:
+    """Все карточки комнаты по tenant (mode=ro): id → {assignee, status, model, …}.
+
+    Это и есть ответ на главную причину бага: сторож раньше смотрел только деревья
+    запросов из реестра, а руководитель создаёт карточки сам (`created_by=default`,
+    без связи с родителем) — такие карточки не попадали ни в одно дерево и уезжали на
+    модель профиля. Tenant у комнаты один, поэтому берём по нему.
+    """
+    out: dict = {}
+    tenant = str(tenant or "").strip()
+    if not tenant:
+        return out
+    con = _connect(cfg, board)
+    if con is None:
+        return out
+    try:
+        try:
+            rows = con.execute(
+                "SELECT id, assignee, status, title, created_at, started_at, "
+                "model_override, provider_override, reasoning_effort FROM tasks "
+                "WHERE tenant = ? ORDER BY created_at DESC LIMIT ?",
+                (tenant, max(1, int(limit)))).fetchall()
+        except Exception:  # noqa: BLE001 - нет колонок модели (старая схема)
+            return out
+    finally:
+        con.close()
+    for row in rows:
+        out[str(row["id"])] = {
+            "id": str(row["id"]), "assignee": str(row["assignee"] or ""),
+            "status": str(row["status"] or ""), "title": str(row["title"] or ""),
+            "created_at": _int(row["created_at"]), "started_at": _int(row["started_at"]),
+            "model": str(row["model_override"] or ""),
+            "provider": str(row["provider_override"] or ""),
+            "reasoning": str(row["reasoning_effort"] or "")}
+    return out
+
+
+def card_map(cfg, room, *, board: str | None = None) -> dict:
+    """Карточки комнаты для правок модели: tenant, а если он пуст — деревья реестра."""
+    use = board or _board(cfg, room)
+    cards = tenant_cards(cfg, use, _tenant(room))
+    if cards:
+        return cards
+    out: dict = {}
+    con = _connect(cfg, use)
+    if con is None:
+        return out
+    try:
+        ids: _new_set = _new_set()
+        for root in _roots(cfg, (room or {}).get("id")):
+            ids |= _tree_ids(cfg, use, root)
+        out = _cards(con, sorted(ids))
+    finally:
+        con.close()
+    return out
+
+
+def apply_to_room(cfg, room_id, *, board: str | None = None, limit: int = MAX_CARDS) -> dict:
+    """Закрепить выбор комнаты на ВСЕХ её карточках, которым ещё предстоит запуск.
+
+    Дешёвый и быстрый перехват: один проход по tenant комнаты за тик сторожа (5 с).
+    Берутся только статусы «ещё не запущена» (`APPLY_STATUSES`); идущие и завершённые
+    не трогаются — для них отдельная проверка `verify_started`.
+    """
+    result = {"updated": [], "skipped": 0, "failed": [], "scanned": 0}
+    room = _modules().get_room(cfg, str(room_id)) or {}
+    if not room:
+        return result
+    settings = settings_of(room)
+    if not settings:
+        return result
+    if getattr(cfg, "mock", False) or getattr(cfg, "demo", False):
+        return result
+    use = board or _board(cfg, room)
+    cards = card_map(cfg, room, board=use)
+    result["scanned"] = len(cards)
+    todo: dict = {}
+    for card in cards.values():
+        profile = card["assignee"]
+        if not profile or profile not in settings:
+            continue
+        if card["status"] not in APPLY_STATUSES:
+            result["skipped"] += 1
+            continue
+        want = _wanted(cfg, room, profile)
+        if not want["model"] and not want["reasoning"]:
+            continue
+        if not _needs_update(card, want):
+            result["skipped"] += 1
+            continue
+        todo.setdefault((want["provider"], want["model"], want["reasoning"]), []).append(card)
+    budget = max(1, int(limit))
+    for want_key, group in todo.items():
+        chunk = group[:budget]
+        budget -= len(chunk)
+        done, failed = _push(cfg, use, chunk, {"provider": want_key[0], "model": want_key[1],
+                                               "reasoning": want_key[2]})
+        result["updated"] += done
+        result["failed"] += failed
+        if budget <= 0:
+            break
+    return result
+
+
+# ---------------------------------------------------------------- проверка после старта
+
+def _fixups_path(cfg, room_id) -> Path:
+    return Path(cfg.state_dir) / str(room_id) / "model_fixups.json"
+
+
+def _fixups(cfg, room_id) -> dict:
+    try:
+        value = sf.read_json(_fixups_path(cfg, room_id), {})
+    except Exception:  # noqa: BLE001 - файл вторичен
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _fixup_note(cfg, room_id, card_id: str, *, model: str, run_id, count: int) -> int:
+    """Отметить попытку перехвата (не больше `FIXUP_MAX` на карточку)."""
+    try:
+        path = _fixups_path(cfg, room_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with sf.lock_for(path):
+            data = _fixups(cfg, room_id)
+            data[str(card_id)] = {"model": str(model or ""), "run_id": run_id,
+                                  "count": int(count), "at": _now()}
+            sf.write_json_atomic(path, data)
+        return int(count)
+    except Exception:  # noqa: BLE001 - журнал попыток не должен ломать проверку
+        return int(count)
+
+
+def verify_started(cfg, room_id, *, board: str | None = None, fix: bool = True,
+                   limit: int = MAX_CARDS) -> dict:
+    """Сверить ФАКТ модели идущих карточек с выбором комнаты; не ту — вернуть на нужную.
+
+    Проверка нужна потому, что модель выбирается в момент допуска запуска: если карточку
+    взяли раньше, чем сторож успел проставить переопределение, она едет на модели профиля
+    до конца прогона (`docs/ENGINE-FACTS`, `gateway/session_kanban.py`). Такую карточку
+    останавливаем штатным `reassign <профиль> --reclaim` (предварительно закрепив выбор) —
+    диспетчер запустит её заново уже на нужной модели. Попытки ограничены `FIXUP_MAX`:
+    если модель так и не встала, дальше только предупреждение, без бесконечных перезапусков.
+    """
+    out = {"checked": 0, "confirmed": 0, "mismatched": [], "fixed": [], "failed": [],
+           "unknown": 0, "skipped": 0}
+    room = _modules().get_room(cfg, str(room_id)) or {}
+    if not room:
+        return out
+    settings = settings_of(room)
+    if not settings:
+        return out
+    if getattr(cfg, "mock", False) or getattr(cfg, "demo", False):
+        return out
+    use = board or _board(cfg, room)
+    cards = card_map(cfg, room, board=use)
+    con = _connect(cfg, use)
+    if con is None:
+        return out
+    try:
+        for card in cards.values():
+            if card["status"] not in STARTED_STATUSES:
+                continue
+            profile = card["assignee"]
+            if profile not in settings:
+                continue
+            want = _wanted(cfg, room, profile)
+            if not want["model"]:
+                out["skipped"] += 1        # в комнате выбора нет: сверять не с чем
+                continue
+            run, sid = _run_session(con, card["id"])
+            if not run or not sid:
+                out["unknown"] += 1        # ещё не допущена / сессии нет
+                continue
+            out["checked"] += 1
+            got = _session_model(cfg, run.get("profile") or profile, sid)
+            if not got.get("model"):
+                out["unknown"] += 1
+                continue
+            same = got["model"] == want["model"] and \
+                (not got.get("provider") or not want["provider"] or got["provider"] == want["provider"])
+            if same:
+                out["confirmed"] += 1
+                continue
+            expected_label = _short_label(want["provider"], want["model"], want["reasoning"])
+            actual_label = _short_label(got.get("provider") or "", got["model"], card["reasoning"])
+            out["mismatched"].append({"id": card["id"], "assignee": profile,
+                                      "expected": expected_label, "actual": actual_label,
+                                      "run_id": run.get("id")})
+            _journal(cfg, str(room_id),
+                     "Карточка %s (%s) ушла на %s, а в комнате выбрано %s"
+                     % (card["id"], profile, actual_label or "модель профиля", expected_label),
+                     kind="model_changed")
+            if not fix or len(out["fixed"]) >= max(1, int(limit)):
+                continue
+            age = _now() - (_int(card.get("started_at")) or _int(run.get("started_at")) or _now())
+            if age < FIXUP_MIN_AGE:
+                out["skipped"] += 1        # только что взяли — дадим воркеру шанс стартовать
+                continue
+            tries = int((_fixups(cfg, str(room_id)).get(card["id"]) or {}).get("count") or 0)
+            if tries >= FIXUP_MAX:
+                out["skipped"] += 1
+                continue
+            _fixup_note(cfg, str(room_id), card["id"], model=got["model"],
+                        run_id=run.get("id"), count=tries + 1)
+            _done, failed = _push(cfg, use, [card], want)
+            if failed:
+                out["failed"].append({"id": card["id"], "reason": failed[0].get("reason") or ""})
+                continue
+            try:
+                try:
+                    from . import engine_write as ew
+                except ImportError:  # pragma: no cover
+                    import engine_write as ew  # type: ignore
+                ew.act(cfg, use, card["id"], "reassign", task_id=card["id"], profile=profile)
+            except Exception as exc:  # noqa: BLE001 - одна карточка не валит проверку
+                out["failed"].append({"id": card["id"], "reason": str(exc)[:200]})
+                continue
+            out["fixed"].append(card["id"])
+            _journal(cfg, str(room_id),
+                     "Карточка %s (%s) остановлена и возвращена на выбор комнаты: %s"
+                     % (card["id"], profile, expected_label), kind="model_restarted")
+    finally:
+        con.close()
+    return out
 
 
 # ---------------------------------------------------------------- комната для API
@@ -1048,6 +1559,10 @@ def member_of(room, cfg, profile) -> dict:
             break
     base["model_settings"] = model_settings(cfg, room, name)
     base["agent_default"] = agent_default(cfg, name)
+    try:
+        base["model_sent"] = member_sent(cfg, room, name)
+    except Exception:  # noqa: BLE001 - «ушло на» вторично для ответа
+        base["model_sent"] = {}
     return base
 
 
@@ -1080,8 +1595,10 @@ def card_settings(cfg, room, profile, *, data=None) -> dict:
     return {"provider": provider, "model": model, "reasoning": reasoning}
 
 
-__all__ = ["EFFORTS", "EFFORT_LABELS", "EFFORT_SHORT", "APPLY_STATUSES", "ModelError",
-           "config_path", "bridge_path", "catalog", "provider_label", "agent_default",
+__all__ = ["EFFORTS", "EFFORT_LABELS", "EFFORT_SHORT", "APPLY_STATUSES", "FIXUP_MAX", "ModelError",
+           "config_path", "state_path", "bridge_path", "catalog", "provider_label", "agent_default",
            "validate", "validate_map", "normalize", "settings_of", "effective", "model_settings",
            "get", "set", "clear", "label", "human", "apply_to_tree", "apply_profile",
-           "restart_running", "decorate_room", "card_settings", "participants"]
+           "restart_running", "decorate_room", "card_settings", "participants",
+           "apply_to_room", "verify_started", "tenant_cards", "card_map", "actual_model",
+           "sent_of", "member_sent", "models_block"]

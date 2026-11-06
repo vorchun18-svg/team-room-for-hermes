@@ -171,7 +171,13 @@ ROUTE_METHODS = (
     (r"^/api/rooms/%s/archive$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/members$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/members/[a-z0-9_.-]{2,40}$" % _ROOM, ("DELETE",)),
-    (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/notes$" % _ROOM, ("PUT",)),
+    (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/notes$" % _ROOM, ("GET", "PUT")),
+    (r"^/api/rooms/%s/notes$" % _ROOM, ("GET",)),
+    (r"^/api/rooms/%s/notes/journal$" % _ROOM, ("GET",)),
+    (r"^/api/rooms/%s/notes/journal/[A-Za-z0-9_-]{2,40}/rollback$" % _ROOM, ("POST",)),
+    (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/notes/entries$" % _ROOM, ("POST",)),
+    (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/notes/entries/[A-Za-z0-9_-]{2,40}$" % _ROOM, ("PATCH", "DELETE")),
+    (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/notes/review$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/model$" % _ROOM, ("PUT",)),
     (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/restart$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/plan$" % _ROOM, ("GET",)),
@@ -194,6 +200,10 @@ ROUTE_METHODS = (
     (r"^/api/stt/transcribe$", ("POST",)),
     (r"^/api/stt/dictionary$", ("GET", "PUT")),
     (r"^/api/stt/learn$", ("POST",)),
+    # части длинной записи (WAVE13 §2): демо держит их в памяти
+    (r"^/api/stt/recordings$", ("GET",)),
+    (r"^/api/stt/recordings/[a-z0-9][a-z0-9_-]{5,40}$", ("GET", "DELETE")),
+    (r"^/api/stt/recordings/[a-z0-9][a-z0-9_-]{5,40}/parts/\d{1,3}$", ("GET", "PUT", "POST")),
 )
 
 

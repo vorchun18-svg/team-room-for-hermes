@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import time
 
 try:  # пакетный и «плоский» импорт (python -m unittest из корня проекта)
@@ -27,6 +28,22 @@ except ImportError:  # pragma: no cover
 
 DEFAULT_MAX_ROUNDS = 1
 MAX_ROUNDS_LIMIT = 2
+#: Режим «до полного одобрения критиком» (W13-E §9): цикл идёт, пока verdict=approve.
+MODE_ROUNDS = "rounds"
+MODE_UNTIL_APPROVED = "until_approved"
+CRITIC_MODES = (MODE_ROUNDS, MODE_UNTIL_APPROVED)
+DEFAULT_ROUND_CAP = 12          # мягкий потолок раундов режима «до одобрения»
+MIN_ROUND_CAP = 2
+MAX_ROUND_CAP = 30
+STALL_ROUNDS = 3                # столько одинаковых наборов замечаний подряд = стоп
+RATE_LIMIT_PAUSE = 600          # первая пауза при лимите провайдера — 10 минут
+RATE_LIMIT_PAUSE_MAX = 3600     # дальше ждём не дольше часа
+RATE_LIMIT_HINTS = ("429", "rate limit", "ratelimit", "usage limit", "usage_limit",
+                    "too many requests", "quota", "лимит запросов", "превышен лимит")
+_RATE_LIMIT_RE = re.compile("|".join(re.escape(h) for h in RATE_LIMIT_HINTS), re.IGNORECASE)
+
+FAILED_STATUSES = ("failed", "crashed")
+OPEN_STATUSES = ("triage", "todo", "ready", "scheduled", "blocked", "review", "running")
 
 # класс ошибки берём у настоящего engine_write один раз: тесты подменяют `_engine`,
 # но ловить исключение нужно всегда одинаково
@@ -174,6 +191,197 @@ def _decomposed(detail: dict, root: dict) -> bool:
     return bool(root.get("parent_ids"))
 
 
+def _mode(record: dict, room: dict, detail: dict | None = None) -> str:
+    """Режим критика: реестр → detail.critic → комната. Неизвестное — «rounds»."""
+    info = (detail or {}).get("critic") if isinstance((detail or {}).get("critic"), dict) else {}
+    raw = (record or {}).get("critic_mode")
+    if not raw:
+        raw = (info or {}).get("mode")
+    if not raw:
+        raw = (room or {}).get("critic_mode")
+    mode = str(raw or "").strip()
+    return mode if mode in CRITIC_MODES else MODE_ROUNDS
+
+
+def _cap(record: dict, room: dict) -> int:
+    """Мягкий потолок раундов режима «до одобрения» (2..30, по умолчанию 12)."""
+    raw = (record or {}).get("critic_round_cap")
+    if raw is None:
+        raw = (room or {}).get("critic_round_cap")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = DEFAULT_ROUND_CAP
+    if isinstance(raw, bool):
+        value = DEFAULT_ROUND_CAP
+    return max(MIN_ROUND_CAP, min(MAX_ROUND_CAP, value))
+
+
+def _issue_key(item) -> str:
+    """Устойчивый ключ замечания: место + суть, без регистра и лишних пробелов."""
+    if isinstance(item, dict):
+        where = " ".join(str(item.get("where") or "").split()).lower()
+        problem = " ".join(str(item.get("problem") or "").split()).lower()
+        text = " · ".join([p for p in (where, problem) if p]) or " ".join(
+            str(v).split()).lower()[:160]
+    else:
+        text = " ".join(str(item or "").split()).lower()
+    return text[:200]
+
+
+def _issue_keys(issues) -> list[str]:
+    """Ключи замечаний без повторов, порядок сохраняется."""
+    out: list[str] = []
+    for item in issues or []:
+        key = _issue_key(item)
+        if key and key not in out:
+            out.append(key)
+    return out
+
+
+def _round_history(record: dict) -> list[dict]:
+    """История раундов из реестра: [{round, verdict, issues: [ключи], at}] по возрастанию."""
+    raw = (record or {}).get("critic_rounds")
+    out: list[dict] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            number = int(item.get("round") or 0)
+        except (TypeError, ValueError):
+            continue
+        if number <= 0:
+            continue
+        issues = item.get("issues") if isinstance(item.get("issues"), list) else []
+        out.append({"round": number, "verdict": str(item.get("verdict") or ""),
+                    "issues": [str(k) for k in issues if str(k or "").strip()],
+                    "at": int(item.get("at") or 0)})
+    out.sort(key=lambda item: item["round"])
+    return out
+
+
+def history_from_detail(detail: dict, record: dict) -> list[dict]:
+    """История раундов из дерева карточек (реестр может отставать на тик).
+
+    Сливается с `record.critic_rounds` по номеру раунда: свежие данные из дерева
+    перекрывают записанные ранее.
+    """
+    detail = detail or {}
+    record = record or {}
+    critic_info = detail.get("critic") if isinstance(detail.get("critic"), dict) else None
+    merged = {item["round"]: dict(item) for item in _round_history(record)}
+    for card in _extra_cards(record, detail):
+        if card["kind"] != "critic":
+            continue
+        node = _node(detail, str(card.get("id")))
+        if node is None:
+            if (critic_info and str(critic_info.get("task_id") or "") == str(card.get("id"))
+                    and critic_info.get("verdict")):
+                node = {"id": str(card.get("id")), "status": "done", "metadata": {},
+                        "summary_md": ""}
+            else:
+                continue
+        if str(node.get("status") or "") != "done":
+            continue
+        verdict = _verdict(node, critic_info)
+        if not verdict:
+            continue
+        merged[card["round"]] = {"round": card["round"], "verdict": verdict,
+                                 "issues": _issue_keys(_issues(node, critic_info)),
+                                 "at": int(card.get("at") or 0)}
+    if not merged:
+        return []
+    return [merged[key] for key in sorted(merged)]
+
+
+def approved(record: dict, detail: dict) -> bool:
+    """Последний вердикт критика — «одобрено» (по истории раундов)."""
+    history = _round_history(record)
+    if history:
+        return history[-1].get("verdict") == "approve"
+    info = (detail or {}).get("critic") if isinstance((detail or {}).get("critic"), dict) else {}
+    return str(info.get("verdict") or "") == "approve"
+
+
+def delivery_hold(room: dict, record: dict, detail: dict) -> bool:
+    """Ответ нельзя отдавать как готовый (режим «до одобрения», одобрения ещё нет).
+
+    Watcher спрашивает это перед ingest: в режиме «до полного одобрения» версия
+    ответа не публикуется, пока критик не сказал approve или цикл не остановлен
+    страховкой (тогда ответ выдаётся с отчётом об остановке).
+    """
+    room, record, detail = room or {}, record or {}, detail or {}
+    if _mode(record, room, detail) != MODE_UNTIL_APPROVED:
+        return False
+    if not _critic_enabled(room, record, detail):
+        return False
+    if record.get("critic_stop"):
+        return False
+    if not _synthesis_ready(detail):
+        return False
+    if approved(record, detail):
+        return False
+    return True
+
+
+def progress(record: dict, detail: dict) -> dict:
+    """Ход цикла: «раунд N, замечаний было K, закрыто M, осталось R» (W13-E §9д)."""
+    history = _round_history(record) or history_from_detail(detail, record)
+    stop = (record or {}).get("critic_stop")
+    if not history:
+        return {"round": 0, "rounds": 0, "issues_before": 0, "closed": 0, "open": 0,
+                "closed_items": [], "open_items": [], "verdict": "", "stop": stop}
+    first = history[0]
+    last = history[-1]
+    before = list(first.get("issues") or [])
+    still_open = list(last.get("issues") or [])
+    closed = [key for key in before if key not in still_open]
+    return {"round": int(last.get("round") or 0), "rounds": len(history),
+            "issues_before": len(before), "closed": len(closed), "open": len(still_open),
+            "closed_items": closed, "open_items": still_open,
+            "verdict": str(last.get("verdict") or ""), "stop": stop}
+
+
+def _failed(node: dict | None) -> bool:
+    return bool(node) and str(node.get("status") or "") in FAILED_STATUSES
+
+
+def _rate_limited(node: dict | None) -> bool:
+    """Ошибка карточки похожа на лимит провайдера (429 / usage limit)."""
+    if not node:
+        return False
+    error = node.get("error")
+    text = ""
+    if isinstance(error, dict):
+        text = " ".join(str(error.get(k) or "") for k in ("code", "message"))
+    elif error:
+        text = str(error)
+    return bool(_RATE_LIMIT_RE.search(text))
+
+
+def _stalled(record: dict, round_no: int, repeats: int = STALL_ROUNDS) -> dict | None:
+    """Зацикливание: один и тот же набор замечаний `repeats` раундов подряд.
+
+    Возвращает описание остановки (для журнала и баннера) или None.
+    """
+    history = [item for item in _round_history(record) if int(item.get("round") or 0) <= round_no]
+    if len(history) < repeats:
+        return None
+    tail = history[-repeats:]
+    keys = [tuple(sorted(set(item.get("issues") or []))) for item in tail]
+    if any(not item for item in keys):
+        return None                       # пустые наборы — это не спор, а другое состояние
+    if len(set(keys)) != 1:
+        return None
+    counts = [len(item.get("issues") or []) for item in tail]
+    if counts[-1] < counts[0]:
+        return None                       # замечаний стало меньше — прогресс есть
+    return {"kind": "no_progress", "round": int(round_no), "repeats": repeats,
+            "issues": list(tail[-1].get("issues") or []),
+            "message": "Критик повторяет одни и те же замечания %d раунда подряд — "
+                       "продолжать спор бессмысленно." % repeats}
+
+
 def _verdict(node: dict | None, critic_info) -> str:
     """Вердикт критика: metadata.verdict → detail.critic.verdict → текст summary."""
     if not node:
@@ -248,7 +456,9 @@ def plan(room: dict, record: dict, detail: dict, now: int) -> list[dict]:
     if root_status != "done" or not _synthesis_ready(detail):
         return actions
     critic = str(room.get("critic") or "").strip()
+    mode = _mode(record, room, detail)
     max_rounds = _max_rounds(record, room, detail)
+    cap = _cap(record, room)
     cards = _extra_cards(record, detail)
     critics = sorted([c for c in cards if c["kind"] == "critic"], key=lambda c: (c["round"], c["at"]))
     revisions = [c for c in cards if c["kind"] == "revision"]
@@ -260,9 +470,13 @@ def plan(room: dict, record: dict, detail: dict, now: int) -> list[dict]:
             actions.append({"kind": "mark_ingest", "root_id": root_id, "reason": "критик не назначен"})
         return actions
 
+    if record.get("critic_stop"):
+        return actions  # цикл остановлен страховкой и ждёт решения Михаила
+
     if not critics:
         actions.append({"kind": "create_critic", "root_id": root_id, "parent_id": root_id,
-                        "assignee": critic, "round": 1, "reason": "проверка ответа"})
+                        "assignee": critic, "round": 1, "reason": "проверка ответа",
+                        "mode": mode})
         return actions
 
     latest = critics[-1]
@@ -270,10 +484,17 @@ def plan(room: dict, record: dict, detail: dict, now: int) -> list[dict]:
     if node is None and critic_info and str(critic_info.get("task_id") or "") == str(latest.get("id"))             and critic_info.get("verdict"):
         # движок ещё не отдал карточку в дереве, но вердикт уже известен из detail.critic
         node = {"id": str(latest.get("id")), "status": "done", "metadata": {}, "summary_md": ""}
+    if _failed(node):
+        # упавшая карточка критика: лимит провайдера — пауза и повтор (страховка «б»),
+        # любая другая ошибка — ждём, как раньше (карточку перезапустят вручную)
+        return actions + _rate_limit_step(record, room, latest, node, now, "critic")
     if not node or str(node.get("status") or "") != "done":
         return actions  # критик ещё работает
     verdict = _verdict(node, critic_info)
     if verdict == "approve":
+        if record.get("critic_pause") or record.get("critic_stop"):
+            actions.append({"kind": "clear_critic_state", "root_id": root_id,
+                            "reason": "критик одобрил ответ"})
         return actions  # ответ принят, делать нечего
     if verdict != "revise":
         return actions  # вердикта нет/он непонятен — не плодим карточки
@@ -293,9 +514,31 @@ def plan(room: dict, record: dict, detail: dict, now: int) -> list[dict]:
 
     revision = sorted(same_round, key=lambda c: c["at"])[-1]
     rev_node = _node(detail, str(revision.get("id")))
+    if _failed(rev_node):
+        return actions + _rate_limit_step(record, room, revision, rev_node, now, "revision")
     if not rev_node or str(rev_node.get("status") or "") != "done":
         return actions  # доработка ещё идёт
-    if latest["round"] < max_rounds:
+
+    if mode == MODE_UNTIL_APPROVED:
+        # (а) нет прогресса: те же замечания N раундов подряд → стоп и вопрос Михаилу
+        stalled = _stalled(record, latest["round"])
+        if stalled:
+            actions.append({"kind": "stop_no_progress", "root_id": root_id, "stop": stalled,
+                            "reason": stalled["message"]})
+            return actions
+        # (в) мягкий потолок: не отдаём «как есть» тихо — останавливаем с отчётом
+        if latest["round"] >= cap:
+            actions.append({"kind": "stop_cap", "root_id": root_id,
+                            "stop": {"kind": "cap", "round": latest["round"], "cap": cap,
+                                     "issues": _issue_keys(_issues(node, critic_info)),
+                                     "message": "Достигнут потолок %d раундов — цикл "
+                                                "остановлен, ответ показан с замечаниями." % cap},
+                            "reason": "потолок раундов"})
+            return actions
+        actions.append({"kind": "create_critic", "root_id": root_id, "parent_id": root_id,
+                        "assignee": critic, "round": latest["round"] + 1, "mode": mode,
+                        "reason": "проверка до полного одобрения"})
+    elif latest["round"] < max_rounds:
         actions.append({"kind": "create_critic", "root_id": root_id, "parent_id": root_id,
                         "assignee": critic, "round": latest["round"] + 1,
                         "reason": "повторная проверка после доработки"})
@@ -305,10 +548,39 @@ def plan(room: dict, record: dict, detail: dict, now: int) -> list[dict]:
     return actions
 
 
+def _rate_limit_step(record: dict, room: dict, card: dict, node: dict, now: int,
+                     kind: str) -> list[dict]:
+    """Пауза и повтор упавшей карточки цикла, если причина — лимит провайдера.
+
+    Первое падение — пауза (10 минут, дальше удваиваем до часа), затем повтор той же
+    карточки с новым ключом идемпотентности. Не лимит — пусто (обычное ожидание).
+    """
+    if not _rate_limited(node):
+        return []
+    pause = record.get("critic_pause") if isinstance(record.get("critic_pause"), dict) else {}
+    same = pause and str(pause.get("round") or "") == str(card.get("round")) \
+        and str(pause.get("kind") or kind) == kind
+    if not same:
+        attempt = 0
+        delay = RATE_LIMIT_PAUSE
+        return [{"kind": "pause_rate_limit", "root_id": str((record or {}).get("root_id") or ""),
+                 "card_kind": kind, "round": int(card.get("round") or 0),
+                 "until": int(now) + delay, "attempt": attempt,
+                 "reason": "лимит провайдера: ждём и продолжаем"}]
+    until = int(pause.get("until") or 0)
+    if int(now) < until:
+        return []                       # пауза ещё идёт: не плодим карточки
+    attempt = int(pause.get("attempt") or 0) + 1
+    delay = min(RATE_LIMIT_PAUSE * (2 ** attempt), RATE_LIMIT_PAUSE_MAX)
+    return [{"kind": "retry_card", "root_id": str((record or {}).get("root_id") or ""),
+             "card_kind": kind, "round": int(card.get("round") or 0), "attempt": attempt,
+             "next_pause": delay, "reason": "повтор после лимита провайдера"}]
+
+
 # ---------------------------------------------------------------- исполнение
 
 def _create_card(cfg, room: dict, record: dict, detail: dict, kind: str, round_no: int,
-                 user_note=None, parent_id=None, issues=None) -> dict:
+                 user_note=None, parent_id=None, issues=None, attempt: int = 0) -> dict:
     """Создать карточку критика/доработки и записать её в реестр. Общий путь для всех."""
     room = room or {}
     root = _root_node(detail, record)
@@ -337,8 +609,11 @@ def _create_card(cfg, room: dict, record: dict, detail: dict, kind: str, round_n
         title = f"Доработка ответа (раунд {round_no})"
     else:
         raise EngineWriteError("bad_request", f"Неизвестный вид карточки цикла: {kind}")
+    # Повтор после лимита провайдера — новый ключ идемпотентности (та же карточка
+    # иначе не создастся: ключ занят упавшей). Номер раунда не меняется.
+    suffix = f"-a{int(attempt)}" if int(attempt or 0) > 0 else ""
     card_id = _engine.create_child_card(cfg, room, board, parent, assignee, title, body, kind,
-                                        idem_key=f"{kind}-{root_id}-r{round_no}")
+                                        idem_key=f"{kind}-{root_id}-r{round_no}{suffix}")
     registry = _registry_add_extra_card(cfg, room_id, root_id,
                                        {"id": card_id, "kind": kind, "round": int(round_no),
                                         "at": int(time.time())})
@@ -356,6 +631,7 @@ def manual_critique(cfg, room: dict, record: dict, detail: dict, text: str | Non
     round_no = int(info.get("round") or 0) + 1
     result = _create_card(cfg, room, record, detail, "critic", round_no, user_note=text)
     result["action"] = "critique"
+    _clear_stop(cfg, room, record, detail, result)      # ручной запуск снимает стоп страховки
     return result
 
 
@@ -370,13 +646,56 @@ def manual_revision(cfg, room: dict, record: dict, detail: dict, text: str | Non
     result = _create_card(cfg, room, record, detail, "revision", round_no, user_note=text,
                           parent_id=parent)
     result["action"] = "revise"
+    _clear_stop(cfg, room, record, detail, result)
     return result
+
+
+def _clear_stop(cfg, room: dict, record: dict, detail: dict, result: dict) -> None:
+    """Ручное действие снимает остановку/паузу цикла: страховка не должна блокировать."""
+    if not (record.get("critic_stop") or record.get("critic_pause")):
+        return
+    root = _root_node(detail, record)
+    root_id = str((record or {}).get("root_id") or root.get("id") or "")
+    room_id = str((room or {}).get("id") or "")
+    if not root_id or not room_id:
+        return
+    result["registry"] = _registry_update(cfg, room_id, root_id,
+                                          {"critic_stop": None, "critic_pause": None})
+
+
+def _now() -> int:
+    return int(time.time())
+
+
+def _journal(cfg, room_id, text: str, *, kind: str = "critic_verdict", actor: str = "app") -> None:
+    """Запись в журнал комнаты (`journal.jsonl`) — формат как у ingest/agent_models.
+
+    Журнал вторичен: любая ошибка файла/блокировки молча пропускается.
+    """
+    try:
+        try:
+            from . import statefiles as sf
+        except ImportError:  # pragma: no cover - плоский импорт
+            import statefiles as sf  # type: ignore
+        from pathlib import Path
+        path = Path(cfg.state_dir) / str(room_id) / "journal.jsonl"
+        with sf.lock_for(path):
+            number = 0
+            for event in sf.read_jsonl(path):
+                ident = str(event.get("id") or "")
+                if ident.startswith("j_") and ident[2:].isdigit():
+                    number = max(number, int(ident[2:]))
+            sf.append_jsonl(path, {"id": "j_%04d" % (number + 1), "room": str(room_id),
+                                   "at": _now(), "kind": kind, "actor": actor,
+                                   "text": " ".join(str(text or "").split())[:600]})
+    except Exception:  # noqa: BLE001 - журнал не должен ронять цикл
+        pass
 
 
 def run_step(cfg, room: dict, record: dict, detail: dict) -> list[dict]:
     """Выполнить plan() через engine_write. Возвращает отчёт по каждому действию."""
     room = room or {}
-    record = record or {}
+    record = dict(record or {})
     detail = detail or {}
     board = str(room.get("board") or "")
     room_id = str(room.get("id") or "")
@@ -387,6 +706,13 @@ def run_step(cfg, room: dict, record: dict, detail: dict) -> list[dict]:
     if not root_id or not board:
         return results
 
+    # История раундов: держим в реестре, чтобы UI показывал ход цикла, а страховки
+    # («нет прогресса») работали даже если карточки пропали из дерева.
+    history = history_from_detail(detail, record)
+    if history and history != _round_history(record):
+        record["critic_rounds"] = history
+        _registry_update(cfg, room_id, root_id, {"critic_rounds": history})
+
     for action in plan(room, record, detail, now):
         kind = action.get("kind")
         entry = {"kind": kind, "ok": False}
@@ -396,8 +722,13 @@ def run_step(cfg, room: dict, record: dict, detail: dict) -> list[dict]:
                 entry.update(ok=True, detail=res.get("detail"), cmd_ms=res.get("cmd_ms", 0),
                              registry=_registry_update(cfg, room_id, root_id, {"retargeted": True}))
             elif kind == "create_critic":
-                entry.update(_create_card(cfg, room, record, detail, "critic",
-                                          int(action.get("round", 1))), kind="create_critic")
+                made = _create_card(cfg, room, record, detail, "critic",
+                                    int(action.get("round", 1)))
+                entry.update(made)
+                entry["kind"] = "create_critic"
+                _journal(cfg, room_id, "Критик проверяет ответ (раунд %d%s)." % (
+                    made["round"], ", до полного одобрения" if action.get("mode") == MODE_UNTIL_APPROVED else ""),
+                    kind="critic_review")
             elif kind == "create_revision":
                 entry.update(_create_card(cfg, room, record, detail, "revision",
                                           int(action.get("round", 1)),
@@ -405,10 +736,55 @@ def run_step(cfg, room: dict, record: dict, detail: dict) -> list[dict]:
                                           parent_id=action.get("parent_id"),
                                           issues=action.get("issues")),
                              kind="create_revision")
+                _journal(cfg, room_id, "Критик вернул ответ на доработку (раунд %s)."
+                         % action.get("round"), kind="revision_created")
             elif kind == "mark_ingest":
                 entry.update(ok=True, detail="Ответ готов к ingest.",
                              registry=_registry_update(cfg, room_id, root_id,
                                                        {"ingest_pending": True}))
+            elif kind in ("stop_no_progress", "stop_cap"):
+                stop = dict(action.get("stop") or {})
+                stop.setdefault("at", now)
+                stop["needs_user"] = True
+                upd = _registry_update(cfg, room_id, root_id,
+                                       {"critic_stop": stop, "ingest_pending": True,
+                                        "critic_pause": None})
+                entry.update(ok=True, detail=stop.get("message"), stop=stop, registry=upd,
+                             kind=kind)
+                _journal(cfg, room_id, "Цикл критика остановлен: %s Ответ показан как есть, "
+                                       "нужно ваше решение." % (stop.get("message") or ""),
+                         kind="critic_verdict")
+            elif kind == "clear_critic_state":
+                entry.update(ok=True, detail="Состояние цикла сброшено: критик одобрил ответ.",
+                             registry=_registry_update(cfg, room_id, root_id,
+                                                       {"critic_pause": None, "critic_stop": None}))
+            elif kind == "pause_rate_limit":
+                pause = {"kind": action.get("card_kind"), "round": action.get("round"),
+                         "until": int(action.get("until") or 0), "at": now,
+                         "attempt": int(action.get("attempt") or 0),
+                         "reason": "лимит провайдера"}
+                entry.update(ok=True, detail="Лимит провайдера — пауза до %d." % pause["until"],
+                             pause=pause,
+                             registry=_registry_update(cfg, room_id, root_id,
+                                                       {"critic_pause": pause}))
+                _journal(cfg, room_id, "Лимит провайдера у карточки %s (раунд %s): пауза около "
+                                       "%d мин, затем повтор." % (
+                                           action.get("card_kind"), action.get("round"),
+                                           max(1, (pause["until"] - now) // 60)),
+                         kind="critic_review")
+            elif kind == "retry_card":
+                card_kind = str(action.get("card_kind") or "critic")
+                made = _create_card(cfg, room, record, detail, card_kind,
+                                    int(action.get("round", 1)),
+                                    attempt=int(action.get("attempt") or 1))
+                pause = {"kind": card_kind, "round": action.get("round"), "until": 0, "at": now,
+                         "attempt": int(action.get("attempt") or 1), "reason": ""}
+                entry.update(made)
+                entry.update(ok=True, pause=pause, kind="retry_card",
+                             registry=_registry_update(cfg, room_id, root_id,
+                                                       {"critic_pause": None}))
+                _journal(cfg, room_id, "Повтор карточки %s (раунд %s) после лимита провайдера."
+                         % (card_kind, action.get("round")), kind="critic_review")
             else:
                 entry.update(detail=f"Неизвестное действие плана: {kind}")
         except EngineWriteError as exc:

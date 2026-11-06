@@ -118,6 +118,7 @@ export async function mount(el, ctx) {
         state.critic = !state.critic;
         criticToggle.setAttribute('aria-checked', state.critic ? 'true' : 'false');
         criticToggle.classList.toggle('is-on', state.critic);
+        if (criticModeSelect) criticModeSelect.classList.toggle('hidden', !state.critic);
         saveDraftNow();
       },
     },
@@ -125,6 +126,28 @@ export async function mount(el, ctx) {
     h('span', { class: 'cmp-toggle__label' }, 'С критиком'))
     : null;
   if (criticToggle) criticToggle.classList.toggle('is-on', state.critic);
+
+  /* Режим проверки при постановке запроса (W13-E §9): 1 / 2 / до полного одобрения.
+     По умолчанию — из настроек комнаты; смена действует только на этот запрос. */
+  const roomMode = String((room && room.critic_mode) || 'rounds');
+  const criticModeSelect = room && room.critic
+    ? h('select', {
+      class: 'select cmp-critic-mode' + (state.critic ? '' : ' hidden'),
+      id: 'cmp-critic-mode',
+      'aria-label': 'Сколько раз проверять критиком',
+      title: 'Раунд — один цикл «критик проверил → доработали → проверили снова»',
+    },
+    h('option', { value: '1' }, '1 раунд — быстро'),
+    h('option', { value: '2' }, '2 раунда — тщательнее'),
+    h('option', { value: 'until_approved' }, 'До полного одобрения'),
+    )
+    : null;
+  if (criticModeSelect) {
+    criticModeSelect.value = roomMode === 'until_approved'
+      ? 'until_approved'
+      : String(Math.min(2, Math.max(1, Number(room.max_rounds) || 1)));
+    criticModeSelect.addEventListener('change', () => { saveDraftNow(); });
+  }
 
   const pathInput = h('input', {
     class: 'input', type: 'text', placeholder: 'D:/Проекты/Комната/STATE.md',
@@ -162,7 +185,7 @@ export async function mount(el, ctx) {
   });
 
   const bar = h('div', { class: 'cmp-bar' },
-    criticToggle, attachBtn,
+    criticToggle, criticModeSelect, attachBtn,
     h('div', { class: 'cmp-bar__right' }, counter, micBtn, sendBtn),
   );
 
@@ -438,6 +461,12 @@ export async function mount(el, ctx) {
       const res = await api.post('/api/rooms/' + enc(roomId) + '/requests', {
         text,
         critic: Boolean(state.critic),
+        // Режим проверки: 1 / 2 раунда либо «до полного одобрения» (W13-E §9).
+        ...(state.critic && criticModeSelect
+          ? (criticModeSelect.value === 'until_approved'
+            ? { critic_mode: 'until_approved' }
+            : { critic_mode: 'rounds', max_rounds: Number(criticModeSelect.value) || 1 })
+          : {}),
         attach: state.attach.slice(),
         // «Это бриф проекта»: поле уходит только в проектной комнате.
         ...briefPayload({ projectMode, brief: state.brief }),

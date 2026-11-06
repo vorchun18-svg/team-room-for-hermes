@@ -66,6 +66,51 @@
       "answered": false,
       "answer": null,
       "answered_at": null
+    },
+    {
+      "id": "q_2",
+      "text": "Добавляем ли в команду ещё одного участника — биз-финансиста (biz-cfo)?",
+      "for": "mikhail",
+      "answered": true,
+      "answer": "Нет, никакого финансиста не добавляем: команда заточена на Россию, лишний участник только замедлит.",
+      "answered_at": 1793161560,
+      "answer_state": "applied",
+      "answer_label": "учтено: работа пересмотрена",
+      "needs_explanation": false,
+      "reaction": {
+        "text": "Принято: biz-cfo не добавляем, шаг по составу команды снят.",
+        "at": 1793161660,
+        "status": "applied",
+        "cards": ["t_643c9d89"],
+        "author": "default",
+        "author_label": "Глеб · руководитель комнаты",
+        "implicit": false,
+        "task_id": "t_643c9d89"
+      },
+      "leader_pending": false,
+      "can_remind": false,
+      "reaction_waited_s": null,
+      "reaction_overdue": false,
+      "reminded_at": null,
+      "answer_changes_done": true
+    },
+    {
+      "id": "q_3",
+      "text": "Публиковать прайс на маркетплейсе до регистрации бренда?",
+      "for": "mikhail",
+      "answered": true,
+      "answer": "Да, публикуйте — регистрация идёт параллельно, цену всё равно придётся назвать.",
+      "answered_at": 1793161980,
+      "answer_state": "sent",
+      "answer_label": "ответ отправлен — руководитель ещё не ответил",
+      "needs_explanation": false,
+      "reaction": null,
+      "leader_pending": true,
+      "can_remind": true,
+      "reaction_waited_s": 420,
+      "reaction_overdue": true,
+      "reminded_at": null,
+      "answer_changes_done": false
     }
   ],
   "decisions": [

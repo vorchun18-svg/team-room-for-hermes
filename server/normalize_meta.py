@@ -20,11 +20,14 @@ def _next_steps(raw: Any) -> list[dict]:
     for item in _items(raw):
         owner: Any = None
         due: Any = None
+        from_question = None
         state = "open"
         if isinstance(item, dict):
             text = _text(item.get("text") or item.get("step") or item.get("title") or item.get("what"))
             owner = item.get("owner") or item.get("assignee") or item.get("who")
             due = item.get("due") if item.get("due") is not None else item.get("deadline")
+            # W14-D §4: ЗАЧЕМ шаг нужен — из какого вопроса/ответа он возник
+            from_question = _text(item.get("from_question") or item.get("question_id")) or None
             raw_state = _text(item.get("state")).lower()
             if raw_state in STATES:
                 state = raw_state
@@ -35,7 +38,7 @@ def _next_steps(raw: Any) -> list[dict]:
         if not text:
             continue
         out.append({"text": text, "owner": _text(owner) or None,
-                    "due": parse_due(due), "state": state})
+                    "due": parse_due(due), "state": state, "from_question": from_question})
     ids = _dedupe_ids("ns", [s["text"] for s in out])
     return [{"id": i, **s} for i, s in zip(ids, out)]
 
