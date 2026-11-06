@@ -19,16 +19,22 @@ try:  # пакетный и «плоский» импорт
     from . import statefiles as sf
     from .app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, BACKLOG_KINDS,
                              BACKLOG_STATUSES, MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS,
-                             ROOM_STATUSES, decode_cursor, derive_title, encode_cursor, make_slug)
+                             ROOM_STATUSES, decode_cursor, derive_title, encode_cursor, make_slug,
+                             preview)
     from .http_util import ApiError, Raw, err
+    from .title_short import short_title as _short_title       # W17-B §4: короткое название
+    from . import answers as _answers                          # W17-B §7: статус вопросов
 except ImportError:  # pragma: no cover
     import config  # type: ignore
     import http_util  # type: ignore
     import statefiles as sf  # type: ignore
     from app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, BACKLOG_KINDS,  # type: ignore
                             BACKLOG_STATUSES, MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS,
-                            ROOM_STATUSES, decode_cursor, derive_title, encode_cursor, make_slug)
+                            ROOM_STATUSES, decode_cursor, derive_title, encode_cursor, make_slug,
+                            preview)
     from http_util import ApiError, Raw, err  # type: ignore
+    from title_short import short_title as _short_title  # type: ignore
+    import answers as _answers  # type: ignore
 
 
 def _stt_flag(cfg) -> bool:
@@ -51,14 +57,9 @@ def _stt_flag(cfg) -> bool:
 def _is_critic_rounds_question(text) -> bool:
     """Вопрос «сколько раундов/прогонов критика?» — то, что задано в комнате (§7в).
 
-    Ищем по основам слов: «критик» + «раунд/прогон/цикл», либо «сколько … провер…».
+    Одно правило на деталь, бэклог и счётчики (W17-B §7): живёт в ``server/answers``.
     """
-    flat = " ".join(str(text or "").lower().split())
-    if not flat or "критик" not in flat:
-        return False
-    if "прогон" in flat or "раунд" in flat or "цикл" in flat:
-        return True
-    return "сколько" in flat and ("провер" in flat or "доработ" in flat)
+    return _answers.is_service_question(text)
 
 
 def _journal_once(cfg, room_id, kind: str, text: str) -> bool:
@@ -94,6 +95,26 @@ def _stt_mode(cfg) -> str:
         return str((stt_mod.status(cfg) or {}).get("mode") or "none")
     except Exception:  # noqa: BLE001 — конфиг важнее диагностики
         return "none"
+
+
+#: какие блоки `RequestDetail` можно заказать через `?fields=` (W17-B §5, B11).
+#: Ядро `RequestSummary` отдаётся всегда — это ровно то, что нужно спискам и меню.
+DETAIL_FIELDS = {
+    "text": "text", "body_full": "body_full", "dispatcher": "dispatcher",
+    "synthesis": "synthesis", "steps": "next_steps", "questions": "open_questions",
+    "answers": "answers", "decisions": "decisions", "stage": "stage",
+    "future_questions": "future_questions", "artifacts": "artifacts", "report": "report",
+    "tree": "tree", "timeline": "timeline", "thread": "thread", "warnings": "warnings",
+    "critic": "critic", "heartbeats": "heartbeats",
+}
+#: поля-ядро (RequestSummary + связи с картой проекта): остаются при любом `fields`
+DETAIL_CORE = frozenset({"id", "room", "title", "title_short", "title_source", "title_locked",
+                         "status", "status_reason", "mode",
+                         "critic", "created_at", "started_at", "finished_at", "duration_s",
+                         "progress", "assignee", "needs_you", "preview", "archived",
+                         "brief", "plan_link", "streams_summary", "legacy_metadata"})
+#: что вернуть в `?include=` (пока только heartbeat)
+DETAIL_INCLUDE = {"heartbeat"}
 
 
 def _profile_info():
@@ -295,6 +316,98 @@ class ReadRoutes:
         return 200, {"rooms": items, "engine": self._engine_brief(),
                      "updated_at": int(time.time())}, {}
 
+    def h_rooms_summary(self, query, body):
+        """`GET /api/rooms/summary` — счётчики и последние запросы ВСЕХ комнат (W17-B §1).
+
+        Один ответ вместо пачки запросов бокового меню: по каждой комнате —
+        `RoomSummary` из кэша наблюдателя и до `requests` последних запросов из
+        реестра (без полной сборки детали). Статусы карточек читаются одним
+        запросом на доску. Ответ кэшируется на пару секунд: меню можно
+        опрашивать часто и всем экранам сразу.
+        """
+        include = (query.get("include_archived") or ["0"])[0].strip().lower() in ("1", "true", "yes")
+        raw_requests = (query.get("requests") or [""])[0].strip()
+        per_room = 3
+        if raw_requests:
+            try:
+                per_room = int(raw_requests)
+            except ValueError:
+                raise err(400, "requests: число от 0 до 10", field="requests") from None
+            if per_room < 0 or per_room > 10:
+                raise err(400, "requests: от 0 до 10", field="requests", limit=per_room)
+        only = (query.get("room") or [""])[0].strip()
+        key = (include, per_room, only)
+        now = time.time()
+        cache = getattr(self, "_rooms_summary_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._rooms_summary_cache = cache
+        hit = cache.get(key)
+        if hit and now - hit[0] < 3.0:
+            return 200, hit[1], {"Cache-Control": "no-store"}
+        rooms = self._rooms()
+        if only:
+            rooms = [room for room in rooms if str(room.get("id")) == only]
+            if not rooms:
+                raise err(404, "Комната не найдена", room=only)
+        rooms = [room for room in rooms if include or not room.get("archived")]
+        records = {str(room.get("id")): self._records(room.get("id"), quiet=True) for room in rooms}
+        # статусы карточек: по одному запросу на доску, а не на комнату
+        by_board: dict = {}
+        for room in rooms:
+            for rec in records.get(str(room.get("id"))) or []:
+                if rec.get("root_id"):
+                    by_board.setdefault(room.get("board") or self.board, set()).add(rec["root_id"])
+        states: dict = {}
+        for board, ids in by_board.items():
+            states.update(self.call("engine_read", "request_states",
+                                    ((self.cfg, board, sorted(ids)), {})) or {})
+        items = []
+        for room in rooms:
+            summary = self._room_summary(room)
+            rows = sorted(records.get(str(room.get("id"))) or [],
+                          key=lambda rec: (rec.get("created_at") or 0, str(rec.get("root_id") or "")),
+                          reverse=True)
+            last = []
+            for rec in rows[:per_room]:
+                root_id = str(rec.get("root_id") or "")
+                state = states.get(root_id) or {}
+                if not state:
+                    continue          # карточки нет на доске — статус неизвестен, в списке не показываем
+                title = rec.get("title") or derive_title(rec.get("text") or "")
+                row = {"id": root_id, "room": room.get("id"), "title": title,
+                       "title_short": _short_title(title or rec.get("text") or ""),
+                       "status": state.get("status"), "needs_you": state.get("status") == "needs_you",
+                       "created_at": int(rec.get("created_at") or 0) or None,
+                       "finished_at": state.get("finished_at"),
+                       "preview": preview(rec.get("text") or "")}
+                self._title_view(row, rec)          # W17-B §4: короткое имя в меню
+                last.append(row)
+            item = dict(summary)
+            item.update({"requests_count": len(rows),
+                         "last_at": max([int(r.get("created_at") or 0) for r in rows], default=0) or None,
+                         "last": last})
+            items.append(item)
+        payload = {"ok": True, "at": int(now), "count": len(items),
+                   "engine": self._engine_brief(), "rooms": items}
+        cache[key] = (now, payload)
+        return 200, payload, {"Cache-Control": "no-store"}
+
+    def h_dispatcher_preview(self, query, body):
+        """`GET /api/dispatcher/preview` — состояние доски только чтением (W17-B §1).
+
+        Замена `POST /api/dispatcher/kick {preview:true}`: GET ничего не пишет, не
+        считается лимитом частоты и работает в песочнице. Ошибка чтения доски не
+        роняет ответ — `report: {}`, кнопку интерфейс просто не покажет.
+        """
+        report = {}
+        try:
+            report = self.mod("kick_report").report(self.cfg, self.board, {"preview": True}) or {}
+        except Exception as exc:  # noqa: BLE001 - предпросмотр не важнее страницы
+            self.log.warning("dispatcher preview: %s" % exc)
+        return 200, {"ok": True, "preview": True, "report": report, "at": int(time.time())}, \
+            {"Cache-Control": "no-store"}
+
     def h_room_get(self, query, body, room_id):
         detail = self._room_detail(self._room(room_id))
         return 200, detail, {"ETag": http_util.etag_of(http_util.json_bytes(detail)),
@@ -333,6 +446,7 @@ class ReadRoutes:
                 haystack = ("%s %s" % (summary.get("title") or "", rec.get("text") or "")).lower()
                 if needle not in haystack:
                     continue
+            self._title_view(summary, rec)          # W17-B §4: имя из реестра сильнее
             items.append(summary)
         page = items[offset:offset + limit]
         has_more = offset + limit < len(items)
@@ -360,17 +474,67 @@ class ReadRoutes:
 
     def h_request_get(self, query, body, rid):
         room, rec = self._find_record(rid)
-        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), rec.get("answers"))
+        include = self._csv(query, "include")
+        bad_include = [value for value in include if value not in DETAIL_INCLUDE]
+        if bad_include:
+            raise err(400, "Неизвестный include", include=bad_include,
+                      allowed=sorted(DETAIL_INCLUDE))
+        fields = self._csv(query, "fields")
+        bad_fields = [value for value in fields if value not in DETAIL_FIELDS]
+        if bad_fields:
+            raise err(400, "Неизвестное поле", fields=bad_fields,
+                      allowed=sorted(DETAIL_FIELDS))
+        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), rec.get("answers"),
+                              include_heartbeat="heartbeat" in include)
         self._ensure_ingested(room, detail)
         self._critic_view(room, rec, detail)          # W13-E §9: режим, ход, страховки
         self._drop_known_critic_question(room, rec, detail)   # §7: не переспрашивать
         detail["thread"] = self._thread(room, rid)
         self._answers_view(room, rec, detail)          # W14-D: ответ ↔ вопрос, шаги
+        self._detail_view(detail, fields)              # W17-B §5: один источник вопросов, `?fields=`
+        self._title_view(detail, rec)                  # W17-B §4: название с приоритетом источников
         return 200, detail, {"ETag": http_util.etag_of(http_util.json_bytes(detail)),
                              "Cache-Control": "no-cache"}
 
-    # --- ответы на вопросы и связка вопрос↔шаг (W14-D §1–§4) ------------------
+    @staticmethod
+    def _detail_view(detail: dict, fields: list) -> None:
+        """Урезать деталь до запрошенных блоков (W17-B §5, B11).
 
+        Всегда: ``questions`` (полная копия ``open_questions``) убирается — источник
+        один, ``open_questions``. При явном ``?fields=…`` остаются только ядро
+        ``RequestSummary`` и названные блоки (``?fields=questions`` → ``open_questions``).
+        """
+        if not isinstance(detail, dict):
+            return
+        detail.pop("questions", None)          # источника два не бывает
+        detail.pop("hidden_questions", None)   # служебные вопросы клиенту не отдаём
+        if not fields:
+            return
+        wanted = set(DETAIL_CORE)
+        for name in fields:
+            key = DETAIL_FIELDS.get(name)
+            if key and key != "questions":
+                wanted.add(key)
+        for key in [key for key in detail if key not in wanted]:
+            detail.pop(key, None)
+
+    # --- название запроса: приоритет источников (W17-B §4, B9 усилено) --------
+
+    def _title_view(self, detail: dict, rec: dict) -> None:
+        """``title_short`` / ``title_source`` / ``title_locked`` с учётом реестра.
+
+        Побеждает источник с большим приоритетом: ``derived`` < ``llm`` <
+        ``leader`` (``metadata.title``) < ``user`` (переименование). Название,
+        заданное пользователем, не перезаписывается никогда.
+        """
+        if not isinstance(detail, dict):
+            return
+        try:
+            self.mod("titles").overlay(detail, rec)
+        except Exception as exc:  # noqa: BLE001 - название не важнее страницы
+            self.log.warning("название %s: %s" % (detail.get("id"), exc))
+
+    # --- ответы на вопросы и связка вопрос↔шаг (W14-D §1–§4) ------------------
     def _answers_view(self, room: dict, rec: dict, detail: dict) -> None:
         """Статус ответа, реакция руководителя у вопроса, метки шагов.
 
@@ -389,15 +553,21 @@ class ReadRoutes:
             stored = rec.get("answers") if isinstance(rec.get("answers"), dict) else {}
             questions = detail.get("open_questions")
             questions = questions if isinstance(questions, list) else []
-            reactions = mod.reactions_from_thread(detail.get("thread") or [], questions)
+            reactions = mod.reactions_from_thread(detail.get("thread") or [], questions,
+                                                  stored, lead=room.get("orchestrator"))
             for question in questions:
                 if not isinstance(question, dict):
                     continue
-                record = stored.get(str(question.get("id")))
+                # W17-B §7: ответ может быть записан на id-близнеца (тот же вопрос
+                # с новым id) — ищем и по тексту, иначе вопрос снова «ждёт ответа».
+                record = mod.record_for(question, stored)
                 if not isinstance(record, dict):
                     record = ({"text": question.get("answer"), "at": question.get("answered_at")}
                               if question.get("answered") and question.get("answer") else {})
-                mod.apply_question(question, record, reactions.get(str(question.get("id"))))
+                # W17-B §8 (B-12): реакция — та же функция, что у кнопки «Напомнить»,
+                # с временем ответа и только от руководителя комнаты.
+                mod.apply_question(question, record,
+                                   mod.reaction_for_question(question, reactions))
             if isinstance(detail.get("questions"), list):
                 detail["questions"] = questions
             dropped = rec.get("steps_dropped") if isinstance(rec.get("steps_dropped"), list) else []
@@ -470,22 +640,33 @@ class ReadRoutes:
         """
         if not isinstance(detail, dict):
             return
+        # W17-B §7: служебные вопросы уже убраны чтением (engine_read) — здесь только
+        # запись в журнал и пересчёт «ждёт тебя», чтобы бейдж вкладки не держался на
+        # скрытом вопросе. Старый путь фильтрации оставлен для заглушек движка.
+        hidden = detail.pop("hidden_questions", None)
         questions = detail.get("questions")
         if not isinstance(questions, list):
             questions = detail.get("open_questions")
-        if not isinstance(questions, list) or not questions:
-            return
+        questions = questions if isinstance(questions, list) else []
         kept, dropped = [], []
         for item in questions:
             if isinstance(item, dict) and _is_critic_rounds_question(item.get("text")):
                 dropped.append(item)
             else:
                 kept.append(item)
+        dropped = list(dropped) + [item for item in (hidden or []) if isinstance(item, dict)]
         if not dropped:
             return
         detail["questions"] = kept
         if isinstance(detail.get("open_questions"), list):
             detail["open_questions"] = kept
+        # счётчик «ждёт тебя»: пересчитываем без скрытых вопросов (B7-3)
+        open_pavel = any((item.get("for") or "mikhail") == "mikhail" and not item.get("answered")
+                         for item in kept if isinstance(item, dict))
+        blocked = any(node.get("needs_human") for node in (detail.get("tree") or [])[1:]
+                      if isinstance(node, dict))
+        detail["needs_you"] = (str(detail.get("status") or "") == "needs_you" or open_pavel
+                               or blocked)
         if detail.get("critic") is None or not isinstance(detail.get("critic"), dict) \
                 or detail["critic"].get("enabled"):
             mode = str(rec.get("critic_mode") or room.get("critic_mode") or "rounds")
@@ -569,6 +750,11 @@ class ReadRoutes:
         for member in room.get("members") or []:
             if isinstance(member, dict) and member.get("profile"):
                 custom[str(member["profile"])] = str(member.get("label") or "")
+        # WAVE17 B-17: руководитель и критик не в `members` — их подпись лежит в
+        # карте `role_labels`. Источник подписи для интерфейса один и тот же.
+        for profile, label in (room.get("role_labels") or {}).items():
+            if profile and label:
+                custom.setdefault(str(profile), str(label))
         out = []
         for member in members:
             if not isinstance(member, dict):

@@ -12,7 +12,7 @@
       "critic_pass": true,
       "counters": {
         "working": 3,
-        "needs_you": 3,
+        "needs_you": 5,
         "done_today": 2
       },
       "phase": {
@@ -23,7 +23,33 @@
       "updated_at": 1793171850,
       "max_rounds": 1,
       "critic_mode": "rounds",
-      "critic_round_cap": 12
+      "critic_round_cap": 12,
+      "phases": [
+        {
+          "id": "idea",
+          "title": "Идея и стратегия"
+        },
+        {
+          "id": "legal",
+          "title": "Легализация"
+        },
+        {
+          "id": "brand",
+          "title": "Бренд и товарный знак"
+        },
+        {
+          "id": "packaging",
+          "title": "Упаковка"
+        },
+        {
+          "id": "production",
+          "title": "Производство"
+        },
+        {
+          "id": "sales",
+          "title": "Продажи"
+        }
+      ]
     },
     {
       "id": "fn",
@@ -40,15 +66,12 @@
         "needs_you": 0,
         "done_today": 1
       },
-      "phase": {
-        "id": "legal",
-        "title": "Легализация",
-        "status": "active"
-      },
+      "phase": null,
       "updated_at": 1793171850,
       "max_rounds": 1,
       "critic_mode": "rounds",
-      "critic_round_cap": 12
+      "critic_round_cap": 12,
+      "phases": []
     }
   ],
   "engine": {

@@ -12,19 +12,22 @@ import re
 from datetime import date
 from typing import Any
 
-# Канонические фазы проекта: id и русский заголовок (API §3.4).
-PHASES: tuple[tuple[str, str], ...] = (
-    ("idea", "Идея и стратегия"),
-    ("legal", "Легализация"),
-    ("brand", "Бренд и товарный знак"),
-    ("packaging", "Упаковка"),
-    ("production", "Производство"),
-    ("sales", "Продажи"),
-)
-PHASE_IDS: tuple[str, ...] = tuple(p[0] for p in PHASES)
-PHASE_TITLES: dict[str, str] = dict(PHASES)
+# Этапы проекта — свойство КОМНАТЫ (WAVE17 §R, B-8): канонического списка этапов в
+# коде больше нет. Здесь остаётся только общая грамматика: статусы этапа и
+# приведение заголовка к id. Названия этапов приходят из metadata ответа и из
+# настроек комнаты (`server/phase_book.py`).
+PHASE_STATUSES = ("done", "active", "next", "blocked")
 
 STATES = ("open", "asked", "done", "dismissed")
+
+_PHASE_ID_RE = re.compile(r"[^a-zа-я0-9]+")
+
+
+def phase_id(text: Any, fallback: str = "phase") -> str:
+    """Заголовок этапа → id: «Согласование и ИП» → «согласование-и-ип»."""
+    raw = _text(text).lower()
+    slug = _PHASE_ID_RE.sub("-", raw).strip("-")
+    return slug or fallback
 
 # ---------------------------------------------------------------- утилиты
 

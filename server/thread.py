@@ -744,6 +744,90 @@ def post_answer_note(cfg, room, rid, question: dict, text: str,
     return {"task_id": card_id, "merged": merged, "routed_to": lead, "question_id": qid}
 
 
+def build_answers_digest_body(cfg, room: dict, root: str, row: dict, items: list,
+                              lead: str) -> str:
+    """Тело карточки «Уточнение» для НАКОПЛЕННЫХ ответов (W17-B §3, аудит B6).
+
+    Пять ответов Михаила висели без реакции руководителя 6+ часов: они пришли до
+    контракта 1.0.2. Автоматически такие ответы не отправляются (это запускает
+    настоящего агента) — только по кнопке. Здесь руководитель получает ОДНУ карточку
+    со всеми ответами и требованием отреагировать на каждый.
+    """
+    title = str(row.get("title") or "")
+    status = _STATUS_RU.get(str(row.get("status") or ""), str(row.get("status") or ""))
+    rows = [item for item in items or [] if isinstance(item, dict)]
+    lines = [
+        "СООБЩЕНИЕ МАКСИМА (передано приложением «Комната команды» по его кнопке):",
+        "НАКОПЛЕННЫЕ ОТВЕТЫ БЕЗ ВАШЕЙ РЕАКЦИИ — %d:" % len(rows),
+        "<<<ОТВЕТЫ>>>",
+    ]
+    for number, item in enumerate(rows, start=1):
+        lines.append("%d) вопрос %s «%s»" % (number, str(item.get("question_id") or "q_0"),
+                                            _short(item.get("question_text") or "", 200)))
+        lines.append("   ответ: %s" % str(item.get("answer") or "")[:1200])
+    lines += [
+        "<<<КОНЕЦ>>>", "",
+        "Запрос: %s «%s» (сейчас %s)." % (root, _short(title, 120), status or "неизвестно"),
+        "",
+        "Ты — руководитель комнаты «%s» (%s). Эти ответы уже ЕСТЬ в работе — Михаил их "
+        "дал, но реакции он не видел." % (str(room.get("title") or room.get("id") or "комната"), lead),
+        "", "Что сделать (по шагам):",
+        "а) Перечитай корень и карточки запроса: kanban_show(task_id=\"%s\")." % root,
+        "б) На КАЖДЫЙ пункт выше ответь короткой реакцией на корне — её Михаил видит "
+        "у вопроса: kanban_comment(task_id=\"%s\", body=\"%s q_x] Принято: …\") — "
+        "«Ничего менять не нужно» или «Работа пересмотрена: карточки t_…»."
+        % (root, answers.REACTION_MARK),
+        "в) Если ответ меняет уже сделанное — поставь доработку сразу; если отменяет шаг — "
+        "шаг должен быть снят (приложение снимает его само при ответе «нет»).",
+        "г) В своде добавь блок «Учтено из ответов»: вопрос → что сделано.",
+        "д) Заверши свою карточку: kanban_complete(summary=<короткий свод по-русски>, "
+        "metadata={\"acknowledged\":[\"q_…\"]}).",
+        "",
+        "Работать можно только инструментами канбана (%s) и своими обычными навыками Hermes."
+        % ", ".join(LEAD_TOOLS),
+    ]
+    return "\n".join(lines)
+
+
+def post_answers_digest(cfg, room, rid, items) -> dict:
+    """Одна карточка руководителю со всеми накопленными ответами (W17-B §3).
+
+    Вызывается ТОЛЬКО действием ``answers_resend`` по клику пользователя: любая
+    автопересылка запускает настоящего агента-руководителя. Комментарий в ветке
+    (``[Михаил · накопленные ответы] …``) пишется здесь же, карточка «Уточнение» —
+    одна на запрос: открытая дописывается, иначе создаётся новая.
+    """
+    root = assert_task_id(rid, "rid")
+    room = _room(cfg, room)
+    if not room:
+        raise EngineWriteError("not_found", "Комната запроса не найдена.",
+                              detail={"reason": "room_not_found"}, http_status=404)
+    rows = [item for item in items or [] if isinstance(item, dict) and item.get("question_id")]
+    if not rows:
+        raise EngineWriteError("bad_request", "Нечего отправлять: ответов без реакции нет.",
+                              detail={"reason": "nothing_to_resend"}, http_status=409)
+    board = _board_of(room)
+    row = card_row(cfg, board, root)
+    if not row:
+        raise EngineWriteError("not_found", "Запрос не найден на доске комнаты.",
+                              detail={"reason": "no_card", "rid": root}, http_status=404)
+    lead = _lead(room, row)
+    text = answers.digest_comment(rows)
+    _comment(cfg, board, root, text)
+    note = _open_note(cfg, board, root, _tenant(room))
+    if note:
+        card_id = assert_task_id(str(note["id"]), "task_id")
+        _comment(cfg, board, card_id, text)
+        merged = True
+    else:
+        body = build_answers_digest_body(cfg, room, root, row, rows, lead)
+        card_id = _create_note(cfg, room, board, root, row, text, None, lead, False,
+                               body=body, key_seed="digest-" + str(len(rows)))
+        merged = False
+    return {"task_id": card_id, "merged": merged, "routed_to": lead, "text": text,
+            "count": len(rows), "at": int(time.time())}
+
+
 def remind_lead(cfg, room, rid, question: dict, ago_min: int = 0) -> dict:
     """«Напомнить руководителю»: короткий сигнал в ветке, что ждём реакцию на ответ.
 
@@ -789,4 +873,6 @@ __all__ = ["NOTE_MARK", "LEAD_MARK", "NOTE_TITLE", "URGENT_LINE", "LEAD_TOOLS", 
            "get_thread", "post_message", "build_note_body", "author_label", "role_label",
            "card_row", "NOTE_KEY_PREFIX",
            # W14-D: ответ на вопрос — своя метка, свой бриф, своя карточка руководителю
-           "build_answer_body", "post_answer_note", "remind_lead"]
+           # W17-B §3: накопленные ответы — одна карточка по кнопке
+           "build_answer_body", "post_answer_note", "remind_lead",
+           "build_answers_digest_body", "post_answers_digest"]

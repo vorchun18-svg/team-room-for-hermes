@@ -22,6 +22,14 @@ const DB_VERSION = 1;
 const STORE = 'parts';
 const PENDING_KEY = 'teamroom.dictation.pending';
 const PENDING_TTL_MS = 72 * 60 * 60 * 1000;   // как и на сервере: трое суток
+/**
+ * Меньше одной части — восстанавливать нечего: такого «хвоста» не заводим и
+ * старые выбрасываем. Раньше след писался в момент СТАРТА записи (`parts: 0`),
+ * поэтому каждая сорванная попытка (отвалился микрофон) оставляла строку
+ * «Есть нерасшифрованная запись», по которой «Распознать» честно не находил
+ * ничего — отсюда «не удалось» и «убрал, а оно снова висит».
+ */
+const MIN_PARTS = 1;
 
 const memory = new Map();          // 'rid/n' → Blob
 let dbPromise = null;
@@ -180,6 +188,8 @@ function writeLocal(items) {
 /**
  * Незаконченные записи: `[{rid, at, seconds, parts}]`, свежие сверху.
  * Просроченные (старше трёх суток) выбрасываются — их уже нет и на сервере.
+ * Пустые следы (`parts: 0`) тоже: в них нет ни одной части звука, распознавать
+ * нечего — именно они раньше висели вечной строкой «Есть нерасшифрованная запись».
  */
 export function listPending() {
   const stored = readLocal();
@@ -187,6 +197,7 @@ export function listPending() {
   const now = Date.now();
   const fresh = items.filter((item) => item && typeof item === 'object'
     && typeof item.rid === 'string' && item.rid
+    && Number(item.parts) >= MIN_PARTS
     && now - Number(item.at || 0) < PENDING_TTL_MS);
   fresh.sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
   if (stored === null) memoryPending = fresh;
@@ -196,13 +207,18 @@ export function listPending() {
 
 /**
  * Запомнить, что запись началась (или продолжилась): после обрыва по этому
- * следу её можно найти и распознать.
+ * следу её можно найти и распознать. Без звука след не заводится.
  */
 export function rememberPending(rid, { parts = 0, seconds = 0, at = 0 } = {}) {
   if (!rid) return null;
   const items = listPending().filter((item) => item.rid !== rid);
+  const count = Math.max(0, Number(parts) || 0);
+  if (count < MIN_PARTS) {
+    if (!writeLocal(items)) memoryPending = items;
+    return null;
+  }
   const item = { rid: String(rid), at: at || Date.now(),
-                 parts: Math.max(0, Number(parts) || 0),
+                 parts: count,
                  seconds: Math.max(0, Number(seconds) || 0) };
   items.unshift(item);
   const kept = items.slice(0, 20);
@@ -210,10 +226,11 @@ export function rememberPending(rid, { parts = 0, seconds = 0, at = 0 } = {}) {
   return item;
 }
 
-/** Забыть запись (текст вставлен или запись отменена). */
+/** Забыть запись (текст вставлен, запись отменена или убрана человеком). */
 export function forgetPending(rid) {
-  if (!rid) return;
-  const items = listPending().filter((item) => item.rid !== rid);
+  const rids = (Array.isArray(rid) ? rid : [rid]).map(String).filter(Boolean);
+  if (!rids.length) return;
+  const items = listPending().filter((item) => !rids.includes(String(item.rid)));
   if (!writeLocal(items)) memoryPending = items;
 }
 

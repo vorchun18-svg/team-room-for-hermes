@@ -1,0 +1,113 @@
+/* shell-titles.css — названия запросов, заглушки загрузки и форма ответа.
+ *
+ * Пакет G (волна 17): B8/P5 (короткие названия и подсказки), B14 (скелетоны
+ * в форме карточек), B15/B-7 (единая форма ответа). Стили только новые:
+ * общие файлы (tokens/base/components) не правятся — A ведёт кегль и токены.
+ * Подключается моими модулями через ensureCss('css/shell-titles.css').
+ */
+
+/* ── название запроса в шапке + карандаш + замок ───────────────────────── */
+
+.req__titleblock { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.req__titleblock .req__title { flex: 1 1 auto; min-width: 0; }
+.req__titleblock.is-busy .req__title { opacity: 0.65; }
+
+.req__titlebtn {
+  flex: none;
+  color: var(--ui-text-tertiary);
+  opacity: 0.7;
+  transition: opacity var(--dur-fast, 120ms) var(--ease, ease);
+}
+.req__titlebtn:hover, .req__titlebtn:focus-visible { opacity: 1; color: var(--foreground); }
+
+.req__titleblock [hidden] { display: none !important; }
+.req__titleedit { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.req__titleedit[hidden] { display: none; }
+.req__title-input {
+  flex: 1 1 auto;
+  min-width: 8ch;
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  letter-spacing: -0.012em;
+  padding: 2px 8px;
+  height: auto;
+}
+.req__titlesave, .req__titlecancel { flex: none; }
+
+.req__lock {
+  flex: none;
+  gap: 4px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--ui-bg-tertiary);
+  color: var(--ui-text-secondary);
+  height: 22px;
+  font-size: var(--text-xs);
+}
+.req__lock[hidden] { display: none; }
+.req__lock:hover { color: var(--foreground); background: var(--ui-bg-quaternary); }
+.req__lock .codicon { font-size: 11px; }
+
+/* ── заглушки загрузки в форме будущих карточек (B14) ──────────────────── */
+
+.skel-stack { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+
+.skel-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  min-width: 0;
+}
+.skel-card__head { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.skel-card__head .skeleton--title { flex: 1 1 auto; max-width: 46%; }
+.skel-card__pill { flex: none; width: 64px; height: 18px; border-radius: var(--radius-full); }
+.skel-card__body { display: flex; flex-direction: column; gap: 6px; }
+.skel-card__body .skeleton { height: 11px; }
+.skel-card__foot { display: flex; align-items: center; gap: var(--space-2); }
+.skel-card__input { flex: 1 1 auto; height: 30px; border-radius: var(--radius-sm); }
+.skel-card__btn { flex: none; width: 84px; height: 30px; border-radius: var(--radius-sm); }
+
+.skel-card--row { gap: var(--space-2); padding: var(--space-2) var(--space-3); }
+.skel-card--question { gap: var(--space-2); }
+
+.skel-rows { display: flex; flex-direction: column; gap: var(--space-2); }
+.skel-row { display: flex; align-items: flex-start; gap: var(--space-2); padding: 4px 0; }
+.skel-row__dot { flex: none; width: 14px; height: 14px; border-radius: var(--radius-full); }
+.skel-row__text { display: flex; flex-direction: column; gap: 5px; flex: 1 1 auto; min-width: 0; }
+.skel-row__text .skeleton { height: 10px; }
+
+/* ── единая форма ответа на вопрос (как в правой колонке запроса) ──────── */
+
+.qa-form { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.qa-form__row { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
+.qa-form__input { flex: 1 1 auto; min-width: 0; resize: vertical; }
+.qa-form__send { flex: none; }
+.qa-form__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.qa-form__hint { font-size: var(--text-sm); }
+.qa-form.is-busy { opacity: 0.8; }
+
+/* ── «что считается» у счётчиков и общая подсказка над вопросами ───────── */
+
+.qa-note { display: flex; align-items: flex-start; gap: 6px; margin: 0 0 var(--space-2); }
+.qa-note .codicon { margin-top: 2px; color: var(--ui-text-tertiary); }
+
+.qstate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--ui-text-secondary);
+}
+.qstate--explanation { color: var(--warn-ink); }
+.qstate--answered { color: var(--ok-ink); }
+
+@media (max-width: 640px) {
+  .req__title-input { font-size: var(--text-lg); }
+  .qa-form__row { flex-direction: column; align-items: stretch; }
+  .qa-form__send { align-self: flex-end; }
+}

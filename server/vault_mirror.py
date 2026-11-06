@@ -19,7 +19,7 @@ import re
 import time
 from pathlib import Path
 
-from .ingest_common import MONTHS_NOM, PHASE_TITLES, STATUS_RU, _as_int, _clean
+from .ingest_common import MONTHS_NOM, STATUS_RU, _as_int, _clean
 from .config import safe_dir_name
 from . import registry
 
@@ -91,7 +91,7 @@ def _state_md(cfg, room_id: str, title: str, state: dict) -> str:
 
     lines += ["## Этапы проекта", "", "| Этап | Статус | Комментарий |", "| --- | --- | --- |"]
     for phase in roadmap.get("phases") or []:
-        lines.append(f"| {PHASE_TITLES.get(phase.get('id'), phase.get('title') or phase.get('id'))} "
+        lines.append(f"| {phase.get('title') or phase.get('id')} "
                      f"| {STATUS_RU.get(phase.get('status'), phase.get('status') or '')} | {_cell(phase.get('note'))} |")
     lines.append("")
 
@@ -933,7 +933,7 @@ def _context_blocks(cfg, room: dict, state: dict, requests: list, include_glossa
     current = roadmap.get("current") or {}
     stage = ["## Текущий этап", ""]
     if current:
-        stage.append("**%s** — %s" % (_clean(current.get("title") or PHASE_TITLES.get(current.get("id")) or current.get("id")),
+        stage.append("**%s** — %s" % (_clean(current.get("title") or current.get("id")),
                                      STATUS_RU.get(current.get("status"), current.get("status") or "")))
         phase = next((p for p in (roadmap.get("phases") or []) if p.get("id") == current.get("id")), {})
         if phase.get("note"):

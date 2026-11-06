@@ -12,6 +12,7 @@ import sqlite3
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock as umock
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -210,7 +211,9 @@ class SeedSandboxTest(unittest.TestCase):
         norm = normalize_metadata(meta)
         self.assertEqual(len(norm["next_steps"]), len(meta["next_steps"]))
         self.assertEqual([p["status"] for p in norm["stage"]["phases"]][:2], ["done", "blocked"])
-        self.assertEqual(len(norm["stage"]["phases"]), 6)
+        # W17-R §1: normalize больше не сворачивает алиасы — «ops» остаётся
+        # отдельным этапом, поэтому в этом ответе 7 этапов, а не 6.
+        self.assertEqual(len(norm["stage"]["phases"]), 7)
         # дерево: 4 среза + синтезатор
         self.assertEqual(len(self._children(state["root_id"])), 5)
 
@@ -249,19 +252,40 @@ class SeedSandboxTest(unittest.TestCase):
 
     # --- защита реальной БД -------------------------------------------------
     def test_real_db_untouched_by_build(self):
-        after = snapshot_real_db()
-        self.assertEqual(after, self.real_before)
+        after = assert_real_untouched(self.real_before)
         self.assertTrue(after["exists"])
         self.assertGreater(after["tasks_count"], 0)
-        self.assertEqual(set(after), {"exists", "size", "mtime", "tasks_count", "max_updated"})
+        self.assertEqual(set(after), {"exists", "tasks_count", "ours", "our_comments",
+                                      "board_bytes", "board_mtime"})
+        # наш след не вырос: ни карточек, ни комментариев от нашего приложения
+        self.assertEqual(after["ours"], self.real_before["ours"])
+        self.assertEqual(after["our_comments"], self.real_before["our_comments"])
 
     def test_assert_real_untouched_detects_drift(self):
-        with self.assertRaises(AssertionError):
-            assert_real_untouched({"exists": False, "size": 1, "mtime": 1,
-                                   "tasks_count": -1, "max_updated": 0})
-        with self.assertRaises(AssertionError):
-            self.sb.assert_real_untouched({"exists": True, "size": 1, "mtime": 1,
-                                           "tasks_count": 1, "max_updated": 1})
+        live = snapshot_real_db()
+        # чужая запись Hermes (диспетчер, агент руководителя) — НЕ падение:
+        # файл вырос и карточек стало больше, но нашего следа не прибавилось.
+        grown = dict(live, tasks_count=live["tasks_count"] + 3,
+                     board_bytes=live["board_bytes"] + 8192)
+        with umock.patch("tests.helpers.snapshot_real_db", return_value=grown):
+            self.assertEqual(assert_real_untouched(live)["tasks_count"], grown["tasks_count"])
+        # файл доски исчез
+        with umock.patch("tests.helpers.snapshot_real_db",
+                         return_value={"exists": False, "tasks_count": 0, "ours": frozenset(),
+                                       "our_comments": 0, "board_bytes": 0, "board_mtime": 0}):
+            with self.assertRaises(AssertionError):
+                assert_real_untouched(live)
+        # наш код создал карточку в живой доске
+        created = dict(live, tasks_count=live["tasks_count"] + 1,
+                       ours=live["ours"] | {"t_0badc0de"})
+        with umock.patch("tests.helpers.snapshot_real_db", return_value=created):
+            with self.assertRaises(AssertionError):
+                assert_real_untouched(live)
+        # наш код написал комментарий в живую доску
+        commented = dict(live, our_comments=live["our_comments"] + 1)
+        with umock.patch("tests.helpers.snapshot_real_db", return_value=commented):
+            with self.assertRaises(AssertionError):
+                assert_real_untouched(live)
 
     def test_writable_db_guard(self):
         self.sb.assert_writable_db_guard()

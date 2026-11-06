@@ -9,7 +9,10 @@
 import { h, hashColor } from './util.js';
 import { icon } from './icons.js';
 import { api, poll } from './api.js';
-import { createRouter, TABS, buildHash, parseHash, tabTitle } from './router.js';
+import { createRouter, TABS, TAB_IDS, buildHash, parseHash, tabTitle } from './router.js';
+import {
+  createRouteMemory, chooseHash, parseRouteHash, isBareHash,
+} from './route-memory.js';
 import { rooms, currentRoom, toasts, theme, health } from './store.js';
 import {
   initShellFeatures, installHotkeys, openRoomDialog, toggleNotifications,
@@ -22,7 +25,7 @@ import {
 } from './shell-sidebar.js';
 import { displayName } from './shell-labels.js';
 import { participantLabel } from './participant-label.js';
-import { crumbItems, requestTitle as fetchRequestTitle, scopeHash } from './scope.js';
+import { crumbItems, requestTitleInfo as fetchRequestTitleInfo, scopeHash } from './scope.js';
 import { folderActionButton, roomSettingsButton, projectDirHint } from './project-dir-button.js';
 import {
   waitingFor, refreshInbox, subscribeInbox, startInboxPolling,
@@ -210,20 +213,25 @@ let topbarKey = '';
 /** Название запроса для крошки: подгружается один раз на маршрут (Д3). */
 let requestCrumbId = '';
 let requestCrumbTitle = '';
+let requestCrumbHint = '';
 
 async function ensureRequestCrumb(route) {
   if (!route || route.name !== 'request' || !route.id) {
     requestCrumbId = '';
     requestCrumbTitle = '';
+    requestCrumbHint = '';
     return;
   }
   const id = String(route.id);
   if (id === requestCrumbId && requestCrumbTitle) return;
   requestCrumbId = id;
   requestCrumbTitle = '';
-  const title = await fetchRequestTitle(api, id);
+  requestCrumbHint = '';
+  // W17-G §1: в крошке короткое название, полный текст диктовки — в подсказке.
+  const info = await fetchRequestTitleInfo(api, id);
   if (requestCrumbId !== id) return;
-  requestCrumbTitle = title;
+  requestCrumbTitle = info.short || '';
+  requestCrumbHint = info.full || '';
   topbarKey = '';
   renderTopbar(router ? router.route : parseHash());
 }
@@ -268,6 +276,7 @@ function crumbsNav(route, room) {
     route,
     roomTitle: room && room.title,
     requestTitle: requestCrumbTitle,
+    requestHint: requestCrumbHint,
     tabTitle,
   });
   if (!items.length) return null;
@@ -277,13 +286,14 @@ function crumbsNav(route, room) {
   const badge = (items.find((item) => item.badge) || {}).badge || '';
   items.forEach((item, i) => {
     if (i) nav.appendChild(h('span', { class: 'crumbs__sep', 'aria-hidden': 'true' }, '›'));
+    const hint = item.hint || item.text;
     if (item.href) {
-      nav.appendChild(h('a', { class: 'crumbs__link', href: item.href, title: item.text }, item.text));
+      nav.appendChild(h('a', { class: 'crumbs__link', href: item.href, title: hint }, item.text));
     } else {
       nav.appendChild(h('span', {
         class: 'crumbs__here',
         'aria-current': item.current ? 'page' : null,
-        title: item.text,
+        title: hint,
       }, item.text));
     }
   });
@@ -321,7 +331,7 @@ function renderTopbar(route) {
   // Перерисовываем шапку только когда реально изменились данные — иначе
   // пятисекундный опрос дёргал бы вкладки под курсором.
   const key = [
-    route.name, route.roomId, route.tab, route.id, requestCrumbTitle,
+    route.name, route.roomId, route.tab, route.id, requestCrumbTitle, requestCrumbHint,
     room && room.title, roomPhase(room), room && room.project_dir,
     waitingOf(room).text,
     room && room.counts && room.counts.working,
@@ -443,10 +453,13 @@ function renderTopbar(route) {
             title: 'Нет данных: приложение не отвечает',
           }, '—');
         } else if (waits.n > 0) {
+          // B16: у числа есть пояснение «что считается» — иначе «7» не понять.
+          const explain = waits.text + ' ждут вашего решения. Считаются вопросы без вашего'
+            + ' ответа, заблокированные задачи и предложенные решения.';
           count = h('span', {
             class: 'tab__count count-pill count-pill--you',
-            'aria-label': waits.text + ' ждут вашего решения',
-            title: waits.text + ' ждут вашего решения',
+            'aria-label': explain,
+            title: explain,
           }, String(waits.n));
         }
       }
@@ -487,12 +500,84 @@ async function loadHealth() {
   if (route && route.name !== 'search' && route.name !== 'settings') renderTopbar(route);
 }
 
+/* ─────────────────────────── опрос бокового меню (WAVE17-P4: реже, одним запросом) */
+
+// Раньше каждые 5 секунд уходило 11 запросов по всем комнатам (список + «Недавнее»
+// + числа вопросов). Теперь: комнаты — из /api/rooms/summary (когда сервер умеет),
+// «Недавнее» и числа — не чаще раза в минуту.
+const ROOMS_POLL_MS = 15000;
+const RECENT_POLL_MS = 60000;
+const INBOX_POLL_MS = 45000;
+let summarySupported = null; // null — не проверяли; false — сервер не умеет
+let lastRecentAt = 0;
+let lastInboxAt = 0;
+
+/** Терпимо разобрать ответ /api/rooms/summary в список комнат. */
+function summaryRooms(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const raw = Array.isArray(payload) ? payload
+    : Array.isArray(payload.rooms) ? payload.rooms
+      : payload.rooms && typeof payload.rooms === 'object' ? Object.values(payload.rooms) : null;
+  if (!Array.isArray(raw)) return null;
+  return raw.filter((r) => r && typeof r === 'object' && (r.id || r.room_id));
+}
+
+/**
+ * Обновить счётчики комнат одним запросом сводки.
+ * Сервер без `/api/rooms/summary` (старый) — просто возвращаем false: работаем как раньше.
+ * @returns {Promise<boolean>} удалось ли (и можно ли не запрашивать /api/rooms)
+ */
+async function refreshSidebarSummary() {
+  if (summarySupported === false) return false;
+  try {
+    const data = await api.get('/api/rooms/summary', { etag: true });
+    if (data && data.notModified) { summarySupported = true; return true; }
+    const list = summaryRooms(data);
+    if (!list) { summarySupported = false; return false; }
+    summarySupported = true;
+    const current = rooms.get('list');
+    if (!current.length) return true; // базового списка ещё нет — придёт из /api/rooms
+    let changed = false;
+    const next = current.map((room) => {
+      const hit = list.find((r) => String(r.id || r.room_id || '') === String(room.id));
+      if (!hit) return room;
+      const counts = normalizeRoom(Object.assign({}, room, hit)).counts;
+      if (counts.working === room.counts.working
+          && counts.needs_you === room.counts.needs_you
+          && counts.done === room.counts.done) return room;
+      changed = true;
+      return Object.assign({}, room, { counts });
+    });
+    if (changed) {
+      rooms.set({ list: next, loadedAt: Date.now() });
+      renderRoomList();
+      updateTitle();
+    }
+    return true;
+  } catch {
+    summarySupported = false;
+    return false;
+  }
+}
+
+/** Фоновая часть меню: «Недавнее» и числа — не чаще раз в минуту. */
+function refreshSidebarExtras({ force = false } = {}) {
+  const now = Date.now();
+  if (force || now - lastRecentAt >= RECENT_POLL_MS) { lastRecentAt = now; loadRecent(); }
+  if (force || now - lastInboxAt >= INBOX_POLL_MS) { lastInboxAt = now; refreshInbox(); }
+}
+
 async function loadRooms({ silent = false } = {}) {
   if (!silent) rooms.set({ loading: true });
+  // Тихий опрос: сначала сводка (один запрос вместо пачки), иначе — прежний путь.
+  if (silent && await refreshSidebarSummary()) {
+    refreshSidebarExtras();
+    return;
+  }
   try {
     const payload = await api.get('/api/rooms', { etag: silent });
     if (payload && payload.notModified) {
-      loadRecent();
+      refreshSidebarExtras();
       return;
     }
     const list = normalizeRooms(payload);
@@ -509,8 +594,7 @@ async function loadRooms({ silent = false } = {}) {
     currentRoom.set({ id: route.roomId, room, phase: roomPhase(room) });
     renderTopbar(route);
   }
-  loadRecent();
-  refreshInbox();
+  refreshSidebarExtras();
 }
 
 function updateTitle() {
@@ -533,6 +617,11 @@ function onRoute(route) {
   if (route.roomId) {
     try { localStorage.setItem(LAST_ROOM_KEY, route.roomId); } catch { /* ignore */ }
   }
+  // B-16: каждый настоящий маршрут запоминаем (и рассказываем плагину — он
+  // использует хэш при пересоздании webview). Пустой хэш здесь НЕ забываем:
+  // роутер рисует «#» при старте, до того как мы прочитали память. Забывает
+  // маршрут только осознанный переход «на все комнаты» (hashchange в route-memory).
+  if (!isBareHash(route.hash)) routeMemory.remember(route.hash);
   ensureRequestCrumb(route);
   renderTopbar(route);
   markActiveRoom();
@@ -541,6 +630,11 @@ function onRoute(route) {
 }
 
 /* ──────────────────────────────────────────────────────────── монтирование */
+
+/** Память маршрута: последний хэш + прокрутка (B-16). */
+const routeMemory = createRouteMemory();
+/** Сколько ждём проверки «запрос ещё существует», мс (сервер может тормозить). */
+const ROUTE_CHECK_MS = 2500;
 
 function mountShell() {
   if (!el.sidebar || !el.topbar || !el.view) {
@@ -577,18 +671,61 @@ function mountShell() {
 
 /* ─────────────────────────────────────────────────────── старт приложения */
 
-function initialHash() {
-  if (location.hash && location.hash !== '#' && location.hash !== '#/') return location.hash;
-  let last = null;
-  try { last = localStorage.getItem(LAST_ROOM_KEY); } catch { /* ignore */ }
-  const list = rooms.get('list');
-  const room = (last && list.find((r) => r.id === last)) || list[0];
-  return room ? buildHash({ roomId: room.id, tab: 'composer' }) : '#/';
+/**
+ * Существует ли запрос из маршрута (B-16: не открывать удалённый запрос).
+ *
+ * Ответ просим коротким: `?fields=artifacts` оставляет только ядро карточки
+ * (id, название, статус) плюс необязательный блок — вместо 272 КБ детали.
+ * 404/410 → запроса нет (false). Сеть молчит, сервер перезапускается или
+ * ругается на параметр (400/501 — старый сервер) → `null`: маршрут НЕ
+ * выбрасываем, страница покажет «не удалось открыть» с кнопкой «Повторить».
+ * @param {string} id
+ * @returns {Promise<boolean|null>}
+ */
+async function requestExists(id) {
+  if (!id) return false;
+  const check = api.get('/api/requests/' + encodeURIComponent(id) + '?fields=artifacts')
+    .then((data) => {
+      if (data && data.notModified) return true;
+      return Boolean(data && (data.id || data.title || data.status || data.root_id));
+    })
+    .catch((err) => {
+      const status = Number((err && err.status) || 0);
+      if (status === 404 || status === 410) return false;
+      return null;
+    });
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(null), ROUTE_CHECK_MS));
+  return Promise.race([check, timeout]);
+}
+
+/**
+ * Маршрут для открытия: явный хэш → сохранённый последний → комната.
+ * Решение принимает `chooseHash` (чистая функция, покрыта тестами).
+ */
+async function initialHash() {
+  const stored = routeMemory.read();
+  const urlHash = location.hash;
+  const candidate = isBareHash(urlHash) ? stored.hash : urlHash;
+  const route = parseRouteHash(candidate);
+  const requestOk = route && route.kind === 'request' ? await requestExists(route.id) : null;
+  let last = '';
+  try { last = localStorage.getItem(LAST_ROOM_KEY) || ''; } catch { /* ignore */ }
+  return chooseHash({
+    urlHash,
+    stored,
+    roomIds: rooms.get('list').map((room) => room.id),
+    tabIds: TAB_IDS,
+    requestOk,
+    defaultRoom: last,
+  });
 }
 
 async function boot() {
   const { pref, persist } = readThemePref();
   applyTheme(pref, persist);
+  // B-16: память маршрута подключаем ДО роутера — иначе первая смена хэша
+  // пришла бы после перерисовки и позиция прокрутки потерялась бы.
+  routeMemory.connect();
   initShellFeatures({
     toast,
     api,
@@ -608,8 +745,15 @@ async function boot() {
   applyNotifyLabel();
 
   await Promise.all([loadHealth(), loadRooms()]);
-  if (!location.hash || location.hash === '#' || location.hash === '#/') {
-    location.replace(initialHash());
+  // B-16: открываем ПОЛНЫЙ прежний маршрут (явный хэш → память → комната),
+  // а не «Запрос» последней комнаты. Устаревший запрос не восстанавливаем.
+  const target = await initialHash();
+  if (target && target !== location.hash) {
+    // hashchange → router.render + route-memory.restore (прокрутка)
+    location.replace(target);
+  } else {
+    routeMemory.remember(target || '#/');
+    routeMemory.restore(target || '');
   }
   renderRoomList();
   updateTitle();
@@ -627,6 +771,19 @@ async function boot() {
     if (route) renderTopbar(route);
   }, { immediate: false });
 
+  // Переименование на странице запроса: крошка и заголовок окна обновляются сразу,
+  // без перезагрузки и без ожидания опроса (W17-G §1).
+  window.addEventListener('teamroom:request-title', (ev) => {
+    const data = (ev && ev.detail) || {};
+    if (String(data.id || '') !== requestCrumbId) return;
+    requestCrumbTitle = String(data.title_short || '');
+    topbarKey = '';
+    const route = router ? router.route : parseHash();
+    if (route) renderTopbar(route);
+    // «Недавнее» в сайдбаре тоже должно показать новое название сразу.
+    loadRecent();
+  });
+
   subscribeInbox(() => {
     const route = router ? router.route : parseHash();
     if (route) renderTopbar(route);
@@ -636,7 +793,7 @@ async function boot() {
 
   startInboxPolling();
 
-  poll(() => loadRooms({ silent: true }), 5000, { pauseHidden: true, immediate: false, onError: () => {} });
+  poll(() => loadRooms({ silent: true }), ROOMS_POLL_MS, { pauseHidden: true, immediate: false, onError: () => {} });
   poll(() => loadHealth(), 15000, { pauseHidden: true, immediate: false, onError: () => {} });
 
   window.addEventListener('online', () => { loadHealth(); loadRooms({ silent: true }); });

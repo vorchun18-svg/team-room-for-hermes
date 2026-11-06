@@ -223,14 +223,62 @@ export function errorToast(ctx, err, fallback = 'Не удалось обнов�
 /**
  * Обернуть таблицы ответа в прокручиваемый контейнер: широкая таблица
  * скроллится внутри ответа, а не растягивает страницу.
+ *
+ * WAVE17 (B3): обёртка `.req-table` держит рамку и тени-подсказки у краёв, а
+ * прокручивается внутренний `.req-table__scroll`. Подсказка показывается ТОЛЬКО
+ * с той стороны, где есть продолжение (`data-edge="end|start|both|none"`),
+ * поэтому она не врёт на короткой таблице. У внутреннего контейнера есть ключ
+ * прокрутки: точечное обновление страницы возвращает горизонтальную позицию.
  * @param {HTMLElement} host
  */
 export function wrapTables(host) {
   if (!host || typeof host.querySelectorAll !== 'function') return;
-  for (const table of Array.from(host.querySelectorAll('table'))) {
-    if (!table.parentNode || (table.closest && table.closest('.req-table'))) continue;
-    const wrap = h('div', { class: 'req-table', tabindex: '0', role: 'region', 'aria-label': 'Таблица ответа' });
+  const tables = Array.from(host.querySelectorAll('table'));
+  tables.forEach((table, index) => {
+    if (!table.parentNode || (table.closest && table.closest('.req-table'))) return;
+    const scroller = h('div', {
+      class: 'req-table__scroll', tabindex: '0', role: 'region',
+      'aria-label': 'Таблица «Свода»: широкая — прокручивается вбок',
+      'data-scroll-key': 'answer-table-' + (index + 1),
+    });
+    const wrap = h('div', {
+      class: 'req-table', 'data-edge': 'none',
+      title: 'Если таблица шире карточки — прокрутите её вбок',
+    }, scroller);
     table.parentNode.insertBefore(wrap, table);
-    wrap.appendChild(table);
+    scroller.appendChild(table);
+    attachEdgeHint(wrap, scroller);
+  });
+}
+
+/** Тени у краёв: `data-edge` пересчитывается при прокрутке и изменении ширины. */
+function attachEdgeHint(wrap, scroller) {
+  const update = () => {
+    try {
+      const max = scroller.scrollWidth - scroller.clientWidth;
+      const left = scroller.scrollLeft;
+      let edge = 'none';
+      if (max > 1) {
+        if (left <= 1) edge = 'end';
+        else if (left >= max - 1) edge = 'start';
+        else edge = 'both';
+      }
+      wrap.setAttribute('data-edge', edge);
+    } catch { /* измерение не удалось — подсказки просто нет */ }
+  };
+  scroller.addEventListener('scroll', update, { passive: true });
+  const RO = globalThis.ResizeObserver;
+  if (typeof RO === 'function') {
+    try {
+      const ro = new RO(update);
+      ro.observe(scroller);
+      const table = scroller.firstChild;
+      if (table) ro.observe(table);   // ширина содержимого тоже важна
+    } catch { /* ignore */ }
   }
+  // Первый замер: сразу (может быть рано — тогда после раскладки).
+  update();
+  const raf = globalThis.requestAnimationFrame;
+  if (typeof raf === 'function') raf(() => update());
+  setTimeout(update, 250);
 }

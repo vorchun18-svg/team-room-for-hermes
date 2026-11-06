@@ -15,7 +15,7 @@ import threading
 import time
 
 from mock_core import (FIXTURE_BY_RID, ApiError, child_id, compute_needs_you, counts_as_waiting,
-                       detail_to_summary, local_midnight, now)
+                       detail_to_summary, local_midnight, now, short_title)
 from mock_models import MockModels
 from mock_plan import MockPlan
 from mock_notes import MockNotes
@@ -108,6 +108,13 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
         out = [detail_to_summary(normalize_v2(copy.deepcopy(d)))
                for d in self.requests.values() if d.get("room") == room_id]
         out += [detail_to_summary(self.live_detail(rid)) for rid, req in self.live.items() if req["room"] == room_id]
+        # Переименование (PATCH) видно и в списках запросов, и в сводке бокового меню.
+        overrides = getattr(self, "title_overrides", None)
+        if isinstance(overrides, dict):
+            for item in out:
+                hit = overrides.get(str(item.get("id")))
+                if isinstance(hit, dict):
+                    item.update(hit)
         out.sort(key=lambda s: s["created_at"], reverse=True)
         return out
 
@@ -123,9 +130,21 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
         detail["thread"] = self.thread_for(rid, detail)
         self.plan_meta(rid, detail)                # brief/streams_summary/plan_link (WAVE9 §4)
         enrich_answers(detail)                     # W14-D: статусы ответов и метки шагов
+        # W17-B §4: переименование в демо (`PATCH /api/requests/{id}`) живёт в памяти
+        # мока и накладывается на любую сборку детали — как реестр у бэкенда.
+        override = (getattr(self, "title_overrides", None) or {}).get(str(rid))
+        if isinstance(override, dict) and override.get("title_short"):
+            detail["title_short"] = override["title_short"]
+            detail["title_source"] = override.get("title_source") or "user"
+            detail["title_locked"] = bool(override.get("title_locked"))
         # W14-H §12: шаги пересобираются на каждый GET — действия пользователя
         # («Согласен», «Убрать», …) накладываем заново, как реестр бэкенда.
         apply_step_overrides(detail, rid, self.step_overrides_for(rid))
+        # W17-B §4: переименование пользователем хранится отдельно от фикстуры —
+        # накладываем при каждом чтении (деталь, списки, сводка, бэклог).
+        overrides = getattr(self, "title_overrides", None)
+        if isinstance(overrides, dict) and rid in overrides:
+            detail.update(overrides[rid])
         return detail
 
     # --- бэклог комнаты ----------------------------------------------------
@@ -216,6 +235,11 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
         detail = normalize_v2(self.fixture("request_queued.json"))
         detail.update({
             "id": rid, "room": req["room"], "title": req["title"], "text": req["text"],
+            # W17-B §4: короткое название — от текста, а не от шаблона фикстуры;
+            # переименование пользователем (PATCH) главнее автоматического.
+            "title_short": req.get("title_short") or short_title(req["title"] or req["text"]),
+            "title_source": req.get("title_source") or "derived",
+            "title_locked": bool(req.get("title_locked")),
             "mode": "auto", "critic": req["critic"], "created_at": created,
             "started_at": None if phase == "queued" else created + 4,
             "finished_at": (created + total + 25 * max(0, revisions - 1)) if phase == "done" else None,

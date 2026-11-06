@@ -19,10 +19,12 @@ import {
   splitTeam, sortMembers, memberModel, countTeam, availableProfiles, withRoomRoles,
   sinceLabel, updatedLabel, roleLabel, plural,
 } from './team-roadmap-model.js';
-import { setProfileDirectory, participantLabel, labelOf } from '../participant-label.js';
-import { notesSummaryLine, notesOf, entriesOfItem, mountNotesEntries } from '../agent-notes-ui.js';
+import { setProfileDirectory, participantLabel, labelOf, shortJob } from '../participant-label.js';
+import { notesSummaryLine, notesOf, entriesOfItem } from '../agent-notes-ui.js';
+// Пакет F: модальный редактор «Особенности для этой комнаты» — только ссылка с карточки.
+import { notesLink } from '../notes-editor.js';
 // Модель участника (WAVE10): чип «модель: …» + «Изменить» → тот же редактор.
-import { agentModelLine, openAgentModelEditor } from '../agent-model-ui.js';
+import { agentModelLine, modelSent, openAgentModelEditor } from '../agent-model-ui.js';
 
 const POLL_MS = 5000;
 const ROLE_OPTIONS = [
@@ -54,7 +56,6 @@ export async function mount(el, ctx) {
     room: ctx.room || null,
     profiles: [],
     roots: new Set(),
-    editingRole: null,
     updatedAt: 0,
     settingsSig: '',
     outsideSig: '',
@@ -106,6 +107,9 @@ export async function mount(el, ctx) {
     return JSON.stringify([
       model.name, model.role, model.pinned, model.state, model.description, model.model,
       model.label, model.labelName, model.labelJob, model.customLabel, model.labelPending,
+      // WAVE17 B-17: подпись руководителя/критика живёт в карте комнаты —
+      // меняется она, перерисовывается и карточка.
+      ((state.room && state.room.role_labels) || {})[model.profile] || '',
       model.model_settings || null, model.agent_default || null,
       model.model_sent || null,
       // W14-I: число записей «Особенности для этой комнаты» — карточка обновится после правки
@@ -116,179 +120,263 @@ export async function mount(el, ctx) {
     ]);
   }
 
-  /** Инлайн-редактор роли: кнопка → select; сохранение через переотправку участника. */
-  function roleControl(model, rerender) {
-    if (!model.roleEditable) {
-      return h('span', {
-        class: 'tm-role-static small muted',
-        title: 'Роль руководителя комнаты и критика задаётся настройками комнаты',
-      }, 'роль фиксирована');
-    }
-    if (state.editingRole === model.profile) {
-      const select = h('select', { class: 'select tm-role-select', 'aria-label': 'Роль в комнате' });
-      for (const opt of ROLE_OPTIONS) {
-        const o = h('option', { value: opt.value }, opt.label);
-        if (opt.value === model.role) o.selected = true;
-        select.appendChild(o);
-      }
-      let closed = false;
-      const finish = (save) => {
-        if (closed) return;
-        closed = true;
-        state.editingRole = null;
-        const next = select.value;
-        if (save && next && next !== model.role) {
-          changeRole(model, next).catch(() => {});
-        } else {
-          rerender();
-        }
-      };
-      select.addEventListener('change', () => finish(true));
-      select.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finish(false); }
-      });
-      select.addEventListener('blur', () => finish(false));
-      setTimeout(() => { try { select.focus(); } catch { /* noop */ } }, 0);
-      return h('div', { class: 'tm-role-edit' }, select);
-    }
-    return h('button', {
-      class: 'btn btn--ghost btn--sm tm-role-btn',
-      type: 'button',
-      title: 'Изменить роль в комнате',
-      onclick: () => { state.editingRole = model.profile; rerender(); },
-    }, h('span', { class: 'tm-role-label' }, model.roleLabel), icon('edit', { size: 11 }));
-  }
-
-  /**
-   * «Особенности для этой комнаты» на карточке участника (WAVE14 §13, пункт 1).
-   *
-   * Видимое место редактирования: раскрыл — увидел записи и поле с диктовкой,
-   * добавил запись (она сразу в реестре комнаты и в журнале). Поля профиля не меняются.
-   */
-  function notesBlock(model, rerender) {
-    const room = state.room || {};
-    const item = notesOf(room)[model.profile] || null;
-    const entries = entriesOfItem(item);
-    const body = h('div', { class: 'tm-card__notesbody' });
-    const summaryCount = h('span', { class: 'tm-card__notescount' },
-      entries.length ? entries.length + ' ' + plural(entries.length, ['запись', 'записи', 'записей']) : 'нет');
-    const summary = h('summary', { class: 'tm-card__notessum', title: 'Добавка к роли участника — только в этой комнате' },
-      'Особенности для этой комнаты', summaryCount);
-    const det = h('details', { class: 'tm-card__notes' }, summary, body);
-    if (state.notesOpen.has(model.profile)) det.setAttribute('open', '');
-    let mounted = null;
-    let loading = false;
-    const mount = () => {
-      if (mounted || loading) return;
-      loading = true;
-      mountNotesEntries(body, ctx, {
-        room, roomId, profile: model.profile, entries, live: true, compact: true,
-        onChange: (profile, text, list) => {
-          // Счётчик у раскрытия обновляем сразу: карточка может перерисоваться позже.
-          const n = Array.isArray(list) ? list.length : entries.length;
-          summaryCount.textContent = n ? n + ' ' + plural(n, ['запись', 'записи', 'записей']) : 'нет';
-          load({ silent: true }).catch(() => {});
-        },
-      }).then((ui) => {
-        mounted = ui;
-        loading = false;
-      }).catch(() => { loading = false; });
-    };
-    det.addEventListener('toggle', () => {
-      if (det.open) {
-        state.notesOpen.add(model.profile);
-        mount();
-      } else {
-        state.notesOpen.delete(model.profile);
-      }
-    });
-    if (state.notesOpen.has(model.profile)) mount();
-    return det;
-  }
-
-  function memberCard(model, rerender) {
+  /** Живой статус одной строкой: точка, «работает / свободен / ждёт человека», «уже N мин». */
+  function stateLine(model) {
     const sinceNode = model.current && model.current.since
       ? h('span', { class: 'tm-since tnum', 'data-since': String(model.current.startedAt || '') },
         '· ' + model.current.since)
       : null;
-
-    const statusLine = h('div', { class: 'tm-state tm-state--' + model.stateKind },
+    return h('div', { class: 'tm-state tm-state--' + model.stateKind },
       h('span', { class: 'tm-dot' }),
       h('span', { class: 'tm-state__label' }, model.stateLabel),
       sinceNode);
+  }
 
-    // WAVE13 §11: заголовок карточки — имя и должность из описания профиля
-    // («Анна — финансы и экономика (CFO)»), техническое имя профиля — мелко под
-    // ним, слово «исполнитель» — роль бейджем, а не заголовком.
-    const label = labelOf({
-      profile: model.profile, name: model.labelName, job: model.labelJob, label: model.label,
-      role: model.role, title: model.title || model.name,
-      source: model.labelSource, pending: model.labelPending,
+  /**
+   * Меню «⋯» карточки (WAVE17 P2/B-17): у руководителя, критика и исполнителей
+   * ОДИН набор действий — «Изменить модель», «Подпись», «Роль в комнате…»;
+   * «Убрать из комнаты» — только у обычных исполнителей.
+   */
+  function cardMenu(model) {
+    const wrap = h('div', { class: 'tm-menu' });
+    const pop = h('div', { class: 'tm-menu__pop', role: 'menu', hidden: true });
+    const btn = h('button', {
+      class: 'btn btn--ghost btn--icon btn--sm tm-menu__btn', type: 'button',
+      'aria-haspopup': 'menu', 'aria-expanded': 'false',
+      'aria-label': 'Действия: ' + (model.labelName || model.name || model.profile),
+      title: 'Действия с участником',
+    }, icon('kebab-horizontal', { size: 15 }));
+
+    const onDoc = (ev) => { if (!wrap.contains(ev.target)) close(); };
+    const onKey = (ev) => {
+      if (ev.key === 'Escape') {
+        if (ev.stopPropagation) ev.stopPropagation();
+        close();
+        try { btn.focus(); } catch { /* noop */ }
+      }
+    };
+    let closed = false;
+    function close() {
+      if (closed) return;
+      closed = true;
+      pop.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('mousedown', onDoc, true);
+      document.removeEventListener('keydown', onKey, true);
+    }
+    function openMenu() {
+      closed = false;
+      pop.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      document.addEventListener('mousedown', onDoc, true);
+      document.addEventListener('keydown', onKey, true);
+      const first = pop.querySelector('button');
+      if (first) { try { first.focus(); } catch { /* noop */ } }
+    }
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (pop.hidden) openMenu(); else close();
     });
 
-    const head = h('div', { class: 'tm-card__head' },
-      avatar(label.short, { size: 34, title: label.title + ' · ' + model.profile }),
-      h('div', { class: 'tm-card__who' },
-        h('div', { class: 'tm-card__name', title: label.title + ' · профиль ' + model.profile }, label.title),
-        h('div', { class: 'tm-card__id small muted' },
-          // Заголовок уже роль — бейдж не повторяем; у исполнителей он короткий.
-          label.source === 'role'
-            ? null
-            : h('span', { class: 'tm-card__role small', title: 'Роль в комнате: ' + label.role }, label.roleShort),
-          h('span', { class: 'tm-card__profile mono truncate', title: 'Профиль Hermes: ' + model.profile },
-            model.profile))),
-      model.pinned
-        ? h('span', { class: 'chip chip--outline tm-badge', title: 'Закреплён в комнате: не убирается из состава' },
-          icon('pin', { size: 11 }), 'всегда в составе')
+    const item = (label, iconName, run, extra = {}) => h('button', {
+      class: 'tm-menu__item' + (extra.danger ? ' tm-menu__item--danger' : ''),
+      type: 'button', role: 'menuitem', tabindex: '-1',
+      onclick: () => { close(); run(); },
+    }, icon(iconName, { size: 13 }), h('span', null, label));
+
+    pop.appendChild(item('Изменить модель', 'settings-gear', () => { openMemberModel(model.profile).catch(() => {}); }));
+    pop.appendChild(item('Подпись', 'edit', () => { editLabel(model).catch(() => {}); }));
+    if (model.roleEditable) {
+      pop.appendChild(item('Роль в комнате…', 'organization', () => { openRoleDialog(model).catch(() => {}); }));
+    }
+    if (model.removable) {
+      pop.appendChild(item('Убрать из комнаты', 'trash', () => { removeMember(model).catch(() => {}); }, { danger: true }));
+    }
+    wrap.append(btn, pop);
+    return wrap;
+  }
+
+  /** Роль в комнате — маленький диалог вместо инлайн-селекта на карточке. */
+  function openRoleDialog(model) {
+    return new Promise((resolve) => {
+      const group = { value: model.role };
+      const rows = ROLE_OPTIONS.map((opt) => {
+        const input = h('input', { type: 'radio', name: 'tm-role', value: opt.value });
+        input.checked = opt.value === model.role;
+        const row = h('label', { class: 'tm-pick tm-pick--role' }, input,
+          h('span', { class: 'tm-pick__main' }, h('span', { class: 'tm-pick__name' }, opt.label)));
+        row.addEventListener('click', () => { input.checked = true; group.value = opt.value; });
+        return row;
+      });
+      const cancel = h('button', { class: 'btn btn--secondary', type: 'button', onclick: () => finish(false) }, 'Отмена');
+      const save = h('button', { class: 'btn btn--primary', type: 'button', onclick: () => finish(true) }, 'Сохранить');
+      const dialog = h('div', {
+        class: 'dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Роль в комнате',
+      },
+      h('div', { class: 'dialog__head' },
+        h('div', { class: 'dialog__title' }, 'Роль в комнате'),
+        h('button', { class: 'btn btn--ghost btn--icon btn--sm', type: 'button', title: 'Закрыть', onclick: () => finish(false) },
+          icon('close', { size: 14 }))),
+      h('div', { class: 'dialog__body' },
+        h('div', { class: 'stack stack--tight' }, rows,
+          h('p', { class: 'small muted' }, 'Роль влияет на то, какие задачи участник получает в этой комнате.'))),
+      h('div', { class: 'dialog__foot' }, cancel, save));
+      const overlay = h('div', { class: 'dialog-backdrop' }, dialog);
+      let done = false;
+      function finish(ok) {
+        if (done) return;
+        done = true;
+        const next = group.value;
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        document.removeEventListener('keydown', onKey, true);
+        resolve(ok ? next : null);
+        if (ok && next && next !== model.role) changeRole(model, next).catch(() => {});
+      }
+      function onKey(ev) {
+        if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finish(false); }
+      }
+      overlay.addEventListener('mousedown', (ev) => { if (ev.target === overlay) finish(false); });
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(overlay);
+      const first = rows[0] && rows[0].querySelector('input');
+      if (first) { try { first.focus(); } catch { /* noop */ } }
+    });
+  }
+
+
+  /**
+   * Подпись участника для карточки: руками заданная в этой комнате (в том числе
+   * для руководителя и критика — WAVE17 B-17, карта `role_labels`), иначе из
+   * описания профиля Hermes, иначе роль в комнате.
+   */
+  function labelPartsOf(model) {
+    const roomLabels = (state.room && state.room.role_labels) || {};
+    const custom = String(model.customLabel || roomLabels[model.profile] || '').trim();
+    const label = labelOf({
+      profile: model.profile, name: model.labelName, job: model.labelJob,
+      label: custom || model.label,
+      role: model.role, title: model.title || model.name,
+      source: custom ? 'member' : model.labelSource, pending: model.labelPending,
+    });
+    const name = String(label.name || '').trim();
+    const job = String(label.job || '').trim();
+    return { label, custom, name, job, none: !custom && !name && !job };
+  }
+
+  /** Сколько записей «Особенности для этой комнаты» у участника. */
+  function notesCount(profile) {
+    return entriesOfItem(notesOf(state.room || {})[profile] || null).length;
+  }
+
+  /**
+   * Компактная карточка участника (WAVE17 P2 + B-17).
+   *
+   * На лице — только то, что нужно каждый день: аватар, имя и должность,
+   * роль-бейдж, живой статус, одна строка «Сейчас: …», ОДИН чип модели,
+   * ссылка «Особенности (N)» и меню «⋯». Последняя работа, счётчики задач,
+   * профиль и правила роли — в «Подробнее» (подсказка/раскрытие), как просил
+   * аудит: «СЕЙЧАС/ПОСЛЕДНЯЯ/готово N/роль фиксирована» с лица убрать.
+   */
+  function memberCard(model) {
+    const { label, name, job, none } = labelPartsOf(model);
+    const heading = name || (job ? shortJob(job) : label.title);
+    const profileTitle = 'Профиль Hermes: ' + model.profile;
+    const titleAttr = label.title + ' · ' + profileTitle;
+
+    // «Задайте подпись» вместо сухого «Исполнитель lawyer» (B-17): у профилей
+    // без описания (default, lawyer, surveyor) заголовок — роль, а рядом мягкая
+    // подсказка, которая сразу открывает поле подписи.
+    const jobNode = none
+      ? h('button', {
+        class: 'tm-card__setlabel', type: 'button',
+        title: 'Задайте подпись: как называть участника в этой комнате (профиль Hermes не меняется)',
+        onclick: () => { editLabel(model).catch(() => {}); },
+      }, 'Задайте подпись', icon('edit', { size: 11 }))
+      : (job
+        ? h('div', { class: 'tm-card__job', title: job }, shortJob(job))
         : null);
 
-    // Описание профиля — одна короткая строка; полный текст в подсказке и по кнопке
-    // «ещё» (замечание Михаила: не обрезать на «…» там, где текст можно показать).
-    // Если описание — это та же «Имя — должность», второй раз не повторяем.
-    const rawDesc = String(model.description || '');
-    const descText = rawDesc && rawDesc !== label.title ? rawDesc : String(model.note || '');
-    const longDesc = descText.length > 90;
-    const desc = h('p', {
-      class: 'tm-card__desc' + (descText ? '' : ' muted'),
-      title: descText || 'Описание профиля не задано.',
-    }, descText || 'Описание профиля не задано.');
-    const moreBtn = longDesc
-      ? h('button', { class: 'tm-card__more', type: 'button', 'aria-expanded': 'false' }, 'ещё')
-      : null;
-    if (longDesc) {
-      const toggle = (ev) => {
-        if (ev) ev.preventDefault();
-        const open = desc.classList.toggle('tm-card__desc--open');
-        moreBtn.textContent = open ? 'свернуть' : 'ещё';
-        moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-      };
-      moreBtn.addEventListener('click', toggle);
-    }
-    const descBox = h('div', { class: 'tm-card__descbox' }, desc, moreBtn);
+    // Роль не повторяем дважды: бейдж не нужен, если должность — это сама роль
+    // («руководитель комнаты», «критик») или заголовок уже роль (нет описания).
+    const roleWord = String(label.roleShort || '').toLowerCase();
+    const roleFull = String(label.role || '').toLowerCase();
+    const jobStart = String(job || '').toLowerCase().replace(/^[^0-9a-zа-яё]+/, '');
+    const headingIsRole = !name && !job;
+    const startsAsRole = Boolean(jobStart) && (
+      jobStart === roleWord || jobStart === roleFull
+      || (roleWord && jobStart.indexOf(roleWord + ' ') === 0)
+      || (roleFull && jobStart.indexOf(roleFull + ' ') === 0));
+    const roleBadge = (headingIsRole || startsAsRole)
+      ? null
+      : h('span', { class: 'tm-role', title: 'Роль в комнате: ' + label.role }, label.roleShort);
 
-    // WAVE10: маленький чип «модель: …» + «Изменить» — открывает тот же редактор.
-    const meta = h('div', { class: 'tm-card__meta' },
-      agentModelLine(state.room || ctx.room, model.profile, {
-        profile: model.profile,
-        role: model.role,
-        title: model.title || model.name,
-        model_settings: model.model_settings,
-        agent_default: model.agent_default,
-        model_sent: model.model_sent,
-      }, { catalog: state.catalog, onEdit: (profile) => { openMemberModel(profile).catch(() => {}); } }),
-      h('span', { class: 'tm-card__counts tnum', title: 'Задачи профиля в комнате' },
-        'готово ' + model.counts.done,
-        model.counts.blocked ? ' · блок ' + model.counts.blocked : '',
-        model.counts.active ? ' · в работе ' + model.counts.active : ''));
+    const head = h('div', { class: 'tm-card__head' },
+      avatar(label.short, { size: 32, title: titleAttr }),
+      h('div', { class: 'tm-card__who' },
+        h('div', { class: 'tm-card__titleline' },
+          h('span', { class: 'tm-card__name', title: titleAttr }, heading),
+          roleBadge),
+        jobNode),
+      h('div', { class: 'tm-card__tools' },
+        model.pinned
+          ? h('span', { class: 'tm-card__pin', title: 'Всегда в составе: не убирается из комнаты' }, icon('pin', { size: 12 }))
+          : null,
+        cardMenu(model)));
 
-    const nowBox = h('div', { class: 'tm-card__line tm-card__line--now' },
-      h('span', { class: 'tm-card__label' }, 'сейчас'),
+    // Одна строка «Сейчас: …» — обрезка в одну строку, полный текст в подсказке.
+    const nowLine = h('div', { class: 'tm-card__now' },
+      h('span', { class: 'tm-card__nowlabel' }, 'Сейчас:'),
       model.current
         ? taskLink(model.current.taskId, model.current.title)
-        : h('span', { class: 'small muted' },
-          model.stateKind === 'waiting' ? 'ждёт ответа человека' : 'активной задачи нет'));
+        : h('span', { class: 'tm-card__nowempty', title: model.stateKind === 'waiting' ? 'Ждёт ответа человека — работа продолжится после ответа' : 'Свободен: активной задачи нет' },
+          model.stateKind === 'waiting' ? 'ждёт ответа человека' : 'свободен'));
 
-    const lastBox = h('div', { class: 'tm-card__line' },
+    // Предупреждение о модели — ТОЛЬКО если последняя карточка участника ушла
+    // не на выбранную модель (P2, пункт 2). Текст человеческий, подробности по кнопке.
+    const sent = modelSent({ model_sent: model.model_sent });
+    let warn = null;
+    if (sent && sent.mismatch) {
+      const sentDetail = h('div', { class: 'tm-card__sentdetail', hidden: true },
+        h('span', { class: 'tm-card__sentsum' },
+          (sent.confirmed ? 'Последняя карточка ушла на: ' : 'В карточке записано: ') + sent.text),
+        h('button', {
+          class: 'tm-card__linkbtn', type: 'button',
+          title: 'Открыть модель, провайдера и мышление участника',
+          onclick: () => { openMemberModel(model.profile).catch(() => {}); },
+        }, 'Изменить модель'));
+      const more = h('button', {
+        class: 'tm-card__linkbtn', type: 'button', 'aria-expanded': 'false',
+        title: 'Какая модель была на самом деле',
+        onclick: () => {
+          const open = sentDetail.hidden;
+          sentDetail.hidden = !open;
+          more.setAttribute('aria-expanded', open ? 'true' : 'false');
+        },
+      }, 'Показать модель');
+      warn = h('div', { class: 'tm-card__warn' },
+        icon('warning', { size: 13 }),
+        h('span', { class: 'tm-card__warntext' }, 'Последний запуск шёл на другой модели — проверьте'),
+        more, sentDetail);
+    }
+
+    const chip = agentModelLine(state.room || ctx.room, model.profile, {
+      profile: model.profile,
+      role: model.role,
+      title: model.title || model.name,
+      model_settings: model.model_settings,
+      agent_default: model.agent_default,
+      model_sent: model.model_sent,
+    }, { catalog: state.catalog, compact: true });
+
+    // «Особенности (N)» — ссылка на модальный редактор (пакет F), счётчик
+    // обновляется сам после правки записей.
+    const notes = notesLink(ctx, {
+      roomId, profile: model.profile, label: label.title, room: state.room || {},
+      count: notesCount(model.profile),
+      onChange: () => { refreshRoom().then(() => load({ silent: true })).catch(() => {}); },
+    });
+
+    const lastLine = h('div', { class: 'tm-card__line' },
       h('span', { class: 'tm-card__label' }, 'последняя'),
       model.last
         ? h('span', { class: 'tm-card__last-body' },
@@ -296,32 +384,35 @@ export async function mount(el, ctx) {
           h('span', { class: 'small muted nowrap' }, model.last.at ? ' · ' + model.last.at : ''))
         : h('span', { class: 'small muted' }, 'работ ещё не было'));
 
-    // «Подпись» — как участник называется в этой комнате (WAVE13 §11). У руководителя
-    // и критика подпись задаётся настройками комнаты, поэтому кнопки нет.
-    const labelBtn = model.removable
-      ? h('button', {
-        class: 'btn btn--ghost btn--sm tm-label-btn', type: 'button',
-        title: model.customLabel
-          ? 'Подпись задана вручную: ' + model.customLabel + '. Изменить'
-          : 'Подписать участника: имя и должность вместо технического профиля',
-        onclick: () => { editLabel(model).catch(() => {}); },
-      }, icon('edit', { size: 12 }), 'Подпись')
-      : null;
+    const countsLine = h('div', { class: 'tm-card__line' },
+      h('span', { class: 'tm-card__label' }, 'задачи'),
+      h('span', { class: 'small muted', title: 'Сколько задач профиля в этой комнате закрыто, заблокировано и идёт сейчас' },
+        'готово ' + model.counts.done
+        + (model.counts.blocked ? ' · блок ' + model.counts.blocked : '')
+        + (model.counts.active ? ' · в работе ' + model.counts.active : '')));
 
-    const foot = h('div', { class: 'tm-card__foot' },
-      h('div', { class: 'tm-card__acts' }, roleControl(model, rerender), labelBtn),
-      model.removable
-        ? h('button', {
-          class: 'btn btn--ghost btn--sm tm-remove', type: 'button', title: 'Убрать из комнаты',
-          onclick: () => { removeMember(model).catch(() => {}); },
-        }, icon('trash', { size: 12 }), 'Убрать')
-        : h('span', { class: 'tm-card__hint small muted' },
-          model.isDirector ? 'руководитель комнаты — не убирается' : 'критик комнаты — не убирается'));
+    const profileLine = h('div', { class: 'tm-card__line' },
+      h('span', { class: 'tm-card__label' }, 'профиль'),
+      h('span', { class: 'small muted mono truncate', title: profileTitle }, model.profile));
+
+    const details = h('details', { class: 'tm-card__more' },
+      h('summary', { class: 'tm-card__moresum', title: 'Последняя работа, счётчики задач и профиль Hermes' }, 'Подробнее'),
+      h('div', { class: 'tm-card__morebody' }, lastLine, countsLine, profileLine,
+        model.roleEditable ? null : h('div', { class: 'small muted tm-card__rolenote' },
+          model.isDirector ? 'Роль руководителя задаётся настройками комнаты' : 'Роль критика задаётся настройками комнаты')));
 
     return h('article', {
       class: 'card tm-card' + (model.stateKind === 'working' ? ' tm-card--live' : ''),
       dataset: { profile: model.profile },
-    }, head, statusLine, descBox, nowBox, lastBox, meta, notesBlock(model, rerender), foot);
+    },
+    head,
+    // Свободен — эту же мысль уже говорит строка «Сейчас: свободен»; отдельная
+    // строка статуса нужна только когда есть работа или ожидание человека.
+    (model.stateKind === 'idle' && !model.current) ? null : stateLine(model),
+    nowLine,
+    warn,
+    h('div', { class: 'tm-card__meta' }, chip, notes),
+    details);
   }
 
   /* ------------------------------------------------------------- отрисовка */
@@ -381,14 +472,12 @@ export async function mount(el, ctx) {
       });
       wanted.add(model.profile);
       const sig = sigOf(model);
-      const editing = state.editingRole === model.profile;
       let entry = cards.get(model.profile);
-      const needRebuild = !entry || entry.editing !== editing || (entry.sig !== sig && !editing);
+      const needRebuild = !entry || entry.sig !== sig;
       if (needRebuild) {
-        const rerender = () => paintGrid(rawList);
-        const node = memberCard(model, rerender);
+        const node = memberCard(model);
         if (entry && entry.node.parentNode) entry.node.replaceWith(node);
-        entry = { node, sig, editing };
+        entry = { node, sig };
         cards.set(model.profile, entry);
       }
       const target = entry.node;
@@ -629,21 +718,24 @@ export async function mount(el, ctx) {
     } catch (err) {
       toast(err && err.message ? err.message : 'Не удалось изменить роль', 'danger');
     } finally {
-      state.editingRole = null;
       await refreshRoom();
       await load({ silent: true });
     }
   }
 
-  /** Подпись участника в комнате: «Имя — должность» (WAVE13 §11). */
+  /** Подпись участника в комнате: «Имя — должность» (WAVE13 §11, B-17 — у всех). */
   async function editLabel(model) {
+    const roomLabels = (state.room && state.room.role_labels) || {};
+    const custom = String(model.customLabel || roomLabels[model.profile] || '').trim();
+    const initial = custom || (model.labelSource === 'role' ? '' : model.label || '');
     const value = await promptDialog({
       title: 'Подпись участника',
       label: 'Имя и должность',
-      initial: model.customLabel || model.label || '',
+      initial,
       placeholder: 'Анна — финансы и экономика (CFO)',
-      hint: 'Так участник называется в этой комнате. Пустое поле — вернуть подпись из '
-        + 'описания профиля Hermes. Файлы профиля (SOUL.md, config.yaml) не меняются.',
+      hint: 'Так участник называется в этой комнате — у руководителя, критика и исполнителей '
+        + 'одинаково. Пустое поле — вернуть подпись из описания профиля Hermes. '
+        + 'Файлы профиля (SOUL.md, config.yaml) не меняются.',
       submitLabel: 'Сохранить',
     });
     if (value === null) return;

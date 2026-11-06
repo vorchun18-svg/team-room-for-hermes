@@ -31,6 +31,7 @@ if str(_PROJECT_DIR) not in sys.path:
 
 import server.config as config                      # noqa: E402
 import server.http_util as http_util                # noqa: E402
+import server.phase_book as phase_book              # noqa: E402
 from server.http_util import ApiError, Raw, err     # noqa: E402
 from server.watcher import Watcher                  # noqa: E402
 from server.routes_read import ReadRoutes           # noqa: E402
@@ -43,6 +44,7 @@ from server.app_common import (                    # noqa: E402
     MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS, ROOM_STATUSES, _backlog_counts, decode_cursor,
     derive_title, encode_cursor, make_slug, preview, try_call,
 )
+from server.title_short import short_title          # noqa: E402  # W17-B §4
 
 DEFAULT_BOARD = os.environ.get("TEAMROOM_BOARD") or "team"
 MAX_THREADS = 64             # D11: предел одновременных соединений (сверх — 503)
@@ -389,9 +391,13 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
                         ((self.cfg, board, root_id), {"room": room}))
         return res if isinstance(res, dict) else {}
 
-    def _detail(self, room: dict, root_id: str, extra=None, critic=None, answers=None) -> dict:
+    def _detail(self, room: dict, root_id: str, extra=None, critic=None, answers=None,
+                include_heartbeat: bool = False) -> dict:
         board = room.get("board") or self.board
         res = self.call("engine_read", "request_detail",
+                        ((self.cfg, board, root_id, room, list(extra or [])),
+                         {"critic": critic, "answers": answers,
+                          "include_heartbeat": bool(include_heartbeat)}),
                         ((self.cfg, board, root_id, room, list(extra or [])),
                          {"critic": critic, "answers": answers}),
                         ((self.cfg, board, root_id, room, list(extra or [])), {}),
@@ -411,7 +417,11 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
 
     def _local_summary(self, room: dict, root_id: str, text: str = "", title: str = "",
                        critic: bool = False, mode: str = "auto") -> dict:
-        return {"id": root_id, "room": room.get("id"), "title": title or derive_title(text),
+        full = title or derive_title(text)
+        return {"id": root_id, "room": room.get("id"), "title": full,
+                # W17-B §4: короткое название есть даже когда движок недоступен
+                "title_short": short_title(full),
+                "title_source": "derived", "title_locked": False,
                 "status": "queued", "status_reason": None, "mode": mode,
                 "critic": {"enabled": bool(critic), "state": "off", "verdict": None, "round": 0},
                 "created_at": int(time.time()), "started_at": None, "finished_at": None,
@@ -461,6 +471,12 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
         cached = self.watcher.summary_for(rid) if self.watcher else None
         cached = cached or {}
         counters = dict(cached.get("counters") or {"working": 0, "needs_you": 0, "done_today": 0})
+        # W17-R §1 (B-8): этапы — свойство комнаты. Нет этапов — нет и чипа этапа,
+        # даже если в кэше вотчера осталась старая фаза из прежней константы.
+        # Нет этапов у комнаты — нет и чипа этапа. Текущий этап даёт наблюдатель
+        # (кэш), а не расчёт на каждом запросе: ETag комнаты не должен «дрожать».
+        phases = phase_book.phases_of(self.cfg, room)
+        phase = cached.get("phase") if phases else None
         return {"id": rid, "title": room.get("title") or rid, "icon": room.get("icon") or "folder",
                 "archived": bool(room.get("archived")), "orchestrator": room.get("orchestrator"),
                 "critic": room.get("critic"), "members_count": len(room.get("members") or []),
@@ -477,8 +493,10 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
                 "launch_mode": str(room.get("launch_mode") or "plan_first"),
                 "max_parallel_streams": int(room.get("max_parallel_streams") or 2),
                 "project_mode": bool(room.get("project_mode")),
+                # Этапы комнаты — в списке, чтобы карта не делала лишний запрос.
+                "phases": phases,
                 "counters": counters,
-                "phase": cached.get("phase"),
+                "phase": phase,
                 "updated_at": int(cached.get("updated_at") or room.get("created_at") or 0)}
 
     def _room_detail(self, room: dict) -> dict:
@@ -486,6 +504,7 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
         detail = {key: value for key, value in room.items()
                   if key not in ("counters", "phase", "dispatcher")}
         detail.update({"counters": summary["counters"], "phase": summary["phase"],
+                       "phases": summary.get("phases") or [],
                        "dispatcher": self._dispatcher_short()})
         # Модель/провайдер/мышление участников (WAVE10): model_settings + agent_default
         # у каждого участника и общая карта agent_models_meta. Модуль не готов — Room без них.
@@ -547,6 +566,15 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
         view["items"] = items
         view["counts"] = view.get("counts") or _backlog_counts(items)
         view.setdefault("updated_at", int(time.time()))
+        # W17-B §7 (B7): статус вопроса берётся из реестра ответов (единственный
+        # источник истины), близнецы схлопываются, служебные вопросы скрываются.
+        # Читается каждый раз заново — поэтому ответ виден в «Дальше» сразу, без
+        # ожидания следующего прохода плана. Данные на диске не меняются.
+        if self._has_mod("answers"):
+            try:
+                view = self.mod("answers").backlog_overlay(view, self._records(room_id, quiet=True))
+            except Exception as exc:  # noqa: BLE001 - бэклог важнее меток
+                self.log.warning("бэклог: наложение ответов %s: %s" % (room_id, exc))
         return view
 
     def _report_csp(self) -> str:
@@ -604,8 +632,11 @@ ROUTES = [(method, re.compile(pattern), handler) for method, pattern, handler in
     ("GET", r"/api/logs", "h_logs"),
     ("GET", r"/api/config", "h_config"),
     ("GET", r"/api/profiles", "h_profiles"),
+    ("GET", r"/api/dispatcher/preview", "h_dispatcher_preview"),
     ("POST", r"/api/dispatcher/kick", "h_kick"),
     ("GET", r"/api/rooms", "h_rooms"),
+    # ВАЖНО: раньше маршрута комнаты по id — иначе «summary» матчится как id комнаты.
+    ("GET", r"/api/rooms/summary", "h_rooms_summary"),
     ("POST", r"/api/rooms", "h_room_create"),
     ("POST", r"/api/rooms/check-dir", "h_room_check_dir"),
     ("GET", r"/api/rooms/" + _ROOM, "h_room_get"),
@@ -623,6 +654,8 @@ ROUTES = [(method, re.compile(pattern), handler) for method, pattern, handler in
     ("POST", r"/api/rooms/" + _ROOM + r"/requests", "h_request_create"),
     ("GET", r"/api/rooms/" + _ROOM + r"/candidates", "h_candidates"),
     ("GET", r"/api/requests/" + _RID, "h_request_get"),
+    # Переименование запроса пользователем (W17-B §4): title_source=user, title_locked.
+    ("PATCH", r"/api/requests/" + _RID, "h_request_patch"),
     ("POST", r"/api/requests/" + _RID + r"/actions", "h_request_actions"),
     ("POST", r"/api/requests/" + _RID + r"/messages", "h_request_messages"),
     ("GET", r"/api/rooms/" + _ROOM + r"/team", "h_team"),

@@ -41,7 +41,7 @@
 }
 
 .rc-chart__unit {
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--rc-muted);
   border: 1px solid var(--rc-border);
@@ -120,7 +120,7 @@
 }
 
 .rc-value {
-  font-size: 10.5px;
+  font-size: 12px;
   fill: var(--rc-fg);
   font-variant-numeric: tabular-nums;
 }
@@ -174,7 +174,7 @@
 
 .rc-pie-pct {
   fill: var(--rc-muted);
-  font-size: 10.5px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -186,7 +186,7 @@
 
 .rc-donut-sub {
   fill: var(--rc-muted);
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .rc-hit {

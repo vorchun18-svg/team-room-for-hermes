@@ -176,7 +176,6 @@
           "outcome": "completed",
           "started_at": 1793160030,
           "ended_at": 1793161200,
-          "summary": "Свод собран.",
           "error": null
         }
       ],
@@ -206,7 +205,6 @@
           "outcome": "completed",
           "started_at": 1793160100,
           "ended_at": 1793160900,
-          "summary": "Справка по зоне готова.",
           "error": null
         }
       ],
@@ -236,7 +234,6 @@
           "outcome": "completed",
           "started_at": 1793160200,
           "ended_at": 1793160800,
-          "summary": "Расхождение найдено.",
           "error": null
         }
       ],
@@ -266,7 +263,6 @@
           "outcome": "completed",
           "started_at": 1793160300,
           "ended_at": 1793161000,
-          "summary": "Точки подключения описаны.",
           "error": null
         }
       ],
@@ -296,7 +292,6 @@
           "outcome": "completed",
           "started_at": 1793160400,
           "ended_at": 1793160700,
-          "summary": "Схема нарисована.",
           "error": null
         }
       ],
@@ -422,6 +417,10 @@
       "task_id": "t_4e91c7b2",
       "kind": "event"
     }
-  ]
+  ],
+  "title_short": "Участок под базу: зона, обременения, доступ к воде",
+  "heartbeats": {
+    "count": 0,
+    "last_at": null
+  }
 }
-

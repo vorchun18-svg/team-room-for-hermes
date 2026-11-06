@@ -31,7 +31,7 @@ WARNING_CODES = {"legacy_metadata", "missing_artifact", "no_synthesis", "report_
                  "partial_ingest", "dispatcher_down", "card_failed", "outside_room", "critic_failed",
                  "critic_rounds_exhausted"}
 TIMELINE_KINDS = {"created", "decomposed", "promoted", "claimed", "started", "commented", "completed",
-                  "blocked", "unblocked", "failed", "archived"}
+                  "blocked", "unblocked", "failed", "archived", "heartbeat"}   # W17-B §5
 JOURNAL_KINDS = {"request_created", "request_status", "request_done", "step_added", "step_done",
                  "question_open", "question_answered", "decision_proposed", "decision_accepted",
                  "report_added", "artifact_added", "member_added", "member_removed", "room_created",

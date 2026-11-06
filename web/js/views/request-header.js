@@ -9,8 +9,10 @@
 import { h, fmtDateTime, fmtDuration, fromCount } from '../util.js';
 import { icon } from '../icons.js';
 import { statusChip, confirmDialog } from '../ui.js';
-import { firstLine, criticOf, synthesisOf } from './request-util.js';
+import { criticOf, synthesisOf } from './request-util.js';
 import { KICK_LABEL, kickStateFromTree, kickUsefulness, kickNow } from './kick-panel.js';
+import { buildTitleBlock } from '../title-edit.js';
+import { resetRequestTitles } from '../scope.js';
 
 export function createHeader(R) {
   const { rid, ctx, state, render, runAction, cloneRequest, decompose } = R;
@@ -192,7 +194,26 @@ export function createHeader(R) {
         h('a', { href: `#/room/${encodeURIComponent(R.roomId)}/composer` },
           icon('arrow-left', { size: 12 }), 'К запросам')),
       h('div', { class: 'req__headrow' },
-        h('h1', { class: 'req__title' }, d.title || firstLine(d.text) || 'Запрос'),
+        // W17-G §1 (B8/P5): короткое название + карандаш и замок. Полный текст
+        // диктовки — в подсказке и в блоке «Запрос» ниже, не в заголовке.
+        buildTitleBlock({
+          getDetail: () => R.detail,
+          api: ctx.api,
+          toast: typeof ctx.toast === 'function' ? ctx.toast : R.toast,
+          roomTitle: (R.room && R.room.title) || '',
+          onSaved: () => {
+            // Крошка и заголовок окна берут название из кеша — сбрасываем его.
+            resetRequestTitles();
+            if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+              try {
+                window.dispatchEvent(new CustomEvent('teamroom:request-title', {
+                  detail: { id: String(R.detail.id || rid), title_short: String(R.detail.title_short || '') },
+                }));
+              } catch { /* старый браузер без CustomEvent */ }
+            }
+            render();
+          },
+        }),
         h('div', { class: 'req__headactions' }, actionsMenu())),
       meta);
   }

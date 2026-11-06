@@ -12,8 +12,8 @@
  *
  * Источники состояния доски:
  *   * страница запроса — дерево работ (`kickStateFromTree`), без запроса к серверу;
- *   * «Здоровье» в настройках — предпросмотр `POST /api/dispatcher/kick {preview:true}`
- *     (только чтение доски, ничего не запускает).
+ *   * «Здоровье» в настройках — предпросмотр `GET /api/dispatcher/preview`
+ *     (чтение доски, ничего не запускает; B12: раньше это был POST).
  */
 
 import { h } from '../util.js';
@@ -269,10 +269,35 @@ export function kickTitle(report, opts = {}) {
 
 /* ───────────────────────────────────────────────────── запросы к API */
 
-/** Предпросмотр: состояние доски без запуска (работает и в песочнице). */
+/**
+ * Предпросмотр: состояние доски без запуска.
+ *
+ * B12: это ЧТЕНИЕ, поэтому идёт `GET /api/dispatcher/preview` — GET ничего не
+ * пишет, не попадает под лимит частоты и честно работает в песочнице. Раньше
+ * на каждую загрузку экрана уходил `POST /api/dispatcher/kick {preview:true}`.
+ * Старый сервер (без нового маршрута) — прозрачный откат на прежний POST.
+ * @param {{get?: Function, post?: Function}} api
+ * @returns {Promise<object|null>} итог (`KickReport`) или null
+ */
 export async function kickPreview(api) {
-  const res = await api.post('/api/dispatcher/kick', { preview: true });
-  const report = res && res.report ? res.report : null;
+  if (api && typeof api.get === 'function') {
+    let res = null;
+    try {
+      res = await api.get('/api/dispatcher/preview');
+    } catch (err) {
+      const status = Number((err && err.status) || 0);
+      // 404/405/501 — сервер не знает маршрут; сеть/500 — не подменяем поведение.
+      if (status !== 404 && status !== 405 && status !== 501) throw err;
+      res = null;
+    }
+    if (res && typeof res === 'object') {
+      const report = res.report && typeof res.report === 'object' ? res.report : null;
+      if (report && Object.keys(report).length) return report;
+      return null;   // сервер ответил «смотреть нечего» — кнопку просто не покажем
+    }
+  }
+  const legacy = await api.post('/api/dispatcher/kick', { preview: true });
+  const report = legacy && legacy.report ? legacy.report : null;
   return report && typeof report === 'object' ? report : null;
 }
 

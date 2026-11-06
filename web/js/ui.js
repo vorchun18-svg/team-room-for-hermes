@@ -567,7 +567,8 @@ export function pathChip(path) {
     type: 'button',
     title: p || undefined,
     'aria-label': p ? 'Открыть: ' + p : 'Файл',
-  }, icon('file-text', { size: 11 }), h('span', { class: 'path-chip__text mono' }, shortPath(p)));
+  // B8 (пакет G): у обрезаемого текста своя подсказка — полный путь.
+  }, icon('file-text', { size: 11 }), h('span', { class: 'path-chip__text mono', title: p || undefined }, shortPath(p)));
   el.addEventListener('click', () => { openPath(p).catch(() => {}); });
   return el;
 }
@@ -901,7 +902,13 @@ function trapTab(ev, root) {
  *          onCancel: Function, onKey?: Function, initialFocus?: HTMLElement}} cfg
  * @returns {{dialog: HTMLElement, body: HTMLElement, foot: HTMLElement, close: Function}}
  */
-function buildDialog(cfg) {
+/**
+ * Собрать модальное окно (общий каркас для confirm/prompt и своих диалогов).
+ * @param {{title?: string, body?: any, buttons?: HTMLElement[], initialFocus?: HTMLElement,
+ *          wide?: boolean, onCancel: Function, onKey?: Function}} cfg
+ * @returns {{dialog: HTMLElement, body: HTMLElement, foot: HTMLElement, overlay: HTMLElement, close: Function}}
+ */
+export function buildDialog(cfg) {
   const d = globalThis.document;
   const cfgObj = cfg || {};
   const titleId = uid('dlg');

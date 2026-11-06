@@ -1,5 +1,5 @@
 /**
- * plan-streams.test.mjs — блок «Направления» на вкладке «Карта проекта».
+ * plan-streams.test.mjs — блок «Части работы» на вкладке «Карта проекта».
  *
  * Что проверяем (критерии волны 9, PLAN-FE-MAP):
  *  • чипы всех семи статусов по-русски: Предложено, В очереди, Идёт, Ждёт лимит,
@@ -8,8 +8,8 @@
  *    ссылка на под-запрос;
  *  • правая пометка «предложил руководитель» / «добавил вы» и причина (title/раскрытие);
  *  • пустое состояние без карты; блок скрыт при выключенном проектном режиме;
- *  • подтверждение «Запустить всё»: сколько направлений и «одновременно до N»;
- *  • кнопки зовут свои обработчики (по id направления);
+ *  • подтверждение «Запустить всё»: сколько частей работы и «одновременно до N»;
+ *  • кнопки зовут свои обработчики (по id части работы);
  *  • текст ошибки сети — человеческий;
  *  • в видимом тексте нет технических слов.
  *
@@ -99,7 +99,7 @@ function render(overrides = {}) {
 
 /* ------------------------------------------------------------------ статусы */
 
-test('семь статусов направления — по-русски, в заданном порядке', () => {
+test('семь статусов части работы — по-русски, в заданном порядке', () => {
   assert.deepEqual(STREAM_STATUSES, [
     'proposed', 'queued', 'running', 'waiting_quota', 'review', 'done', 'dropped',
   ]);
@@ -142,7 +142,7 @@ test('карточка показывает название, цель, отве
   try {
     const root = render();
     const cards = cardsOf(root);
-    assert.equal(cards.length, 4, 'по карточке на направление');
+    assert.equal(cards.length, 4, 'по карточке на часть работы');
 
     const card = cards[1]; // s2
     assert.equal(card.getAttribute('data-stream'), 's2');
@@ -170,12 +170,12 @@ test('зависимость читается словами: «после «Д�
     uninstallFakeDom();
   }
   const byId = { s1: { title: 'Договор' }, s9: {} };
-  assert.equal(dependencyNote({ depends_on: ['s9'] }, byId), 'после «направления без названия»');
+  assert.equal(dependencyNote({ depends_on: ['s9'] }, byId), 'после «части работы без названия»');
   assert.equal(dependencyNote({ depends_on: [] }, byId), '');
   assert.equal(dependencyNote({}, byId), '');
 });
 
-test('ссылка на под-запрос есть только у запущенных направлений', () => {
+test('ссылка на под-запрос есть только у запущенных частей работы', () => {
   installFakeDom();
   try {
     const root = render();
@@ -232,9 +232,9 @@ test('счётчики карты: всего, идёт, ждёт лимит, п
   assert.equal(c.active, 2, 'идёт + ждёт лимит');
   assert.equal(streamsSummary(null).total, 0);
 
-  assert.equal(streamsCountLine(PLAN), '4 направления · идёт 1 · ждёт лимит 1 · предложено 1');
+  assert.equal(streamsCountLine(PLAN), '4 части работы · идёт 1 · ждёт лимит 1 · предложено 1');
   assert.equal(streamsCountLine(null), 'пока пусто');
-  assert.equal(streamsCountLine({ streams: [{ id: 'a', status: 'done' }] }), '1 направление');
+  assert.equal(streamsCountLine({ streams: [{ id: 'a', status: 'done' }] }), '1 часть работы');
 });
 
 test('запускать можно предложенное и стоящее в очереди', () => {
@@ -250,12 +250,12 @@ test('запускать можно предложенное и стоящее �
 
 /* ------------------------------------------------------------ подтверждение */
 
-test('«Запустить всё»: сколько направлений, «одновременно до N», предупреждение', () => {
+test('«Запустить всё»: сколько частей работы, «одновременно до N», предупреждение', () => {
   const many = launchConfirm(PLAN, 2);
   assert.equal(many.count, 1);
-  assert.equal(many.title, 'Запустить направление?');
-  assert.match(many.text, /Начнут работу 1 направление/);
-  assert.match(many.text, /Одновременно — до 2 направлений/);
+  assert.equal(many.title, 'Запустить часть работы?');
+  assert.match(many.text, /Начнут работу 1 часть работы/);
+  assert.match(many.text, /Одновременно — до 2 частей работы/);
   assert.match(many.text, /настоящие агенты/);
   assert.match(many.text, /тратить время модели/);
 
@@ -263,21 +263,21 @@ test('«Запустить всё»: сколько направлений, «о
     streams: ['a', 'b', 'c', 'd'].map((id) => ({ id, status: 'proposed' })),
   }, 4);
   assert.equal(four.count, 4);
-  assert.equal(four.title, 'Запустить все направления?');
-  assert.match(four.text, /Начнут работу 4 направления/);
-  assert.match(four.text, /до 4 направлений/);
+  assert.equal(four.title, 'Запустить все части работы?');
+  assert.match(four.text, /Начнут работу 4 части работы/);
+  assert.match(four.text, /до 4 частей работы/);
 
   const none = launchConfirm({ streams: [{ id: 'a', status: 'done' }] }, 2);
   assert.equal(none.count, 0);
   assert.match(none.text, /запускать нечего/);
 });
 
-test('«до 1 направления» — родительный падеж единственного, не «направлений»', () => {
+test('«до 1 части работы» — родительный падеж единственного, не «частей работы»', () => {
   const one = launchConfirm(PLAN, 1);
-  assert.match(one.text, /Одновременно — до 1 направления:/);
-  assert.doesNotMatch(one.text, /до 1 направлений/);
+  assert.match(one.text, /Одновременно — до 1 части работы:/);
+  assert.doesNotMatch(one.text, /до 1 частей работы/);
   const three = launchConfirm(PLAN, 3);
-  assert.match(three.text, /Одновременно — до 3 направлений:/);
+  assert.match(three.text, /Одновременно — до 3 частей работы:/);
 });
 
 /* --------------------------------------------------- ответственный по-русски */
@@ -311,7 +311,7 @@ test('ответственный: имя из /team, иначе роль; про
   }
 });
 
-test('участники направления — по именам, без системных id', () => {
+test('участники части работы — по именам, без системных id', () => {
   installFakeDom();
   try {
     const root = render({ people: [{ profile: 'biz-runner', title: 'Раннер', role: 'utility' }] });
@@ -326,7 +326,7 @@ test('участники направления — по именам, без с
 
 /* -------------------------------------------------------------------- кнопки */
 
-test('шапка блока: «Запустить всё», «Добавить направление», «Собрать карту из запросов комнаты»', () => {
+test('шапка блока: «Запустить всё», «Добавить часть работы», «Собрать карту из запросов комнаты»', () => {
   installFakeDom();
   try {
     const calls = [];
@@ -340,7 +340,7 @@ test('шапка блока: «Запустить всё», «Добавить �
     launchAll.dispatch('click', { type: 'click' });
     assert.deepEqual(calls[0], ['all', ['s4']], 'запускает только предложенные');
 
-    buttonWith(root, 'Добавить направление').dispatch('click', { type: 'click' });
+    buttonWith(root, 'Добавить часть работы').dispatch('click', { type: 'click' });
     buttonWith(root, 'Собрать карту из запросов комнаты').dispatch('click', { type: 'click' });
     assert.deepEqual(calls.slice(1), [['add'], ['rebuild']]);
   } finally {
@@ -348,7 +348,7 @@ test('шапка блока: «Запустить всё», «Добавить �
   }
 });
 
-test('у направления: «Запустить», «Отложить», «Изменить» зовут обработчики с id', () => {
+test('у части работы: «Запустить», «Отложить», «Изменить» зовут обработчики с id', () => {
   installFakeDom();
   try {
     const calls = [];
@@ -394,7 +394,7 @@ test('пусто: «Карты пока нет» + что делать', () => {
     assert.ok(empty, 'пустое состояние есть');
     assert.equal(byClass(empty, 'empty__title')[0].textContent, 'Карты пока нет');
     assert.equal(byClass(empty, 'empty__text')[0].textContent,
-      'Напишите главный запрос — руководитель комнаты предложит направления.');
+      'Напишите главный запрос — руководитель комнаты предложит части работы.');
     assert.equal(buttonWith(root, 'Запустить всё'), undefined, 'запускать нечего');
   } finally {
     uninstallFakeDom();
@@ -422,7 +422,10 @@ test('проектный режим выключен — блока нет, то
   installFakeDom();
   try {
     const hint = projectModeHint();
-    assert.equal(text(hint), 'Включить проектный режим в настройках комнаты');
+    // W17-R §2 (B-9): ссылка открывает настройки ЭТОЙ комнаты — подпись короче,
+    // а куда ведёт, сказано в подсказке.
+    assert.equal(text(hint), 'Включить проектный режим');
+    assert.match(hint.getAttribute('title'), /настройки этой комнаты/);
     assert.match(hint.getAttribute('class'), /btn--link/);
   } finally {
     uninstallFakeDom();
@@ -465,7 +468,7 @@ test('подсказка «Ждёт лимит» объясняет, что пр
     const root = render();
     const note = byClass(root, 'ps-note')[0];
     assert.ok(note, 'пояснение есть');
-    assert.match(text(note), /продолжится само/);
+    assert.match(text(note), /продолжится сама/);
     assert.match(text(note), /лимит/);
   } finally {
     uninstallFakeDom();
@@ -481,7 +484,7 @@ test('диалог «Изменить»: поля заполнены, микро
     const promise = openStreamEditor({ mode: 'edit', stream: PLAN.streams[1], members: ['biz-ops'] });
     const dialog = byClass(doc.body, 'ps-dialog')[0];
     assert.ok(dialog, 'диалог смонтирован');
-    assert.equal(byClass(dialog, 'dialog__title')[0].textContent, 'Изменить направление');
+    assert.equal(byClass(dialog, 'dialog__title')[0].textContent, 'Изменить часть работы');
 
     const inputs = byTag(dialog, 'input').concat(byTag(dialog, 'textarea'));
     assert.ok(inputs.length >= 4, 'название, цель, ответственный, срок');
@@ -497,7 +500,7 @@ test('диалог «Изменить»: поля заполнены, микро
     assert.equal(values.goal, 'Получить образцы к 5 ноября');
     assert.equal(values.owner, 'biz-ops');
     assert.equal(values.due, '2026-11-05');
-    assert.deepEqual(values.members, ['biz-ops'], 'участники — как в направлении');
+    assert.deepEqual(values.members, ['biz-ops'], 'участники — как в части работы');
   } finally {
     uninstallFakeDom();
   }
@@ -509,7 +512,7 @@ test('диалог «Добавить» не сохраняет пустое н�
   try {
     const promise = openStreamEditor({ mode: 'add', members: ['biz-ops'] });
     const dialog = byClass(doc.body, 'ps-dialog')[0];
-    assert.equal(byClass(dialog, 'dialog__title')[0].textContent, 'Добавить направление');
+    assert.equal(byClass(dialog, 'dialog__title')[0].textContent, 'Добавить часть работы');
     buttonWith(dialog, 'Добавить').dispatch('click', { type: 'click' });
     assert.equal(byClass(doc.body, 'ps-dialog').length, 1, 'диалог остался открыт');
     assert.equal(byTag(dialog, 'input')[0].getAttribute('aria-invalid'), 'true');

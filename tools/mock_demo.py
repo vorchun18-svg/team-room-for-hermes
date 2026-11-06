@@ -341,6 +341,10 @@ def timeline(created_at, title, room, phase, revisions=0):
                        "actor": room["critic"], "text": "Критик взял свод на проверку"})
         events.append({"at": created_at + 20, "kind": "completed", "task_id": "critic",
                        "actor": room["critic"], "text": "Критик проверил свод: замечаний нет"})
+    # W17-B §5: «Признак жизни» — шум, который сервер/мок прячут из timeline по умолчанию
+    for offset, task in ((7, "w1"), (9, "w2"), (16, "w1"), (28, "root")):
+        events.append({"at": created_at + offset, "kind": "heartbeat", "task_id": task,
+                       "actor": "system", "text": "Признак жизни"})
     if revisions:
         events.append({"at": created_at + 35, "kind": "commented", "task_id": "root", "actor": "mikhail",
                        "text": "Михаил отправил ответ на доработку"})

@@ -19,7 +19,11 @@ import {
   groupSteps, buildAgenda, agendaRange, icsAllUrl,
   kindLabel, STEP_GROUP_MODES, filterByRequest,
   requestFilterMode, setRequestParam, REQUEST_FILTER_ALL, REQUEST_FILTER_ONE,
+  // B-7 (фронт): близнецы, служебные вопросы, состояние из реестра ответов.
+  questionIds, questionStateOf,
 } from './backlog-model.js';
+import { buildQuestionForm } from './question-form.js';
+import { skeletonCards, skeletonRows, showSkeletonAfter } from '../shell-skeleton.js';
 import { setInboxCounts } from '../shell-inbox.js';
 import { countText, COUNT_FORMS } from '../shell-labels.js';
 import {
@@ -30,14 +34,22 @@ import { openStepDialog } from './step-dialog.js';
 
 const POLL_MS = 5000;
 
-/** Заголовок секции с числом и существительным в подсказке (D18). */
-function countHeader(title, n, forms, actions) {
+/**
+ * Заголовок секции с числом, существительным и пояснением «что считается» (D18, B16).
+ * @param {string} title
+ * @param {number} n
+ * @param {string[]} forms
+ * @param {HTMLElement|null} [actions]
+ * @param {string} [explain] что именно попадает в число
+ */
+function countHeader(title, n, forms, actions, explain) {
   const head = sectionHeader(title, { count: n, actions });
   const chip = head.querySelector('.section-header__count');
   if (chip) {
     const text = countText(n, forms);
-    chip.title = text;
-    chip.setAttribute('aria-label', text);
+    const hint = explain ? text + '. ' + explain : text;
+    chip.title = hint;
+    chip.setAttribute('aria-label', hint);
   }
   return head;
 }
@@ -49,6 +61,8 @@ function countHeader(title, n, forms, actions) {
 export async function mount(el, ctx) {
   ensureCss('css/view-backlog.css');
   ensureCss('css/view-backlog-extras.css');
+  // Формы ответа и заглушки загрузки — общие с правой колонкой запроса (B15/B14).
+  ensureCss('css/shell-titles.css');
   // W14-H §12: шаг — кликабельная строка и окно шага (стили общие со страницей запроса).
   ensureCss('css/view-steps.css');
 
@@ -144,6 +158,24 @@ export async function mount(el, ctx) {
     return state.data && Array.isArray(state.data.items) ? state.data.items : [];
   }
 
+  /** Ответили ли уже на этот вопрос (с учётом id-близнецов, B-7). */
+  function isAnswered(item) {
+    return questionIds(item).some((id) => state.answered.has(id));
+  }
+
+  /**
+   * Отметить вопрос отвеченным СРАЗУ, не дожидаясь ответа сервера: строка
+   * исчезает из «ждут вашего решения», бейдж вкладки и сайдбар пересчитаны
+   * (B-7, фронт). Опрос потом подтвердит статус из реестра ответов.
+   */
+  function markAnswered(item) {
+    for (const id of questionIds(item)) state.answered.add(id);
+    for (const it of allItems()) {
+      if (it && it.kind === 'open_question' && isAnswered(it)) it.status = 'done';
+    }
+    paintInbox();
+  }
+
   /** Пункты с учётом фильтра «Только этот запрос». */
   function visibleItems() {
     return filterByRequest(allItems(), state.requestFilter);
@@ -237,7 +269,7 @@ export async function mount(el, ctx) {
 
   function buildInbox() {
     const parts = partitionBacklog(visibleItems());
-    const questions = parts.questions.filter((q) => !state.answered.has(q.id));
+    const questions = parts.questions.filter((q) => !isAnswered(q));
     const decisions = parts.decisions.filter((d) => !state.answered.has(d.id));
     const blocked = state.blocked.filter((b) => !state.answered.has(b.task_id)
       && (!state.requestFilter || String(b.request_id) === state.requestFilter));
@@ -270,38 +302,68 @@ export async function mount(el, ctx) {
       }),
     }));
 
-    const rowsQuestions = questions.map((item) => inboxRow({
-      kind: 'question',
-      iconName: 'comment-draft',
-      title: 'Вопрос к вам',
-      text: item.text,
-      hint: null,
-      source: sourceLink(roomId, item.source_request, item.source_title),
-      due: item.due,
-      actions: null,
-      form: inlineForm({
-        label: 'Ответ на вопрос',
-        placeholder: 'Ваш ответ…',
-        submit: 'Ответить',
-        onSubmit: async (text) => {
-          const qid = backlogQuestionId(item.id);
-          if (!qid || !item.source_request) {
-            toast('У вопроса нет идентификатора — ответить нельзя', 'danger');
-            return;
-          }
+    // B-7 (фронт): одна карточка на вопрос. Состояние — только из полей API
+    // (`status`, `state_label`, `answer_state`), близнецы уже схлопнуты моделью.
+    const rowsQuestions = questions.map((item) => {
+      const st = questionStateOf(item);
+      const qid = backlogQuestionId(item.id);
+      const rid = String(item.source_request || '').trim();
+      const label = 'Ответ на вопрос: ' + String(item.text || '').slice(0, 80);
+      const send = async (text, mode) => {
+        if (!qid || !rid) {
+          toast('У вопроса нет идентификатора — ответить нельзя', 'danger');
+          return;
+        }
+        const explain = mode === 'explain';
+        if (explain) {
           try {
-            await api.post(`/api/requests/${encodeURIComponent(item.source_request)}/actions`,
-              { action: 'answer', question_id: qid, task_id: item.source_request, text });
-            state.answered.add(item.id);
-            toast('Ответ отправлен', 'ok');
+            await api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
+              { action: 'answer', question_id: qid, task_id: rid, text, need_explanation: true });
+            toast('Просьба о пояснении отправлена — вопрос остаётся открытым', 'ok');
           } catch (err) {
-            toast(err && err.message ? err.message : 'Не удалось отправить ответ', 'danger');
+            toast(err && err.message ? err.message : 'Не удалось отправить просьбу', 'danger');
           } finally {
             await load({ silent: true });
           }
-        },
-      }),
-    }));
+          return;
+        }
+        try {
+          await api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
+            { action: 'answer', question_id: qid, task_id: rid, text });
+          // Сразу: карточка исчезает, счётчики вкладки и сайдбара пересчитаны —
+          // без перезагрузки страницы и без ожидания опроса (B-7).
+          markAnswered(item);
+          toast('Ответ отправлен — вопрос убран из списка', 'ok');
+        } catch (err) {
+          toast(err && err.message ? err.message : 'Не удалось отправить ответ', 'danger');
+        } finally {
+          await load({ silent: true });
+        }
+      };
+      return inboxRow({
+        kind: 'question',
+        iconName: 'comment-draft',
+        title: 'Вопрос к вам',
+        text: item.text,
+        hint: st.state === 'explanation'
+          ? 'Руководитель пояснит вопрос — ответ можно будет дополнить'
+          : null,
+        source: sourceLink(roomId, item.source_request, item.source_title),
+        due: item.due,
+        actions: h('span', {
+          class: 'qstate qstate--' + st.state,
+          title: 'Статус вопроса берётся из реестра ответов',
+        }, st.label),
+        form: buildQuestionForm({
+          question: { id: qid || item.id },
+          label,
+          waiting: st.state === 'explanation',
+          keepKey: 'backlog-q:' + String(item.id || ''),
+          onSubmit: (text) => send(text, 'answer'),
+          onExplain: (text) => send(text, 'explain'),
+        }),
+      });
+    });
 
     const rowsDecisions = decisions.map((item) => inboxRow({
       kind: 'decision',
@@ -343,7 +405,15 @@ export async function mount(el, ctx) {
           ? { label: 'К следующим шагам', onclick: () => stepsHost.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
           : null,
       })
-      : h('div', { class: 'inbox-groups' }, groups);
+      : h('div', null,
+        // Одна общая подсказка на весь список вместо повтора ×N (B15).
+        questions.length
+          ? h('div', { class: 'qa-note small muted' }, icon('info', { size: 11 }),
+            h('span', null, 'Ответьте на вопрос — строка исчезнет сразу.'
+              + ' Не поняли вопрос? Нажмите «Мне нужно пояснение» —'
+              + ' руководитель объяснит, что имеется в виду.'))
+          : null,
+        h('div', { class: 'inbox-groups' }, groups));
 
     const summary = inboxSummary({ questions, blocked, decisions });
     const scopeSwitch = state.requestFilter
@@ -359,7 +429,8 @@ export async function mount(el, ctx) {
     const head = h('div', { class: 'backlog__card-head backlog__card-head--inbox' },
       countHeader('Ждут вашего решения', summary.total, COUNT_FORMS.case, total
         ? h('span', { class: 'chip chip--warn' }, icon('bell', { size: 11 }), 'нужен ответ')
-        : null),
+        : null,
+      'Считаются вопросы без вашего ответа, заблокированные задачи и предложенные решения.'),
       summary.text ? h('div', { class: 'inbox__breakdown small muted' }, summary.text) : null,
       scopeSwitch);
     // Одно число для вкладки, сайдбара и заголовка окна (D4).
@@ -435,7 +506,8 @@ export async function mount(el, ctx) {
     const steps = partitionBacklog(visibleItems()).steps;
     const groups = groupSteps(steps, state.groupMode, new Date());
     const head = h('div', { class: 'backlog__card-head' },
-      countHeader('Следующие шаги', steps.length, ['шаг', 'шага', 'шагов']));
+      countHeader('Следующие шаги', steps.length, ['шаг', 'шага', 'шагов'], null,
+        'Считаются незакрытые шаги команды: выполненные и убранные попадают в «Закрытые».'));
 
     let body;
     if (!steps.length) {
@@ -449,7 +521,7 @@ export async function mount(el, ctx) {
         h('div', { class: 'step-group__head' },
           state.groupMode === 'source'
             ? h('a', { class: 'step-group__title', href: group.request_id ? requestHref(roomId, group.request_id) : undefined, title: group.title },
-              h('span', { class: 'truncate' }, group.title))
+              h('span', { class: 'truncate', title: group.title }, group.title))
             : h('span', { class: 'step-group__title' },
               group.tone === 'danger' ? icon('warning', { size: 12 }) : null,
               h('span', {}, group.title)),
@@ -514,7 +586,8 @@ export async function mount(el, ctx) {
       });
     return h('section', { class: 'card card--flush backlog__card future' },
       h('div', { class: 'backlog__card-head' },
-        countHeader('Будущие вопросы', future.length, COUNT_FORMS.question)),
+        countHeader('Будущие вопросы', future.length, COUNT_FORMS.question, null,
+          'Считаются вопросы, которые команда отложила на потом: их можно задать или отложить ещё раз.')),
       h('div', { class: 'backlog__card-body' }, body));
   }
 
@@ -550,7 +623,8 @@ export async function mount(el, ctx) {
 
     return h('section', { class: 'card card--flush backlog__card agenda-card' },
       h('div', { class: 'backlog__card-head' },
-        countHeader('Повестка', agenda.reduce((n, d) => n + d.items.length, 0), ['дела', 'дел', 'дел']),
+        countHeader('Повестка', agenda.reduce((n, d) => n + d.items.length, 0), ['дела', 'дел', 'дел'], null,
+          'Считаются шаги со сроком в ближайшие 14 дней, включая просроченные.'),
         h('span', { class: 'small muted' }, agendaRange(14))),
       h('div', { class: 'backlog__card-body' }, body));
   }
@@ -580,7 +654,8 @@ export async function mount(el, ctx) {
       : emptyState({ icon: 'archive', title: 'Закрытых элементов нет', text: 'Выполненные и убранные шаги будут копиться здесь.' });
     return h('section', { class: 'card card--flush backlog__card closed' },
       h('div', { class: 'backlog__card-head' },
-        countHeader('Закрытые', closed.length, ['элемент', 'элемента', 'элементов'])),
+        countHeader('Закрытые', closed.length, ['элемент', 'элемента', 'элементов'], null,
+          'Считаются выполненные и убранные вами шаги, вопросы и решения.')),
       h('div', { class: 'backlog__card-body' }, body));
   }
 
@@ -659,12 +734,21 @@ export async function mount(el, ctx) {
   async function load({ silent = false } = {}) {
     if (disposed) return;
     const seq = ++loadSeq;
+    // B14: заглушки в форме будущих карточек; появляются, только если ответ
+    // задерживается (140 мс), и снимаются сразу, как пришли данные.
+    let pending = [];
     if (!silent) {
-      inboxHost.replaceChildren(skeleton(3));
-      stepsHost.replaceChildren(skeleton(4));
-      futureHost.replaceChildren(skeleton(2));
-      agendaHost.replaceChildren(skeleton(2));
+      pending = [
+        showSkeletonAfter(inboxHost, skeletonCards({ rows: 2, variant: 'question', lines: 2 })),
+        showSkeletonAfter(stepsHost, skeletonRows(3)),
+        showSkeletonAfter(futureHost, skeletonCards({ rows: 1, variant: 'card', lines: 1 })),
+        showSkeletonAfter(agendaHost, skeletonRows(2)),
+      ];
     }
+    const dropSkeletons = () => {
+      for (const s of pending) { try { s.cancel(); } catch { /* уже снят */ } }
+      pending = [];
+    };
     try {
       const data = await api.get(`/api/rooms/${encodeURIComponent(roomId)}/backlog`, { signal: abort.signal });
       let requests = state.requests;
@@ -698,8 +782,10 @@ export async function mount(el, ctx) {
       state.blocked = blocked.filter((c) => !state.answered.has(c.task_id));
       state.error = null;
       state.offline = false;
+      dropSkeletons();
       paintAll();
     } catch (err) {
+      dropSkeletons();
       if (disposed || seq !== loadSeq || (err && err.name === 'AbortError')) return;
       if (!silent || !state.data) {
         state.error = err;

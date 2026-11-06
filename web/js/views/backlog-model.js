@@ -164,17 +164,112 @@ export function sortByDue(items) {
   });
 }
 
+
+/* ------------------------------------------------- вопросы: состояние и близнецы */
+
 /**
+ * Нормализованный ключ текста вопроса: регистр, пробелы, знаки, служебные
+ * префиксы («Не к спеху:») и скобочные уточнения не считаются разницей.
+ * Тем же правилом сервер склеивает близнецов (B-7), поэтому ответ на любой
+ * id закрывает всю пару и здесь.
+ * @param {*} text
+ * @returns {string}
+ */
+export function questionTextKey(text) {
+  let s = String(text === null || text === undefined ? '' : text).toLowerCase();
+  s = s.replace(/\s+/g, ' ').trim();
+  s = s.replace(/^не к спеху[:.,]?\s*/i, '');
+  s = s.replace(/\([^)]*\)/g, ' ').replace(/\[[^\]]*\]/g, ' ');
+  s = s.replace(/[«»"'`.,;:!?…—–-]+/g, ' ');
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Служебный вопрос руководителя («Сколько раундов/прогонов критика?») — не
+ * показывается человеку (B-7). Правило то же, что у сервера.
+ * @param {*} text
+ * @returns {boolean}
+ */
+export function isServiceQuestion(text) {
+  const key = questionTextKey(text);
+  if (!key) return false;
+  if (/критик/.test(key) && /(раунд|прогон|цикл)/.test(key)) return true;
+  return /сколько/.test(key) && /(провер|раунд|прогон)/.test(key);
+}
+
+/** id-близнецы вопроса (могут прийти с сервера или быть вычислены по тексту). */
+export function questionIds(item) {
+  const own = String((item && item.id) || '');
+  const extra = Array.isArray(item && item.aliases) ? item.aliases : [];
+  return [own, ...extra.map((v) => String(v || ''))].filter(Boolean);
+}
+
+/** Состояние вопроса по полям API (без собственных догадок на клиенте). */
+export function questionStateOf(item) {
+  const state = String((item && (item.answer_state || item.state)) || '').trim().toLowerCase();
+  const answered = Boolean(item && (item.answered === true
+    || String(item.status || '') === 'done'
+    || (item.answer !== undefined && item.answer !== null && String(item.answer).trim())
+    || ['applied', 'answered', 'sent', 'replied', 'done'].includes(state)));
+  if (answered) {
+    return { state: 'answered', label: String((item && item.answer_label) || 'отвечен') };
+  }
+  if (state === 'waiting_explanation' || state === 'explanation' || (item && item.needs_explanation === true)) {
+    return { state: 'explanation', label: String((item && item.state_label) || 'ждёт пояснения') };
+  }
+  return { state: 'open', label: String((item && item.state_label) || 'ждёт вашего ответа') };
+}
+
+/**
+ * Схлопнуть близнецов: один вопрос = одна карточка (B-7).
+ * Представителем становится уже закрытый/отвеченный вариант — иначе пара
+ * «отвечен + открыт» осталась бы в списке.
+ * @param {object[]} items
+ * @returns {object[]}
+ */
+export function dedupeByText(items) {
+  const list = Array.isArray(items) ? items.filter((i) => i && typeof i === 'object') : [];
+  const groups = new Map();
+  for (const item of list) {
+    const key = questionTextKey(item.text) || String(item.id || '');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  const out = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) { out.push(group[0]); continue; }
+    const rep = group.find((i) => questionStateOf(i).state !== 'open') || group[0];
+    const ids = [];
+    for (const item of group) {
+      for (const id of questionIds(item)) if (id !== rep.id && !ids.includes(id)) ids.push(id);
+    }
+    out.push(Object.assign({}, rep, { aliases: ids.reverse() }));
+  }
+  return out;
+}
+
+/**
+ * Вопросы для показа: без служебных и без близнецов.
+ * @param {object[]} items
+ * @returns {object[]}
+ */
+export function visibleQuestions(items) {
+  const list = (Array.isArray(items) ? items : []).filter((i) => i && !isServiceQuestion(i.text));
+  return dedupeByText(list);
+}
+
+/*
  * Разложить плоский список `items` бэклога на блоки экрана.
  * @param {Array} items BacklogItem[]
  */
 export function partitionBacklog(items) {
   const list = Array.isArray(items) ? items : [];
   return {
-    questions: sortByDue(list.filter((i) => i && i.kind === 'open_question' && i.status === 'open')),
+    // B-7: служебные вопросы скрыты, близнецы схлопнуты — один вопрос = одна строка.
+    questions: sortByDue(visibleQuestions(list.filter((i) => i && i.kind === 'open_question' && i.status === 'open'))),
     decisions: sortByDue(list.filter((i) => i && i.kind === 'decision' && i.status === 'open')),
     steps: sortByDue(list.filter((i) => i && i.kind === 'next_step' && isActive(i))),
-    future: sortByDue(list.filter((i) => i && i.kind === 'future_question' && isActive(i))),
+    future: sortByDue(dedupeByText(list.filter((i) => i && i.kind === 'future_question' && isActive(i)))),
     closed: sortByDue(list.filter(isClosed)),
   };
 }

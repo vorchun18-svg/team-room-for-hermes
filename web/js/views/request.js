@@ -20,6 +20,7 @@
 import { h, fromCount } from '../util.js';
 import { icon } from '../icons.js';
 import { poll as apiPoll } from '../api.js';
+import { applyLivePatch, captureSnapshot, isEditing, stateSignature } from '../live-patch.js';
 import { skeleton, confirmDialog, ensureCss } from '../ui.js';
 import { firstLine, synthesisOf, versionsOf, latestVersion, safePart, requestErrorBanner, errorToast } from './request-util.js';
 import { ensureProfileDirectory } from '../participant-label.js';
@@ -31,8 +32,19 @@ import { isBrief, buildPlanCard } from './plan-req.js';
 import { briefCrumbItems, requestTitle } from '../scope.js';
 
 const FINAL = new Set(['done', 'failed']);
-const POLL_ACTIVE = 2000;
-const POLL_IDLE = 10000;
+// WAVE17-P4: опрос реже, чем раньше (было 2 с): 304 по ETag дешёвый, но и он
+// не нужен чаще, чем человек читает экран. Завершённый запрос — совсем редко.
+const POLL_ACTIVE = 5000;
+const POLL_IDLE = 30000;
+// Отложенное обновление: пока печатают/диктуют, проверяем не чаще раза в 0,7 с.
+const DEFER_CHECK_MS = 700;
+
+/**
+ * Подпись данных для сравнения «изменилось ли что-то на экране».
+ * Реализация — в live-patch.js (`stateSignature`): heartbeat не считается
+ * изменением, иначе страница перерисовывалась бы каждую минуту впустую.
+ */
+const signatureOf = stateSignature;
 
 /* ──────────────────────────────────────────────────────────────── mount */
 
@@ -72,6 +84,10 @@ export async function mount(el, ctx) {
   const state = { version: null, askOpen: false, pipeOpen: false };
   const keepValues = new Map(); // data-keep → введённый текст
   const listeners = [];
+  // WAVE17-P4: обновление, отложенное на время набора текста или диктовки.
+  let pendingRender = false;
+  let deferTimer = null;
+  let deferredSince = 0;
 
   /* ── модули-соседи ─────────────────────────────────────────── */
 
@@ -160,7 +176,7 @@ export async function mount(el, ctx) {
 
   async function refresh(opts = {}) {
     if (disposed) return;
-    const { force = false, initial = false, quiet = false } = opts;
+    const { force = false, initial = false, quiet = false, fromPoll = false } = opts;
     let res;
     try {
       res = await ctx.api.get(
@@ -177,7 +193,7 @@ export async function mount(el, ctx) {
     lastFetchAt = Date.now();
     if (!res || res.notModified) return;
 
-    const sig = JSON.stringify(res);
+    const sig = signatureOf(res);
     if (sig === lastSig) return;
     lastSig = sig;
     const prev = detail;
@@ -210,17 +226,20 @@ export async function mount(el, ctx) {
         if (title && title !== briefTitle && !disposed) { briefTitle = title; render(); }
       }).catch(() => { /* крошка останется без названия — это не мешает */ });
     }
-    render();
+    // Опрос не перебивает набор текста и диктовку: обновимся, когда закончат.
+    render({ deferIfEditing: fromPoll });
   }
 
   async function tick() {
     if (disposed || busy) return;
     const before = Boolean(parts || reportEmbed);
     await ensureParts();
-    if (!before && (parts || reportEmbed)) render();
+    if (!before && (parts || reportEmbed)) render({ deferIfEditing: true });
     const active = detail ? !FINAL.has(detail.status) : true;
+    // Завершённый запрос нечего опрашивать каждые 5 секунд — реже.
+    if (poller && typeof poller.setDelay === 'function') poller.setDelay(active ? POLL_ACTIVE : POLL_IDLE);
     if (!active && Date.now() - lastFetchAt < POLL_IDLE) return;
-    await refresh({ quiet: true });
+    await refresh({ quiet: true, fromPoll: true });
   }
 
   /* ── действия ─────────────────────────────────────────────── */
@@ -299,7 +318,7 @@ export async function mount(el, ctx) {
       h('summary', null,
         icon('chevron-right', { size: 12, className: 'req-ask__chev' }),
         h('span', { class: 'req-ask__label' }, 'Запрос'),
-        h('span', { class: 'req-ask__preview' }, firstLine(detail.text))),
+        h('span', { class: 'req-ask__preview', title: firstLine(detail.text) }, firstLine(detail.text))),
       h('div', { class: 'req-ask__text' }, detail.text));
     return det;
   }
@@ -396,6 +415,7 @@ export async function mount(el, ctx) {
         h('div', { class: 'card req-answer' }, skeleton(6)));
     }
 
+   
     const page = h('div', { class: 'req' });
     // Под-запрос направления: сначала путь «Комната › Бриф › Направление».
     const crumbs = briefCrumbsBlock();
@@ -407,6 +427,7 @@ export async function mount(el, ctx) {
     const warnings = safePart('renderWarnings', parts?.renderWarnings, detail);
     if (warnings) page.append(warnings);
 
+   
     const main = h('div', { class: 'req__main' });
     const ask = askBlock();
     if (ask) main.append(ask);
@@ -427,6 +448,7 @@ export async function mount(el, ctx) {
       onSent: () => refresh({ force: true, quiet: true }),
     });
 
+   
     const critic = safePart('renderCritic', parts?.renderCritic, detail, ctx);
     if (critic) main.append(critic);
     const report = safePart('renderReportEmbed', reportEmbed?.renderReportEmbed, detail, ctx);
@@ -438,41 +460,67 @@ export async function mount(el, ctx) {
     const timeline = safePart('renderTimeline', parts?.renderTimeline, detail);
     if (timeline) main.append(timeline);
 
+   
     page.append(h('div', { class: 'req__grid' }, main, buildAside()));
     return page;
   }
 
-  function render() {
+  /**
+   * Перерисовать страницу, сохранив состояние.
+   *
+   * WAVE17-P4: вместо `root.replaceChildren(...)` (снос всего дерева и сброс
+   * прокрутки правой колонки и ленты) — точечная правка через live-patch.js:
+   * одинаковые блоки остаются на месте, изменившиеся заменяются по одному.
+   * Если человек печатает или диктует, обновление откладывается (`deferIfEditing`).
+   */
+  function render(opts = {}) {
     if (disposed) return;
-    header.closeMenu();
-    const view = document.getElementById('view');
-    const scrollTop = view ? view.scrollTop : 0;
-    const active = document.activeElement;
-    const focusKey = active && active.dataset && active.dataset.keep ? active.dataset.keep : null;
-    let selStart = null;
-    let selEnd = null;
-    if (focusKey && typeof active.selectionStart === 'number') {
-      try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch { /* ignore */ }
+    if (opts.deferIfEditing && isEditing(root)) {
+      pendingRender = true;
+      scheduleDeferredRender();
+      return;
     }
-
+    header.closeMenu();
+    // W17-STAB-2: снимок состояния берём ДО сборки новой страницы. Сборка
+    // переиспользует живые строки вопросов (`reconcileQuestions` переносит их в
+    // новое дерево), из-за чего колонка на миг теряет содержимое и Chrome
+    // сбрасывает её scrollTop в 0. Снимок после сборки запоминал бы уже ноль —
+    // и прокрутка правой колонки пропадала при каждом обновлении.
+    const snap = captureSnapshot(root, document);
     const next = buildPage();
-    root.replaceChildren(...next.childNodes);
-
+    applyLivePatch(root, next, { doc: document, draftKeys: keepValues, snapshot: snap });
+    pendingRender = false;
+    deferredSince = 0;
+    if (deferTimer) { clearTimeout(deferTimer); deferTimer = null; }
+    // Поля страницы, чей черновик живёт в карте: значение важнее разметки.
     for (const input of root.querySelectorAll('[data-keep]')) {
       const key = input.dataset.keep;
       if (keepValues.has(key) && input.value !== keepValues.get(key)) input.value = keepValues.get(key);
     }
-    if (focusKey) {
-      const again = [...root.querySelectorAll('[data-keep]')].find((n) => n.dataset.keep === focusKey);
-      if (again) {
-        try {
-          again.focus({ preventScroll: true });
-          if (selStart != null) again.setSelectionRange(selStart, selEnd == null ? selStart : selEnd);
-        } catch { /* ignore */ }
-      }
-    }
-    if (view) view.scrollTop = scrollTop;
   }
+
+  /** Отложенное обновление: ждём, пока закончат печатать или диктовать. */
+  function scheduleDeferredRender() {
+    if (deferTimer || disposed) return;
+    if (!deferredSince) deferredSince = Date.now();
+    deferTimer = setTimeout(tryDeferredRender, DEFER_CHECK_MS);
+  }
+
+  function tryDeferredRender() {
+    deferTimer = null;
+    if (disposed) return;
+    if (!pendingRender) { deferredSince = 0; return; }
+    if (isEditing(root)) {
+      // Ждём дальше: обновление не должно отбирать поле или ронять прокрутку.
+      deferTimer = setTimeout(tryDeferredRender, DEFER_CHECK_MS);
+      return;
+    }
+    render();
+  }
+
+  const onFocusOut = () => { if (pendingRender) scheduleDeferredRender(); };
+  root.addEventListener('focusout', onFocusOut);
+  listeners.push(() => { try { root.removeEventListener('focusout', onFocusOut); } catch { /* ignore */ } });
 
   /* ── старт ─────────────────────────────────────────────────── */
 
@@ -491,6 +539,8 @@ export async function mount(el, ctx) {
     unmount() {
       disposed = true;
       if (poller) poller.stop();
+      if (deferTimer) { clearTimeout(deferTimer); deferTimer = null; }
+      pendingRender = false;
       header.closeMenu();
       for (const off of listeners) { try { off(); } catch { /* ignore */ } }
       listeners.length = 0;

@@ -1,6 +1,62 @@
 {
   "items": [
     {
+      "id": "t_5d0c11a2",
+      "room": "cafe",
+      "title": "Разбор договора поставки упаковки с бразильским поставщиком: штрафы, простой линии, спецификация партий",
+      "title_short": "Договор поставки упаковки: штрафы и простой",
+      "status": "done",
+      "status_reason": null,
+      "mode": "auto",
+      "critic": {
+        "enabled": true,
+        "state": "approved",
+        "verdict": "approve",
+        "round": 2
+      },
+      "created_at": 1793896400,
+      "started_at": 1793897000,
+      "finished_at": 1793951200,
+      "duration_s": 54200,
+      "progress": {
+        "done": 5,
+        "total": 5,
+        "percent": 100
+      },
+      "assignee": "default",
+      "needs_you": true,
+      "preview": "Три условия закрыты, остался коэффициент пересчёта в приложении Б.",
+      "archived": false
+    },
+    {
+      "id": "t_10e9f0a1",
+      "room": "cafe",
+      "title": "Разбор договора поставки упаковки с бразильским поставщиком: проверить сроки, штрафы, условия приёмки, порядок возврата брака, валютные оговорки, ответственность за простой производства и порядок изменения объёма партий — и подготовить короткое заключение для Михаила с тремя вариантами действий",
+      "title_short": "Договор поставки упаковки: риски и что менять",
+      "status": "needs_you",
+      "status_reason": "Три вопроса ждут вашего ответа",
+      "mode": "auto",
+      "critic": {
+        "enabled": true,
+        "state": "approved",
+        "verdict": "approve",
+        "round": 1
+      },
+      "created_at": 1793854046,
+      "started_at": 1793854446,
+      "finished_at": 1793933246,
+      "duration_s": 78800,
+      "progress": {
+        "done": 3,
+        "total": 4,
+        "percent": 75
+      },
+      "assignee": "default",
+      "needs_you": true,
+      "preview": "Договор поставки упаковки: три условия нужно менять до подписания",
+      "archived": false
+    },
+    {
       "id": "t_2a6f5c93",
       "room": "cafe",
       "title": "Каналы продаж: Едок или Развоз",

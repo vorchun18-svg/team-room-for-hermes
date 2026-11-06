@@ -179,14 +179,19 @@ export function participantLabel(profile, opts = {}) {
   if (!entry && !(member && (member.name || member.job)) && id) warmDirectory();
 
   const source = (member || entry || {});
+  // WAVE17 B-17: руководитель и критик не лежат в `members` — их подпись
+  // приходит из карты комнаты `role_labels`. Источник тот же, что у «Подписи»
+  // исполнителя, поэтому все экраны получают её без отдельных правил.
+  const roleLabel = String(((room && room.role_labels) || {})[id] || '').trim();
+  const custom = String(source.label || '').trim() || roleLabel;
   return labelOf({
     profile: id,
     name: source.name || '',
     job: source.job || '',
-    label: source.label || '',
+    label: custom,
     role,
     title: (member && member.title) || (entry && entry.title) || '',
-    source: source.label_source || '',
+    source: custom && !source.label ? 'member' : (source.label_source || ''),
     pending: source.label_pending === true,
   });
 }

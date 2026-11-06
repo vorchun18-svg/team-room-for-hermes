@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import re
 import time
 
@@ -579,8 +580,56 @@ def _rate_limit_step(record: dict, room: dict, card: dict, node: dict, now: int,
 
 # ---------------------------------------------------------------- исполнение
 
+def _thread_items(cfg, room: dict, record: dict, detail: dict) -> list:
+    """Лента запроса для дайджеста — полные тексты уточнений Михаила (без обрезки)."""
+    try:
+        try:
+            from . import thread as thread_mod
+        except ImportError:  # pragma: no cover
+            import thread as thread_mod  # type: ignore
+        fn = getattr(thread_mod, "get_thread", None)
+        root = _root_node(detail, record) or {}
+        root_id = str((record or {}).get("root_id") or root.get("id") or "")
+        if not root_id or not callable(fn):
+            return []
+        return list(fn(cfg, root_id, room=room) or [])
+    except Exception:  # noqa: BLE001 - лента вторична для карточки доработки
+        return []
+
+
+def revision_digest(detail: dict, room: dict | None = None, record: dict | None = None,
+                    thread_items=None) -> dict:
+    """Дайджест «что появилось после версии» — из contract, с запасным пустым ответом.
+
+    Расчёт живёт в `contract.revision_digest` (там же, где тело карточки), поэтому
+    предпросмотр в интерфейсе и тело карточки не расходятся.
+    """
+    fn = getattr(_contract, "revision_digest", None)
+    if not callable(fn):
+        return {"version": 0, "count": 0, "answers": [], "notes": [], "decisions": [],
+                "steps": [], "text": ""}
+    try:
+        return fn(detail, room, record, thread_items) or {"version": 0, "count": 0, "text": ""}
+    except Exception:  # noqa: BLE001 - без дайджеста доработка всё равно возможна
+        return {"version": 0, "count": 0, "answers": [], "notes": [], "decisions": [],
+                "steps": [], "text": ""}
+
+
+def _build_revision_body(room, request_text, answer, issues, user_note, cfg, digest) -> str:
+    """Вызвать contract.build_revision_body с дайджестом; старый контракт — без него."""
+    fn = _contract.build_revision_body
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):  # pragma: no cover - C-функции и заглушки без подписи
+        params = {}
+    if "digest" in params:
+        return fn(room, request_text, answer, issues, user_note, cfg, digest=digest)
+    return fn(room, request_text, answer, issues, user_note, cfg)
+
+
 def _create_card(cfg, room: dict, record: dict, detail: dict, kind: str, round_no: int,
-                 user_note=None, parent_id=None, issues=None, attempt: int = 0) -> dict:
+                 user_note=None, parent_id=None, issues=None, attempt: int = 0,
+                 thread_items=None, digest=None) -> dict:
     """Создать карточку критика/доработки и записать её в реестр. Общий путь для всех."""
     room = room or {}
     root = _root_node(detail, record)
@@ -605,7 +654,9 @@ def _create_card(cfg, room: dict, record: dict, detail: dict, kind: str, round_n
         if issues is None:
             critic_info = detail.get("critic") if isinstance(detail.get("critic"), dict) else {}
             issues = [] if str(user_note or "").strip() else (critic_info.get("issues") or [])
-        body = _contract.build_revision_body(room, request_text, answer, issues, user_note, cfg)
+        if digest is None:
+            digest = revision_digest(detail, room, record, thread_items)
+        body = _build_revision_body(room, request_text, answer, issues, user_note, cfg, digest)
         title = f"Доработка ответа (раунд {round_no})"
     else:
         raise EngineWriteError("bad_request", f"Неизвестный вид карточки цикла: {kind}")
@@ -614,12 +665,25 @@ def _create_card(cfg, room: dict, record: dict, detail: dict, kind: str, round_n
     suffix = f"-a{int(attempt)}" if int(attempt or 0) > 0 else ""
     card_id = _engine.create_child_card(cfg, room, board, parent, assignee, title, body, kind,
                                         idem_key=f"{kind}-{root_id}-r{round_no}{suffix}")
-    registry = _registry_add_extra_card(cfg, room_id, root_id,
-                                       {"id": card_id, "kind": kind, "round": int(round_no),
-                                        "at": int(time.time())})
-    return {"kind": kind, "ok": True, "task_id": card_id, "round": int(round_no),
-            "assignee": assignee, "parent_id": parent, "registry": registry,
-            "detail": "Создана карточка критика." if kind == "critic" else "Создана карточка доработки."}
+    registry_entry = {"id": card_id, "kind": kind, "round": int(round_no),
+                      "at": int(time.time())}
+    if kind == "revision":
+        # W17-S §3: причина версии — из чего появилась («ваше замечание» / «ваши ответы»).
+        note = " ".join(str(user_note or "").split())[:400]
+        registry_entry["note"] = note
+        registry_entry["reason"] = "note" if note else (
+            "answers" if int((digest or {}).get("count") or 0) else "revision")
+        registry_entry["answers_count"] = int((digest or {}).get("count") or 0)
+        registry_entry["changes"] = list((digest or {}).get("changes") or [])[:10]
+    registry = _registry_add_extra_card(cfg, room_id, root_id, registry_entry)
+    result = {"kind": kind, "ok": True, "task_id": card_id, "round": int(round_no),
+              "assignee": assignee, "parent_id": parent, "registry": registry,
+              "detail": "Создана карточка критика." if kind == "critic" else "Создана карточка доработки."}
+    if kind == "revision":
+        result["digest"] = {"version": int((digest or {}).get("version") or 0),
+                            "count": int((digest or {}).get("count") or 0),
+                            "note": str(user_note or "").strip()}
+    return result
 
 
 def manual_critique(cfg, room: dict, record: dict, detail: dict, text: str | None = None) -> dict:
@@ -643,8 +707,11 @@ def manual_revision(cfg, room: dict, record: dict, detail: dict, text: str | Non
     info = detail.get("critic") if isinstance(detail.get("critic"), dict) else {}
     round_no = max(1, int(info.get("round") or 0))
     parent = str(info.get("task_id") or "") or None
+    # W17-S §2: в карточку идёт дайджест «что появилось после версии» — с полными
+    # текстами уточнений Михаила из ленты, а не обрезанными строками событий.
+    thread_items = _thread_items(cfg, room, record, detail)
     result = _create_card(cfg, room, record, detail, "revision", round_no, user_note=text,
-                          parent_id=parent)
+                          parent_id=parent, thread_items=thread_items)
     result["action"] = "revise"
     _clear_stop(cfg, room, record, detail, result)
     return result

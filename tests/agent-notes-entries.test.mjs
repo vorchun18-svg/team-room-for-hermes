@@ -150,24 +150,27 @@ test('редактор: пустое поле не добавляет запис
 
 /* ─────────────────────────────────────────── видимое место на карточке */
 
-test('«Команда»: у участника есть блок «Особенности для этой комнаты»', () => {
+test('«Команда»: у участника — ссылка «Особенности (N)» в блокнот (WAVE17 P2)', () => {
   const src = readFileSync(new URL('../web/js/views/team.js', import.meta.url), 'utf8');
-  assert.match(src, /Особенности для этой комнаты/);
-  assert.match(src, /mountNotesEntries/);
-  assert.match(src, /tm-card__notes/);
+  // С WAVE17 карточка компактная: на лице только ссылка в модальный блокнот
+  // (пакет F), inline-редактор записей с карточки убран.
+  assert.match(src, /notesLink/, 'ссылка «Особенности (N)» на карточке');
+  assert.doesNotMatch(src, /mountNotesEntries/, 'inline-редактор записей с карточки убран');
+  assert.doesNotMatch(src, /tm-card__notes/, 'блока записей на лице карточки нет');
   const css = readFileSync(new URL('../web/css/agent-notes.css', import.meta.url), 'utf8');
   assert.match(css, /\.notes-entry\b/, 'нет стилей записи');
-  assert.match(css, /\.tm-card__notes\b/, 'нет стилей блока на карточке');
+  assert.match(css, /\.notes-link\b/, 'нет стилей ссылки «Особенности (N)»');
   assert.match(css, /\.agent-note__area\s*{[^}]*padding-right:\s*40px/s,
     'кнопке микрофона нужно ~40px справа');
 });
 
-test('окно «Изменить»: существующая комната правит записи сразу', () => {
+test('окно «Изменить»: только ссылка «Особенности (N)» в блокнот (WAVE17 P6)', () => {
   const src = readFileSync(new URL('../web/js/views/room-dialog.js', import.meta.url), 'utf8');
-  assert.match(src, /mountNotesLive/);
-  assert.match(src, /const notesLive = Boolean\(full && full\.id\)/);
-  assert.match(src, /if \(!notesLive\)/, 'старый полный текст не должен перезаписывать записи');
+  assert.match(src, /notesLink/, 'ссылка в блокнот');
   assert.match(src, /Особенности для этой комнаты/);
-  assert.match(src, /журнал/i);
+  assert.doesNotMatch(src, /mountNotesLive/, 'мелкие поля в диалоге убраны — записи живут в блокноте');
+  assert.doesNotMatch(src, /mountAgentNotes/, 'черновика полного текста больше нет');
+  assert.doesNotMatch(src, /api\.put\([^)]*agents[^)]*notes/,
+    'сохранение комнаты не перезаписывает записи полным текстом');
   assert.ok(ROOM);
 });

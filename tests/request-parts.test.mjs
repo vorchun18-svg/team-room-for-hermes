@@ -326,8 +326,8 @@ test('errorReason: технический лог → причина по-рус�
   assert.equal(errorReason('timeout after 1800s'), 'превышено время ожидания (30 мин)');
   assert.equal(errorReason('timeout after 45s'), 'превышено время ожидания (45 с)');
   assert.equal(errorReason('worker exited with code 1: OSError…'), 'исполнитель завершился с ошибкой (код 1)');
-  assert.equal(errorReason("Процесс воркера завершился с кодом 1: KeyError('custo_embalagem')"),
-    'в данных не нашлось поле «custo_embalagem»');
+  assert.equal(errorReason("Процесс воркера завершился с кодом 1: KeyError('cost_packaging')"),
+    'в данных не нашлось поле «cost_packaging»');
   assert.equal(errorReason('OSError: [Errno 28] No space left on device'), 'на диске закончилось место');
   assert.equal(errorReason('crashed'), 'исполнитель аварийно завершился');
   assert.equal(errorReason(''), '');
@@ -339,11 +339,11 @@ test('failureInfo: две попытки, причина и сырой лог о
   const f = failureInfo(d);
   assert.equal(f.attempts, 2, 'две неудачные попытки в дереве');
   assert.match(f.text, /^Исполнитель не справился \(2 попытки\)\./);
-  assert.match(f.text, /Причина: в данных не нашлось поле «custo_embalagem»\./);
+  assert.match(f.text, /Причина: в данных не нашлось поле «cost_packaging»\./);
   assert.ok(!/timeout after|KeyError|exit 1|воркер/i.test(f.text), 'технический лог в текст не попадает');
   const raw = f.details.map((x) => x.text).join('\n');
   assert.match(raw, /Воркер расчёта упал дважды \(exit 1\)/, 'оригинал сохранён');
-  assert.match(raw, /KeyError\('custo_embalagem'\)/);
+  assert.match(raw, /KeyError\('cost_packaging'\)/);
   assert.equal(f.details.find((x) => x.code).code, 'worker_crashed');
 });
 

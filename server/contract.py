@@ -258,9 +258,12 @@ def build_contract_block(room: dict, slug: str, cfg) -> str:
         "Корневая карточка завершается kanban_complete(summary=<готовый ответ Михаилу в Markdown, "
         "по-русски, ОДИН связный текст, а не пересказ отчётов подряд>, metadata={...}).",
         "metadata (все поля необязательны, но заполняй, что знаешь):",
+        '  title:        "<короткое название запроса, 3–60 знаков, без «Так,…» и без markdown>"   # как запрос выглядит в списках и меню; полный текст Михаила не меняется',
         '  next_steps:   [{"text","owner"(профиль),"due"(YYYY-MM-DD),"from_question"?}]   # 3–7 конкретных шагов; from_question — id вопроса вида q_…, из которого шаг',
         '  open_questions:[{"text","for":"mikhail|<профиль>"}]               # что нужно решить Михаилу',
         '  decisions:    [{"text","why","status":"proposed|accepted"}]',
+        ('  changes:      ["<что изменилось в своде по сравнению с предыдущей версией>", "…"]   # W17-S §3: 3–7 коротких пунктов; Михаил видит их как «Что изменилось»' if slug == "revision" else ''),
+        ('  version_reason: "<почему сделана эта версия: по замечанию Михаила / по вашим ответам на вопросы / по замечаниям критика>"  # W17-S §3: подпись версии' if slug == "revision" else ''),
         '  stage:        {"current":"<id фазы>","phases":[{"id","title","status":"done|active|next|blocked","note"}]}',
         '  future_questions:["…"]                                            # вопросы на будущее, отдельно от текущего ответа',
         '  artifacts:    [{"path","title","kind"}]                           # файлы, созданные в ходе работы',
@@ -768,9 +771,230 @@ def _fmt_issues(issues) -> str:
     return "\n".join(lines)
 
 
+# ------------------------------------------------- дайджест «что появилось после версии»
+
+#: сколько знаков оставляем от одного ответа/уточнения в дайджесте
+DIGEST_ITEM_MAX = 700
+#: сколько пунктов каждого вида берём (самые новые), чтобы тело карточки не распухло
+DIGEST_ITEMS_MAX = 14
+DIGEST_TOTAL_MAX = 9000
+#: как читается статус ответа в дайджесте (ключи — `answers.STATE_RU`)
+DIGEST_ANSWER_RU = {"sent": "ждёт реакции руководителя", "received": "руководитель прочитал",
+                    "applied": "учтено руководителем", "no_change": "руководитель решил не менять",
+                    "waiting_explanation": "вы просили пояснение"}
+
+
+def _at_of(item) -> int:
+    """Время записи числом (`at` / `answered_at` / `created_at`), иначе 0."""
+    item = item if isinstance(item, dict) else {}
+    for key in ("at", "answered_at", "created_at"):
+        try:
+            value = int(item.get(key) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value:
+            return value
+    return 0
+
+
+def _digest_date(at: int) -> str:
+    if not at:
+        return ""
+    try:
+        return time.strftime("%d.%m %H:%M", time.localtime(int(at)))
+    except (ValueError, OSError):      # pragma: no cover - экзотические TZ
+        return ""
+
+
+def version_cutoff(detail: dict) -> tuple[int, int]:
+    """Момент выпуска показанной версии свода и её номер: ``(at, version)``.
+
+    `at` = 0 — версии ещё нет (первая доработка): в дайджест попадает всё, что есть.
+    """
+    syn = detail.get("synthesis") if isinstance(detail, dict) else {}
+    syn = syn if isinstance(syn, dict) else {}
+    hist = [h for h in (syn.get("history") or []) if isinstance(h, dict)]
+    if hist:
+        last = hist[-1]
+        return _at_of(last), int(last.get("version") or len(hist) or 0)
+    return _at_of(syn), int(syn.get("version") or 0)
+
+
+def _digest_answers(detail: dict, record: dict, cutoff: int) -> list[dict]:
+    """Ответы Михаила на вопросы, данные ПОСЛЕ выпуска версии (вопрос → ответ)."""
+    stored = (record or {}).get("answers") if isinstance((record or {}).get("answers"), dict) else {}
+    enriched = {}
+    block = detail.get("answers") if isinstance(detail.get("answers"), dict) else {}
+    for item in block.get("items") or []:
+        if isinstance(item, dict) and item.get("question_id"):
+            enriched[str(item["question_id"])] = item
+    out = []
+    for question in detail.get("open_questions") or []:
+        if not isinstance(question, dict):
+            continue
+        qid = str(question.get("id") or "")
+        extra = enriched.get(qid) or {}
+        record_q = stored.get(qid) if isinstance(stored.get(qid), dict) else {}
+        answer = _as_text(question.get("answer") or extra.get("answer") or record_q.get("text"))
+        at = _at_of({"at": question.get("answered_at") or extra.get("at") or record_q.get("at")})
+        if not answer or at <= cutoff:
+            continue
+        state = str(question.get("answer_state") or extra.get("state") or record_q.get("status") or "")
+        reaction = question.get("reaction") if isinstance(question.get("reaction"), dict) else {}
+        out.append({"question_id": qid or None, "question": _short(question.get("text"), 500),
+                    "answer": _short(answer, DIGEST_ITEM_MAX), "at": at, "state": state,
+                    "state_ru": DIGEST_ANSWER_RU.get(state, ""),
+                    "reaction": _short(reaction.get("text"), 300) if reaction else ""})
+    return out[-DIGEST_ITEMS_MAX:]
+
+
+def _digest_notes(detail: dict, thread, cutoff: int) -> list[dict]:
+    """Уточнения Михаила в диалоге после версии: полный текст из ленты, иначе из событий."""
+    source = thread if isinstance(thread, list) and thread else (detail.get("thread") or [])
+    source = source if isinstance(source, list) and source else (detail.get("timeline") or [])
+    out = []
+    for item in source or []:
+        if not isinstance(item, dict) or item.get("pending"):
+            continue
+        if str(item.get("author") or item.get("actor") or "") != "mikhail":
+            continue
+        if str(item.get("kind") or "") in ("event", "system"):
+            continue                      # служебные строки ленты — не уточнения
+        at = _at_of(item)
+        text = _as_text(item.get("text"))
+        if not text or at <= cutoff:
+            continue
+        out.append({"at": at, "text": _short(text, DIGEST_ITEM_MAX),
+                    "attach": [str(p) for p in (item.get("attach") or [])][:5]})
+    return out[-DIGEST_ITEMS_MAX:]
+
+
+def _digest_decisions(detail: dict, cutoff: int) -> list[dict]:
+    """Решения, появившиеся после версии (принятые и предложенные)."""
+    out = []
+    for item in detail.get("decisions") or []:
+        if not isinstance(item, dict):
+            continue
+        at = _at_of(item)
+        text = _as_text(item.get("text"))
+        if not text or at <= cutoff:
+            continue
+        status = str(item.get("status") or "proposed")
+        if status == "rejected":
+            continue
+        out.append({"text": _short(text, 400), "status": status,
+                    "status_ru": "принято" if status == "accepted" else "предложено", "at": at})
+    return out[-DIGEST_ITEMS_MAX:]
+
+
+def _digest_steps(detail: dict, record: dict | None = None, cutoff: int = 0) -> list[dict]:
+    """Шаги, которые Михаил согласовал, прокомментировал, переместил или убрал."""
+    actions = (record or {}).get("step_actions") if isinstance((record or {}).get("step_actions"), dict) else {}
+    labels = {"agree": "согласовано вами", "comment": "прокомментировано вами",
+              "move": "перемещено вами", "drop": "убран"}
+    out = []
+    for item in detail.get("next_steps") or []:
+        if not isinstance(item, dict):
+            continue
+        text = _as_text(item.get("text"))
+        if not text:
+            continue
+        step_id = str(item.get("id") or "")
+        state = str(item.get("state") or "")
+        action = actions.get(step_id) if isinstance(actions.get(step_id), dict) else {}
+        action = action or (item.get("user_action") if isinstance(item.get("user_action"), dict) else {})
+        kind = str(action.get("kind") or "")
+        at = int(action.get("at") or item.get("user_action_at") or 0)
+        if state in ("dismissed", "cancelled"):
+            label = _as_text(item.get("state_label")) or ("убран" if state == "dismissed" else "снят")
+        elif kind and at > cutoff:
+            label = labels.get(kind, _as_text(item.get("user_action_label")) or "учтено вами")
+            if kind == "move":
+                bits = []
+                if action.get("due"):
+                    bits.append("срок " + str(action["due"]))
+                if action.get("owner"):
+                    bits.append("исполнитель " + str(action["owner"]))
+                if bits:
+                    label += ": " + ", ".join(bits)
+        elif item.get("conflicts_with_answer"):
+            label = "противоречит вашему ответу"
+        else:
+            continue
+        out.append({"text": _short(text, 400), "state": state or kind, "state_ru": label})
+    return out[-DIGEST_ITEMS_MAX:]
+
+
+def revision_digest(detail: dict, room: dict | None = None, record: dict | None = None,
+                    thread=None, cutoff=None, version=None) -> dict:
+    """Дайджест «что появилось после выпуска текущей версии свода» (W17-S §2).
+
+    Единственное место, где решается, ЧТО из беседы попадёт в карточку доработки:
+    ответы Михаила на вопросы, его уточнения в диалоге, новые решения и убранные
+    шаги. Тот же расчёт использует предпросмотр «Что получит руководитель» и
+    отметка «свод устарел», поэтому интерфейс и тело карточки не расходятся.
+
+    Возвращает ``{version, since_at, count, answers, notes, decisions, steps, text}``:
+    `count` — сколько ВАШИХ ответов и уточнений ещё не учтено (это число показывает
+    интерфейс), `text` — готовый блок для тела карточки. Никогда не бросает.
+    """
+    detail = detail if isinstance(detail, dict) else {}
+    try:
+        cut_at, cut_version = version_cutoff(detail)
+        if cutoff is not None:
+            cut_at = int(cutoff or 0)
+        if version is not None:
+            cut_version = int(version or 0)
+        answers = _digest_answers(detail, record or {}, cut_at)
+        notes = _digest_notes(detail, thread, cut_at)
+        decisions = _digest_decisions(detail, cut_at)
+        steps = _digest_steps(detail, record or {}, cut_at)
+    except Exception:  # noqa: BLE001 - дайджест не имеет права ронять доработку
+        return {"version": 0, "since_at": None, "count": 0, "answers": [], "notes": [],
+                "decisions": [], "steps": [], "text": ""}
+    lines: list[str] = []
+    if answers:
+        lines.append(f"Ответы Михаила на вопросы — {len(answers)}:")
+        for idx, item in enumerate(answers, 1):
+            line = f"{idx}. Вопрос: {item['question']}\n   Ответ: {item['answer']}"
+            if item["state_ru"]:
+                line += f"\n   Реакция руководителя: {item['state_ru']}."
+            if item["reaction"]:
+                line += f" «{item['reaction']}»"
+            lines.append(line)
+    if notes:
+        lines.append(f"Уточнения Михаила в диалоге — {len(notes)}:")
+        for idx, item in enumerate(notes, 1):
+            date = _digest_date(item["at"])
+            stamp = f"[{date}] " if date else ""
+            line = f"{idx}. {stamp}{item['text']}"
+            if item["attach"]:
+                line += "\n   Приложенные пути: " + "; ".join(item["attach"])
+            lines.append(line)
+    if decisions:
+        lines.append(f"Решения Михаила — {len(decisions)}:")
+        for idx, item in enumerate(decisions, 1):
+            lines.append(f"{idx}. {item['text']} ({item['status_ru']})")
+    if steps:
+        lines.append(f"Шаги, которые Михаил согласовал, переместил или убрал — {len(steps)}:")
+        for idx, item in enumerate(steps, 1):
+            lines.append(f"{idx}. {item['text']} ({item['state_ru']})")
+    text = "\n".join(lines)
+    if len(text) > DIGEST_TOTAL_MAX:
+        text = text[: DIGEST_TOTAL_MAX - 1].rstrip() + "\n…(дальше не поместилось)"
+    return {"version": int(cut_version or 0), "since_at": cut_at or None,
+            "count": len(answers) + len(notes), "answers": answers, "notes": notes,
+            "decisions": decisions, "steps": steps, "text": text}
+
+
 def build_revision_body(room: dict, request_text: str, prev_answer_md: str, issues=None,
-                        user_note: str | None = None, cfg=None) -> str:
-    """Тело карточки-доработки: запрос + предыдущий ответ + замечания + контракт ответа."""
+                        user_note: str | None = None, cfg=None, digest=None) -> str:
+    """Тело карточки-доработки: запрос + предыдущий ответ + замечания + дайджест + контракт.
+
+    `digest` (W17-S §2) — результат `revision_digest`: ответы Михаила, его уточнения,
+    решения и убранные шаги с момента выпуска текущей версии. Без него руководитель
+    видит только замечание и свод, а беседу ему приходится перечитывать самому.
+    """
     slug = "revision"
     if cfg is None:
         raise ValueError("build_revision_body: нужен cfg (пути контракта)")
@@ -782,10 +1006,20 @@ def build_revision_body(room: dict, request_text: str, prev_answer_md: str, issu
         parts.append(_join_blocks("<<<ЗАМЕЧАНИЯ КРИТИКА>>>", issues_block, "<<<КОНЕЦ ЗАМЕЧАНИЙ>>>"))
     if user_note:
         parts.append(_join_blocks("<<<ЗАМЕЧАНИЕ МАКСИМА>>>", str(user_note).strip(), "<<<КОНЕЦ ЗАМЕЧАНИЯ>>>"))
-    if not issues_block and not user_note:
+    digest_text = digest.get("text") if isinstance(digest, dict) else _as_text(digest)
+    if isinstance(digest_text, str) and digest_text.strip():
+        version = digest.get("version") if isinstance(digest, dict) else 0
+        head = ("<<<ПОСЛЕ ВЕРСИИ %s (это уже произошло — учти ВСЁ)>>>" % version if version
+                else "<<<ПОСЛЕ ВЫПУСКА СВОДА (это уже произошло — учти ВСЁ)>>>")
+        parts.append(head + digest_text.strip() + "\n<<<КОНЕЦ НОВОГО>>>")
+    if not issues_block and not user_note and not (isinstance(digest_text, str) and digest_text.strip()):
         parts.append("Замечаний нет — перепроверь ответ и улучши слабые места.")
     parts.append("Это доработка того же запроса: выдай НОВЫЙ цельный ответ (по-русски, один связный "
                  "текст), а не пересказ прошлого и не список правок.")
+    parts.append("Обязательно перечисли в metadata.changes (3–7 коротких пунктов, по-русски) ЧТО "
+                 "ИЗМЕНИЛОСЬ в своде по сравнению с предыдущей версией — Михаил видит этот список "
+                 "под сводом; и укажи metadata.version_reason — одной строкой, почему сделана версия "
+                 "(например «по замечанию Михаила про сроки» или «учтены ответы на вопросы»).")
     parts.append(build_contract_block(room, slug, cfg))
     return _join_blocks(*parts)
 

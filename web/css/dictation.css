@@ -115,9 +115,11 @@
   padding: var(--space-2); border-radius: var(--radius-sm);
   background: var(--ui-bg-quinary); border: 1px solid var(--border-soft);
 }
-.mic-panel__recover-text { font-size: var(--text-sm); font-weight: 600; }
-.mic-panel__recover-hint { font-size: var(--text-sm); color: var(--muted-foreground); line-height: var(--leading-normal); }
-.mic-panel__recover-actions { display: flex; align-items: center; gap: var(--space-2); }
+.mic-panel__recover-text { font-size: var(--text-sm); font-weight: 600; overflow-wrap: anywhere; }
+.mic-panel__recover-hint { font-size: var(--text-sm); color: var(--muted-foreground); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+/* Кнопок может быть две («Распознать запись» и «Убрать все») — в узкой панели
+   они переносятся, а не вылезают за край. */
+.mic-panel__recover-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .mic-panel__msg {
   font-size: var(--text-sm); color: var(--ui-text-secondary); line-height: var(--leading-normal);
   padding: var(--space-2); border-radius: var(--radius-sm);

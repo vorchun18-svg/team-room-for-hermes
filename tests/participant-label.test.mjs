@@ -106,3 +106,36 @@ test('ответ /team с полями подписи главнее катал�
   assert.equal(label.pending, true);
   clearProfileDirectory();
 });
+
+test('WAVE17 B-17: подпись руководителя и критика — из карты role_labels комнаты', () => {
+  clearProfileDirectory();
+  const room = {
+    orchestrator: 'default',
+    critic: 'biz-critic',
+    members: [{ profile: 'lawyer', role: 'worker' }],
+    role_labels: { default: 'Михаил — руководитель комнаты', 'biz-critic': 'Атлас — критик' },
+  };
+  const lead = participantLabel('default', { room, role: 'orchestrator' });
+  assert.equal(lead.title, 'Михаил — руководитель комнаты');
+  assert.equal(lead.source, 'member');          // та же «ручная» подпись, что у исполнителя
+  assert.equal(lead.role, 'руководитель комнаты');
+
+  const critic = participantLabel('biz-critic', { room, role: 'critic' });
+  assert.equal(critic.title, 'Атлас — критик');
+  assert.equal(critic.source, 'member');
+
+  // Нет подписи — заголовок не название профиля, а роль (B-17).
+  const bare = participantLabel('default', {
+    room: { orchestrator: 'default', members: [], role_labels: {} }, role: 'orchestrator',
+  });
+  assert.equal(bare.title, 'Руководитель комнаты');
+  assert.equal(bare.source, 'role');
+
+  // Поле участника (если руководитель заодно в members) старше карты ролей.
+  const both = participantLabel('default', {
+    member: { profile: 'default', role: 'worker', label: 'Из участника', label_source: 'member' },
+    room, role: 'orchestrator',
+  });
+  assert.equal(both.title, 'Из участника');
+  clearProfileDirectory();
+});

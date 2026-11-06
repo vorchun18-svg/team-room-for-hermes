@@ -127,33 +127,51 @@ export function fileUrl(path) {
 }
 
 /**
- * Опрос с паузой в скрытой вкладке.
+ * Опрос с паузой в скрытой вкладке, задержкой при ошибках и возможностью
+ * менять период на ходу.
+ *
+ * WAVE17-P4: чаще, чем нужно, сервер не дёргаем — период задаёт вызывающий
+ * (`setDelay`), а при сбоях связи опрос сам замедляется (до `maxMs`), чтобы не
+ * заваливать локальный сервер запросами, пока он занят.
+ *
  * @param {() => any} fn  что вызывать (может быть async)
  * @param {number} [ms=5000]
- * @param {{pauseHidden?:boolean, immediate?:boolean, onError?:(e:Error)=>void}} [opts]
- * @returns {{stop:()=>void, tick:()=>Promise<void>, isStopped:()=>boolean}}
+ * @param {{pauseHidden?:boolean, immediate?:boolean, onError?:(e:Error)=>void,
+ *          backoff?:boolean, maxMs?:number}} [opts]
+ * @returns {{stop:()=>void, tick:()=>Promise<void>, isStopped:()=>boolean,
+ *            setDelay:(ms:number)=>void, pause:()=>void, resume:()=>void}}
  */
 export function poll(fn, ms = 5000, opts = {}) {
-  const { pauseHidden = true, immediate = true, onError } = opts;
+  const { pauseHidden = true, immediate = true, onError, backoff = true, maxMs = 60000 } = opts;
   let stopped = false;
+  let paused = false;
   let timer = null;
   let running = false;
+  let base = Math.max(250, Number(ms) || 5000);
+  let delay = base;
+  let fails = 0;
 
-  const schedule = (delay = ms) => {
-    if (stopped) return;
+  const schedule = (next = delay) => {
+    if (stopped || paused) return;
     clearTimeout(timer);
-    timer = setTimeout(tick, delay);
+    timer = setTimeout(tick, Math.max(250, next));
   };
 
   async function tick() {
-    if (stopped) return;
+    if (stopped || paused) return;
     if (pauseHidden && typeof document !== 'undefined' && document.hidden) return schedule();
     if (running) return schedule();
     running = true;
     try {
       await fn();
+      fails = 0;
+      delay = base;
     } catch (err) {
       if (onError) onError(err);
+      if (backoff) {
+        fails += 1;
+        delay = Math.min(Math.max(base, Number(maxMs) || 60000), base * Math.pow(2, Math.min(fails, 4)));
+      }
     } finally {
       running = false;
       schedule();
@@ -162,7 +180,9 @@ export function poll(fn, ms = 5000, opts = {}) {
 
   const onVisible = () => {
     if (typeof document !== 'undefined' && !document.hidden) {
+      // Вернулись на вкладку — не ждём остаток паузы, но и не долбим сервер.
       clearTimeout(timer);
+      delay = base;
       tick();
     }
   };
@@ -183,6 +203,25 @@ export function poll(fn, ms = 5000, opts = {}) {
     },
     tick,
     isStopped: () => stopped,
+    /** Сменить период (например, запрос завершён — опрашиваем редко). */
+    setDelay(next) {
+      const value = Math.max(250, Number(next) || base);
+      base = value;
+      delay = value;
+      fails = 0;
+      if (!running) schedule();
+    },
+    /** Временно остановить (диктовка, открытое окно ввода). */
+    pause() {
+      paused = true;
+      clearTimeout(timer);
+    },
+    resume() {
+      if (!paused) return;
+      paused = false;
+      delay = base;
+      schedule();
+    },
   };
 }
 

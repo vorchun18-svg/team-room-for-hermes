@@ -12,6 +12,7 @@
  */
 
 import { h } from './util.js';
+import { deriveTitle } from './request-title.js';
 
 /** Имя query-параметра фильтра по запросу. */
 export const REQUEST_PARAM = 'request';
@@ -98,7 +99,11 @@ export function crumbItems(opts = {}) {
 
   if (route.name === 'request') {
     const title = String(opts.requestTitle || '').trim();
-    return [root, { text: title ? 'Запрос «' + title + '»' : 'Запрос', current: true }];
+    const item = { text: title ? 'Запрос «' + title + '»' : 'Запрос', current: true };
+    // Полный текст запроса — в подсказке: крошка показывает короткое название.
+    const hint = String(opts.requestHint || '').trim();
+    if (hint) item.hint = hint;
+    return [root, item];
   }
 
   const tab = String(route.tab || '');
@@ -109,7 +114,7 @@ export function crumbItems(opts = {}) {
 
 /**
  * Крошки под-запроса направления (проектный режим, волна 9):
- * `Комната «…» › Бриф «…» › Направление «…»`.
+ * `Комната «…» › Бриф «…» › Часть работы «…»`.
  *
  * Под-запрос приходит с `RequestDetail.plan_link = {stream_id, title,
  * brief_root_id?, brief_title?}`. Id на экран не выводим; название брифа
@@ -135,7 +140,7 @@ export function briefCrumbItems(opts = {}) {
   return [
     { text: roomTitle ? 'Комната «' + roomTitle + '»' : 'Комната', href: scopeHash(roomId, 'composer') },
     briefItem,
-    { text: 'Направление «' + streamTitle + '»', current: true },
+    { text: 'Часть работы «' + streamTitle + '»', current: true },
   ];
 }
 
@@ -148,19 +153,41 @@ export function briefCrumbItems(opts = {}) {
  */
 const titleCache = new Map();
 
-export async function requestTitle(api, requestId) {
+/**
+ * Название запроса для подписей: короткое (как на экране) и полное (для подсказки).
+ * Кеш один на сессию: список запросов и отчёты ссылаются на один корень много раз.
+ * @param {{get: Function}} api
+ * @param {string} requestId
+ * @returns {Promise<{short: string, full: string}>}
+ */
+export async function requestTitleInfo(api, requestId) {
   const rid = String(requestId || '').trim();
-  if (!rid) return '';
+  if (!rid) return { short: '', full: '' };
   if (titleCache.has(rid)) return titleCache.get(rid);
-  let title = '';
+  let info = { short: '', full: '' };
   try {
     const detail = await api.get('/api/requests/' + encodeURIComponent(rid));
-    title = String((detail && detail.title) || '').trim();
+    const full = String((detail && detail.title) || '').trim();
+    // W17-G §1: в крошке — короткое название, полный текст — в подсказке.
+    const short = String((detail && detail.title_short) || '').trim()
+      || (full ? deriveTitle(full) : '');
+    info = { short, full };
   } catch {
-    title = '';
+    info = { short: '', full: '' };
   }
-  titleCache.set(rid, title);
-  return title;
+  titleCache.set(rid, info);
+  return info;
+}
+
+/**
+ * Название запроса для подписи вместо id (короткое).
+ * @param {{get: Function}} api
+ * @param {string} requestId
+ * @returns {Promise<string>} '' — если сервер не ответил
+ */
+export async function requestTitle(api, requestId) {
+  const info = await requestTitleInfo(api, requestId);
+  return info.short || '';
 }
 
 /** Сбросить кеш названий (тесты и смена комнаты). */
@@ -231,6 +258,7 @@ export default {
   crumbItems,
   briefCrumbItems,
   requestTitle,
+  requestTitleInfo,
   resetRequestTitles,
   sourceTitle,
   sourceHint,

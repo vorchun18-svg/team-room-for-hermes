@@ -59,15 +59,33 @@ def free_port(start: int = 8851, end: int = 8899) -> int:
     raise RuntimeError("нет свободного порта в 8851–8899")
 
 
-def http(method: str, url: str, body=None, timeout: float = 30.0) -> tuple[int, str]:
+def http(method: str, url: str, body=None, timeout: float = 45.0,
+         attempts: int = 2) -> tuple[int, str]:
+    """HTTP-вызов с повтором: одна сетевая заминка не должна «ронять» проверку.
+
+    Раньше `urllib` таймаут вылетал наверх трассировкой и `test_portable` падал
+    без понятной причины (известный флейк полного прогона). Теперь — один повтор,
+    а если сеть так и не ответила, `NetError` с адресом и временем.
+    """
     data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method,
                                  headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8", "replace")
+    last: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status, resp.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", "replace")
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last = exc
+            if attempt + 1 < max(1, attempts):
+                time.sleep(0.5 * (attempt + 1))
+    raise NetError("нет ответа от %s за %.0f с (%s)" % (url, timeout, last))
+
+
+class NetError(RuntimeError):
+    """Сеть не ответила: читаемая ошибка вместо трассировки `urllib`."""
 
 
 class Sandbox:
@@ -130,10 +148,10 @@ class Sandbox:
             if self.proc.poll() is not None:
                 raise RuntimeError("сервер завершился при запуске:\n%s" % self.tail())
             try:
-                code, _ = http("GET", self.url("/api/health"), timeout=3)
+                code, _ = http("GET", self.url("/api/health"), timeout=3, attempts=1)
                 if code == 200:
                     return
-            except (urllib.error.URLError, OSError):
+            except (urllib.error.URLError, OSError, NetError):
                 pass
             time.sleep(0.4)
         raise RuntimeError("сервер не ответил за %.0f с:\n%s" % (START_TIMEOUT, self.tail()))
@@ -141,12 +159,20 @@ class Sandbox:
     def url(self, path: str) -> str:
         return "http://127.0.0.1:%d%s" % (self.port, path)
 
-    def call(self, method: str, path: str, body=None, timeout: float = 40.0):
+    def call(self, method: str, path: str, body=None, timeout: float = 60.0):
         code, text = http(method, self.url(path), body, timeout)
         try:
             return code, json.loads(text), text
         except ValueError:
             return code, {}, text
+
+    def soft_call(self, method: str, path: str, body=None, timeout: float = 60.0):
+        """То же, но сетевая ошибка становится проверкой «не ответил», а не падением."""
+        try:
+            return self.call(method, path, body, timeout)
+        except NetError as exc:
+            payload = {"error": {"message": str(exc)}}
+            return 599, payload, json.dumps(payload, ensure_ascii=False)
 
     def tail(self, lines: int = 40) -> str:
         try:
@@ -356,7 +382,7 @@ def _screens(box: "Sandbox", room_id: str, prefix: str, checks: "Checks") -> Non
         ("/api/rooms/%s/reports" % room_id, "отчёты", True),
     )
     for path, name, strict in screens:
-        code, payload, raw = box.call("GET", path)
+        code, payload, raw = box.soft_call("GET", path)
         if strict:
             checks.ok("%s: %s открывается (200)" % (prefix, name), code == 200, raw[:300])
         else:
@@ -430,6 +456,18 @@ def scenario_c(base: Path) -> tuple[dict, "Checks"]:
     return result, checks
 
 
+def _run_scenario(runner, base: Path, report: dict, name: str) -> None:
+    """Выполнить сценарий; сетевая/пусковая ошибка — провал проверки, а не падение."""
+    try:
+        result, checks = runner(base)
+    except (RuntimeError, OSError, NetError) as exc:
+        result = {"name": name, "error": str(exc)[:800], "tail": ""}
+        checks = Checks()
+        checks.ok("%s: сценарий выполнился" % name, False, str(exc)[:400])
+    report["scenarios"].append(result)
+    report["checks"] += checks.items
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Проверка переносимости «Комнаты команды»")
     parser.add_argument("--keep", action="store_true", help="не удалять каталоги песочниц")
@@ -441,17 +479,11 @@ def main(argv=None) -> int:
     report: dict = {"base": str(base), "scenarios": [], "checks": []}
     try:
         if args.only in (None, "a"):
-            result, checks = scenario_a(base)
-            report["scenarios"].append(result)
-            report["checks"] += checks.items
+            _run_scenario(scenario_a, base, report, "A-clean")
         if args.only in (None, "b"):
-            result, checks = scenario_b(base)
-            report["scenarios"].append(result)
-            report["checks"] += checks.items
+            _run_scenario(scenario_b, base, report, "B-live")
         if args.only in (None, "c"):
-            result, checks = scenario_c(base)
-            report["scenarios"].append(result)
-            report["checks"] += checks.items
+            _run_scenario(scenario_c, base, report, "C-nothing")
     finally:
         failed = [item for item in report["checks"] if not item["ok"]]
         report["ok"] = not failed

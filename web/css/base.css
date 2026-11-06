@@ -3,6 +3,25 @@
    (@font-face для codicon — в components.css, рядом с .codicon.)
    ========================================================================== */
 
+/* Моноширинная гарнитура Hermes (JetBrains Mono, OFL-1.1 — web/fonts/OFL.txt).
+   local() первым: система с установленным шрифтом обходится без загрузки файла. */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local('JetBrains Mono Regular'), local('JetBrainsMono-Regular'),
+       url('../fonts/JetBrainsMono-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: local('JetBrains Mono Bold'), local('JetBrainsMono-Bold'),
+       url('../fonts/JetBrainsMono-Bold.woff2') format('woff2');
+}
+
 * { box-sizing: border-box; }
 * { margin: 0; padding: 0; }
 html, body { height: 100%; }

@@ -15,7 +15,7 @@
 
 .team-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(292px, 1fr));
   gap: var(--space-3);
   align-items: stretch;
   min-width: 0;
@@ -24,43 +24,74 @@
 .team-grid--empty .empty { padding: var(--space-8) var(--space-4); }
 
 .tm-card {
-  display: flex; flex-direction: column; gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
+  position: relative;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: var(--space-3) var(--space-3) var(--space-2);
   min-width: 0; height: 100%;
 }
 .tm-card--live { box-shadow: inset 2px 0 0 var(--ok); }
 
+/* ── шапка: аватар, имя и должность, роль, «⋯» ─────────────────────────────── */
+
 .tm-card__head {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center; gap: var(--space-2);
+  align-items: start; gap: var(--space-2);
+  min-width: 0;
 }
 .tm-card__who { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tm-card__titleline { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tm-card__name {
-  font-size: var(--text-md); font-weight: 600; line-height: 1.25; color: var(--foreground);
-  overflow-wrap: anywhere;
+  font-size: var(--text-sm); font-weight: 600; line-height: 1.3; color: var(--foreground);
+  min-width: 0; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.tm-card__id {
-  font-size: var(--text-sm); line-height: 1.3; display: flex; align-items: center;
-  gap: 4px 6px; min-width: 0; flex-wrap: wrap;
-}
-/* WAVE13 §11: роль — бейдж рядом с техническим именем профиля, не заголовок. */
-.tm-card__role {
-  flex: 0 0 auto; padding: 0 5px; border-radius: var(--radius-xs);
-  border: 1px solid var(--border-soft); color: var(--ui-text-secondary);
-  font-size: var(--text-sm); line-height: 1.5; letter-spacing: 0.01em;
-}
-.tm-card__profile {
-  font-size: var(--text-sm); color: var(--ui-text-secondary);
+.tm-card__job {
+  font-size: var(--text-xs); line-height: 1.35; color: var(--ui-text-secondary);
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Профиль без описания («default», «lawyer»): вместо сухой роли — мягкая подсказка,
+   клик открывает поле подписи (B-17). */
+.tm-card__setlabel {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px;
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: var(--text-xs); color: var(--link);
+  text-decoration: underline dotted; text-underline-offset: 2px; white-space: nowrap;
+}
+.tm-card__setlabel:hover { color: var(--ui-base); }
+.tm-card__setlabel:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: var(--radius-xs); }
 
-.tm-badge { height: 18px; padding: 0 6px; font-size: var(--text-sm); color: var(--ui-text-tertiary); }
-.tm-badge .codicon { font-size: 11px; }
+/* Роль — бейдж рядом с именем, не заголовок (WAVE13 §11). */
+.tm-role {
+  flex: 0 0 auto; padding: 0 5px; border-radius: var(--radius-xs);
+  border: 1px solid var(--border-soft); color: var(--ui-text-secondary);
+  font-size: var(--text-xs); line-height: 1.5; letter-spacing: 0.01em; white-space: nowrap;
+}
+.tm-card__tools { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.tm-card__pin { display: inline-flex; align-items: center; color: var(--ui-text-tertiary); }
 
-.tm-card__flags { gap: 4px; }
-.tm-card__flags:empty { display: none; }
-.tm-flag { height: 18px; padding: 0 6px; font-size: var(--text-sm); letter-spacing: 0.01em; }
+/* ── меню «⋯»: Изменить модель / Подпись / Роль / Убрать ──────────────────── */
+
+.tm-menu { position: relative; }
+.tm-menu__btn { width: 24px; height: 24px; padding: 0; color: var(--ui-text-tertiary); }
+.tm-menu__btn:hover { color: var(--foreground); background: var(--ui-row-hover-background); }
+.tm-menu__pop {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 30;
+  display: flex; flex-direction: column; gap: 1px;
+  min-width: 208px; padding: 4px;
+  background: var(--ui-bg-elevated); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+}
+.tm-menu__pop[hidden] { display: none; }
+.tm-menu__item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 8px; border: 0; border-radius: var(--radius-sm); background: transparent;
+  color: var(--foreground); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer;
+}
+.tm-menu__item:hover { background: var(--ui-row-hover-background); }
+.tm-menu__item:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
+.tm-menu__item .codicon { color: var(--ui-text-tertiary); flex: none; }
+.tm-menu__item--danger,
+.tm-menu__item--danger .codicon { color: var(--danger-ink); }
 
 /* ── живой статус ────────────────────────────────────────────────────────── */
 
@@ -84,40 +115,82 @@
   .tm-state--working .tm-dot { animation: none; }
 }
 
-.tm-card__desc {
-  margin: 0; font-size: var(--text-sm); line-height: var(--leading-normal);
-  color: var(--ui-text-secondary); overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
-}
-/* Длинное описание — одна строка, полный текст по кнопке «ещё» (не режем на «…»). */
-.tm-card__descbox { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.tm-card__descbox:has(> .tm-card__more) { flex-wrap: wrap; }
-.tm-card__desc--open { -webkit-line-clamp: unset; overflow: visible; }
-.tm-card__more {
-  flex: 0 0 auto; padding: 0; border: 0; background: none; cursor: pointer;
-  color: var(--ui-text-tertiary); font-size: var(--text-sm); text-decoration: underline dotted;
-  font-family: inherit; white-space: nowrap;
-}
-.tm-card__more:hover { color: var(--link); }
-.tm-card__more:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: var(--radius-xs); }
+/* ── «Сейчас: …» одной строкой ────────────────────────────────────────────── */
 
-/* ── строки «сейчас» / «последняя» / мета ─────────────────────────────────── */
-
-/* Подпись колонки — 78 px: «ПОСЛЕДНЯЯ» (75 px при 12 px + разрядке) больше
-   не наезжает на текст задачи в 62 px-колонке (дефект при 780 px). Колонка
-   фиксированная, чтобы значения в строках «сейчас» и «последняя» стояли
-   на одной вертикали; слишком длинная подпись режется «…», а не лезет поверх. */
-.tm-card__line {
-  display: grid; grid-template-columns: 78px minmax(0, 1fr);
-  gap: var(--space-2); align-items: baseline; min-width: 0;
+.tm-card__now {
+  display: flex; align-items: baseline; gap: 5px; min-width: 0;
   font-size: var(--text-sm);
 }
+.tm-card__nowlabel { flex: none; color: var(--ui-text-tertiary); font-size: var(--text-xs); }
+.tm-card__now .tm-task {
+  display: block; min-width: 0; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  -webkit-line-clamp: unset;
+}
+.tm-card__nowempty { color: var(--ui-text-secondary); font-size: var(--text-xs); }
+
+/* ── предупреждение о модели (только при расхождении) ─────────────────────── */
+
+.tm-card__warn {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px;
+  padding: 5px 8px; border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--warn-ink); font-size: var(--text-xs); line-height: 1.4;
+}
+.tm-card__warn .codicon { flex: none; color: var(--warn-ink); }
+.tm-card__warntext { min-width: 0; }
+.tm-card__linkbtn {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: var(--text-xs); color: var(--link);
+  text-decoration: underline dotted; text-underline-offset: 2px;
+}
+.tm-card__linkbtn:hover { color: var(--ui-base); }
+.tm-card__linkbtn:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: var(--radius-xs); }
+.tm-card__sentdetail {
+  flex: 1 1 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px;
+  min-width: 0; color: var(--ui-text-secondary);
+}
+.tm-card__sentdetail[hidden] { display: none; }
+.tm-card__sentsum { min-width: 0; overflow-wrap: anywhere; }
+
+/* ── низ карточки: чип модели + «Особенности (N)» ─────────────────────────── */
+
+.tm-card__meta {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: var(--space-2);
+  min-width: 0; padding-top: 2px;
+}
+/* Один чип: колонка ограничена, поэтому длинная модель режется «…», а не вылезает (B7). */
+.tm-card__meta .agent-model__line { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.tm-card__meta .agent-model__line-chip { max-width: 100%; }
+.tm-card__meta .notes-link { margin-left: auto; flex: none; justify-self: end; }
+
+/* ── «Подробнее»: последняя работа, счётчики, профиль ─────────────────────── */
+
+.tm-card__more { font-size: var(--text-xs); min-width: 0; margin-top: auto; }
+.tm-card__moresum {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--ui-text-tertiary); cursor: pointer; list-style: none;
+}
+.tm-card__moresum::-webkit-details-marker { display: none; }
+.tm-card__moresum::before { content: '▸'; font-size: 11px; line-height: 1; }
+.tm-card__more[open] .tm-card__moresum::before { content: '▾'; }
+.tm-card__moresum:hover { color: var(--ui-text-secondary); }
+.tm-card__moresum:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: var(--radius-xs); }
+.tm-card__morebody { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; min-width: 0; }
+
+/* Подпись колонки фиксирована (72 px), чтобы значения строк стояли на одной
+   вертикали; слишком длинная подпись режется, а не лезет поверх текста. */
+.tm-card__line {
+  display: grid; grid-template-columns: 72px minmax(0, 1fr);
+  gap: var(--space-2); align-items: baseline; min-width: 0;
+  font-size: var(--text-xs);
+}
 .tm-card__label {
-  font-size: var(--text-sm); letter-spacing: 0.04em; text-transform: uppercase;
+  font-size: var(--text-xs); letter-spacing: 0.03em;
   color: var(--ui-text-tertiary); white-space: nowrap;
   min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
-.tm-card__now-body { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
 .tm-card__last-body { display: inline; min-width: 0; }
 .tm-task {
   color: var(--foreground); text-decoration: none; min-width: 0; max-width: 100%;
@@ -125,48 +198,13 @@
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .tm-task:hover { color: var(--link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--link) 40%, transparent); }
-.tm-card__line--now .tm-task { font-weight: 500; }
-
-.tm-card__meta {
-  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
-  min-width: 0; padding-top: 2px;
-}
+.tm-card__rolenote { line-height: 1.4; }
 .tm-model {
   display: inline-flex; align-items: center; height: 18px; padding: 0 5px;
   border-radius: var(--radius-xs); border: 1px solid var(--border-soft);
-  font-size: var(--text-sm); color: var(--ui-text-tertiary);
+  font-size: var(--text-xs); color: var(--ui-text-tertiary);
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.tm-card__counts { font-size: var(--text-sm); color: var(--ui-text-tertiary); }
-
-/* ── подвал карточки: роль + убрать ───────────────────────────────────────── */
-
-.tm-card__foot {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
-  margin-top: auto; padding-top: var(--space-2); border-top: 1px solid var(--border-soft);
-  min-width: 0;
-}
-.tm-role-btn {
-  gap: 5px; padding: 0 6px; height: 22px; font-size: var(--text-sm);
-  color: var(--ui-text-secondary); border-radius: var(--radius-sm);
-}
-.tm-role-btn .codicon { font-size: 11px; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
-.tm-role-btn:hover .codicon,
-.tm-role-btn:focus-visible .codicon { opacity: 1; }
-.tm-role-label { white-space: nowrap; }
-.tm-role-static { font-size: var(--text-sm); }
-.tm-role-select { width: auto; min-width: 132px; height: 22px; min-height: 22px; padding: 0 4px; font-size: var(--text-sm); }
-.tm-remove { color: var(--ui-text-tertiary); }
-.tm-remove:hover { color: var(--danger-ink); }
-/* WAVE13 §11: слева — роль и «Подпись», справа — «Убрать». */
-.tm-card__acts { display: flex; align-items: center; gap: 2px; min-width: 0; flex-wrap: wrap; }
-.tm-label-btn {
-  gap: 4px; padding: 0 6px; height: 22px; font-size: var(--text-sm);
-  color: var(--ui-text-tertiary); border-radius: var(--radius-sm);
-}
-.tm-label-btn .codicon { font-size: 11px; }
-.tm-label-btn:hover { color: var(--foreground); }
-.tm-card__hint { font-size: var(--text-sm); }
 
 /* ── «вне состава» ───────────────────────────────────────────────────────── */
 
@@ -209,6 +247,7 @@
   padding: var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
   border: 1px solid transparent;
 }
+.tm-pick--role { grid-template-columns: 14px minmax(0, 1fr); }
 .tm-pick:hover { background: var(--ui-row-hover-background); }
 .tm-pick:has(input:checked) {
   background: var(--ui-row-active-background);
@@ -232,8 +271,11 @@
   .tm-fact__label { font-size: var(--text-sm); }
 }
 @media (max-width: 560px) {
+  .tm-card__titleline { flex-wrap: wrap; gap: 2px 6px; }
   .tm-card__line { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .tm-card__label { display: none; }
   .tm-pick { grid-template-columns: 14px auto minmax(0, 1fr); }
   .tm-pick .tm-model { display: none; }
+  .tm-card__meta { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
+  .tm-card__meta .notes-link { margin-left: 0; justify-self: start; }
 }

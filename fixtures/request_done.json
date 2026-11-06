@@ -269,7 +269,6 @@
           "outcome": "completed",
           "started_at": 1793164230,
           "ended_at": 1793164590,
-          "summary": "Свод по «Лету» собран из четырёх срезов и проверки критика.",
           "error": null
         }
       ],
@@ -309,7 +308,6 @@
           "outcome": "completed",
           "started_at": 1793164250,
           "ended_at": 1793164430,
-          "summary": "Чек-лист для ИП и 4 запроса в СЭС готовы.",
           "error": null
         }
       ],
@@ -349,7 +347,6 @@
           "outcome": "completed",
           "started_at": 1793164255,
           "ended_at": 1793164480,
-          "summary": "Шорт-лист упаковки и оценка себестоимости.",
           "error": null
         }
       ],
@@ -384,7 +381,6 @@
           "outcome": "completed",
           "started_at": 1793164260,
           "ended_at": 1793164400,
-          "summary": "Статус бренда и развилка по товарному знаку.",
           "error": null
         }
       ],
@@ -425,7 +421,6 @@
           "outcome": "completed",
           "started_at": 1793164265,
           "ended_at": 1793164410,
-          "summary": "Каналы первых продаж и расчёт маржи.",
           "error": null
         }
       ],
@@ -485,7 +480,6 @@
           "outcome": "completed",
           "started_at": 1793164600,
           "ended_at": 1793164650,
-          "summary": "Вердикт revise, 3 замечания.",
           "error": null
         }
       ],
@@ -520,7 +514,6 @@
           "outcome": "completed",
           "started_at": 1793164660,
           "ended_at": 1793164725,
-          "summary": "Доработка по трём замечаниям критика.",
           "error": null
         }
       ],
@@ -721,5 +714,10 @@
       "task_id": "t_a1b2c3d4",
       "kind": "comment"
     }
-  ]
+  ],
+  "title_short": "Дорожная карта проекта: где мы сейчас и что дальше",
+  "heartbeats": {
+    "count": 0,
+    "last_at": null
+  }
 }

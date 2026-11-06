@@ -10,10 +10,16 @@
  *   POST /api/requests/{rid}/messages {text, attach, urgent}
  * Сообщение сразу появляется в ленте (оптимистично), затем лента берётся из
  * ответа сервера. Ошибка сети — человеческий текст под полем, набранное
- * остаётся в поле. Вторая кнопка зависит от статуса запроса:
- *   готово  → «Отправить на доработку» (существующее действие revise);
+ * остаётся в поле.
+ *
+ * Вторая кнопка зависит от статуса запроса:
  *   ошибка  → «Повторить с уточнением»;
- *   в работе → второй кнопки нет.
+ *   иначе   → второй кнопки нет.
+ *
+ * W17-S §1: кнопки «Отправить на доработку» здесь БОЛЬШЕ НЕТ — доработка свода
+ * запускается одним местом («Доработать свод» в блоке «Свод команды»). Если свод
+ * готов, под полем есть переключатель «и доработать свод по этому сообщению»:
+ * сообщение уходит как уточнение и тем же текстом запускает доработку (revise).
  *
  * Перерисовка страницы (опрос 2/10 с) не сбрасывает набранное, фокус и
  * прокрутку ленты: черновик и позиция живут в записи, привязанной к ctx.
@@ -90,15 +96,25 @@ export function authorTitle(item, room) {
 }
 
 /**
- * Вторая кнопка по статусу запроса; у идущей работы её нет.
+ * Вторая кнопка по статусу запроса. Доработки свода здесь нет (W17-S §1):
+ * у готового свода вместо кнопки — переключатель «и доработать свод».
  * @param {string} status
  * @returns {{key: string, label: string}|null}
  */
 export function secondAction(status) {
   const s = String(status === null || status === undefined ? '' : status);
-  if (s === 'done') return { key: 'revise', label: 'Отправить на доработку' };
   if (s === 'failed') return { key: 'retry', label: 'Повторить с уточнением' };
   return null;
+}
+
+/**
+ * Показывать ли переключатель «и доработать свод по этому сообщению».
+ * Только когда свод готов (дорабатывать есть что).
+ * @param {string} status
+ * @returns {boolean}
+ */
+export function canReviseWithMessage(status) {
+  return String(status === null || status === undefined ? '' : status) === 'done';
 }
 
 /* ─────────────────────────────────────────── данные ленты */
@@ -215,7 +231,7 @@ function stateFor(ctx, rid) {
   let st = byRid.get(rid);
   if (!st) {
     st = {
-      thread: [], text: '', attach: [], urgent: false,
+      thread: [], text: '', attach: [], urgent: false, revise: false,
       focus: false, feedScroll: 0, atBottom: true,
       sending: false, error: '', seq: 0,
     };
@@ -476,6 +492,18 @@ export function mountThread(container, ctx, opts = {}) {
       title: 'Руководитель комнаты пересмотрит оставшиеся шаги; начатую работу никто не останавливает',
     }, urgentInput, h('span', null, URGENT_LABEL));
 
+  /* W17-S §1: вместо второй кнопки «Отправить на доработку» — переключатель.
+     Сообщение уходит как обычное уточнение и этим же текстом запускает доработку. */
+  const reviseInput = h('input', { type: 'checkbox', 'data-revise-with-message': '' });
+  reviseInput.checked = Boolean(st.revise);
+  reviseInput.addEventListener('change', () => { st.revise = Boolean(reviseInput.checked); });
+  const reviseBox = canReviseWithMessage(status)
+    ? h('label', {
+      class: 'checkbox thr__revise',
+      title: 'Сообщение уйдёт руководителю комнаты как уточнение и сразу запустит доработку свода по нему',
+    }, reviseInput, h('span', null, 'и доработать свод по этому сообщению'))
+    : null;
+
   /* ── отправка ─────────────────────────────────────────── */
 
   /**
@@ -515,6 +543,8 @@ export function mountThread(container, ctx, opts = {}) {
     }
 
     if (kind === 'revise') {
+      // Оставлено для совместимости вызовов, но кнопки в интерфейсе нет (W17-S §1):
+      // доработка запускается только из блока «Свод команды».
       st.sending = true;
       syncButtons();
       try {
@@ -522,7 +552,7 @@ export function mountThread(container, ctx, opts = {}) {
         st.text = '';
         ta.value = '';
         showError('');
-        toast('Ответ отправлен на доработку руководителю комнаты', 'ok');
+        toast('Свод отправлен на доработку руководителю комнаты', 'ok');
         if (typeof o.onSent === 'function') await o.onSent();
       } catch (err) {
         showError(errorText(err).message + ' Текст остался в поле — попробуйте ещё раз.');
@@ -535,6 +565,8 @@ export function mountThread(container, ctx, opts = {}) {
 
     st.seq += 1;
     const localId = 'local:' + st.seq;
+    const reviseToo = Boolean(st.revise) && canReviseWithMessage(status);
+    if (reviseToo) { st.revise = false; reviseInput.checked = false; }
     const local = {
       id: localId, at: Math.floor(Date.now() / 1000), author: 'mikhail', author_kind: 'mikhail',
       author_label: 'Михаил', text, task_id: null, kind: 'message', pending: true,
@@ -560,9 +592,20 @@ export function mountThread(container, ctx, opts = {}) {
       st.urgent = false;
       urgentInput.checked = false;
       paintFiles();
-      toast(kind === 'retry'
-        ? 'Повтор с уточнением отправлен руководителю комнаты'
-        : 'Сообщение отправлено руководителю комнаты', 'ok');
+      if (reviseToo) {
+        // W17-S §1: то же сообщение запускает доработку свода; дайджест ответов
+        // и уточнений руководитель получит автоматически (build_revision_body).
+        try {
+          await api.post(`/api/requests/${enc(rid)}/actions`, { action: 'revise', text });
+          toast('Сообщение отправлено — руководитель доработает свод по нему', 'ok');
+        } catch (err) {
+          toast('Сообщение ушло, но доработку запустить не удалось: ' + (errorText(err).message || ''), 'danger');
+        }
+      } else {
+        toast(kind === 'retry'
+          ? 'Повтор с уточнением отправлен руководителю комнаты'
+          : 'Сообщение отправлено руководителю комнаты', 'ok');
+      }
       paintFeed();
       paintCount();
       // Снимаем «Отправляю…» ДО onSent: тот перерисовывает страницу целиком и
@@ -624,9 +667,12 @@ export function mountThread(container, ctx, opts = {}) {
       h('div', { class: 'thr__bar' },
         clipBtn,
         h('div', { class: 'spacer' }),
+        reviseBox,
         urgentBox,
         secondBtn,
         sendBtn),
+      reviseBox ? h('div', { class: 'thr__hint thr__hint--revise' },
+        'Без переключателя сообщение только уточняет задачу; с ним — ещё и запускает доработку свода.') : null,
       h('div', { class: 'thr__hint' }, SEND_HINT),
       errLine));
 

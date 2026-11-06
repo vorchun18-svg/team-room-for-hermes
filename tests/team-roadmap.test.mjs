@@ -66,11 +66,13 @@ test('роли и статусы переводятся по-русски', () =
   assert.equal(memberState(undefined).state, 'idle', 'пустой статус = свободен');
   assert.equal(memberState('weird').state, 'idle');
 
-  assert.deepEqual(stageMeta('done'), { status: 'done', label: 'готово', tone: 'ok' });
+  // W17-R §4: у этапа есть значок статуса, а «дальше» больше не подпись статуса.
+  assert.deepEqual(stageMeta('done'), { status: 'done', label: 'готово', tone: 'ok', icon: 'check' });
   assert.equal(stageMeta('active').tone, 'info');
+  assert.equal(stageMeta('active').icon, 'play');
   assert.equal(stageMeta('blocked').tone, 'warn');
-  assert.equal(stageMeta('next').label, 'дальше');
-  assert.equal(stageMeta(null).status, 'next', 'неизвестный статус этапа = дальше');
+  assert.equal(stageMeta('next').label, 'не начат');
+  assert.equal(stageMeta(null).status, 'next', 'неизвестный статус этапа = «не начат»');
 });
 
 test('clockLabel и sinceLabel считают «уже N мин»', () => {

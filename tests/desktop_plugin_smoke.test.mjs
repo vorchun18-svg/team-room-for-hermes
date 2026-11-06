@@ -64,7 +64,13 @@ globalThis.document = {
     return el
   }
 }
-globalThis.window = { matchMedia: () => ({ matches: false }), open: () => true }
+const windowListeners = {}
+globalThis.window = {
+  matchMedia: () => ({ matches: false }),
+  open: () => true,
+  addEventListener: (name, fn) => { (windowListeners[name] ||= []).push(fn) },
+  removeEventListener: (name, fn) => { windowListeners[name] = (windowListeners[name] || []).filter(g => g !== fn) }
+}
 const realSetTimeout = globalThis.setTimeout.bind(globalThis)
 const realClearTimeout = globalThis.clearTimeout.bind(globalThis)
 const liveTimers = new Set()
@@ -220,6 +226,43 @@ function fire(event, payload) {
   for (const handler of view.listeners[event] || []) handler(payload)
 }
 
+/** Событие у запасного <iframe> (когда тег <webview> недоступен). */
+function fireFrame(event, payload) {
+  const frame = tree.querySelectorAll('iframe')[0]
+  assert.ok(frame, 'iframe исчез')
+  for (const handler of frame.listeners[event] || []) handler(payload || {})
+}
+
+/** Сообщение из страницы в окно хозяина (путь <iframe>). */
+function postMessage(data) {
+  const event = { data, origin: 'http://127.0.0.1:8777', source: null }
+  for (const handler of windowListeners.message || []) handler(event)
+}
+
+/** Кнопка с текстом (мини-рендерер держит текст отдельными узлами). */
+function findButton(label) {
+  const walk = node => {
+    if (!node) return null
+    for (const child of node.children || []) {
+      if (child && typeof child.text === 'string' && child.text.trim() === label && node.listeners && node.listeners.click) {
+        return node
+      }
+      const hit = walk(child)
+      if (hit) return hit
+    }
+    return null
+  }
+  return walk(tree)
+}
+
+/** Свежее состояние страницы: как будто плагин только что открыли. */
+function reset() {
+  stopTimers()
+  hooks.slots = []
+  tree = null
+  flush()
+}
+
 // Снять таймеры страницы (watchdog загрузки и автоповтор), иначе процесс висит.
 function stopTimers() {
   for (const slot of hooks.slots) {
@@ -259,7 +302,8 @@ test('<webview> создаётся императивно, без partition, в�
   assert.match(view.style.cssText, /height:100%/)
   assert.deepEqual(
     Object.keys(view.listeners).sort(),
-    ['crashed', 'did-fail-load', 'did-finish-load', 'render-process-gone']
+    ['crashed', 'did-fail-load', 'did-finish-load', 'did-navigate',
+      'did-navigate-in-page', 'dom-ready', 'render-process-gone']
   )
   assert.equal(tree.text().includes('запускаются'), false)
 })
@@ -270,7 +314,9 @@ test('did-finish-load не показывает плашку', async () => {
   assert.equal(tree.text().includes('Командные комнаты ещё запускаются'), false)
 })
 
-test('did-fail-load главного фрейма — русская плашка с кнопками', async () => {
+test('первый запуск: сервер не ответил — плашка «ещё запускаются» с кнопками', async () => {
+  reset()
+  await settle()
   fire('did-fail-load', { errorCode: -102, errorDescription: 'ERR_CONNECTION_REFUSED', isMainFrame: true })
   await settle()
   const text = tree.text()
@@ -281,6 +327,30 @@ test('did-fail-load главного фрейма — русская плашк�
   assert.match(text, /ERR_CONNECTION_REFUSED/)
 })
 
+test('B-16: перезапуск сервера не сносит уже загруженную страницу', async () => {
+  reset()
+  await settle()
+  fire('did-finish-load', {})
+  await settle()
+  const before = tree.querySelectorAll('webview')[0]
+  assert.ok(before)
+
+  fire('did-fail-load', { errorCode: -102, errorDescription: 'ERR_CONNECTION_REFUSED', isMainFrame: true })
+  await settle()
+
+  const after = tree.querySelectorAll('webview')[0]
+  assert.equal(after, before, 'webview пересоздан — так нельзя: страница была жива')
+  assert.equal(after.removed, false)
+  const text = tree.text()
+  assert.equal(/Командные комнаты ещё запускаются/.test(text), false, 'страницу не закрываем плашкой')
+  assert.match(text, /Сервер перезапускается/)
+
+  // Сервер вернулся: тихая плашка уходит, страницу не трогаем.
+  fire('did-finish-load', {})
+  await settle()
+  assert.equal(tree.text().includes('Сервер перезапускается'), false)
+})
+
 test('ошибка подкадра игнорируется, ERR_ABORTED тоже', async () => {
   fire('did-finish-load', {})
   await settle()
@@ -288,6 +358,45 @@ test('ошибка подкадра игнорируется, ERR_ABORTED тож
   fire('did-fail-load', { errorCode: -3, isMainFrame: true })
   await settle()
   assert.equal(tree.text().includes('ещё запускаются'), false)
+  assert.equal(tree.text().includes('Сервер перезапускается'), false)
+})
+
+test('B-16: маршрут запоминается и открывается заново при пересоздании webview', async () => {
+  reset()
+  await settle()
+  fire('did-finish-load', {})
+  await settle()
+  fire('did-navigate-in-page', {
+    url: 'http://127.0.0.1:8777/?theme=light#/room/fn/request/t_9f3c2a10',
+    isMainFrame: true
+  })
+  await settle()
+
+  // Окно гостя закрылось — единственный случай, когда страницу пересоздаём.
+  fire('render-process-gone', {})
+  await settle()
+  const again = findButton('Повторить')
+  assert.ok(again, 'нет кнопки «Повторить»')
+  for (const handler of again.listeners.click || []) handler({ currentTarget: again })
+  await settle()
+
+  const views = tree.querySelectorAll('webview')
+  assert.equal(views.length, 1)
+  assert.match(views[0].attrs.src, /#\/room\/fn\/request\/t_9f3c2a10$/,
+    'пересоздание открыло не тот маршрут: ' + views[0].attrs.src)
+})
+
+test('B-16: возврат «на все комнаты» забывает прежний маршрут', async () => {
+  fire('did-navigate-in-page', { url: 'http://127.0.0.1:8777/?theme=light#/', isMainFrame: true })
+  await settle()
+  fire('render-process-gone', {})
+  await settle()
+  const again = findButton('Повторить')
+  assert.ok(again)
+  for (const handler of again.listeners.click || []) handler({ currentTarget: again })
+  await settle()
+  const views = tree.querySelectorAll('webview')
+  assert.match(views[0].attrs.src, /\?theme=(light|dark)$/, 'дома хэш не нужен: ' + views[0].attrs.src)
 })
 
 test('без поддержки <webview> — запасной <iframe> с микрофоном', async () => {
@@ -303,6 +412,22 @@ test('без поддержки <webview> — запасной <iframe> с ми�
   assert.equal(frames.length, 1, 'ожидался запасной <iframe>')
   assert.match(frames[0].attrs.allow, /microphone/)
   assert.match(frames[0].attrs.src, /127\.0\.0\.1:8777/)
+})
+
+test('B-16: <iframe> присылает маршрут сообщением — он же попадает в src', async () => {
+  // Страница сообщает маршрут хозяину: {type:'team-room:route', hash}
+  postMessage({ type: 'team-room:route', version: 1, hash: '#/room/cafe/backlog' })
+  await settle()
+  // Пересоздание запасного пути (сервер не ответил) — src должен нести тот же хэш.
+  fireFrame('error', {})
+  await settle()
+  const again = findButton('Повторить')
+  assert.ok(again, 'нет кнопки «Повторить»')
+  for (const handler of again.listeners.click || []) handler({ currentTarget: again })
+  await settle()
+  const frames = tree.querySelectorAll('iframe')
+  assert.equal(frames.length, 1)
+  assert.match(frames[0].attrs.src, /#\/room\/cafe\/backlog$/, 'iframe открыт не на том маршруте: ' + frames[0].attrs.src)
   WEBVIEW_OK = true
 })
 

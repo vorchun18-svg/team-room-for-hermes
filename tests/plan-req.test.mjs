@@ -1,14 +1,14 @@
 /**
- * plan-req.test.mjs — «Проектный режим» на странице брифа/направления (PLAN-FE-REQ).
+ * plan-req.test.mjs — «Проектный режим» на странице брифа/части работы (PLAN-FE-REQ).
  *
  * Что проверяем (критерии волны 9, §4–§6):
  *  • флажок «Это бриф проекта»: подсказка дословно, правило «включён в пустой
  *    комнате», поле `brief` уходит только в проектной комнате;
- *  • бейдж «бриф» и мини-счётчик «направлений: N, идёт: M» из `streams_summary`;
- *  • плашка «Предложенная карта»: направления компактно, «Запустить всё»,
+ *  • бейдж «бриф» и мини-счётчик «частей работы: N, идёт: M» из `streams_summary`;
+ *  • плашка «Предложенная карта»: части работы компактно, «Запустить всё»,
  *    «Открыть карту проекта», пустое состояние, ошибка сети по-русски;
- *  • крошка «Комната › Бриф › Направление» (со ссылкой на бриф и без неё);
- *  • журнал плана: «добавил направление «X», потому что …»;
+ *  • крошка «Комната › Бриф › Часть работы» (со ссылкой на бриф и без неё);
+ *  • журнал плана: «добавил часть работы «X», потому что …»;
  *  • Артефакты: путь внутри папки проекта — относительно неё;
  *  • в видимом тексте нет технических слов.
  *
@@ -79,7 +79,7 @@ const PLAN = {
 test('флажок брифа: подпись и подсказка — дословно из ТЗ, без технических слов', () => {
   assert.equal(BRIEF_LABEL, 'Это бриф проекта');
   assert.ok(BRIEF_HINT.includes('Руководитель комнаты не будет глубоко исследовать'));
-  assert.ok(BRIEF_HINT.includes('предложит карту направлений'));
+  assert.ok(BRIEF_HINT.includes('предложит карту частей работы'));
   assert.ok(BRIEF_HINT.includes('«Запустить»'));
   assert.ok(!/директор|dispatcher|kanban|t_/i.test(BRIEF_LABEL + BRIEF_HINT));
 });
@@ -118,12 +118,12 @@ test('бриф: поле читается терпимо, сводка — total
   assert.equal(summaryOf(null), null);
 });
 
-test('счётчик: «направлений: N, идёт: M»; пустая строка — сводки нет', () => {
-  assert.equal(summaryText({ total: 4, running: 2 }), 'направлений: 4, идёт: 2');
-  assert.equal(summaryText({ total: 1, running: null }), 'направлений: 1');
+test('счётчик: «частей работы: N, идёт: M»; пустая строка — сводки нет', () => {
+  assert.equal(summaryText({ total: 4, running: 2 }), 'частей работы: 4, идёт: 2');
+  assert.equal(summaryText({ total: 1, running: null }), 'частей работы: 1');
   assert.equal(summaryText(null), '');
   const chip = briefSummaryChip({ total: 4, running: 2 });
-  assert.equal(text(chip), 'направлений: 4, идёт: 2');
+  assert.equal(text(chip), 'частей работы: 4, идёт: 2');
   assert.equal(briefSummaryChip(null), null);
 });
 
@@ -133,7 +133,7 @@ test('бейдж «бриф» — короткая подпись и понят�
   assert.match(badge.getAttribute('title'), /бриф проекта/i);
 });
 
-test('статусы направлений по-русски, предложенные считаются', () => {
+test('статусы частей работы по-русски, предложенные считаются', () => {
   assert.equal(streamStatusInfo('proposed').label, 'предложено');
   assert.equal(streamStatusInfo('running').label, 'идёт');
   assert.equal(streamStatusInfo('waiting_quota').label, 'ждёт лимита');
@@ -159,12 +159,12 @@ test('имена без системных id: руководитель комн
 
 /* ------------------------------------------------- плашка «Предложенная карта» */
 
-test('плашка: заголовок, направления компактно, зависимости и сроки', () => {
+test('плашка: заголовок, части работы компактно, зависимости и сроки', () => {
   const card = buildPlanCard({ plan: PLAN, roomId: 'cafe' });
   assert.equal(text(byClass(card, 'plan-card__title')[0]), PLAN_TITLE);
 
   const rows = byClass(card, 'plan-stream');
-  assert.equal(rows.length, 3, 'все направления в списке');
+  assert.equal(rows.length, 3, 'все части работы в списке');
   assert.deepEqual(rows.map((r) => r.getAttribute('data-stream')), ['s1', 's2', 's3']);
 
   const first = text(rows[0]);
@@ -232,7 +232,7 @@ test('плашка: пустая карта и ошибка сети — чел�
 
 /* ---------------------------------------------------- крошка под-запроса */
 
-test('крошка под-запроса: «Комната › Бриф › Направление», бриф — ссылкой', () => {
+test('крошка под-запроса: «Комната › Бриф › Часть работы», бриф — ссылкой', () => {
   const items = briefCrumbItems({
     roomId: 'cafe', roomTitle: 'Лето', briefRootId: 't_root',
     briefTitle: 'Запуск линейки', streamTitle: 'Упаковка',
@@ -242,9 +242,9 @@ test('крошка под-запроса: «Комната › Бриф › На
   assert.equal(items[0].href, '#/room/cafe/composer');
   assert.equal(items[1].text, 'Бриф «Запуск линейки»');
   assert.equal(items[1].href, '#/room/cafe/request/t_root');
-  assert.equal(items[2].text, 'Направление «Упаковка»');
+  assert.equal(items[2].text, 'Часть работы «Упаковка»');
   assert.equal(items[2].current, true);
-  assert.ok(!JSON.stringify(items).includes('s1'), 'id направления на экран не выводим');
+  assert.ok(!JSON.stringify(items).includes('s1'), 'id части работы на экран не выводим');
 });
 
 test('крошка под-запроса: без id и названия брифа — всё равно путь', () => {
@@ -252,18 +252,18 @@ test('крошка под-запроса: без id и названия бриф
   assert.equal(items.length, 3);
   assert.equal(items[1].text, 'Бриф');
   assert.equal(items[1].href, undefined, 'некуда вести — ссылки нет');
-  assert.equal(items[2].text, 'Направление «Логистика»');
-  assert.deepEqual(briefCrumbItems({ roomId: 'cafe' }), [], 'без направления крошки нет');
+  assert.equal(items[2].text, 'Часть работы «Логистика»');
+  assert.deepEqual(briefCrumbItems({ roomId: 'cafe' }), [], 'без части работы крошки нет');
   assert.deepEqual(briefCrumbItems({ streamTitle: 'X' }), [], 'без комнаты крошки нет');
 });
 
 /* ------------------------------------------------------- журнал плана */
 
-test('журнал плана: «добавил направление «X», потому что …»', () => {
+test('журнал плана: «добавил часть работы «X», потому что …»', () => {
   const plan = {
     ...PLAN,
     log: [
-      { at: 1793200000, who: 'manager', kind: 'created', text: 'предложил карту: 3 направления', stream_id: null },
+      { at: 1793200000, who: 'manager', kind: 'created', text: 'предложил карту: 3 части работы', stream_id: null },
       { at: 1793200100, who: 'manager', kind: 'added', text: 'появился новый блок работ', stream_id: 's1' },
       { at: 1793200200, who: 'mikhail', kind: 'changed', text: 'срок сдвинулся', stream_id: 's2' },
       { at: 1793200300, who: 'system', kind: 'dropped', text: 'передумали', stream_id: 's3' },
@@ -274,16 +274,16 @@ test('журнал плана: «добавил направление «X», п
   const events = planLogEvents(plan);
   assert.equal(events.length, 6);
   assert.deepEqual(events.map((e) => e.kind), Array(6).fill('plan'));
-  assert.equal(events[0].text, 'предложил карту: 3 направления', 'фраза сервера не удваивается');
-  assert.equal(events[1].text, 'добавил направление «Упаковка», потому что появился новый блок работ');
+  assert.equal(events[0].text, 'предложил карту: 3 части работы', 'фраза сервера не удваивается');
+  assert.equal(events[1].text, 'добавил часть работы «Упаковка», потому что появился новый блок работ');
   assert.equal(events[1].actor, 'руководитель комнаты');
   assert.equal(events[2].actor, 'Михаил');
-  assert.equal(events[2].text, 'изменил направление «Логистика»: срок сдвинулся');
-  assert.equal(events[3].text, 'убрал направление «Цены», потому что передумали');
-  assert.equal(events[4].text, 'направление «Логистика» ждёт лимита — очередь подождёт');
-  assert.equal(events[5].text, 'запустил направление «Логистика»');
+  assert.equal(events[2].text, 'изменил часть работы «Логистика»: срок сдвинулся');
+  assert.equal(events[3].text, 'убрал часть работы «Цены», потому что передумали');
+  assert.equal(events[4].text, 'часть работы «Логистика» ждёт лимита — очередь подождёт');
+  assert.equal(events[5].text, 'запустил часть работы «Логистика»');
   assert.equal(events[1].request_id, 't_root', 'запись ведёт на бриф');
-  assert.ok(!events.map((e) => e.text).join(' ').includes('s1'), 'id направления в тексте нет');
+  assert.ok(!events.map((e) => e.text).join(' ').includes('s1'), 'id части работы в тексте нет');
 });
 
 test('журнал плана: пустой и битый лог не роняют вкладку', () => {

@@ -49,6 +49,47 @@ def items_from_detail(rid: str, detail: dict) -> list:
     return [item for item in out if item["text"]]
 
 
+def apply_answers(view: dict, details) -> dict:
+    """Наложить ответы демо-запроса на бэклог: статус, близнецы, служебные вопросы.
+
+    Зеркало бэкенда (W17-B §7): один источник истины — ответ; вопросы-близнецы
+    схлопываются; «раунды критика» не показываются. Модуль сервера — чистые функции,
+    поэтому демо считает ровно так же, как боевая программа.
+    """
+    try:
+        import sys
+        from pathlib import Path
+        server_dir = Path(__file__).resolve().parent.parent / "server"
+        if str(server_dir) not in sys.path:
+            sys.path.insert(0, str(server_dir))
+        import answers as mod                      # server/answers.py
+    except Exception:                              # noqa: BLE001 - демо важнее точности
+        return view
+    records = []
+    for rid, detail in details or []:
+        stored = {}
+        for question in detail.get("open_questions") or []:
+            if not isinstance(question, dict):
+                continue
+            qid = str(question.get("id") or "")
+            answer = question.get("answer")
+            state = str(question.get("answer_state") or "")
+            if answer:
+                stored[qid] = {"text": answer, "at": question.get("answered_at"),
+                               "answered": bool(question.get("answered")) or state in
+                               ("sent", "received", "applied", "no_change"),
+                               "status": state or "sent", "question_text": question.get("text") or ""}
+            elif state == "waiting_explanation":
+                stored[qid] = {"text": question.get("explanation_text") or "…", "answered": False,
+                               "status": "waiting_explanation",
+                               "question_text": question.get("text") or ""}
+        records.append({"root_id": rid, "answers": stored})
+    try:
+        return mod.backlog_overlay(view, records)
+    except Exception:                              # noqa: BLE001
+        return view
+
+
 def merge(existing: list, derived: list) -> int:
     """Дописать недостающие элементы, сохранив статусы, выставленные Михаилом."""
     known = {item.get("id") for item in existing}

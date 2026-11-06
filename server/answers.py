@@ -136,6 +136,31 @@ def explanation_comment(question_id, question_text, text) -> str:
     return "%s %s «%s»] %s" % (EXPLAIN_MARK, question_id, short(question_text, 120), norm(text))
 
 
+#: метка одной карточки «накопленные ответы» (W17-B §3, B6)
+DIGEST_MARK = "[Михаил · накопленные ответы]"
+
+
+def digest_comment(items, limit: int = 180) -> str:
+    """Одно сообщение руководителю со всеми ответами без реакции (W17-B §3).
+
+    ``items`` — ``[{question_id, question_text, answer, at}]`` в порядке вопросов.
+    Нумерация и id вопроса — чтобы руководитель мог ответить реакцией на каждый;
+    текст ответа обрезается по границе слова (полный он в реестре и в ветке).
+    """
+    rows = [item for item in items or [] if isinstance(item, dict)]
+    lines = ["%s Ответы без вашей реакции — %d. Ответь на КАЖДЫЙ короткой реакцией в ветке:"
+             % (DIGEST_MARK, len(rows))]
+    for number, item in enumerate(rows, start=1):
+        qid = str(item.get("question_id") or "q_0")
+        qtext = short(item.get("question_text") or "", 120)
+        answer = short(item.get("answer") or "", limit)
+        lines.append("%d) %s «%s» — %s" % (number, qid, qtext, answer))
+    lines.append("Формат реакции: «%s %s] Принято: …» (или «Ничего менять не нужно», "
+                 "«Работа пересмотрена: карточки t_…»)."
+                 % (REACTION_MARK, str((rows[0] if rows else {}).get("question_id") or "q_x")))
+    return "\n".join(lines)
+
+
 def reaction_comment(question_id, state, text) -> str:
     """Готовая метка реакции руководителя (её пишет он сам в ветке)."""
     return "%s %s] %s" % (REACTION_MARK, question_id, norm(text))
@@ -205,67 +230,168 @@ def _cards_of(text) -> list:
     return out
 
 
-def reactions_from_thread(items, questions=None) -> dict:
-    """Реакции руководителя из ленты: ``{question_id: {text, at, status, cards, author}}``.
+#: порог запасного (implicit) поиска реакции по совпадению основ слов.
+#: Аудит B-12: при пороге 3 посторонний комментарий руководителя про ДРУГОЕ
+#: уточнение засчитывался реакцией на вопрос `q_7decf20e`. Нужно не только число
+#: общих слов, но и доля от слов вопроса — иначе редкий длинный вопрос «ловит»
+#: любой отчёт об уточнениях.
+IMPLICIT_MIN_SCORE = 4
+IMPLICIT_MIN_RATIO = 0.5
 
-    Основной путь — метка ``[Руководитель · реакция на ответ q_x]`` (контракт в
-    ``docs/AGENT-GUIDE.md``). Запасной — обычный комментарий руководителя, который
-    явно называет id вопроса или дословно перекрывает текст вопроса; такая реакция
-    помечается ``implicit`` и в интерфейсе показывается так же.
+
+def _lead_names(lead) -> set:
+    """Профили руководителя комнаты (``str``/список) в нижнем регистре."""
+    values = [lead] if isinstance(lead, str) else list(lead or [])
+    return {str(value).strip().lower() for value in values if str(value or "").strip()}
+
+
+def _from_leader(item, leads: set) -> bool:
+    """Запись ленты — от руководителя комнаты (а не от любого агента).
+
+    Аудит B-12: раньше подходил ЛЮБОЙ ``author_kind="agent"`` (критик, исполнитель),
+    поэтому чужая реплика закрывала ответ. ``leads`` пусто → считаем, что комната
+    не сообщила руководителя: тогда подходит любой агент (совместимость с моками).
+    """
+    if not isinstance(item, dict) or item.get("author_kind") != "agent":
+        return False
+    if not leads:
+        return True
+    return str(item.get("author") or "").strip().lower() in leads
+
+
+def _after_answer(at: int, record) -> bool:
+    """Реакция записана НЕ РАНЬШЕ ответа (аудит B-12: время обязательно).
+
+    Время в ленте — секунды, поэтому «в ту же секунду» считается «после»: ответ и
+    реакция на него физически не могут быть раньше ответа, а вот комментарий,
+    написанный ДО ответа (боевой случай 05.11 16:48 против ответа 16:52),
+    отсекается. Нет времени ответа (старая запись без ``at``) — проверять нечего.
+    """
+    answered_at = int((record or {}).get("at") or 0) if isinstance(record, dict) else 0
+    return not answered_at or at >= answered_at
+
+
+def reactions_from_thread(items, questions=None, answers=None, lead=None) -> dict:
+    """Реакции руководителя из ленты: ``{question_id: {text, at, status, cards, …}}``.
+
+    ЕДИНСТВЕННЫЙ путь поиска реакции — им пользуются окно вопроса, кнопка
+    «Напомнить руководителю» и пересылка накопленных ответов (аудит B-12: раньше
+    окно и кнопка искали по-разному и расходились).
+
+    Правила (W17-B §8):
+    * автор — ТОЛЬКО руководитель комнаты (``lead`` = ``room["orchestrator"]``);
+    * реакция — только ПОСЛЕ ответа (``answers[qid]["at"]``);
+    * основной путь — метка ``[Руководитель · реакция на ответ q_x]``
+      (контракт ``docs/AGENT-GUIDE.md``);
+    * запасной (``implicit``) — комментарий руководителя, который называет id
+      вопроса, либо перекрывает текст вопроса по основам слов
+      (:data:`IMPLICIT_MIN_SCORE` + :data:`IMPLICIT_MIN_RATIO`). Запасной путь
+      работает только для вопросов, у которых есть ответ: без ответа реакции быть
+      не может.
     """
     out: dict = {}
-    by_stem: dict = {}
+    records = answers if isinstance(answers, dict) else {}
+    leads = _lead_names(lead)
+    known: dict = {}
+    rec_of: dict = {}
     for question in questions or []:
-        if isinstance(question, dict) and question.get("id"):
-            by_stem[str(question["id"])] = stems(question.get("text"))
+        if not isinstance(question, dict) or not question.get("id"):
+            continue
+        qid = str(question["id"])
+        known[qid] = question
+        record = record_for(question, records) if records else None
+        if isinstance(record, dict) and norm(record.get("text")):
+            rec_of[qid] = record
+        for alias in question.get("aliases") or []:
+            known.setdefault(str(alias), question)
+            if qid in rec_of:
+                rec_of.setdefault(str(alias), rec_of[qid])
+    by_stem = {qid: stems((known.get(qid) or {}).get("text")) for qid in rec_of}
     for item in items or []:
-        if not isinstance(item, dict) or item.get("author_kind") != "agent":
+        if not _from_leader(item, leads):
             continue
         text = norm(item.get("text"))
         if not text:
             continue
+        at = int(item.get("at") or 0)
         qid, implicit = "", False
         if text.startswith(REACTION_MARK) or "реакция на ответ" in text.lower():
             qid = _qid_from(text)
         if not qid:
             mentioned = _qid_from(text)
-            if mentioned and mentioned in by_stem:
+            if mentioned and mentioned in known and mentioned in rec_of:
                 qid, implicit = mentioned, True
-        if not qid and by_stem:
+        if not qid and by_stem and reaction_state(text) in ("applied", "no_change"):
             mine = stems(text)
-            best, score = "", 0
+            best, score, ratio = "", 0, 0.0
             for candidate, words in by_stem.items():
                 common = len(mine & words)
-                if common > score:
-                    best, score = candidate, common
-            if score >= 3 and reaction_state(text) in ("applied", "no_change"):
+                share = common / max(1, len(words))
+                if common > score or (common == score and share > ratio):
+                    best, score, ratio = candidate, common, share
+            if best and score >= IMPLICIT_MIN_SCORE and ratio >= IMPLICIT_MIN_RATIO:
                 qid, implicit = best, True
         if not qid:
             continue
-        at = int(item.get("at") or 0)
+        if not _after_answer(at, rec_of.get(qid)):
+            continue                    # комментарий ДО ответа — не реакция (B-12)
+        status = reaction_state(text)
         previous = out.get(qid)
         if previous and int(previous.get("at") or 0) > at:
             continue
-        out[qid] = {"text": text, "at": at, "status": reaction_state(text),
+        out[qid] = {"text": text, "at": at, "status": status,
+                    "label": STATE_RU.get(status, STATE_RU["received"]),
                     "cards": _cards_of(text), "author": item.get("author") or "",
                     "author_label": item.get("author_label") or "",
                     "implicit": implicit, "task_id": item.get("task_id")}
     return out
 
 
+def reaction_for_question(question, reactions) -> dict | None:
+    """Реакция для вопроса с учётом id-близнецов (``aliases``)."""
+    if not isinstance(question, dict):
+        return None
+    reactions = reactions if isinstance(reactions, dict) else {}
+    found = reactions.get(str(question.get("id")))
+    if isinstance(found, dict):
+        return found
+    for alias in question.get("aliases") or []:
+        found = reactions.get(str(alias))
+        if isinstance(found, dict):
+            return found
+    return None
+
+
+def reaction_lookup(question, questions, records, thread_items, lead=None) -> tuple:
+    """(запись ответа, реакция) — ОДИН поиск для окна вопроса и кнопки «Напомнить».
+
+    ``questions`` — весь список вопросов запроса (а не один вопрос!): запасное
+    сопоставление по тексту зависит от набора, и именно из-за разных наборов окно
+    и кнопка расходились (аудит B-12).
+    """
+    record = record_for(question, records) if isinstance(records, dict) else None
+    reactions = reactions_from_thread(thread_items, questions, records, lead=lead)
+    return record, reaction_for_question(question, reactions)
+
+
 # ------------------------------------------------------------------ применение ---
 
 def state_of(record: dict | None, reaction: dict | None = None) -> str:
-    """Статус ответа: реестр + найденная реакция руководителя."""
+    """Статус ответа: реестр + найденная реакция руководителя.
+
+    W17-B §2 (аудит B5): встречный вопрос — ТОЛЬКО явное действие
+    ``need_explanation`` (кнопка). Эвристика по тексту больше не меняет статус:
+    она ловила ложные срабатывания на старых записях (боевой `q_7985e685`: в ответе
+    Михаила было решение «эта папка не относится к юристу», а вопрос помечался
+    «ждёт пояснения»). Такие записи реестра считаются ОТВЕТАМИ (`answered=true`),
+    без перезаписи данных. Подсказка «похоже на просьбу пояснить» осталась
+    отдельной функцией (`explanation_hint`) — только для журнала.
+    """
     record = record if isinstance(record, dict) else {}
     text = norm(record.get("text"))
     if not text:
         return "open"
     if record.get("answered") is False or str(record.get("status") or "") == "waiting_explanation":
-        return "waiting_explanation"
-    if "status" not in record and "answered" not in record and is_counter_question(text):
-        # старые записи (до W14-D) писали только текст: встречный вопрос ошибочно
-        # считался ответом (п. 10). Восстанавливаем смысл по тексту.
         return "waiting_explanation"
     if isinstance(reaction, dict) and reaction.get("status") in ("received", "applied", "no_change"):
         return str(reaction["status"])
@@ -273,6 +399,19 @@ def state_of(record: dict | None, reaction: dict | None = None) -> str:
     if stored in ("received", "applied", "no_change"):
         return stored
     return "sent"
+
+
+def explanation_hint(record: dict | None) -> bool:
+    """Подсказка для журнала: текст старой записи похож на просьбу пояснить.
+
+    На статус ответа НЕ влияет (W17-B §2): решение принимает только явная кнопка
+    «Мне нужно пояснение». Нужна, чтобы в журнале было видно, какие старые ответы
+    стоит перечитать.
+    """
+    record = record if isinstance(record, dict) else {}
+    if "answered" in record or "status" in record:
+        return False                     # новая запись: смысл уже записан явно
+    return is_counter_question(record.get("text"))
 
 
 def apply_question(question: dict, record, reaction=None, now: int | None = None) -> dict:
@@ -630,6 +769,233 @@ def steps_to_cancel(steps, question, answer_text) -> list:
     return out
 
 
+# --------------------------------------------------- статус вопросов (W17-B §7) ---
+# Аудит B7: «вопросы в „Дальше“ не знают об ответе». Реестр ответов — ЕДИНСТВЕННЫЙ
+# источник истины статуса вопроса. Бэклог, счётчики вкладки и деталь запроса считают
+# статус одним и тем же кодом, поэтому ответ исчезает из «ждут вашего решения» сразу.
+
+#: вводные префиксы, которые не делают вопрос другим вопросом
+_QUESTION_PREFIX = re.compile(r"^(?:не\s+к\s+спеху|не\s+срочно|на\s+будущее|потом)\s*[:—–-]\s*",
+                              re.IGNORECASE)
+#: скобочные уточнения (в т.ч. «(рекомендация: …)») — сравниваем вопросы без них:
+#: руководитель часто переписывает пояснение в скобках, а вопрос остаётся тем же
+_PARENS = re.compile(r"\([^()]{0,300}\)")
+_PUNCT = re.compile(r"[^\w]+", re.UNICODE)
+
+
+def is_service_question(text) -> bool:
+    """Служебный вопрос, ответ на который уже задан настройками комнаты (§7в, B7-3).
+
+    «Сколько раундов/прогонов критика?» — руководитель не должен переспрашивать;
+    вопрос скрывается и из детали, и из бэклога, и из счётчиков.
+    """
+    flat = norm(text).lower()
+    if not flat or "критик" not in flat:
+        return False
+    if "прогон" in flat or "раунд" in flat or "цикл" in flat:
+        return True
+    return "сколько" in flat and ("провер" in flat or "доработ" in flat)
+
+
+def text_key(text) -> str:
+    """Ключ вопроса для поиска близнецов: регистр, пробелы, знаки, префиксы, скобки.
+
+    Только для сравнения — в интерфейсе показывается настоящий текст. Боевые примеры
+    (`fn`): q_22b45cc3 и q_18b309bf — один вопрос «Задачи агентам в TaskFlow: вариант А
+    (…) или Б (…)»; q_d47fe5e7 и q_d5b4abf0 — «Ольга К. (маркшейдер…): передавать…».
+    """
+    value = norm(text).lower()
+    for _ in range(3):
+        stripped = _QUESTION_PREFIX.sub("", value)
+        if stripped == value:
+            break
+        value = stripped
+    value = _PARENS.sub(" ", value)
+    value = value.replace("ё", "е")
+    return " ".join(_PUNCT.sub(" ", value).split())
+
+
+def record_for(question: dict, records) -> dict | None:
+    """Запись ответа для вопроса: по id, затем по id-близнецам, затем по тексту.
+
+    ``records`` — реестр ответов запроса (``answers[q_id]``). Текстовая связка нужна,
+    когда руководитель выдал тот же вопрос с новым id (B7-2), — ответ, данный на один
+    id, должен закрывать все близнецы.
+    """
+    if not isinstance(records, dict) or not isinstance(question, dict):
+        return None
+    record = records.get(str(question.get("id")))
+    if isinstance(record, dict):
+        return record
+    for alias in question.get("aliases") or []:
+        record = records.get(str(alias))
+        if isinstance(record, dict):
+            return record
+    key = text_key(question.get("text"))
+    if len(key) < 12:
+        return None
+    for other in records.values():
+        if isinstance(other, dict) and text_key(other.get("question_text")) == key:
+            return other
+    return None
+
+
+def dedupe_questions(questions) -> list:
+    """Схлопнуть вопросы-близнецы в один элемент, id остальных — в ``aliases`` (B7-2).
+
+    Группа — по :func:`text_key`. Показывается самый полный текст (самый длинный),
+    признаки ответа берутся у любого отвеченного близнеца. Порядок — как пришёл.
+    """
+    groups: dict = {}
+    order: list = []
+    for question in questions or []:
+        if not isinstance(question, dict):
+            continue
+        key = text_key(question.get("text")) or ("id:" + str(question.get("id")))
+        base = groups.get(key)
+        if base is None:
+            base = dict(question)
+            base["aliases"] = []
+            groups[key] = base
+            order.append(key)
+            continue
+        if len(norm(question.get("text"))) > len(norm(base.get("text"))):
+            keep_id = base.get("id")
+            aliases = base.get("aliases") or []
+            base.update(question)
+            base["id"] = keep_id                      # стабильный ключ элемента
+            base["aliases"] = aliases
+        alias = str(question.get("id") or "")
+        if alias and alias != str(base.get("id")) and alias not in base["aliases"]:
+            base["aliases"].append(alias)
+        if question.get("answered") and not base.get("answered"):
+            for field in ("answered", "answer", "answered_at", "answer_state", "answer_label",
+                          "needs_explanation", "reaction", "leader_pending", "can_remind",
+                          "reaction_overdue", "reaction_waited_s"):
+                if field in question:
+                    base[field] = question[field]
+    return [groups[key] for key in order]
+
+
+def question_state(record: dict | None) -> dict:
+    """Статус вопроса для «Дальше» и счётчиков: ``{state, answered, label, at, answer}``."""
+    record = record if isinstance(record, dict) else {}
+    state = state_of(record)
+    if state == "waiting_explanation":
+        return {"state": state, "answered": False, "label": "ждёт пояснения",
+                "at": int(record.get("at") or 0) or None, "answer": None}
+    if state == "open":
+        return {"state": "open", "answered": False, "label": STATE_RU["open"], "at": None, "answer": None}
+    return {"state": state, "answered": True, "label": "отвечен",
+            "at": int(record.get("at") or 0) or None, "answer": norm(record.get("text")) or None}
+
+
+def _records_index(records) -> tuple:
+    """Реестр ответов комнаты → (по (root, q_id), по тексту вопроса)."""
+    by_id: dict = {}
+    by_text: dict = {}
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        stored = record.get("answers")
+        if not isinstance(stored, dict):
+            continue
+        root = str(record.get("root_id") or "")
+        for qid, entry in stored.items():
+            if not isinstance(entry, dict) or not norm(entry.get("text")):
+                continue
+            by_id[(root, str(qid))] = entry
+            key = text_key(entry.get("question_text"))
+            if len(key) >= 12:
+                by_text.setdefault(key, entry)
+    return by_id, by_text
+
+
+def backlog_overlay(view: dict, records) -> dict:
+    """Наложить реестр ответов на бэклог комнаты (B7-1, B7-2, B7-3).
+
+    * статус вопроса — только из реестра: ответ есть → ``done`` («отвечен»),
+      просьба пояснить → ``open`` + «ждёт пояснения», иначе ``open``;
+    * вопросы-близнецы схлопываются в один элемент (``aliases``), счётчики — по уникальным;
+    * служебные вопросы (раунды критика) не показываются вовсе.
+
+    Данные на диске не меняются: это чтение, миграция без перезаписи.
+    """
+    if not isinstance(view, dict):
+        return view
+    items = [item for item in view.get("items") or [] if isinstance(item, dict)]
+    by_id, by_text = _records_index(records)
+    merged: dict = {}
+    hidden = []
+    out: list = []
+    for raw in items:
+        item = dict(raw)
+        kind = str(item.get("kind") or "")
+        if kind in ("open_question", "future_question"):
+            if is_service_question(item.get("text")):
+                hidden.append({"id": item.get("id"), "text": item.get("text")})
+                continue
+            root, _sep, qid = str(item.get("id") or "").partition(":")
+            entry = by_id.get((root, qid)) or by_text.get(text_key(item.get("text")))
+            state = question_state(entry)
+            item["answer_state"] = state["state"]
+            item["state_label"] = state["label"]
+            current = str(item.get("status") or "open")
+            if current in ("dismissed", "asked"):
+                pass                     # действие пользователя сильнее: «убрал»/«уточняю»
+            elif state["answered"]:
+                item["status"] = "done"
+                item["answered_at"] = state["at"]
+                item["answer"] = state["answer"]
+            else:
+                # просьба пояснить и «нет ответа» — вопрос ОСТАЁТСЯ в «Дальше»
+                item["status"] = "open"
+            key = text_key(item.get("text"))
+            if key and key in merged:
+                base = merged[key]
+                if item.get("id") and item["id"] != base.get("id") \
+                        and item["id"] not in (base.get("aliases") or []):
+                    base.setdefault("aliases", []).append(item["id"])
+                if len(norm(item.get("text"))) > len(norm(base.get("text"))):
+                    keep = base.get("id")
+                    aliases = base.get("aliases") or []
+                    base.update(item)
+                    base["id"] = keep
+                    base["aliases"] = aliases
+                if item.get("status") == "done" and base.get("status") != "done":
+                    base.update({"status": "done", "answer_state": item.get("answer_state"),
+                                 "state_label": item.get("state_label"),
+                                 "answered_at": item.get("answered_at"), "answer": item.get("answer")})
+                continue
+            item["aliases"] = []
+            if key:
+                merged[key] = item
+            out.append(item)
+            continue
+        out.append(item)
+    counts = {status: 0 for status in ("open", "asked", "done", "dismissed")}
+    for item in out:
+        status = str(item.get("status") or "open")
+        counts[status] = counts.get(status, 0) + 1
+    counts["total"] = len(out)
+    counts["hidden_service"] = len(hidden)
+    sections = {
+        "inbox": [i for i in out if i.get("status") in ("open", "asked")
+                  and i.get("kind") in ("open_question", "decision")],
+        "next_steps": [i for i in out if i.get("kind") == "next_step"
+                       and i.get("status") in ("open", "asked")],
+        "future_questions": [i for i in out if i.get("kind") == "future_question"],
+        "decisions": [i for i in out if i.get("kind") == "decision"],
+    }
+    result = dict(view)
+    result["items"] = out
+    result["counts"] = counts
+    result["sections"] = sections
+    if hidden:
+        result["hidden_service"] = hidden
+    return result
+
+
 def summary(questions, steps) -> dict:
     """Сводка для интерфейса: сколько ответов, ждут реакции, ждут пояснения, конфликты."""
     states = {}
@@ -648,7 +1014,11 @@ def summary(questions, steps) -> dict:
     cancelled = [step.get("id") for step in steps or []
                  if isinstance(step, dict) and step.get("cancelled_by_answer")]
     return {"answers": sum(states.values()), "states": states, "pending": pending,
-            "waiting_explanation": waiting, "conflicts": conflicts, "cancelled": cancelled}
+            "waiting_explanation": waiting, "conflicts": conflicts, "cancelled": cancelled,
+            # W17-B §3: кнопка «Отправить руководителю накопленные ответы» — есть что
+            # отправлять и это осмысленно (ответы без реакции). Пусто — кнопку не показываем.
+            "can_resend": pending > 0, "resend_pending": pending,
+            "resend_label": "Отправить руководителю накопленные ответы"}
 
 
 __all__ = ["ANSWER_MARK", "EXPLAIN_MARK", "REACTION_MARK", "REMIND_MARK", "STATES", "STATE_RU",
@@ -658,9 +1028,14 @@ __all__ = ["ANSWER_MARK", "EXPLAIN_MARK", "REACTION_MARK", "REMIND_MARK", "STATE
            "STEP_REACTION_MARK", "STEP_KINDS", "STEP_KIND_RU", "STEP_KIND_VERB", "STEP_STATUS_RU",
            "norm", "short", "stems", "is_negation", "is_counter_question",
            "answer_comment", "explanation_comment", "reaction_comment", "remind_text",
+           "DIGEST_MARK", "digest_comment", "explanation_hint",
            "answer_kind_of", "answer_text_of", "question_id_of", "question_text_of",
-           "reaction_state", "reactions_from_thread",
+           "reaction_state", "reactions_from_thread", "reaction_for_question", "reaction_lookup",
+           "IMPLICIT_MIN_SCORE", "IMPLICIT_MIN_RATIO",
            "state_of", "apply_question", "answer_item", "link_question", "link_steps",
            "sort_steps", "step_id_of", "step_comment", "step_reaction_state", "step_reaction_label",
            "step_reactions_from_thread", "apply_step", "steps_log_for",
-           "steps_to_cancel", "summary"]
+           "steps_to_cancel", "summary",
+           # W17-B §7 (B7): статус вопроса из реестра, близнецы, служебные вопросы
+           "is_service_question", "text_key", "record_for", "dedupe_questions",
+           "question_state", "backlog_overlay"]

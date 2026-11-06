@@ -302,7 +302,7 @@
 .btn--ghost:hover { background: var(--ui-control-hover-background); color: var(--foreground); }
 .btn--danger { background: var(--danger-soft); color: var(--danger-ink); }
 .btn--danger:hover { background: color-mix(in srgb, var(--danger) 20%, transparent); }
-.btn--link { height: auto; padding: 0; color: var(--link); }
+.btn--link { height: auto; padding: 0; color: var(--link); white-space: normal; text-align: left; }
 .btn--link:hover { text-decoration: underline; }
 .btn--sm { height: var(--control-sm); padding: 0 var(--space-2); font-size: var(--text-sm); border-radius: var(--radius-sm); }
 .btn--lg { height: var(--control-lg); padding: 0 var(--space-4); font-size: var(--text-base); }
@@ -594,6 +594,29 @@
 .markdown details { padding: var(--space-2) var(--space-3); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
 .markdown summary { font-weight: 500; }
 .markdown .task-list-item { margin-left: -1.1em; list-style: none; }
+
+/* ═══ МАСШТАБ 14 px: уточнения глобальных размеров ══════════════════════════
+   Базовый текст Hermes — 14 px (--text-sm = --text-base), подписи — 12,
+   счётные бейджи — 11. Без этих уточнений в плашках высотой 18–24 px кегль
+   вырос бы до 14 px и разорвал их, а «мелкие» подписи сравнялись бы с
+   основным текстом и перестали быть подписями. */
+.brand__mark { font-size: var(--text-xs); }
+.brand__sub, .sidebar__label, .recent__room, .recent__empty,
+.engine__row, .engine__local, .health, .health__origin,
+.topbar__sub, .card__sub, .field__hint, .field__error, .page-hint,
+.menu__hint, .menu__label, .btn--sm, .table th { font-size: var(--text-xs); }
+.crumbs__link, .crumbs__here, .crumbs__sep { font-size: var(--text-sm); }
+.count-pill, .tab__count, .kbd { font-size: var(--text-2xs); }
+.chip { height: 22px; font-size: var(--text-xs); }
+.nav-item { min-height: 32px; }
+.menu__item { min-height: 30px; }
+.avatar--sm { font-size: 10px; }
+.recent__body { line-height: var(--leading-normal); }
+
+/* Тема хозяина. Пока плагин Hermes передаёт свою тему, наш переключатель скрыт:
+   два управления одним и тем же спорят друг с другом. Без хозяина (браузер,
+   демо) кнопка на месте, атрибута нет. */
+:root[data-theme-source='host'] #theme-toggle { display: none; }
 
 /* ═══ АДАПТИВ ═══════════════════════════════════════════════════════════════
    Точки перелома (одно место на весь каркас; вьюхи добавляют только своё):

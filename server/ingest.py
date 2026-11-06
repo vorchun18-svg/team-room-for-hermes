@@ -10,14 +10,15 @@ from __future__ import annotations
 
 import datetime as _dt
 
+from . import phase_book as phase_mod
 from . import registry
 from . import rooms as rooms_mod
 from . import statefiles as sf
 from .config import journal_md_path, state_md_path
 
 # --- раскладка по файлам: перенесённые имена доступны отсюда, как и раньше ---
-from .ingest_common import (IngestError, KINDS, MONTHS_NOM, MONTHS_RU, PHASES, PHASE_IDS, PHASE_STATUSES,
-    PHASE_TITLES, STATUSES, STATUS_ORDER, STATUS_RU, _as_int, _backlog_path, _clean,
+from .ingest_common import (IngestError, KINDS, MONTHS_NOM, MONTHS_RU, PHASE_STATUSES,
+    STATUSES, STATUS_ORDER, STATUS_RU, _as_int, _backlog_path, _clean,
     _current_phase, _decisions_path, _journal_path, _now, _phase_template,
     _reports_path, _roadmap_path, _room_id, _sha, _state_dir)  # noqa: F401
 from .ingest_extract import (_artifact_kind, _canonical, _extract, _meta_from_detail, _needs_normalize,
@@ -182,15 +183,24 @@ def ingest_request(cfg, room, detail: dict) -> dict:
 # --- чтение состояния -------------------------------------------------------
 
 def _phases_public(cfg, room_id: str) -> tuple[list[dict], int, dict | None]:
+    """Этапы комнаты + статусы из её roadmap.json (W17-R §1, B-8).
+
+    Списка этапов в коде нет: берём этапы самой комнаты (поле `phases` либо
+    миграцию чтением из её карты). У комнаты без этапов полоса пустая — это
+    нормальное состояние, а не ошибка.
+    """
     data = sf.read_json(_roadmap_path(cfg, room_id), None)
     stored = {}
+    declared = phase_mod.phases_of(cfg, {"id": room_id})
     if isinstance(data, dict):
         stored = {p.get("id"): p for p in (data.get("phases") or []) if isinstance(p, dict)}
     phases = []
-    for phase_id, title in PHASES:
+    for item in declared:
+        phase_id, title = item["id"], item["title"]
+        got = stored.get(phase_id) or {}
         base = _phase_template(phase_id, title)
-        base.update({k: v for k, v in (stored.get(phase_id) or {}).items() if v is not None})
-        base["id"], base["title"] = phase_id, (stored.get(phase_id) or {}).get("title") or title
+        base.update({k: v for k, v in got.items() if v is not None})
+        base["id"], base["title"] = phase_id, title
         phases.append(base)
     updated = _as_int(data.get("updated_at")) if isinstance(data, dict) else 0
     return phases, updated, _current_phase(phases)

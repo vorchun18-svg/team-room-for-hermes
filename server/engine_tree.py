@@ -168,6 +168,28 @@ def _last_at(node: dict):
     return None
 
 
+def _changes_of(meta: dict) -> list:
+    """`metadata.changes` руководителя → список строк (W17-S §3, «Что изменилось»).
+
+    Принимает `["пункт", …]`, `[{"text": …}]` и одну строку; лишнее отбрасывает.
+    """
+    raw = (meta or {}).get("changes") if isinstance(meta, dict) else None
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out = []
+    for item in raw:
+        text = item.get("text") if isinstance(item, dict) else item
+        text = " ".join(str(text or "").split())
+        if not text:
+            continue
+        out.append(text if len(text) <= 300 else text[:299].rstrip() + "…")
+        if len(out) >= 10:
+            break
+    return out
+
+
 def _synth_title(title: str) -> bool:
     low = (title or "").lower()
     return any(k in low for k in ("свест", "сводн", "synth"))
@@ -317,15 +339,22 @@ def _synthesis(ctx: dict, nodes: list, extra_cards: list) -> tuple:
     if base:
         canon = _canon(_raw_meta(base), base.get("summary_md"))
         history.append({"version": 1, "kind": "initial", "task_id": base["id"],
-                        "author": base.get("assignee"), "at": _last_at(base), "verdict": None, "note": ""})
+                        "author": base.get("assignee"), "at": _last_at(base), "verdict": None, "note": "",
+                        "reason": "initial", "changes": _changes_of(_raw_meta(base))})
     revisions = sorted([c for c in extra_cards if c.get("kind") == "revision" and c.get("id") in by_id],
                        key=lambda c: (c.get("at") or 0, str(c.get("id"))))
     for card in revisions:
         node = by_id[card["id"]]
         if node.get("summary_md"):
+            # W17-S §3: у версии есть причина («ваше замечание» / «ответы / критика»)
+            # и список «что изменилось» — из реестра карточки доработки и/или metadata.
+            raw = _raw_meta(node) if isinstance(_raw_meta(node), dict) else {}
             history.append({"version": len(history) + 1, "kind": "revision", "task_id": node["id"],
                             "author": node.get("assignee"), "at": _last_at(node), "verdict": None,
-                            "note": "Доработка после замечаний"})
+                            "note": str(card.get("note") or "") or "Доработка после замечаний",
+                            "reason": str(card.get("reason") or ""),
+                            "answers_count": int(card.get("answers_count") or 0),
+                            "changes": _changes_of(raw) or list(card.get("changes") or [])})
     critics = [n for n in nodes if n["role"] == "critic"]
     for i, entry in enumerate(history):
         nxt = history[i + 1]["at"] if i + 1 < len(history) else None

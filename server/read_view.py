@@ -15,13 +15,17 @@ from pathlib import Path
 
 try:  # пакетный и «плоский» импорт (python -m unittest из корня проекта)
     from .config import path_allowed
+    from . import phase_book as _phases
 except ImportError:  # pragma: no cover
     from config import path_allowed  # type: ignore
+    import phase_book as _phases  # type: ignore
 
 PREVIEW_MAX = 200
-PHASES = [("idea", "Идея и стратегия"), ("legal", "Легализация"), ("brand", "Бренд и товарный знак"),
-          ("packaging", "Упаковка"), ("production", "Производство"), ("sales", "Продажи")]
-PHASE_IDS = [p[0] for p in PHASES]
+# Этапы проекта — свойство КОМНАТЫ (W17-R §1, B-8): списка в коде больше нет.
+# Имена оставлены пустыми списками только для совместимости импортов: код,
+# который ещё спрашивает `PHASES`, получает «этапов нет» и не рисует чужих этапов.
+PHASES: list = []
+PHASE_IDS: list = []
 CRITIC_STATES = ("off", "waiting", "reviewing", "approved", "revised", "failed")
 CLOSED = ("done", "archived")
 ACTIVE = ("ready", "running", "review")
@@ -35,24 +39,13 @@ def as_list(value) -> list:
 
 
 # ------------------------------------------------------------------ поля ответа ---
-def stage(canon: dict) -> dict:
-    """Канонический stage → Stage API §3.4: всегда 6 фаз в фиксированном порядке."""
-    raw = canon.get("stage") if isinstance(canon.get("stage"), dict) else {}
-    got = {p.get("id"): p for p in as_list(raw.get("phases"))
-           if isinstance(p, dict) and p.get("id") in PHASE_IDS}
-    phases = []
-    for pid, title in PHASES:
-        p = got.get(pid) or {}
-        status = p.get("status") if p.get("status") in ("done", "active", "next", "blocked") else "next"
-        phases.append({"id": pid, "title": p.get("title") or title, "status": status,
-                       "note": p.get("note") or ""})
-    current = raw.get("current")
-    if current not in PHASE_IDS:
-        active = [p["id"] for p in phases if p["status"] in ("active", "blocked")]
-        done = [p["id"] for p in phases if p["status"] == "done"]
-        nxt = [p["id"] for p in phases if p["status"] == "next"]
-        current = active[0] if active else (done[-1] if done else (nxt[0] if nxt else None))
-    return {"current": current, "phases": phases}
+def stage(canon: dict, phases=None) -> dict:
+    """Канонический stage → Stage API §3.4: только этапы КОМНАТЫ (W17-R §1).
+
+    ``phases`` — список этапов комнаты (`[{id, title}]`, `server/phase_book.py`).
+    Нет этапов у комнаты — пустой stage: полоса этапов и чип «этап» не рисуются.
+    """
+    return _phases.stage(phases, canon)
 
 
 def steps(canon: dict) -> list:

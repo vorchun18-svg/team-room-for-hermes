@@ -19,7 +19,7 @@ installFakeDom(); // h() строит узлы только при наличи�
 
 const {
   KICK_LABEL, KICK_HINT, kickStateFromTree, kickUsefulness, kickWhyNot,
-  kickReport, kickError, kickText, kickPanel, kickNow,
+  kickReport, kickError, kickText, kickPanel, kickNow, kickPreview,
 } = await import('../web/js/views/kick-panel.js');
 
 const NOW = 1793912795000; // мс — как на боевой доске 05.11
@@ -213,4 +213,50 @@ test('kickNow: ошибка сервера не бросает, а даёт ит
   const report = await kickNow(api, '');
   assert.equal(report.kind, 'error');
   assert.match(kickText(report).lines[0], /уже запускали/);
+});
+
+/* ────────────────────────────── B12: предпросмотр — чтение, а не запуск */
+
+test('B12: предпросмотр идёт GET-ом и ничего не запускает', async () => {
+  const calls = [];
+  const api = {
+    get: async (path) => {
+      calls.push({ method: 'GET', path });
+      return { ok: true, preview: true, report: { kind: 'preview', counts: { ready: 2, running: 1 } } };
+    },
+    post: async (path, body) => {
+      calls.push({ method: 'POST', path, body });
+      return { report: { kind: 'preview', counts: { ready: 2 } } };
+    },
+  };
+  const report = await kickPreview(api);
+  assert.deepEqual(calls, [{ method: 'GET', path: '/api/dispatcher/preview' }],
+    'предпросмотр — только GET, POST не нужен');
+  assert.equal(report.counts.ready, 2);
+});
+
+test('B12: старый сервер без GET-маршрута — откат на прежний POST {preview:true}', async () => {
+  const calls = [];
+  const api = {
+    get: async (path) => { calls.push({ method: 'GET', path }); const e = new Error('Не найдено'); e.status = 404; throw e; },
+    post: async (path, body) => { calls.push({ method: 'POST', path, body }); return { report: { kind: 'preview', counts: { stuck: 1 } } }; },
+  };
+  const report = await kickPreview(api);
+  assert.deepEqual(calls.map((c) => c.method), ['GET', 'POST']);
+  assert.equal(calls[1].path, '/api/dispatcher/kick');
+  assert.equal(calls[1].body.preview, true);
+  assert.equal(report.counts.stuck, 1);
+});
+
+test('B12: пустой ответ сервера — null, кнопку просто не покажем', async () => {
+  const api = { get: async () => ({ ok: true, preview: true, report: {} }), post: async () => { throw new Error('нельзя'); } };
+  assert.equal(await kickPreview(api), null);
+});
+
+test('B12: сеть упала — ошибка пробрасывается (кнопка не прячется)', async () => {
+  const api = {
+    get: async () => { const e = new Error('Нет связи с приложением'); e.status = 0; throw e; },
+    post: async () => ({ report: { kind: 'preview' } }),
+  };
+  await assert.rejects(() => kickPreview(api), /Нет связи/);
 });

@@ -29,12 +29,16 @@ BACKLOG_KINDS = ("next_step", "future_question", "open_question", "decision")
 PATCH_FIELDS = {"title", "icon", "orchestrator", "critic", "context_files", "project_dir",
                 "mode_default", "critic_pass", "max_rounds",
                 "launch_mode", "max_parallel_streams", "project_mode", "agent_notes",
-                "agent_models"}
+                "agent_models",
+                # W17-R §1 (B-8): этапы проекта — свойство комнаты, правятся в её настройках.
+                "phases"}
 ACTION_ALLOWED = ("dispatch", "comment", "answer", "unblock", "reassign", "rework", "retry",
                   "archive", "clone", "decompose", "critique", "revise",
                   # W14-D §2/§4: «Напомнить руководителю» и «Убрать» шаг
                   # W14-H §12: действия по шагу — согласен / прокомментировать / переместить
-                  "answer_remind", "step_drop", "step_agree", "step_comment", "step_move")
+                  # W17-B §3: «Отправить руководителю накопленные ответы» (только по клику)
+                  "answer_remind", "step_drop", "step_agree", "step_comment", "step_move",
+                  "answers_resend")
 ACTION_REQUIRED = {"answer": ("question_id",), "reassign": ("task_id", "profile"),
                    "answer_remind": ("question_id",), "step_drop": ("step_id",),
                    "step_agree": ("step_id",), "step_comment": ("step_id",),

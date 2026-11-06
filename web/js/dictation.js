@@ -57,7 +57,7 @@ const SETTINGS_TTL_MS = 60 * 1000;
 
 const ERR_PERMISSION = 'Разрешите микрофон: значок замка рядом с адресом → Микрофон → Разрешить. Пока можно печатать вручную.';
 const ERR_NO_MIC = 'Микрофон не найден. Подключите его и попробуйте снова — пока можно печатать вручную.';
-const ERR_BUSY_MIC = 'Микрофон занят другой программой. Закройте её и попробуйте снова.';
+const ERR_BUSY_MIC = 'Микрофон отключился или занят другой программой. Проверьте, что он подключён, и нажмите «Надиктовать» ещё раз.';
 const ERR_UNSUPPORTED = 'Браузер не умеет записывать с микрофона. Откройте приложение в Chrome — или печатайте вручную.';
 const ERR_SERVER = 'Распознавание речи не готово — сервер ещё запускается. Попробуйте через минуту, пока можно печатать вручную.';
 const ERR_EMPTY = 'Речь не обнаружена. Попробуйте ещё раз — или напечатайте вручную.';
@@ -66,6 +66,15 @@ const ERR_KEPT = 'Запись сохранена — нажмите «Расп�
 const MSG_LOADING = 'Загружаю распознавание речи… первый раз — до минуты';
 const HINT_REC = 'Говорите — текст встанет туда, где курсор.';
 const HINT_KEEP = 'Поле не заблокировано — можно печатать.';
+
+// Микрофон отвалился (выдернули, устройство заняли, драйвер упал). Браузер сам
+// останавливает запись — говорим об этом и не теряем то, что успели записать.
+const MSG_MIC_LOST = 'Микрофон отключился — записанное до этого сохранено.';
+const MSG_MIC_LOST_EMPTY = 'Микрофон отключился до начала записи — говорить не удалось. Проверьте, что он подключён, и нажмите «Надиктовать» ещё раз.';
+const MSG_MIC_LOST_OK = 'Микрофон отключился. Записанное до этого распознано — текст в поле.';
+// Запись, которой уже нет на диске (сервер хранит их трое суток): строку убираем,
+// чтобы она не всплывала снова и снова.
+const MSG_RECORD_GONE = 'Запись уже удалена — на диске хранится трое суток. Надиктуйте заново, это быстро.';
 
 /* ─────────────────────────────────────────────────────────── утилиты */
 
@@ -395,7 +404,7 @@ export function createMic(target, opts = {}) {
     startedAt: 0, maxMs: Number(o.maxMs) > 0 ? Number(o.maxMs) : sttSettings.maxMs,
     partMs: Number(o.partMs) > 0 ? Number(o.partMs) : sttSettings.partMs,
     rid: '', partNo: 0, parts: [], pumping: false, store: true, dropped: false,
-    discard: false, slow: false, rotTimer: null,
+    discard: false, slow: false, rotTimer: null, track: null, micLost: false,
     timer: null, meter: null, levelBuf: null, audioCtx: null, analyser: null,
     learn: null, destroyed: false,
   };
@@ -528,23 +537,61 @@ export function createMic(target, opts = {}) {
   /** Строка «есть нерасшифрованная запись» — из локального списка. */
   function refreshRecover() {
     if (!panel.isOpen()) return;
+    // Пока где-то идёт запись, показывать «распознать» нечего: её части ещё
+    // пишутся, и вторая панель не должна предлагать их расшифровать.
+    if (activeSession && activeSession !== api && activeSession.isRecording()) {
+      panel.setRecover(null);
+      return;
+    }
     const items = store.listPending().filter((item) => item.rid !== st.rid
       || (st.phase === 'idle' && !st.parts.length));
-    const item = items[0];
-    if (!item) { panel.setRecover(null); return; }
+    if (!items.length) { panel.setRecover(null); return; }
     // Панель открыта только ради нерасшифрованной записи — нужен заголовок.
     if (st.phase === 'idle') panel.setTitle('Диктовка');
-    const seconds = Number(item.seconds) || 0;
+    const totalS = items.reduce((sum, item) => sum + (Number(item.seconds) || 0), 0);
+    const one = items.length === 1 ? items[0] : null;
+    const clock = totalS > 0 ? ' · ' + formatClock(totalS * 1000) : '';
     panel.setRecover({
-      text: 'Есть нерасшифрованная запись' + (seconds > 0 ? ' · ' + formatClock(seconds * 1000) : ''),
-      hint: 'Наговоренное сохранено — можно распознать и вставить в это поле.',
-      onRecover: () => { void recoverItem(item); },
-      onDismiss: () => {
-        store.forgetPending(item.rid);
-        void store.dropRecording(item.rid);
-        panel.setRecover(null);
-      },
+      text: one
+        ? 'Есть нерасшифрованная запись' + clock
+        : 'Есть нерасшифрованные записи: ' + items.length + clock,
+      hint: one
+        ? 'Наговоренное сохранено — можно распознать и вставить в это поле.'
+        : 'Наговоренное сохранено. Распознаём по одной — начнём с последней.',
+      onRecover: () => { void recoverItem(items[0]); },
+      // «Убрать» = убрать ВСЁ, что сейчас показано: иначе при следующем
+      // открытии панели вылезала бы следующая запись — «убрал, а оно снова висит».
+      onDismiss: () => { void dismissPending(items); },
+      dismissLabel: one ? 'Убрать' : 'Убрать все',
     });
+  }
+
+  /** Серверная копия записи (она живёт трое суток — зачем держать зря). */
+  function deleteOnServer(rid) {
+    if (!rid) return;
+    try {
+      void fetch(REC_URL + '/' + rid, { method: 'DELETE', credentials: 'same-origin' })
+        .catch(() => null);
+    } catch (err) { warn('delete', err); }
+  }
+
+  /**
+   * Человек нажал «Убрать»: следа, локальных частей и серверной копии больше
+   * нет. Строка уходит и НЕ возвращается при следующем открытии панели.
+   */
+  async function dismissPending(items) {
+    const rids = (Array.isArray(items) ? items : [items])
+      .map((item) => String((item && item.rid) || '')).filter(Boolean);
+    if (!rids.length) return;
+    try { store.forgetPending(rids); } catch (err) { warn('pending', err); }
+    panel.setRecover(null);
+    for (const rid of rids) {
+      try { void store.dropRecording(rid); } catch (err) { warn('indexeddb', err); }
+      deleteOnServer(rid);
+    }
+    // Пока строка висела, следов могло стать больше (новая сорванная попытка) —
+    // читаем список заново, а не показываем то, что уже убрали.
+    refreshRecover();
   }
 
   /* ── запись ── */
@@ -661,7 +708,59 @@ export function createMic(target, opts = {}) {
     const clock = btn.querySelector ? btn.querySelector('.mic-btn__time') : null;
     if (clock) clock.textContent = formatClock(elapsed);
     // Достигли лимита — не выбрасываем запись, а отправляем на распознавание.
-    if (shouldAutoStop(elapsed, st.maxMs)) stop(false);
+    if (shouldAutoStop(elapsed, st.maxMs)) { stop(false); return; }
+    // Сторож микрофона: бывает, что событие «дорожка закончилась» не приходит
+    // (webview, смена устройства) — тогда рекордер просто стоит. Панель не должна
+    // показывать «Запись» с бегущим таймером, когда писать уже некуда.
+    if (micDead()) micLostNow();
+  }
+
+  /** Микрофон ещё работает? `false` — устройство пропало во время записи. */
+  function micDead() {
+    if (st.phase !== 'recording') return false;
+    const track = st.track;
+    if (track && String(track.readyState) === 'ended') return true;
+    const rec = st.rec;
+    return Boolean(rec) && String(rec.state) === 'inactive';
+  }
+
+  /** Микрофон отвалился: останавливаемся сами, сказанное не теряем. */
+  function micLostNow() {
+    if (st.phase !== 'recording') return;
+    st.micLost = true;
+    st.error = '';
+    stop(false);
+  }
+
+  /** Слушать дорожку: «закончилась» = устройство отключили или заняли. */
+  function watchTrack(stream) {
+    st.track = null;
+    const tracks = stream && typeof stream.getAudioTracks === 'function'
+      ? stream.getAudioTracks()
+      : (stream && typeof stream.getTracks === 'function' ? stream.getTracks() : []);
+    const track = (tracks || [])[0] || null;
+    if (!track) return;
+    st.track = track;
+    const onEnd = () => micLostNow();
+    try {
+      if (typeof track.addEventListener === 'function') {
+        track.addEventListener('ended', onEnd);
+        // На Windows выдёргивание устройства сначала даёт «mute», а «ended»
+        // может не прийти вовсе — проверяем фактическое состояние дорожки.
+        track.addEventListener('mute', () => {
+          setTimeout(() => { if (String(track.readyState) === 'ended') onEnd(); }, 1200);
+        });
+      } else {
+        track.onended = onEnd;
+      }
+    } catch (err) { warn('дорожка', err); }
+  }
+
+  /** Наш собственный стоп рекордера (не путать с «браузер остановил сам»). */
+  function shutRecorder(rec) {
+    if (!rec) return;
+    rec.__expectedStop = true;
+    try { if (String(rec.state) !== 'inactive') rec.stop(); } catch { /* уже стоим */ }
   }
 
   /* ── части записи ── */
@@ -680,12 +779,20 @@ export function createMic(target, opts = {}) {
     const close = (fromError) => {
       if (closed) return;
       closed = true;
+      // Наш это стоп (кнопка, лимит, поворот части) или запись оборвал браузер?
+      // Второе = микрофон пропал: об этом надо сказать, а не молча ждать.
+      const expected = Boolean(rec.__expectedStop);
       if (st.rec === rec) { st.rec = null; st.chunks = []; }
+      if (!fromError && !expected && st.phase === 'recording') {
+        st.micLost = true;
+        st.phase = 'transcribing';
+      }
       closePart(rec, chunks, fromError);
       // Микрофон больше не нужен: распознавание идёт по сохранённым частям.
       if (st.phase !== 'recording') {
         releaseMedia();
         if (activeSession === api) activeSession = null;
+        render();
         // Часть могла оказаться пустой (стоп сразу после поворота) — очередь
         // всё равно должна тронуться, иначе панель навсегда останется «расшифровываю».
         maybePump();
@@ -697,6 +804,7 @@ export function createMic(target, opts = {}) {
     rec.onstop = () => close(false);
     rec.onerror = (ev) => {
       const name = ev && ev.error && ev.error.name ? String(ev.error.name) : '';
+      rec.__expectedStop = true;
       close(true);
       fail('Запись прервалась' + (name ? ' (' + name + ')' : '') + '. ' + ERR_KEPT);
     };
@@ -716,6 +824,9 @@ export function createMic(target, opts = {}) {
     const type = (rec && rec.mimeType) || 'audio/webm';
     let blob = null;
     try { blob = new Blob(chunks, { type }); } catch { blob = null; }
+    // Куски забираем один раз: часть закрывается ровно один раз, и повторный
+    // вызов с тем же списком кусков не отправит одно и то же аудио дважды.
+    if (Array.isArray(chunks)) chunks.length = 0;
     if (st.discard) return null;
     if (!blob || !blob.size) return null;
     const job = queuePart(blob);
@@ -748,7 +859,7 @@ export function createMic(target, opts = {}) {
   function rotate() {
     const rec = st.rec;
     if (!rec) return;
-    try { if (String(rec.state) !== 'inactive') rec.stop(); } catch { /* уже стоим */ }
+    shutRecorder(rec);
     if (st.phase === 'recording' && st.stream) {
       if (!openRecorder()) {
         fail('Запись прервалась на новой части. ' + ERR_KEPT);
@@ -914,7 +1025,9 @@ export function createMic(target, opts = {}) {
     if (!st.parts.length) {
       if (st.phase === 'transcribing') {
         st.phase = 'error';
-        st.error = ERR_EMPTY;
+        st.error = st.micLost ? MSG_MIC_LOST_EMPTY : ERR_EMPTY;
+        // Звука нет вовсе — восстанавливать нечего: следа быть не должно.
+        try { store.forgetPending(st.rid); } catch (err) { warn('pending', err); }
         render();
         openPanel();
       }
@@ -946,16 +1059,21 @@ export function createMic(target, opts = {}) {
   }
 
   function finishOk() {
+    const wasLost = st.micLost;
     st.phase = 'idle';
     st.error = '';
     st.slow = false;
     st.blob = null;
+    st.micLost = false;
     render();
     panel.close();
+    // Текст уже в поле — след, локальные части и серверная копия больше не нужны.
     try { store.forgetPending(st.rid); } catch (err) { warn('pending', err); }
     try { void store.dropRecording(st.rid); } catch (err) { warn('indexeddb', err); }
+    deleteOnServer(st.rid);
     const el = liveField();
     if (typeof el.focus === 'function') { try { el.focus(); } catch { /* не критично */ } }
+    if (wasLost) say(MSG_MIC_LOST_OK, 'warn');
   }
 
   /* ── «Распознать ещё раз» ── */
@@ -997,11 +1115,13 @@ export function createMic(target, opts = {}) {
   async function recoverItem(item) {
     if (!item || !item.rid) return;
     if (st.phase === 'recording' || st.phase === 'arming' || st.pumping) return;
+    const rid = String(item.rid);
     st.parts = [];
     st.partNo = 0;
     st.error = '';
-    st.rid = String(item.rid);
+    st.rid = rid;
     st.store = true;
+    st.micLost = false;
     st.phase = 'transcribing';
     render();
     openPanel();
@@ -1009,8 +1129,8 @@ export function createMic(target, opts = {}) {
     const jobs = [];
     for (let n = 1; n <= total; n += 1) {
       let blob = null;
-      try { blob = await store.getPart(item.rid, n); } catch (err) { warn('indexeddb', err); }
-      if (!blob) blob = await fetchPart(item.rid, n);
+      try { blob = await store.getPart(rid, n); } catch (err) { warn('indexeddb', err); }
+      if (!blob) blob = await fetchPart(rid, n);
       if (!blob) continue;
       jobs.push({ n, blob, state: 'new', error: '', text: '', seconds: st.partMs / 1000,
                   saved: true });
@@ -1019,8 +1139,13 @@ export function createMic(target, opts = {}) {
     st.partNo = jobs.length;
     panel.setRecover(null);
     if (!jobs.length) {
+      // Запись уже удалена (на диске их держат трое суток) — распознавать нечего.
+      // Убираем след, чтобы строка не всплывала при каждом открытии панели.
       st.phase = 'error';
-      st.error = 'Запись не найдена: её уже убрали с диска.';
+      st.error = MSG_RECORD_GONE;
+      try { store.forgetPending(rid); } catch (err) { warn('pending', err); }
+      try { void store.dropRecording(rid); } catch (err) { warn('indexeddb', err); }
+      deleteOnServer(rid);
       render();
       return;
     }
@@ -1075,6 +1200,7 @@ export function createMic(target, opts = {}) {
     st.error = '';
     st.discard = false;
     st.dropped = false;
+    st.micLost = false;
     st.chunks = [];
     st.blob = null;
     st.parts = [];
@@ -1092,6 +1218,8 @@ export function createMic(target, opts = {}) {
     } catch (err) {
       st.phase = 'error';
       st.error = mediaErrorText(err);
+      // Следа нет и не будет: писать некуда — незачем потом предлагать «Распознать».
+      try { store.forgetPending(st.rid); } catch (e) { warn('pending', e); }
       render();
       return;
     }
@@ -1102,12 +1230,14 @@ export function createMic(target, opts = {}) {
 
     st.stream = stream;
     if (!openRecorder()) { releaseMedia(); fail(ERR_UNSUPPORTED); return; }
+    watchTrack(stream);
 
     st.startedAt = Date.now();
     st.phase = 'recording';
-    try {
-      store.rememberPending(st.rid, { parts: 0, seconds: 0 });
-    } catch (err) { warn('pending', err); }
+    // След «незаконченной записи» пишется не здесь, а с первой реальной частью
+    // звука (`queuePart`). Раньше он появлялся в момент старта с `parts: 0` —
+    // и каждая сорванная попытка оставляла «Есть нерасшифрованная запись»,
+    // по которой распознавать было нечего.
     activeSession = api;
     st.timer = setInterval(tick, TICK_MS);
     scheduleRotate();
@@ -1128,7 +1258,7 @@ export function createMic(target, opts = {}) {
     st.phase = discard ? 'idle' : 'transcribing';
     render();
     if (!rec || String(rec.state) === 'inactive') { closePart(rec, chunks, false); return; }
-    try { rec.stop(); } catch { closePart(rec, chunks, false); }
+    shutRecorder(rec);
   }
 
   /** Ошибка: запись не выбрасываем — что успели, уходит на распознавание. */
@@ -1139,7 +1269,7 @@ export function createMic(target, opts = {}) {
     st.rec = null;
     st.chunks = [];
     if (rec) {
-      try { rec.stop(); } catch { /* уже стоим */ }
+      shutRecorder(rec);
       if (chunks.length) closePart(rec, chunks, true);
     }
     releaseMedia();
@@ -1150,6 +1280,10 @@ export function createMic(target, opts = {}) {
     render();
     openPanel();
     if (st.parts.length) void pump();
+    else {
+      // Сохранять нечего — след «незаконченной записи» тоже не нужен.
+      try { store.forgetPending(st.rid); } catch (err) { warn('pending', err); }
+    }
   }
 
   function cancel() {
@@ -1179,10 +1313,7 @@ export function createMic(target, opts = {}) {
     if (!rid) return;
     try { void store.dropRecording(rid); } catch (err) { warn('indexeddb', err); }
     try { store.forgetPending(rid); } catch (err) { warn('pending', err); }
-    try {
-      void fetch(REC_URL + '/' + rid, { method: 'DELETE', credentials: 'same-origin' })
-        .catch(() => null);
-    } catch (err) { warn('delete', err); }
+    deleteOnServer(rid);
   }
 
   /**

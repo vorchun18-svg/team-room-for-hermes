@@ -360,10 +360,23 @@ class ServerTeamLabelTests(unittest.TestCase):
         self.assertEqual(member["label"], "Анна — финансы и экономика (CFO)")
         self.assertEqual(member["label_source"], "profile")
 
-    def test_label_of_lead_is_refused(self):
-        status, payload = self._call("PUT", "/api/rooms/lab/agents/default/label", {"label": "Кто-то"})
-        self.assertEqual(status, 400, payload)
-        self.assertEqual(payload["error"]["detail"].get("reason"), "room_lead")
+    def test_label_of_lead_is_saved_like_anyone(self):
+        # WAVE17 B-17: руководитель комнаты подписывается той же операцией, что исполнитель;
+        # подпись хранится в реестре комнаты (`role_labels`), а не в профиле Hermes.
+        status, payload = self._call("PUT", "/api/rooms/lab/agents/default/label", {"label": "Михаил — руководитель"})
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["label"], "Михаил — руководитель")
+        self.assertEqual(payload["role_labels"].get("default"), "Михаил — руководитель")
+        director = self._member("default")
+        self.assertEqual(director["label"], "Михаил — руководитель")
+        self.assertEqual(director["label_source"], "member")
+        stored = json.loads((Path(self.sb.cfg.data_dir) / "rooms.json").read_text(encoding="utf-8"))
+        self.assertEqual(stored["rooms"][0]["role_labels"]["default"], "Михаил — руководитель")
+        # пустая строка — сброс к роли/описанию профиля
+        status, payload = self._call("PUT", "/api/rooms/lab/agents/default/label", {"label": ""})
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(self._member("default")["label"], "")
+        self.assertNotIn("default", payload.get("role_labels") or {})
 
     def test_label_of_stranger_is_not_found(self):
         status, payload = self._call("PUT", "/api/rooms/lab/agents/lawyer/label", {"label": "Лев"})

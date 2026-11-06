@@ -10,7 +10,7 @@
  * под `.req-steps`.
  */
 
-/* ── блок «Следующие шаги» ───────────────────────────────────────────────── */
+/* ── блок «Шаги» ─────────────────────────────────────────────────────────── */
 
 .req-steps .req-step {
   display: block;
@@ -18,6 +18,101 @@
   padding: 0;
   border-top: 0;
   border-radius: var(--radius-sm);
+  min-width: 0;
+}
+
+/* WAVE17 (B1): шаг — ОДНА строка: иконка статуса, название (не больше двух
+   строк, полный текст — в подсказке), исполнитель и срок справа.
+   Прежняя сетка `.req-step` (15px + 1fr) осталась от чекбокса и «съедала»
+   весь текст в колонку 15 px — шаг растягивался на 900–1300 px. */
+.req-steps .req-step__open {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) minmax(74px, auto);
+  grid-template-areas: "status text meta";
+  align-items: start;
+  gap: 2px var(--space-2);
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.req-steps .req-step__status {
+  grid-area: status;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  margin-top: 2px;
+  color: var(--ui-text-quaternary);
+}
+
+.req-steps .req-step__status--asked { color: var(--info-ink, var(--primary)); }
+.req-steps .req-step__status--done { color: var(--ok-ink, var(--ok)); }
+.req-steps .req-step__status--conflict { color: var(--warn-ink, var(--warn)); }
+.req-steps .req-step__status--dismissed,
+.req-steps .req-step__status--cancelled { color: var(--ui-text-quaternary); }
+
+.req-steps .req-step__text {
+  grid-area: text;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.req-steps .req-step__meta {
+  grid-area: meta;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px var(--space-1);
+  margin: 0;
+  /* Потолок в пикселях, а не в процентах: процент считался от ширины дорожки
+     сетки и сжимал подпись до «П…» (колонка 58 px при дорожке 126). */
+  max-width: 12rem;
+  min-width: 0;
+  text-align: right;
+}
+
+.req-steps .req-step__meta > * { min-width: 0; max-width: 100%; }
+/* Срок и исполнитель не сжимаются (иначе от подписи остаётся «П…»), а имя
+   исполнителя сокращается с многоточием; полное имя — в подсказке. */
+.req-steps .req-step__owner { flex: 0 0 auto; overflow: hidden; }
+.req-steps .req-step__owner .avatar { flex: none; }
+.req-steps .req-step__due { flex: 0 0 auto; }
+
+.req-steps .req-step__reaction {
+  grid-column: 2 / -1;
+  margin: 2px 0 0;
+}
+
+/* W17-STAB-2a: в узкой правой колонке (экран 900–1100 px, колонка ≈300–350 px)
+   подпись исполнителя и срок занимали фиксированные ~162 px и оставляли
+   названию шага 78 px — влезало одно слово и «противо…». Название важнее меты,
+   поэтому в узком контейнере исполнитель и срок уходят ПОД текст (колонка
+   названия становится ~250 px), а строка остаётся одной карточкой. */
+.req-steps {
+  container-type: inline-size;
+  container-name: reqsteps;
+}
+@container reqsteps (max-width: 420px) {
+  .req-steps .req-step__open {
+    grid-template-columns: 16px minmax(0, 1fr);
+    grid-template-areas: "status text" "status meta";
+  }
+  .req-steps .req-step__meta {
+    justify-content: flex-start;
+    max-width: 100%;
+    margin-top: 2px;
+    text-align: left;
+  }
 }
 
 .req-steps__group + .req-steps__group,
@@ -34,6 +129,20 @@
 
 .req-steps__list .req-step + .req-step {
   border-top: 1px solid var(--border-soft);
+}
+
+/* Срок в строке шага: подпись короткая и НЕ сжимается (раньше «Через 4 дня»
+   превращалось в «Через…»); полная дата — в подсказке чипа. */
+.req-steps .req-step__due {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: visible;
+}
+.req-steps .req-step__due .due-chip__text {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 .req-step__open {
@@ -72,7 +181,7 @@
   align-items: center;
   gap: 4px;
   max-width: 100%;
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
   color: var(--ui-text-secondary);
 }
 
@@ -80,6 +189,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+  max-width: 8ch;
 }
 
 .req-step__owner--empty {

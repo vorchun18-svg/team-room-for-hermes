@@ -45,7 +45,7 @@
   "next_steps": [
     {
       "id": "ns_1",
-      "text": "Починить формулу: в таблице поставщика нет колонки custo_embalagem",
+      "text": "Починить формулу: в таблице поставщика нет колонки cost_packaging",
       "owner": "biz-cfo",
       "due": "2026-10-29",
       "state": "open"
@@ -142,7 +142,6 @@
           "outcome": "completed",
           "started_at": 1793159960,
           "ended_at": 1793160500,
-          "summary": "Себестоимость собрана.",
           "error": null
         }
       ],
@@ -166,7 +165,7 @@
       "comments": [
         {
           "author": "biz-cfo",
-          "text": "Дважды упало на отсутствующее поле custo_embalagem в таблице.",
+          "text": "Дважды упало на отсутствующее поле cost_packaging в таблице.",
           "at": 1793160805
         }
       ],
@@ -178,8 +177,7 @@
           "outcome": "failed",
           "started_at": 1793160510,
           "ended_at": 1793160660,
-          "summary": "",
-          "error": "exit 1: KeyError('custo_embalagem')"
+          "error": "exit 1: KeyError('cost_packaging')"
         },
         {
           "id": 94,
@@ -188,14 +186,13 @@
           "outcome": "failed",
           "started_at": 1793160700,
           "ended_at": 1793160800,
-          "summary": "",
-          "error": "exit 1: KeyError('custo_embalagem') (повтор)"
+          "error": "exit 1: KeyError('cost_packaging') (повтор)"
         }
       ],
       "needs_human": false,
       "error": {
         "code": "worker_crashed",
-        "message": "Процесс воркера завершился с кодом 1: KeyError('custo_embalagem')"
+        "message": "Процесс воркера завершился с кодом 1: KeyError('cost_packaging')"
       },
       "outside_room": false
     }
@@ -227,7 +224,7 @@
       "kind": "failed",
       "task_id": "t_3b7e9d13",
       "actor": "biz-cfo",
-      "text": "Воркер упал: KeyError custo_embalagem"
+      "text": "Воркер упал: KeyError cost_packaging"
     },
     {
       "at": 1793160800,
@@ -278,6 +275,10 @@
       "task_id": "t_3b7e9d11",
       "kind": "event"
     }
-  ]
+  ],
+  "title_short": "Юнит-экономика набора из 6 моти",
+  "heartbeats": {
+    "count": 0,
+    "last_at": null
+  }
 }
-

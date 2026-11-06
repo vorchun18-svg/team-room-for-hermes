@@ -545,6 +545,7 @@ def scenario_s2(h: Harness) -> Result:
           const body = q('#answer .req-answer__body');
           return {
             ready: Boolean(title), title: title ? title.textContent.trim() : '',
+            titleAttr: title ? String(title.getAttribute('title') || '').trim() : '',
             meta: meta ? meta.innerText.replace(/\s+/g, ' ').trim() : '',
             answer: answer ? (answer.innerText || '').replace(/\s+/g, ' ').trim() : '',
             answerBody: body ? (body.innerText || '').trim().length : 0,
@@ -566,10 +567,19 @@ def scenario_s2(h: Harness) -> Result:
                              "условный GET возвращает 304, а request.refresh() выходит по res.notModified "
                              "до render() — данных в новом экземпляре нет. Затронуты все состояния, "
                              "чьи детали уже грузил композер.")
-        want_title = str(detail.get("title") or h.sb.state(name).get("root_id"))
+        # W17-G §1 (B8/P5): в шапке короткое название (`title_short`), полный текст — в подсказке.
+        # Пока сервер не пересчитал название, клиент показывает своё короткое — оба варианта
+        # допустимы, но заголовок обязан быть коротким и относиться к ЭТОМУ запросу.
+        want_full = str(detail.get("title") or h.sb.state(name).get("root_id"))
+        want_short = str(detail.get("title_short") or want_full)
         got_title = str(dom.get("title") or "")
-        res.check(f"{name}: заголовок совпадает с API", bool(got_title) and got_title[:40] == want_title[:40],
-                  got_title[:120], want_title[:120], screen)
+        short_ok = (bool(got_title) and got_title[:40] == want_short[:40]) or (
+            bool(got_title) and len(got_title) <= 70 and want_full.startswith(got_title))
+        res.check(f"{name}: заголовок — короткое название этого запроса",
+                  short_ok, got_title[:120], want_short[:120], screen)
+        res.check(f"{name}: полный текст названия — в подсказке заголовка",
+                  want_full[:50] in str(dom.get("titleAttr") or ""),
+                  str(dom.get("titleAttr"))[:130], f"содержит «{want_full[:50]}…»", screen)
         label = STATUS_LABEL.get(str(detail.get("status") or ""), "")
         res.check(f"{name}: чип статуса «{label}»", bool(label) and label in str(dom.get("meta") or ""),
                   str(dom.get("meta"))[:220], f"содержит «{label}»", screen)
@@ -882,7 +892,31 @@ def scenario_s5(h: Harness) -> Result:
         path = h.shot("s5-team-added")
         if path:
             res.screenshots.append(path)
-        h.cdp.eval_js("(() => { const c = document.querySelector('.tm-card[data-profile=%s] .tm-remove'); if (c) c.click(); return Boolean(c); })()" % json.dumps(profile))
+        # W17-E §1 (B7/P2): действия участника — в меню «⋯» карточки, не отдельной кнопкой.
+        menu = h.cdp.eval_js(r"""
+        (() => {
+          const card = document.querySelector('.tm-card[data-profile=' + JSON.stringify(%s) + ']');
+          if (!card) return 'нет карточки';
+          const btn = card.querySelector('.tm-menu__btn');
+          if (!btn) return 'нет меню «⋯»';
+          btn.click();
+          const pop = card.querySelector('.tm-menu__pop');
+          return pop && !pop.hidden ? 'ok' : 'меню не открылось';
+        })()
+        """ % json.dumps(profile))
+        res.check("команда: меню «⋯» участника открылось", menu == "ok", str(menu), "ok", "team")
+        picked = h.cdp.eval_js(r"""
+        (() => {
+          const card = document.querySelector('.tm-card[data-profile=' + JSON.stringify(%s) + ']');
+          const item = card ? [...card.querySelectorAll('.tm-menu__item')]
+            .find((b) => /Убрать/.test(String(b.textContent || ''))) : null;
+          if (!item) return 'нет пункта «Убрать из комнаты»';
+          item.click();
+          return 'ok';
+        })()
+        """ % json.dumps(profile))
+        res.check("команда: пункт «Убрать из комнаты» есть у исполнителя", picked == "ok",
+                  str(picked), "ok", "team")
         deadline = time.time() + 8
         while time.time() < deadline:
             if h.cdp.eval_js("Boolean(document.querySelector('.dialog'))"):
@@ -1563,6 +1597,16 @@ def scenario_s12(h: Harness) -> Result:
                   "каталог остался на месте", "team")
         res.check("новая папка создана", second.is_dir(), str(second), "каталог существует", "team")
 
+        # Окно закрывается после «Сохранить». Дождаться закрытия, иначе следующий шаг
+        # чистит поле в ещё открытом окне, а поздний ответ сервера возвращает в него
+        # прежний путь — и PATCH уходит со старым значением (плавающий провал S12).
+        deadline = time.time() + 12
+        while time.time() < deadline and h.cdp.eval_js("Boolean(document.querySelector('.dialog'))"):
+            time.sleep(0.2)
+        res.check("окно настроек закрылось после сохранения пути",
+                  not h.cdp.eval_js("Boolean(document.querySelector('.dialog'))"),
+                  "окно ещё открыто", "закрыто", "team")
+
         # 7) убрать путь — снова «Задать папку», старые комнаты не ломаются
         # Шапка перерисовывается после сохранения: кнопку ищем с повторами, пока
         # не откроется окно с полем папки (иначе проверка ловит гонку с перерисовкой).
@@ -1592,7 +1636,7 @@ def scenario_s12(h: Harness) -> Result:
         res.check("в окне настроек показан текущий путь комнаты", loaded,
                   f"в поле {cur!r}, ожидали {str(second)!r}", "текущий путь", "team")
         field_ok = False
-        for _ in range(6):
+        for _ in range(20):
             cleared_now = bool(h.cdp.eval_js(r"""
             (() => {
               const i = document.querySelector('.dialog input[aria-label="Папка проекта"]');
@@ -1717,10 +1761,13 @@ def write_reports(results: list[Result], h: Harness, opts, started: float,
         "exit_code": exit_code,
     }
     path_json.parent.mkdir(parents=True, exist_ok=True)
-    path_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # W17-STAB-2: слепки песочницы содержат frozenset/Path — приводим к строкам,
+    # иначе отчёт не записывается и провал сценария теряется в трейсбеке.
+    blob = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    path_json.write_text(blob, encoding="utf-8")
     if json_extra:
         json_extra.parent.mkdir(parents=True, exist_ok=True)
-        json_extra.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        json_extra.write_text(blob, encoding="utf-8")
 
     lines = [
         "# Сквозной UI-тест «Комнаты команды» — отчёт",
@@ -1789,8 +1836,8 @@ def write_reports(results: list[Result], h: Harness, opts, started: float,
               f"- Сервер остановлен: `{h.cleanup.get('server_stopped')}`",
               f"- Chrome остановлен: `{h.cleanup.get('chrome_stopped')}`",
               f"- Реальная kanban.db не изменена: `{h.cleanup.get('real_board_untouched')}`",
-              f"- Слепок до: `{json.dumps(h.cleanup.get('real_before'), ensure_ascii=False)}`",
-              f"- Слепок после: `{json.dumps(h.cleanup.get('real_after'), ensure_ascii=False)}`", ""]
+              f"- Слепок до: `{json.dumps(h.cleanup.get('real_before'), ensure_ascii=False, default=str)}`",
+              f"- Слепок после: `{json.dumps(h.cleanup.get('real_after'), ensure_ascii=False, default=str)}`", ""]
     path_md.parent.mkdir(parents=True, exist_ok=True)
     path_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

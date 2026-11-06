@@ -126,7 +126,8 @@
 | `critic_round_cap` | int | 2..30, мягкий потолок раундов для `until_approved` (по умолчанию 12): по достижении цикл останавливается с отчётом |
 | `launch_mode` | `plan_first` \| `auto` | «Проектный режим» **этой** комнаты: `plan_first` — направления ждут кнопки «Запустить» (по умолчанию), `auto` — стартуют сразу после карты (A1) |
 | `max_parallel_streams` | int | 1..4, сколько направлений идёт одновременно; остальные ждут очереди (по умолчанию 2, A2) |
-| `project_mode` | bool | «Проектный режим» включён: главный запрос → карта направлений. У новых комнат `true`, у записей без поля — `false` |
+| `project_mode` | bool | «Проектный режим» включён: главный запрос → карта **частей работы**. У новых комнат `true`, у записей без поля — `false` |
+| `phases` | `{id, title}[]` \| `null` | Этапы проекта **этой** комнаты (W17-R §1, B-8): необязательный список, порядок = порядок показа; `id` — стабильный слаг, по нему связываются статусы. `[]` — этапов нет (полосы этапов и чипа «этап» не будет); `null` — поля нет в записи, этапы подтягиваются миграцией чтением из `data/state/<room>/roadmap.json` (только если там есть реальные статусы/заметки); данные при этом не переписываются |
 | `agent_notes` | `{profile: {text, updated_at, entries[], review}}` | особенности участникам **этой** комнаты (§6.2.2): записи `{id, text, source, origin, created_at, used_count, pinned}`, `text` — склейка; файлы профиля не меняются; нет поля — `{}` |
 | `agent_models` | `{profile: {provider, model, reasoning, updated_at}}` | модель/провайдер/мышление участника **только в этой комнате** (§6.11); нет записи — настройки агента |
 | `seeded` | bool | комната создана сидом при первом запуске (а не пользователем) |
@@ -136,11 +137,12 @@
 `Member`: `{profile, role: "worker"|"critic"|"observer", note, pinned: bool, added_at: int}`.
 `role` — роль в комнате. Директор (`orchestrator`) в `members` не входит; критик входит с `role:"critic"` и дублирует `room.critic` (это позволяет держать в комнате второго критика с той же ролью). `POST /api/rooms/{id}/members` не принимает директора и текущего `room.critic` — они меняются через `PATCH`.
 
-`RoomSummary` = `{id, title, icon, archived, orchestrator, critic, members_count, project_dir, mode_default, critic_pass, max_rounds, critic_mode, critic_round_cap, launch_mode, max_parallel_streams, project_mode, counters, phase, updated_at}`:
+`RoomSummary` = `{id, title, icon, archived, orchestrator, critic, members_count, project_dir, mode_default, critic_pass, max_rounds, critic_mode, critic_round_cap, launch_mode, max_parallel_streams, project_mode, phases, counters, phase, updated_at}`:
 
 * `counters` = `{working, needs_you, done_today}` — живые счётчики запросов комнаты.
   `working` — статусы `working|reviewing|synthesizing`; `needs_you` — запросы со статусом `needs_you` **и** запросы со статусом `done`, у которых `needs_you:true` (завершены, но Михаилу остался вопрос; см. §4); `done_today` — `done` c `finished_at` внутри текущих суток по поясу сервера (запрос `done + needs_you` попадает в оба счётчика — это сознательно: он и завершён сегодня, и ждёт ответа).
-* `phase` = `{id, title, status}` — текущая фаза проекта (та же логика, что `roadmap.current`); `null`, если фаз нет.
+* `phases` = `{id, title}[]` — этапы этой комнаты (та же миграция чтением, что в `Room`); `[]` — этапов нет.
+* `phase` = `{id, title, status}` — текущий этап (та же логика, что `roadmap.current`); `null`, если этапов у комнаты нет.
 * `RoomDetail` = `Room` + `counters`, `phase`, `dispatcher` (`{ok, state, warning}`).
 
 ### 3.3 `RequestSummary`
@@ -149,7 +151,10 @@
 |---|---|---|
 | `id` | string | `t_a1b2c3d4` (корневая карточка) |
 | `room` | string | id комнаты (для привязанной через `adopt` карточки — из реестра, даже если `tenant` у неё `NULL`) |
-| `title` | string | заголовок запроса |
+| `title` | string | полный заголовок запроса (первая строка диктовки, как раньше) |
+| `title_short` | string | **короткое название** (W17-B, ≤ 60 знаков): `title_source="user"` (переименование) → `metadata.title` руководителя (`leader`) → название малой модели Hermes (`llm`) → мгновенное `derived` (первая осмысленная строка без вводных «Так,…», по границе слова, с многоточием). Полный текст — в `title`, исходная диктовка — в `text` (§3.4). Везде, где показывается название, интерфейс берёт `title_short`, полный — в подсказку |
+| `title_source` | enum | `derived` \| `llm` \| `leader` \| `user` — откуда взято название (B9 усилено, §4 W17-B). Приоритет: `derived` < `llm` < `leader` < `user` |
+| `title_locked` | bool | `true` — название задал пользователь (`PATCH /api/requests/{id} {title}`); автоматика и модель его не перезаписывают. `PATCH` с пустой строкой снимает блокировку |
 | `status` | enum | см. §4 |
 | `status_reason` | string \| null | короткое объяснение («ждёт ответа Михаила по Q2») |
 | `mode` | `auto` | как разбирали — всегда `auto` |
@@ -197,7 +202,8 @@
 | `artifacts` | `Artifact[]` | файлы работы |
 | `report` | `ReportRef` | интерактивный отчёт |
 | `tree` | `TaskNode[]` | дерево карточек, корень первым |
-| `timeline` | `TimelineEvent[]` | хронология запроса (по возрастанию `at`) |
+| `timeline` | `TimelineEvent[]` | хронология запроса (по возрастанию `at`). **Без `heartbeat`** по умолчанию (W17-B): 117 из 214 событий боевого запроса были «признаком жизни». `?include=heartbeat` (через запятую) возвращает их |
+| `heartbeats` | `{count: int, last_at: int\|null}` | сводка скрытых heartbeat: сколько их и когда был последний (W17-B). Поле есть всегда, даже когда `timeline` без них |
 | `thread` | `ThreadItem[]` | диалог по запросу (§6.3, «Диалог по запросу»; необязательное поле: без него клиент работает по `timeline`) |
 | `warnings` | `Warning[]` | мягкие проблемы чтения/нормализации |
 | `brief` | bool | запрос — главный (бриф проекта): руководитель выдал карту направлений (§6.10). Необязательное, по умолчанию `false` |
@@ -205,6 +211,17 @@
 | `streams_summary` | `{total, running, done, status}` \| null | сводка карты для страницы брифа: сколько направлений, сколько идёт/готово, статус карты. `null` у под-запросов |
 
 `RequestDetail` = `RequestSummary` + поля выше. Единственное исключение: одноимённое поле `critic` расширено — в сводке `CriticRef` (4 ключа), в детали `CriticBlock` (7 ключей, включает `CriticRef`). Оба — объекты; `bool` не принимается нигде.
+
+**Поля запроса детали (W17-B).** `GET /api/requests/{rid}` принимает два параметра:
+
+| Параметр | Значения | Смысл |
+|---|---|---|
+| `include` | `heartbeat` (через запятую) | вернуть скрытые по умолчанию события `heartbeat` в `timeline` |
+| `fields` | имена блоков через запятую | вернуть только перечисленные блоки сверх ядра `RequestSummary`. Имена: `text`, `body_full`, `dispatcher`, `synthesis`, `steps` (`next_steps`), `questions` (`open_questions`), `answers`, `decisions`, `stage`, `future_questions`, `artifacts`, `report`, `tree`, `timeline`, `thread`, `warnings`, `critic`, `heartbeats`. Неизвестное имя → `400 bad_request` (`detail.allowed`). Пример: `?fields=questions,answers,steps,timeline,thread` — страница без `tree` и `synthesis` |
+
+Дублирующее поле `questions` (полная копия `open_questions`, 14,9 КБ боевого ответа) **убрано** из детали (W17-B): источник один — `open_questions`. Прежний ключ отдаётся только при явном `?fields=questions` для старых клиентов.
+
+`ETag` считается по уже урезанному ответу: без `heartbeat` он не «дрожит» от признаков жизни — `304` работает, пока не изменились настоящие данные.
 
 `Synthesis`:
 
@@ -219,8 +236,11 @@
 | `legacy` | bool | ответ получен из старого формата metadata |
 | `history` | `SynthesisVersion[]` | все версии по возрастанию номера; последняя = `version` |
 
-`SynthesisVersion` = `{version: int, kind: "initial"\|"revision", task_id: string\|null, author: string\|null, at: int\|null, verdict: null\|"approve"\|"revise", note: string}`.
+`SynthesisVersion` = `{version: int, kind: "initial"|"revision", task_id: string|null, author: string|null, at: int|null, verdict: null|"approve"|"revise", note: string, reason?: string, answers_count?: int, changes?: string[]}`.
 `kind` — `initial` (первый свод корня) или `revision` (доработка после критика или замечания Михаила). `verdict` — вердикт, из-за которого появилась следующая версия (`revise`), либо `approve`, если версия принята критиком; иначе `null`. `note` — короткая русская заметка («Учтены три замечания критика»).
+
+**W17-S §3 (1.0.3):** у версии есть причина и список изменений —
+`reason` = `initial | note | answers | revision` (`note` — «по вашему замечанию», `answers` — «после ваших ответов и уточнений»), `note` для `reason="note"` содержит текст замечания Михаила (из реестра карточки доработки, до 400 знаков), `answers_count` — сколько ответов/уточнений было в дайджесте этой доработки, `changes` — «что изменилось» из `metadata.changes` руководителя (или из реестра, если metadata пустая; до 10 пунктов, каждый ≤ 300 знаков). Интерфейс подписывает версию причиной и показывает `changes` списком; запасной путь без `changes` — разница по заголовкам разделов, которую считает клиент (`web/js/views/request-answer.js`).
 
 `synthesis.at` может быть позже `finished_at` только у старых записей; в v2 `finished_at` — конец всего цикла, включая доработку.
 
@@ -253,8 +273,14 @@
 `user_action = {kind: agree|comment|move|drop, at, text, due, owner, direction, label}|null`, `user_action_label` («согласовано вами», «прокомментировано вами», «перемещено вами», «убрано вами»), `reaction = {text, at, status: received|applied|no_change|moved|removed, label, cards}|null` (из ветки `[Руководитель · реакция на шаг ns_x] …`), `reaction_label` — видимая подпись («принято», «учтено: работа пересмотрена», «срок изменён», «порядок изменён», «шаг убран»), `reaction_pending=true` + `reaction_label="руководитель ещё не ответил"` (реакции ещё нет), `reaction_waited_s`, `reaction_overdue`.
 `history[] = {at, kind, label, text, due, owner, direction}` — история шага (действия пользователя и реакция руководителя); `can_agree`/`can_drop` — доступны ли действия; `due_changed_by_user`/`owner_changed_by_user` — срок/исполнитель изменены пользователем («Переместить»); `order` — позиция после перемещения (`steps_order` в реестре).
 
-`OpenQuestion`: `{id, text, for: string, answered: bool, answer: string|null, answered_at: int|null, answer_state, answer_label, needs_explanation, explanation_requested_at, explanation_text, reaction, leader_pending, can_remind, reaction_waited_s, reaction_overdue, reminded_at, answer_changes_done}`.
+`OpenQuestion`: `{id, text, for: string, answered: bool, answer: string|null, answered_at: int|null, answer_state, answer_label, needs_explanation, explanation_requested_at, explanation_text, reaction, leader_pending, can_remind, reaction_waited_s, reaction_overdue, reminded_at, answer_changes_done, aliases: string[]}`.
 `for` — `"mikhail"` или профиль. `id` — `q_<hash8>` от текста вопроса.
+`aliases` — id-близнецы того же вопроса (W17-B §7, B7-2): руководитель при повторной выдаче плана создаёт
+тот же вопрос с новым id (боевые `q_22b45cc3`/`q_18b309bf`, `q_d47fe5e7`/`q_d5b4abf0`,
+`q_789a8dce`/`q_2a6cce56`). Вопросы сравниваются по нормализованному тексту (регистр, пробелы, знаки,
+префиксы «Не к спеху:», скобочные уточнения). В `open_questions` такой вопрос один, остальные id — в
+`aliases`; ответ, данный на любой из id, закрывает все. `answered`/`answer_state` считаются по реестру
+ответов — он единственный источник истины статуса.
 `answer_state`: `open` (нет ответа) | `waiting_explanation` (встречный вопрос: **вопрос не закрыт**, в т.ч. старые записи реестра, распознанные по тексту) | `sent` (ответ отправлен, руководитель ещё не ответил) | `received` (принят) | `applied` (учтено, работа пересмотрена) | `no_change` (менять не нужно). `answer_label` — то же по-русски.
 `reaction = {text, at, status, cards: t_…, author, author_label, implicit, task_id}|null` — реакция руководителя из ветки: `[Руководитель · реакция на ответ q_x] …`; `implicit=true`, если метки не было и связь найдена по id вопроса в тексте.
 `leader_pending=true` + `can_remind=true` → «руководитель ещё не ответил» и кнопка «Напомнить руководителю» (`answer_remind`); `reaction_waited_s` — сколько секунд ждём, `reaction_overdue=true` — реакции нет дольше «разумного времени» (180 с). `answer_changes_done=true` — ответ изменил уже сделанное (в реакции есть карточки).
@@ -262,8 +288,9 @@
 `Decision`: `{id, text, why: string|null, status: "proposed"|"accepted"|"rejected", at: int|null, source_request: string}`. `id` — `d_1…`.
 
 `Stage`: `{current: string|null, phases: StagePhase[]}`; `StagePhase` = `{id, title, status: "done"|"active"|"next"|"blocked", note: string}`.
-Порядок фаз фиксирован: `idea → legal → brand → packaging → production → sales`.
-`current` = первая фаза со статусом `active|blocked`, иначе последняя `done`, иначе первая `next`, иначе `null`.
+**Этапы принадлежат комнате** (W17-R §1, B-8): список, порядок и заголовки — из `Room.phases`; списка этапов в коде нет. У комнаты без этапов `stage` — `{current: null, phases: []}` (полоса этапов и чип «этап» не показываются).
+Статус и `note` берутся из metadata ответа: этап комнаты сопоставляется с этапом из ответа по `id`, а если не совпал — по названию (старые ответы называли этапы словами). Этапы, которых комната не объявила, в ответ не попадают.
+`current` = `current` ответа, если он есть среди этапов комнаты; иначе первая фаза со статусом `active|blocked`, иначе последняя `done`, иначе первая `next`, иначе `null`.
 
 `Artifact`: `{path, title, kind, exists: bool, size: int|null}`.
 `kind`: `md|json|html|csv|image|pdf|docx|xlsx|pptx|other` (по расширению; неизвестное → `other`). `size` — байты, `null` если файла нет.
@@ -291,11 +318,15 @@
 | `needs_human` | bool | карточка ждёт человека |
 | `error` | `{code, message}\|null` | последняя ошибка |
 
-`Run` = `{id: int, profile, status, outcome, started_at, ended_at, summary, error: string|null}`;
+`Run` = `{id: int, profile, status, outcome, started_at, ended_at, summary?, metadata?, error: string|null}`;
+`summary` и `metadata` попытки **опускаются**, если дословно повторяют `summary_md`/`metadata` самой
+карточки (W17-B §5: в дереве боевого запроса это было 30 КБ копий). Фронтенд берёт свод карточки из
+узла, из попытки — статус, профиль, время и ошибку.
 `status`: `running|done|failed|crashed`; `outcome`: `completed|failed|crashed|reclaimed|null`.
 
-`TimelineEvent` = `{at, kind, task_id, actor, text}`; `kind`: `created|decomposed|promoted|claimed|started|commented|completed|blocked|unblocked|failed|archived`.
+`TimelineEvent` = `{at, kind, task_id, actor, text}`; `kind`: `created|decomposed|promoted|claimed|started|commented|completed|blocked|unblocked|failed|archived|heartbeat`.
 `actor` — профиль, `"mikhail"` или `"system"`; `text` — короткая русская строка.
+`heartbeat` («Признак жизни») — технический шум: по умолчанию не отдаётся, его счётчик и время — в `RequestDetail.heartbeats` (W17-B).
 
 `Warning` = `{code, message, detail?}`; коды: `legacy_metadata`, `missing_artifact`, `no_synthesis`, `report_invalid`, `schema_drift`, `partial_ingest`, `dispatcher_down`, `card_failed`, `outside_room` (ребёнок назначен профилю вне состава комнаты), `critic_failed` (карточка критика упала), `critic_rounds_exhausted` (лимит раундов исчерпан, ответ отдаётся как есть).
 
@@ -305,7 +336,7 @@
 * `role`: `orchestrator | worker | critic | observer`.
 * `name`, `job`, `label` — подпись участника (WAVE13 §11): имя и должность из описания профиля Hermes. `label` = готовая строка «Анна — финансы и экономика (CFO)»; `name`/`job` пустые, если описания нет.
 * `label_source`: `member` (подпись задана в комнате) | `describe` (`hermes profile describe`) | `profile` (описание из `profile.yaml`) | `role` (описания нет — интерфейс показывает роль).
-* `custom_label`: ручная подпись участника (поле `label` в составе комнаты); `""` — не задана.
+* `custom_label`: ручная подпись участника (поле `label` в составе комнаты, а у руководителя и критика — `Room.role_labels[profile]`); `""` — не задана (WAVE17 B-17).
 * `description`: описание профиля для короткой строки под заголовком карточки.
 * `label_pending`: `true` — ответ `hermes profile describe` ещё не пришёл (подпись уточнится сама, ответ не ждёт CLI).
 * `state`: `idle | working | waiting`; `waiting` — есть blocked-карточка или вопрос к этому профилю.
@@ -314,7 +345,7 @@
 * `counts`: `{done, blocked, active}` по карточкам комнаты.
 
 `Roadmap` = `{room, updated_at, current: StagePhase|null, phases: StagePhase[], decisions: Decision[]}`.
-`phases` — всегда 6 фаз в фиксированном порядке, с `note` (русский текст) и `updated_at` (int|null).
+`phases` — этапы **этой комнаты** в её порядке (`Room.phases`; миграция чтением, если поля в записи нет), с `note` (русский текст), `updated_at` (int|null) и `source_request`. У комнаты без этапов — `[]`, `current: null`.
 `Decision` здесь тот же, что в `RequestDetail`, плюс `owner` (кто решает) и `updated_at`.
 
 `BacklogItem`:
@@ -384,10 +415,10 @@
 
 ### 5.1 `stage`: словарь «область → статус» и коллизия ключей
 
-**stage.** Словарь «область → статус» превращается в 6 фаз:
+**stage.** Словарь «область → статус» превращается в этапы ровно по его ключам (W17-R §1, B-8: канонического списка этапов больше нет):
 
-1. Ключи приводятся к канону: `idea|vision|идея → idea`; `legal|law|юр* → legal`; `brand|роспатент|trademark|бренд → brand`; `packaging|pack|упаковка → packaging`; `production|ops|производство|операции → production`; `sales|vendas|продажи → sales`.
-   **Коллизия ключей.** Сначала раскладываются ключи, совпадающие с id фазы (канонические: `idea, legal, brand, packaging, production, sales`), затем — алиасы. Алиас применяется **только если канонического ключа для этой фазы нет**: в реальном `t_605613e0` есть и `production`, и `ops` — оба значат фазу `production`, побеждает `production`, а `ops` не перезаписывает её и не сдвигает порядок обхода. Так результат не зависит от порядка ключей в JSON. Если канонического ключа нет, побеждает первый по порядку алиас (порядок алиасов перечислен выше).
+1. `id` этапа — стабильный слаг из ключа (`legal → legal`, `«Согласование» → «согласование»`), `title` — сам ключ как написан. Порядок — порядок ключей в JSON. Алиасов и подмены ключей нет: `ops` остаётся отдельным этапом, а не «переименовывается» в `production`.
+   Какие из этих этапов видит пользователь, решает `Room.phases` (связка по `id`, затем по названию).
 2. Статус по тексту значения, проверки по порядку (первое совпадение):
    * `blocked` — «ждёт решения», «ждёт действия», «blocked», «заблокирован»;
    * `next` — «не начат», «не начато», «не запущен», «not started»;
@@ -494,6 +525,15 @@ report: KickReport, dispatcher: {ok, state, warning}, at: int}`.
 проход в песочнице (`detail.reason="sandbox_no_dispatch"`).
 `502 engine_error` — CLI вернул ошибку (`detail.stderr`).
 
+#### `GET /api/dispatcher/preview`
+Состояние доски **только чтением** (W17-B, вместо `POST /api/dispatcher/kick {preview:true}`): тот же
+`KickReport`, что у `preview`-прохода, но `GET` ничего не пишет и не считает лимит частоты — его можно
+звать на каждой загрузке экрана, и он честно работает в песочнице.
+
+`200` → `{ok: true, preview: true, report: KickReport, at: int}`. Тело `report` — как у `kick` (§6.1).
+Ошибка чтения доски не роняет ответ: `report: {}`, `ok: true` (кнопку просто не показываем).
+`POST /api/dispatcher/kick {preview:true}` оставлен для старых клиентов и отвечает так же.
+
 ### 6.2 Комнаты
 
 #### `GET /api/rooms`
@@ -505,6 +545,39 @@ report: KickReport, dispatcher: {ok, state, warning}, at: int}`.
             "phase": {"id": "legal", "title": "Легализация", "status": "active"}}], "updated_at": 1793171890}
 ```
 → `fixtures/rooms.json`
+
+#### `GET /api/rooms/summary`
+**Один запрос на всё боковое меню** (W17-B): счётчики и последние запросы ВСЕХ комнат. Раньше меню
+каждые ~9 с отправляло 11 запросов по всем комнатам, включая неактивные.
+
+Query: `requests` (0..10, по умолчанию `3`) — сколько последних запросов на комнату; `include_archived`
+(`1|0`, по умолчанию `0`); `room` (необязательно, id комнаты — тогда в ответе только она).
+
+`200` →
+```json
+{"ok": true, "at": 1793912795, "count": 2,
+ "engine": {"ok": true, "board": "team", "warning": null},
+ "rooms": [{"id": "fn", "title": "Гранит", "icon": "folder", "archived": false,
+            "orchestrator": "biz-director", "critic": "biz-critic", "members_count": 4,
+            "mode_default": "auto", "critic_pass": true, "max_rounds": 2,
+            "critic_mode": "rounds", "critic_round_cap": 12,
+            "launch_mode": "plan_first", "max_parallel_streams": 2, "project_mode": false,
+            "counters": {"working": 2, "needs_you": 1, "done_today": 3},
+            "phase": {"id": "legal", "title": "Легализация", "status": "active"},
+            "requests_count": 7, "last_at": 1793912000,
+            "last": [{"id": "t_1b0aa253", "room": "fn", "title": "Так, начнём работу…",
+                      "title_short": "Начнём работу в этой комнате", "status": "done",
+                      "needs_you": true, "created_at": 1793906100, "finished_at": 1793911000,
+                      "preview": "Так, начнём работу…"}]}]}
+```
+
+* Поля комнаты — те же, что в `RoomSummary` (§3.2), плюс `requests_count` и `last_at` (последняя запись реестра).
+* `last[]` — до `requests` последних запросов комнаты **из реестра**, без полной сборки детали:
+  `id`, `room`, `title`, `title_short`, `status` (из доски, одним запросом на доску), `needs_you` из кэша
+  наблюдателя, `created_at`, `finished_at`, `preview`. Запросов с неизвестным статусом (карточки нет на доске)
+  в списке нет.
+* Ответ кэшируется на 2–3 с: меню можно опрашивать часто и всем экранам сразу.
+* `200` даже при недоступном канбане: счётчики из кэша наблюдателя, `last[].status = null`, `engine.ok=false`.
 
 #### `POST /api/rooms`
 Создать комнату (и доску, если её нет). Тело:
@@ -523,13 +596,14 @@ report: KickReport, dispatcher: {ok, state, warning}, at: int}`.
 | `mode_default` | `auto` | нет | `auto` (только) |
 | `critic_pass` | bool | нет | `false` |
 | `max_rounds` | int | нет | `1` (допустимо 1..2) |
-| `launch_mode` | `plan_first` \| `auto` | нет | `plan_first` |
+| `launch_mode` | `plan_first` \| `auto` | нет | `auto` — **новая** комната запускает части сразу, без подтверждения (решение Михаила, W17-R §3). Записи без поля читаются как `plan_first`: настройки существующих комнат не меняются |
 | `max_parallel_streams` | int 1..4 | нет | `2` |
 | `project_mode` | bool | нет | `true` (новая комната сразу в проектном режиме) |
+| `phases` | `{id?, title}[]` | нет | `[]` — этапов нет, шаблонов по умолчанию не бывает; `id` выводится из заголовка, лимиты 24 этапа / 80 знаков |
 | `agent_notes` | `{profile: {text?, updated_at?, entries?[]}}` | нет | `{}` — особенности участникам этой комнаты (§6.2.2), записи или старый текст |
 
 `201` → `RoomDetail` (§3.2), заголовок `Location: /api/rooms/{id}`.
-`400 bad_request` — нет `title`/`orchestrator`, плохой `id`, неизвестный профиль (`detail.available`), `mode_default="swarm"` («не поддерживается»), `max_rounds` вне 1..2, негодный `project_dir` (§6.2.1), `launch_mode` не из `plan_first|auto` («Режим запуска: «сначала план» или «сразу без подтверждения»»), `max_parallel_streams` не целое 1..4 («Одновременно направлений: от 1 до 4»), `project_mode` не bool («ожидается true или false»).
+`400 bad_request` — нет `title`/`orchestrator`, плохой `id`, неизвестный профиль (`detail.available`), `mode_default="swarm"` («не поддерживается»), `max_rounds` вне 1..2, негодный `project_dir` (§6.2.1), `launch_mode` не из `plan_first|auto` («Режим запуска: «сначала план» или «сразу без подтверждения»»), `max_parallel_streams` не целое 1..4 («Одновременно частей работы: от 1 до 4»), `project_mode` не bool («ожидается true или false»), `phases` не список/этап без заголовка/повтор `id`/больше 24 этапов/заголовок длиннее 80 знаков.
 Старые записи `data/rooms.json` без этих полей читаются как `plan_first` / `2` / `false`; файл при чтении не переписывается (обратная совместимость).
 `409 conflict` — комната с таким `id` уже есть (`detail.room`). `502 engine_error` — не удалось создать доску.
 
@@ -626,6 +700,12 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 `POST /api/rooms/{id}/agents/{profile}/notes/used` — `{entry_ids?: [id]}`; без списка
 считаются все записи участника. `200` → `{ok, profile, touched}`.
 
+`POST /api/rooms/{id}/agents/{profile}/notes/entries/{entry}/pin` — `{pinned: bool}`
+(WAVE17 P6, окно-«блокнот»): закрепить или снять закрепление записи. `200` →
+`{ok, profile, entries, text, entry, limits}`; в журнал комнаты пишется событие
+`pinned` / `unpin` (его можно откатить). `400` — нет поля `pinned`; `404` — записи нет
+или участник не в комнате; `409` — комната в архиве.
+
 `GET /api/rooms/{id}/notes/journal?limit=50` → `{ok, room, count, events}` — новые сверху,
 текст замаскирован (`[скрыто]`), добавлены `action_ru` и `source_ru`.
 
@@ -650,18 +730,28 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 Состав комнаты (`Room.members[]`): `{profile, role, note, pinned, added_at, label}`; `label: ""` —
 подпись из описания профиля.
 
+**Одна операция для всех (WAVE17 B-17).** Руководитель комнаты и критик не лежат в `members`
+(они — настройки комнаты), поэтому их подпись хранится в `Room.role_labels: {profile: label}`
+(профиль Hermes тоже не меняется). Тот же `PUT` пишет её туда, пустая строка — сбрасывает.
+Приоритет источников подписи: `label` участника / `role_labels` комнаты (пользователь) →
+`hermes profile describe` → описание из `profile.yaml` → роль в комнате (`label_source=role`).
+`GET /api/rooms/{id}` и блок команды (`GET /api/rooms/{id}/team`) отдают её одинаково — полем
+`label`, поэтому все экраны (команда, шапка, дерево работ, вопросы, шаги, боковое меню) берут
+подпись из одного места.
+
 ##### `PUT /api/rooms/{id}/agents/{profile}/label`
 Тело: `{label: string}` ≤ 120 знаков (пробелы схлопываются); пустая строка — вернуться к описанию профиля.
+Доступно **всем** участникам: исполнителю, руководителю комнаты, критику.
 
 `200` →
 ```json
-{"ok": true, "profile": "biz-cfo", "label": "Ира — бухгалтер проекта",
+{"ok": true, "profile": "default", "label": "Михаил — руководитель комнаты",
+ "role_labels": {"default": "Михаил — руководитель комнаты"},
  "members": [{"profile": "biz-cfo", "role": "worker", "note": "", "pinned": false,
               "added_at": 1793060000, "label": "Ира — бухгалтер проекта"}]}
 ```
-`400 bad_request` — `label` не строка, NUL в подписи, а также попытка подписать руководителя комнаты
-или критика (`detail.reason="room_lead"`: они задаются настройками комнаты).
-`404 not_found` — нет комнаты или профиля в её составе. `502 engine_error` — реестр не записался.
+`role_labels` есть всегда (у исполнителя — без изменений). `400 bad_request` — `label` не строка, NUL в подписи.
+`404 not_found` — нет комнаты или профиля ни в составе, ни в ролях комнаты. `502 engine_error` — реестр не записался.
 
 #### `POST /api/rooms/check-dir`
 Проверка папки проекта до сохранения (GET-подобная, **ничего не создаёт**: права смотрятся у ближайшего существующего родителя).
@@ -677,7 +767,7 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 → `fixtures/room_cafe.json`
 
 #### `PATCH /api/rooms/{id}`
-Частичное обновление. Разрешены поля: `title, icon, orchestrator, critic, context_files, project_dir, mode_default, critic_pass, max_rounds, critic_mode, critic_round_cap, launch_mode, max_parallel_streams, project_mode, agent_notes`.
+Частичное обновление. Разрешены поля: `title, icon, orchestrator, critic, context_files, project_dir, mode_default, critic_pass, max_rounds, critic_mode, critic_round_cap, launch_mode, max_parallel_streams, project_mode, phases, agent_notes`.
 Настройки проектного режима меняются только здесь — общих режимов «для всех комнат» нет (A1); `id`, `board`, `tenant` неизменяемы.
 Пустой `launch_mode` (`""`) = рекомендуемый `plan_first`. PATCH не трогает `project_dir` и состав, если они не переданы.
 `200` → `RoomDetail`. `400 bad_request` — неизменяемое поле (`id`, `board`, `tenant`) или неизвестное (`detail.fields`), `mode_default="swarm"`, `max_rounds` вне 1..2, `critic_mode` не из `rounds|until_approved`, `critic_round_cap` вне 2..30. `404 not_found`. `409 conflict` — `orchestrator`/`critic` не из ростера. Отклонённая правка ничего не меняет (проверка до записи).
@@ -744,6 +834,12 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 `502 engine_error` — БД/CLI не прочитались. Битые metadata не роняют ответ: поля нормализуются, в `warnings[]` — `legacy_metadata`.
 → `fixtures/request_done.json`, `request_critic_approved.json`, `request_done_legacy.json`, `request_working.json`, `request_reviewing.json`, `request_needs_you.json`, `request_outside_room.json`, `request_failed.json`, `request_queued.json`
 
+#### `PATCH /api/requests/{rid}`
+Переименование названия запроса (W17-B §4, B9 усилено). Тело: `{title}` — строка до 120 знаков; `""` снимает блокировку и возвращает автоматическое название.
+`200` → `{ok: true, action: "rename", request: RequestSummary, title_short, title_source, title_locked}`.
+После непустого `title` в реестре `title_source="user"`, `title_locked=true`; это название не перезаписывается ни моделью, ни руководителем, ни пересчётом по ходу беседы. Полный текст запроса (`title`, `text`) не меняется.
+`400 bad_request` — нет поля `title` / не строка / длиннее 120 / NUL-байт. `404 not_found` — запрос не корень комнаты.
+
 #### `POST /api/requests/{rid}/actions`
 Одно действие над запросом. Тело: `{action, ...поля}`.
 
@@ -751,15 +847,16 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 |---|---|---|---|---|
 | `dispatch` | `task_id?` | проход диспетчера, чтобы карточку взяли (кнопка «Проверить доску сейчас») | `{spawned, promoted, reclaimed, planned, max, report: KickReport, dispatcher}` — формат `report` см. §6.1 | `502` |
 | `comment` | `text` (1..8000), `author?`=`mikhail` | комментарий к корню | `{comment: {id: int, author, text, at}}` (`id` — номер строки `task_comments`; растёт; мок отдаёт тот же формат) | `400`, `404` |
-| `answer` | `question_id`, `text` (1..8000), `need_explanation?` (bool) | **Ответ на конкретный вопрос** (W14-D §1–§4): комментарий с меткой `[Михаил · ответ на вопрос q_x «текст вопроса»]` + `unblock` блокирующих детей; в ветке появляется запись `kind="answer"` со ссылкой на вопрос; руководителю создаётся (или дописывается) карточка «Уточнение» с контрактом реакции. Запись в реестре: `answers[q_id] = {text, at, answered, status, question_text, steps_at_answer, unblocked, cancelled_steps?}`. Статус `sent`, пока руководитель не отреагировал. При ответе-отказе («нет/не нужно») связанные шаги снимаются («снят по вашему ответу»). `need_explanation:true` или текст-просьба («поясни…») → **вопрос остаётся открытым** (`answered:false`, `answer_state:"waiting_explanation"`) | `{question: OpenQuestion, answer: {question_id, text, at, state, label, needs_explanation}, steps: {cancelled: string[], cancelled_label}, unblocked: string[], note?: {task_id, merged, routed_to}}` | `400` (`need_explanation` не bool), `404` (`detail.question_id`), `409` уже отвечен (кроме встречного вопроса — на него можно ответить снова) |
-| `answer_remind` | `question_id` | **«Напомнить руководителю»** (W14-D §2): короткий сигнал в ветку `[Михаил · напоминание] …` на корень и в открытую карточку «Уточнение»; отметка `reminded_at`/`reminders` в реестре | `{question_id, reminded_at, reminders, text, routed_to, question}` | `404` ответа на вопрос нет, `409` руководитель уже отреагировал |
+| `answer` | `question_id`, `text` (1..8000), `need_explanation?` (bool) | **Ответ на конкретный вопрос** (W14-D §1–§4): комментарий с меткой `[Михаил · ответ на вопрос q_x «текст вопроса»]` + `unblock` блокирующих детей; в ветке появляется запись `kind="answer"` со ссылкой на вопрос; руководителю создаётся (или дописывается) карточка «Уточнение» с контрактом реакции. Запись в реестре: `answers[q_id] = {text, at, answered, status, question_text, steps_at_answer, unblocked, cancelled_steps?}`. Статус `sent`, пока руководитель не отреагировал. При ответе-отказе («нет/не нужно») связанные шаги снимаются («снят по вашему ответу»). `need_explanation:true` (кнопка «Мне нужно пояснение») → **вопрос остаётся открытым** (`answered:false`, `answer_state:"waiting_explanation"`); текст-просьба без кнопки («поясни…») считается ОБЫЧНЫМ ОТВЕТОМ (W17-B §2, аудит B5) | `{question: OpenQuestion, answer: {question_id, text, at, state, label, needs_explanation}, steps: {cancelled: string[], cancelled_label}, unblocked: string[], note?: {task_id, merged, routed_to}}` | `400` (`need_explanation` не bool), `404` (`detail.question_id`), `409` уже отвечен (кроме встречного вопроса — на него можно ответить снова) |
+| `answer_remind` | `question_id` | **«Напомнить руководителю»** (W14-D §2): короткий сигнал в ветку `[Михаил · напоминание] …` на корень и в открытую карточку «Уточнение»; отметка `reminded_at`/`reminders` в реестре. Реакция ищется ТОЙ ЖЕ функцией, что в окне вопроса (B-12): только от руководителя комнаты и только ПОСЛЕ ответа | `{question_id, reminded_at, reminders, text, routed_to, reaction: null, question}` | `404` ответа на вопрос нет. `409` руководитель уже отреагировал — `detail: {reason: "already_answered", question_id, answer: {question_id, text, at, state, label}, reaction: {text, at, status, label, cards, implicit, author}, reaction_label, question}`: ответ и найденная реакция приходят ВМЕСТЕ с ошибкой, чтобы окно показало их, а не пустое «уже ответил» |
+| `answers_resend` | — | **«Отправить руководителю накопленные ответы»** (W17-B, только по клику): одним сообщением в ветку `[Михаил · накопленные ответы] …` и одной карточкой «Уточнение» руководителю — все ответы без реакции, по порядку вопросов, со ссылками `q_…` на каждый вопрос и требованием отреагировать на каждый. Автоматически (по таймеру/при открытии) не отправляется никогда: это запускает настоящего агента. Отметка `resent_at`/`resend_count` в реестре ответов | `{sent: int, question_ids: string[], task_id, at, note?: {task_id, merged, routed_to}}` | `409` нечего отправлять (`detail.reason=\"nothing_to_resend\"`, `detail.pending=0`) |
 | `step_drop` | `step_id` (`ns_…` или `<rid>:ns_…`) | **«Не согласен — убрать»** (W14-D §4, W14-H §12): шаг помечается убранным (`steps_dropped` + `step_actions` в реестре), снимается в бэклоге комнаты (`dismissed`), руководителю уходит `[Михаил · убрать шаг ns_x «…»]` | `{step_id, step: NextStep, dropped: string[], message, reaction_label: "шаг убран"}` | `400` кривой id, `404` шага нет |
 | `step_agree` | `step_id` | **«Согласен»** (W14-H §12): действие пользователя по шагу — ответ на ЭТОТ шаг. Метка в ветке `[Михаил · согласен с шагом ns_x «…»]`, запись `step_actions[ns_x] = {kind:"agree", at}`; статус шага не меняется (его ведёт руководитель), `reaction_label` = «руководитель ещё не ответил» до реакции | `{step_id, step: NextStep, message, reaction_label, pending_label, log}` | `400` кривой id, `404` шага нет |
 | `step_comment` | `step_id`, `text` (1..8000) | **«Прокомментировать»**: комментарий к шагу как ответ на него — `[Михаил · комментарий к шагу ns_x «…»] текст`; текст виден в `step.user_action.text` и в истории | `{step_id, step, message, reaction_label, pending_label, log}` | `400` нет текста/кривой id, `404` шага нет |
 | `step_move` | `step_id`, `due?` (`YYYY-MM-DD`\|null), `owner?` (профиль), `direction?` (`up`\|`down`) | **«Переместить»**: срок, исполнитель или порядок. Срок пишется в реестр (`step_actions`) и в бэклог комнаты; порядок — `steps_order`; метка `[Михаил · переместить шаг ns_x «…»: срок …, исполнитель …, выше/ниже]`. Хотя бы одно из полей обязательно | `{step_id, step, message, reaction_label, pending_label, log}` | `400` нет изменений / кривой `due`/`owner`/`direction`, `404` шага нет |
 | `unblock` | `task_id?`, `text?` | снять блокировку (одну или все) | `{unblocked: string[]}` | `409` нечего разблокировать |
 | `decompose` | — | **«Разложить сейчас»**: явный LLM-вызов декомпозиции (таймаут 180 с). Разрешён только по клику пользователя и только для `queued` | `{decomposed: true, child_ids: string[], dispatcher}` | `409` уже разложен (`detail.reason="already_decomposed"`, `detail.status`) |
-| `revise` | `text` (1..8000) | «На доработку» от Михаила: создаёт карточку-доработку (`role=revision`, parent — критик или корень), ответ уходит в `synthesizing`; готовая доработка = новая версия | `{version: int, previous_version: int, revision_task_id: string, note: string}` | `400` пустой текст, `409` ответа ещё нет (`detail.reason="synthesis_pending"`) |
+| `revise` | `text` (1..8000) | «Доработать свод» от Михаила (**единственный** путь доработки, W17-S §1): создаёт карточку-доработку (`role=revision`, parent — критик или корень), ответ уходит в `synthesizing`; готовая доработка = новая версия | `{version: int, previous_version: int, revision_task_id: string, note: string, digest: {version, count, note}}` | `400` пустой текст, `409` ответа ещё нет (`detail.reason="synthesis_pending"`) |
 | `critique` | — | запустить критика вручную (повторная проверка текущей версии); `round += 1` | `{round: int, critic_task_id: string, state: "reviewing"}` | `409` у комнаты нет критика (`detail.reason="no_critic"`), `409` ответа ещё нет |
 | `reassign` | `task_id`, `profile` | сменить исполнителя карточки; снимает `outside_room`, если профиль из состава комнаты | `{task: TaskNode}` | `400` не участник комнаты (`detail.available`), `404` нет карточки, `409` карточка done/archived |
 | `rework` | `task_id?`, `text` (1..8000) | «на доработку» конкретной карточки (по умолчанию — критик/корень) с указанием | `{task: TaskNode}` | `400`, `404`, `409` карточка archived |
@@ -856,14 +953,30 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 → `fixtures/team_cafe.json`
 
 #### `GET /api/rooms/{id}/roadmap`
-Этапы проекта и решения. `200` → `Roadmap` (§3.5). `404 not_found`. Если данных ещё нет — 6 фаз со статусом `next`, `current: "idea"`, `decisions: []`.
+Этапы проекта и решения. `200` → `Roadmap` (§3.5). `404 not_found`. Если у комнаты нет своих этапов — `phases: []`, `current: null` (раньше здесь были шесть чужих этапов из константы), `decisions` — как есть.
 → `fixtures/roadmap_cafe.json`
 
 #### `GET /api/rooms/{id}/backlog`
 «Дальше»: шаги, будущие вопросы, вопросы, решения. Query: `status` (через запятую), `kind` (через запятую), `limit` (по умолчанию 200).
-`200` → `{room, updated_at, counts: {open, asked, done, dismissed, total}, items: BacklogItem[]}`.
+`200` → `{room, updated_at, counts: {open, asked, done, dismissed, total, hidden_service}, items: BacklogItem[], sections, hidden_service?}`.
 `400 bad_request` — неизвестный `status`/`kind`. `404 not_found`.
 → `fixtures/backlog_cafe.json`
+
+**Статус вопроса — из реестра ответов (W17-B §7, аудит B7).** Раньше бэклог хранил свой `status`
+и после ответа Михаила вопрос продолжал висеть в «ждут вашего решения» (боевой `q_e7b16109`:
+`answered=true` в детали, `status=open` в «Дальше»). Теперь при каждом чтении:
+
+* вопрос с ответом → `status: "done"`, `state_label: "отвечен"`, `answer_state`, `answer`, `answered_at`;
+* просьба пояснить (`need_explanation`) → `status: "open"`, `state_label: "ждёт пояснения"`;
+* иначе `status: "open"`, `state_label: "ждёт вашего ответа"`;
+* близнецы (см. `OpenQuestion.aliases`) схлопываются в один элемент — `aliases` у элемента, счётчики
+  и `sections` считаются по уникальным;
+* служебные вопросы (число раундов критика) не показываются: `counts.hidden_service` — сколько скрыто,
+  `hidden_service: [{id, text}]` — какие (для диагностики).
+
+`counts` и `sections` пересчитываются на чтении, поэтому вкладка «Дальше», бейдж и страница запроса
+показывают одно и то же сразу после ответа — без ожидания следующего прохода плана. Данные на диске
+не перезаписываются (миграция чтением).
 
 #### `POST /api/rooms/{id}/backlog/{item_id}`
 Отметить шаг/вопрос. Тело: `{status: "open"|"asked"|"done"|"dismissed", due?: "YYYY-MM-DD"|null}`.
@@ -967,7 +1080,9 @@ Range-запросы не поддерживаются (всегда `200`, не
 | GET | `/api/config` | Config | `config.json` |
 | GET | `/api/profiles` | `{items, count, dispatcher}` | `profiles.json` |
 | POST | `/api/dispatcher/kick` | `{ok, spawned, …}` | — |
+| GET | `/api/dispatcher/preview` | `{ok, preview, report, at}` | — |
 | GET | `/api/rooms` | `{rooms, engine, updated_at}` | `rooms.json` |
+| GET | `/api/rooms/summary` | `{ok, at, count, engine, rooms[{…, last[]}]}` | `rooms_summary.json` |
 | POST | `/api/rooms` | RoomDetail (201) | — |
 | GET | `/api/rooms/{id}` | RoomDetail | `room_cafe.json`, `room_fn.json` |
 | PATCH | `/api/rooms/{id}` | RoomDetail | — |

@@ -154,6 +154,10 @@
       "task_id": "t_2a6f5c93",
       "kind": "event"
     }
-  ]
+  ],
+  "title_short": "Каналы продаж: Едок или Развоз",
+  "heartbeats": {
+    "count": 0,
+    "last_at": null
+  }
 }
-

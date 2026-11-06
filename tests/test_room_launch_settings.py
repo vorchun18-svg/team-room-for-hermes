@@ -57,7 +57,8 @@ class RoomsUnit(unittest.TestCase):
     # --- дефолты ---------------------------------------------------------
     def test_new_room_defaults(self):
         room = self.make()
-        self.assertEqual(room["launch_mode"], "plan_first")
+        # W17-R §3 (решение Михаила 06.11): НОВАЯ комната запускает части сразу.
+        self.assertEqual(room["launch_mode"], "auto")
         self.assertEqual(room["max_parallel_streams"], 2)
         self.assertIs(room["project_mode"], True)
         self.assertTrue(rooms.get_room(self.cfg, room["id"])["project_mode"])
@@ -133,6 +134,7 @@ class RoomsUnit(unittest.TestCase):
         path.write_text(raw, encoding="utf-8")
 
         room = rooms.get_room(self.cfg, "old")
+        # Запись без поля — прежнее поведение: «сначала план» (настройки не меняем).
         self.assertEqual(room["launch_mode"], "plan_first")
         self.assertEqual(room["max_parallel_streams"], 2)
         self.assertIs(room["project_mode"], False)
@@ -143,8 +145,9 @@ class RoomsUnit(unittest.TestCase):
         rooms.seed_defaults(self.cfg)
         for room in rooms.list_rooms(self.cfg):
             self.assertIs(room["project_mode"], False, room["id"])
-            self.assertEqual(room["launch_mode"], "plan_first")
-            self.assertEqual(room["max_parallel_streams"], 2)
+            # Существующие (посеянные) комнаты читаются по-старому: «сначала план».
+            self.assertEqual(room["launch_mode"], "plan_first", room["id"])
+            self.assertEqual(room["max_parallel_streams"], 2, room["id"])
 
     def test_string_false_in_file_does_not_enable(self):
         """В файле могло оказаться "false" строкой — режим не включается молча."""
@@ -164,6 +167,7 @@ class RoomsUnit(unittest.TestCase):
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         room = rooms.list_rooms(self.cfg)[0]
         self.assertEqual(room["max_parallel_streams"], 2)
+        # Мусор в файле не включает «сразу»: режим остаётся прежним — «сначала план».
         self.assertEqual(room["launch_mode"], "plan_first")
 
 
@@ -230,7 +234,8 @@ class RoomsApi(unittest.TestCase):
         res = self.call("POST", "/api/rooms", dict(self.BODY, id="plan-defaults"))
         self.assertEqual(res["status"], 201, res)
         room = res["json"]
-        self.assertEqual(room["launch_mode"], "plan_first")
+        # W17-R §3 (решение Михаила 06.11): НОВАЯ комната запускает части сразу.
+        self.assertEqual(room["launch_mode"], "auto")
         self.assertEqual(room["max_parallel_streams"], 2)
         self.assertIs(room["project_mode"], True)
 

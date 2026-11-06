@@ -308,10 +308,11 @@ class TestLegacy(IngestBase):
 
 class TestViewsAndActions(IngestBase):
     def test_empty_room_views(self):
+        # W17-R §1 (B-8): у комнаты без своих этапов полосы этапов нет —
+        # раньше здесь были шесть чужих этапов из константы.
         roadmap = ingest.roadmap_view(self.cfg, "fn")
-        self.assertEqual(len(roadmap["phases"]), 6)
-        self.assertEqual({p["status"] for p in roadmap["phases"]}, {"next"})
-        self.assertEqual(roadmap["current"]["id"], "idea")
+        self.assertEqual(roadmap["phases"], [])
+        self.assertIsNone(roadmap["current"])
         self.assertEqual(roadmap["decisions"], [])
 
         backlog = ingest.backlog_view(self.cfg, "fn")

@@ -63,6 +63,24 @@ class MockServerTest(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=5)
 
+    # --- STAB-3: занятый порт не должен «тихо двоиться» --------------------
+    def test_busy_port_is_refused(self):
+        """Второй мок на занятом порту — понятная ошибка, а не двойная привязка.
+
+        На Windows `allow_reuse_address` разрешает второму сокету встать на тот же
+        порт: оба слушают и Windows отдаёт соединение любому из них. В e2e это
+        давало «Комната с таким id уже есть» в чистом прогоне (браузер попадал в
+        прежний мок). Теперь create_server проверяет порт и падает.
+        """
+        with self.assertRaises(RuntimeError) as ctx:
+            mock.create_server(self.port, self.web, self.fixtures, phase_scale=0.03,
+                               extra_roots=[self.files])
+        message = str(ctx.exception)
+        self.assertIn("уже занят", message)
+        self.assertIn(str(self.port), message)
+        self.assertTrue(mock.port_in_use("127.0.0.1", self.port))
+        self.assertFalse(mock.port_in_use("127.0.0.1", 0))
+
     # --- помощники -------------------------------------------------------
     def call(self, path, method="GET", body=None, headers=None):
         data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -158,7 +176,10 @@ class MockServerTest(unittest.TestCase):
         self.assertEqual([i["created_at"] for i in data["items"]],
                          sorted([i["created_at"] for i in data["items"]], reverse=True))
         status, _, filtered = self.json("/api/rooms/cafe/requests?status=needs_you")
-        self.assertEqual([i["status"] for i in filtered["items"]], ["needs_you"])
+        # W17-S: в демо-данных появился ещё один запрос, ждущий ответа (свод с вопросами),
+        # поэтому проверяем сам фильтр, а не число запросов в демо.
+        self.assertTrue(filtered["items"])
+        self.assertTrue(all(i["status"] == "needs_you" for i in filtered["items"]))
         status, _, bad = self.json("/api/rooms/cafe/requests?status=nope")
         self.assertEqual(status, 400)
         self.assertEqual(bad["error"]["code"], "bad_request")
@@ -175,9 +196,14 @@ class MockServerTest(unittest.TestCase):
         status, _, cand = self.json("/api/rooms/fn/candidates")
         self.assertEqual(status, 200)
         self.assertEqual(cand["count"], 0)
+        # W17-R §1 (B-8): у комнаты без своих этапов полосы этапов нет —
+        # в том числе в демо (раньше демо выдумывало шесть чужих этапов).
         status, _, roadmap = self.json("/api/rooms/fn/roadmap")
-        self.assertEqual(roadmap["current"]["id"], "legal")
-        self.assertEqual(len(roadmap["phases"]), 6)
+        self.assertEqual(roadmap["phases"], [])
+        self.assertIsNone(roadmap["current"])
+        status, _, cafe_map = self.json("/api/rooms/cafe/roadmap")
+        self.assertEqual(len(cafe_map["phases"]), 6, "у Лето свои этапы")
+        self.assertEqual(cafe_map["current"]["id"], "legal")
 
     def test_done_request_v2_contract(self):
         d = self.detail("t_a1b2c3d4")
@@ -405,14 +431,15 @@ class MockServerTest(unittest.TestCase):
             self.assertEqual(self.detail(rid)["needs_you"], waiting, rid)
         status, _, rooms = self.json("/api/rooms")
         cafe = next(r for r in rooms["rooms"] if r["id"] == "cafe")
-        self.assertEqual(cafe["counters"]["needs_you"], 3)       # needs_you + 2 done с вопросами
+        # W17-S: +1 запрос с вопросами (свод с тремя версиями) в демо-данных.
+        self.assertEqual(cafe["counters"]["needs_you"], 5)       # 5 запросов с вопросами в демо (W17)
         status, _, data = self.json("/api/requests/t_a1b2c3d4/actions", "POST",
                                     {"action": "answer", "question_id": "q_1", "text": "Да"})
         self.assertEqual(status, 200)
         d = self.detail("t_a1b2c3d4")
         self.assertEqual((d["status"], d["needs_you"]), ("done", False))   # статус не меняется
         status, _, rooms = self.json("/api/rooms")
-        self.assertEqual(next(r for r in rooms["rooms"] if r["id"] == "cafe")["counters"]["needs_you"], 2)
+        self.assertEqual(next(r for r in rooms["rooms"] if r["id"] == "cafe")["counters"]["needs_you"], 4)
 
     def test_answer_unblocks_and_is_single_use(self):
         status, _, data = self.json("/api/requests/t_5c8e4a02/actions", "POST",

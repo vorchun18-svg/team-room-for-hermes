@@ -134,9 +134,11 @@ COPY_DOCS = (
 #: скриншоты для README: только из docs/shots/final, только без бренда на картинке
 SHOT_CANDIDATES = (
     "backlog-1280.png",
+    "request-1280.png",
     "roadmap-1280-dark.png",
     "team-780.png",
     "composer-1280.png",
+    "notes-editor-1280.png",
     "room-model-dialog.png",
 )
 SHOTS_LIMIT = 8
@@ -581,9 +583,14 @@ python tools/install_desktop_plugin.py --help
 
 | | |
 |---|---|
-| ![Дальше и вопросы](docs/shots/backlog-1280.png) | ![Карта проекта](docs/shots/roadmap-1280-dark.png) |
-| ![Команда](docs/shots/team-780.png) | ![Запрос команде](docs/shots/composer-1280.png) |
+| ![Дальше и вопросы](docs/shots/backlog-1280.png) | ![Запрос: свод и правая колонка](docs/shots/request-1280.png) |
+| ![Карта проекта](docs/shots/roadmap-1280-dark.png) | ![Команда](docs/shots/team-780.png) |
+| ![Запрос команде](docs/shots/composer-1280.png) | ![Особенности комнаты](docs/shots/notes-editor-1280.png) |
 | ![Модель участника](docs/shots/room-model-dialog.png) | Диалог комнаты: провайдер, модель и уровень мышления участника — только для этой комнаты. |
+
+Страница запроса: слева свод команды с версиями, справа «Нужен ваш ответ» и шаги
+одной строкой. Блокнот «Особенности для этой комнаты» — добавка к SOUL.md, которая
+действует только здесь и не меняет профиль Hermes.
 
 ## Тесты
 

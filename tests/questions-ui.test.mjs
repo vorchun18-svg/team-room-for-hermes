@@ -359,7 +359,7 @@ test('нет реакции руководителя: подпись и кноп
   }
 });
 
-test('открытый вопрос: поле + отдельные «Отправить» и «Мне нужно пояснение»', async () => {
+test('открытый вопрос: поле + отдельные «Отправить» и «Пояснить…» (P3)', async () => {
   const s = asideStand();
   try {
     const host = globalThis.document.createElement('div');
@@ -372,9 +372,17 @@ test('открытый вопрос: поле + отдельные «Отпра�
     const send = all(row, 'req-q__send')[0];
     assert.ok(send, 'кнопка «Отправить»');
     assert.match(text(send), /Отправить/);
+    // WAVE17 P3/B15: длинная подпись «Мне нужно пояснение» у каждого вопроса —
+    // это была стена одинаковых кнопок. Теперь короткая кнопка, а само
+    // объяснение («Мне нужно пояснение…») живёт в title/aria и в ОДНОЙ общей
+    // подсказке блока.
     const explain = all(row, 'req-q__explain')[0];
-    assert.ok(explain, 'кнопка «Мне нужно пояснение»');
-    assert.match(text(explain), /Мне нужно пояснение/);
+    assert.ok(explain, 'кнопка «Пояснить…»');
+    assert.match(text(explain), /Пояснить/);
+    assert.match(String(explain.getAttribute('title') || ''), /Мне нужно пояснение/);
+    const hints = all(host, 'req-q__common-hint');
+    assert.equal(hints.length, 1, 'подсказка про пояснение — одна на блок, не ×N');
+    assert.match(text(hints[0]), /Пояснить/);
     // Поле и «Отправить» — соседи в одной строке: dictation-auto увидит кнопку-действие.
     assert.equal(send.parentNode, field.parentNode, 'кнопка в той же строке, что и поле');
 

@@ -15,6 +15,7 @@ import { rooms, health } from './store.js';
 import { dispatcherRunning } from './shell-status.js';
 import { waitingFor } from './shell-inbox.js';
 import { countText, COUNT_FORMS } from './shell-labels.js';
+import { titleShortOf, titleHint } from './request-title.js';
 
 export const APP_TITLE = 'Комната команды';
 const RECENT_LIMIT = 5;
@@ -207,7 +208,50 @@ const TONE = {
   queued: 'muted',
 };
 
-/** Собрать последние запросы по всем комнатам (по 5 с комнаты) и перерисовать. */
+/**
+ * «Недавнее» одним запросом: `GET /api/rooms/summary` отдаёт `last[]` всех комнат
+ * с короткими названиями (W17-C §2.4, W17-G §4). Сервер без сводки — null,
+ * тогда работаем по-старому (по одному запросу на комнату).
+ * @param {object[]} list комнаты
+ * @returns {Promise<object[]|null>}
+ */
+async function recentFromSummary(list) {
+  try {
+    const data = await api.get('/api/rooms/summary?requests=' + RECENT_LIMIT, { etag: true });
+    // 304 — данные не менялись: список уже на экране, ничего не перерисовываем.
+    if (data && data.notModified) return 'unchanged';
+    if (!data) return null;
+    const raw = Array.isArray(data.rooms) ? data.rooms
+      : (data.rooms && typeof data.rooms === 'object' ? Object.values(data.rooms) : null);
+    if (!Array.isArray(raw) || !raw.length) return null;
+    const items = [];
+    for (const room of raw) {
+      if (!room || typeof room !== 'object') continue;
+      const roomTitle = String(room.title || '');
+      const roomId = String(room.id || room.room_id || '');
+      const last = Array.isArray(room.last) ? room.last : [];
+      for (const rec of last) {
+        if (!rec || !rec.id) continue;
+        items.push({
+          id: String(rec.id),
+          title: String(rec.title || ''),
+          title_short: String(rec.title_short || ''),
+          preview: String(rec.preview || ''),
+          status: rec.status,
+          at: rec.created_at || rec.finished_at,
+          roomId,
+          roomTitle,
+        });
+      }
+    }
+    items.sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0));
+    return items.slice(0, RECENT_LIMIT);
+  } catch {
+    return null;
+  }
+}
+
+/** Собрать последние запросы по всем комнатам (одним запросом сводки, иначе порциями). */
 export async function loadRecent() {
   if (recentLoading) return;
   const list = rooms.get('list').filter((r) => !r.archived);
@@ -215,13 +259,17 @@ export async function loadRecent() {
 
   recentLoading = true;
   try {
+    const viaSummary = await recentFromSummary(list);
+    if (viaSummary === 'unchanged') return;
+    if (Array.isArray(viaSummary)) { renderRecent(viaSummary); return; }
     const batches = await Promise.all(list.map(async (room) => {
       try {
         const data = await api.get('/api/rooms/' + enc(room.id) + '/requests?limit=' + RECENT_LIMIT);
         const items = Array.isArray(data) ? data : (data && Array.isArray(data.items) ? data.items : []);
         return items
           .filter((i) => i && i.id && !i.archived)
-          .map((i) => ({ id: i.id, title: i.title || 'Без заголовка', status: i.status, at: i.created_at, roomId: room.id, roomTitle: room.title }));
+          .map((i) => ({ id: i.id, title: i.title || '', title_short: i.title_short || '',
+            preview: i.preview || '', status: i.status, at: i.created_at, roomId: room.id, roomTitle: room.title }));
       } catch {
         return [];
       }
@@ -240,7 +288,7 @@ function renderRecent(items) {
   const list = $('#recent-list');
   if (!host || !list) return;
 
-  const sig = items.map((i) => [i.id, i.title, i.status, i.roomId].join('|')).join('#');
+  const sig = items.map((i) => [i.id, i.title_short, titleShortOf(i), i.status, i.roomId].join('|')).join('#');
   if (sig === recentSig) return;
   recentSig = sig;
 
@@ -252,17 +300,19 @@ function renderRecent(items) {
   host.classList.remove('hidden');
   for (const item of items) {
     const tone = TONE[String(item.status || '')] || 'muted';
-    const full = String(item.title);
-    // Подсказка с полным текстом: пять обрезанных строк иначе не различить (D13).
-    const hint = full + ' · ' + String(item.roomTitle);
+    // B8/P5: короткое название на экране, полный текст диктовки — в подсказке.
+    const short = titleShortOf(item) || 'Без названия';
+    const hint = titleHint(item, item.roomTitle ? 'Комната: ' + item.roomTitle : '');
+    const fullHint = hint || short;
     list.appendChild(h('a', {
       class: 'recent__item',
       href: '#/room/' + enc(item.roomId) + '/request/' + enc(item.id),
-      title: hint,
+      title: fullHint,
+      'aria-label': short + ' — ' + String(item.roomTitle || 'комната'),
     },
     h('span', { class: 'status-dot status-dot--' + tone, 'aria-hidden': 'true' }),
     h('span', { class: 'recent__body' },
-      h('span', { class: 'recent__title', title: hint }, full),
+      h('span', { class: 'recent__title', title: fullHint }, short),
       h('span', { class: 'recent__room', title: String(item.roomTitle) }, String(item.roomTitle))),
     ));
   }

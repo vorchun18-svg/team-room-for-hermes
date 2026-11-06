@@ -223,6 +223,13 @@ class Watcher:
                             self._fail("заметка Obsidian %s (%s)" % (root_id, room_id), exc)
                     # 4) особые указания участникам комнаты — автокомментарии (WAVE9 §9)
                     self._agent_notes(room, root_id, stats)
+                    # 5) название запроса по ходу беседы (W17-B §4, B9 усилено):
+                    #    после выпуска свода/уточнений, не чаще REFRESH_MIN_S,
+                    #    user-название не трогается. Ошибка не валит тик.
+                    try:
+                        self.app.fn("titles", "maybe_refresh")(self.cfg, room, rec, detail)
+                    except Exception as exc:  # noqa: BLE001 - название вторично
+                        self._fail("название %s (%s)" % (root_id, room_id), exc)
                 except Exception as exc:  # noqa: BLE001 - один запрос не валит цикл
                     stats["errors"] += 1
                     self._fail("запрос %s (%s)" % (root_id, room_id), exc)

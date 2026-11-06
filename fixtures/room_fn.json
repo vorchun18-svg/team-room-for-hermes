@@ -84,11 +84,7 @@
     "needs_you": 0,
     "done_today": 1
   },
-  "phase": {
-    "id": "legal",
-    "title": "Легализация",
-    "status": "active"
-  },
+  "phase": null,
   "dispatcher": {
     "ok": true,
     "state": "running",
@@ -111,5 +107,6 @@
     }
   },
   "critic_mode": "rounds",
-  "critic_round_cap": 12
+  "critic_round_cap": 12,
+  "phases": []
 }

@@ -18,6 +18,8 @@ import {
   confirmDialog, iconButton,
 } from '../ui.js';
 import { briefBadge, briefSummaryChip, summaryOf } from './plan-req.js';
+import { titleShortOf, titleHint } from '../request-title.js';
+import { skeletonCards } from '../shell-skeleton.js';
 
 const ACTIVE = new Set(['working', 'reviewing', 'synthesizing']);
 
@@ -129,7 +131,12 @@ export function createFeed(opts) {
 
   const feedHead = sectionHeader('Запросы', { count: 0, actions: [refreshBtn] });
   const feedCount = feedHead.querySelector('.section-header__count');
-  if (feedCount) feedCount.classList.add('count-pill');
+  if (feedCount) {
+    feedCount.classList.add('count-pill');
+    // B16: у числа есть пояснение «что считается».
+    feedCount.title = 'Запросы комнаты: считаются все, кроме архива';
+    feedCount.setAttribute('aria-label', 'Запросы комнаты: считаются все, кроме архива');
+  }
   const toolbar = h('div', { class: 'cmp-toolbar' }, filtersHost, searchBox);
 
   const feed = h('section', { class: 'cmp-feedwrap' }, feedHead, toolbar, feedNote, listEl);
@@ -263,7 +270,11 @@ export function createFeed(opts) {
       if (state.filter === 'active' && !ACTIVE.has(st)) return false;
       if (state.filter === 'needs' && !(item.needs_you || st === 'needs_you')) return false;
       if (state.filter === 'done' && st !== 'done') return false;
-      if (q && !String(item.title || '').toLowerCase().includes(q)) return false;
+      // Ищем и по короткому названию, и по полному тексту запроса.
+      if (q) {
+        const hay = (String(item.title || '') + ' ' + String(item.title_short || '')).toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       return true;
     });
   }
@@ -271,7 +282,7 @@ export function createFeed(opts) {
   function itemsSignature(items) {
     return items.map((i) => {
       const p = i.progress || {};
-      return [i.id, i.status, p.done, p.total, i.finished_at, i.created_at, i.needs_you, i.title].join(':');
+      return [i.id, i.status, p.done, p.total, i.finished_at, i.created_at, i.needs_you, i.title, i.title_short, i.title_source].join(':');
     }).join('|');
   }
 
@@ -304,7 +315,10 @@ export function createFeed(opts) {
         role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(total),
         'aria-valuenow': String(done), 'aria-label': 'Выполнено ' + done + ' из ' + total,
       }, h('div', { class: 'progress__bar', style: { width: pct + '%' } })));
-      row.appendChild(h('span', { class: 'cmp-card__count small muted nowrap tnum' }, done + '/' + total));
+      row.appendChild(h('span', {
+        class: 'cmp-card__count small muted nowrap tnum',
+        title: 'Выполнено ' + done + ' работ из ' + total + ' — так команда разложила этот запрос',
+      }, done + '/' + total));
     }
     let now = 'руководитель комнаты разбирает запрос';
     if (st === 'reviewing') now = 'критик проверяет свод';
@@ -325,6 +339,8 @@ export function createFeed(opts) {
     const st = String(item.status || 'queued');
     const detail = detailCache.get(item.id);
     const href = '#/room/' + enc(roomId) + '/request/' + enc(item.id);
+    // B8/P5: на карточке короткое название, полный текст — в подсказке.
+    const short = titleShortOf(item) || 'Без названия';
 
     // Один статус: «ждёт тебя» важнее «в работе», второй чип не нужен.
     const shown = item.needs_you || st === 'needs_you' ? 'needs_you' : st;
@@ -354,25 +370,26 @@ export function createFeed(opts) {
     let snippet = null;
     if (st === 'done' && detail && detail.text) {
       const text = mdToText(detail.text, 320);
-      if (text) snippet = h('p', { class: 'cmp-card__snippet' }, text);
+      if (text) snippet = h('p', { class: 'cmp-card__snippet', title: text }, text);
     } else if (st === 'done' && !detail) {
       snippet = h('p', { class: 'cmp-card__snippet cmp-card__snippet--pending' }, 'Ответ загружается…');
     } else if (item.status_reason) {
-      snippet = h('p', { class: 'cmp-card__snippet' }, plainTerms(item.status_reason));
+      snippet = h('p', { class: 'cmp-card__snippet', title: plainTerms(item.status_reason) }, plainTerms(item.status_reason));
     }
 
     const main = h('a', {
       class: 'cmp-card__main', href, 'data-act': 'open',
-      'aria-label': (item.title || 'Запрос') + ' — открыть страницу запроса',
+      'aria-label': short + ' — открыть страницу запроса',
     },
-    h('div', { class: 'cmp-card__row' }, h('h3', { class: 'cmp-card__title' }, String(item.title || 'Без заголовка'))),
+    h('div', { class: 'cmp-card__row' },
+      h('h3', { class: 'cmp-card__title', title: titleHint(item) || short }, short)),
     meta, progressRow(item, detail), snippet);
 
     const menuBtn = h('button', {
       class: 'btn btn--ghost btn--icon btn--sm cmp-card__menu-btn',
       type: 'button', 'data-act': 'menu',
       'aria-haspopup': 'menu', 'aria-expanded': 'false',
-      'aria-label': 'Действия: ' + String(item.title || item.id),
+      'aria-label': 'Действия: ' + short,
       title: 'Действия',
     }, icon('ellipsis', { size: 14 }));
     menuBtn.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); openMenu(menuBtn, item); });
@@ -421,7 +438,8 @@ export function createFeed(opts) {
     feedNote.textContent = feedNoteText(items);
 
     if (!state.loaded && !state.error) {
-      listEl.appendChild(skeleton(4));
+      // B14: заглушка в форме будущих карточек, а не серые полосы.
+      listEl.appendChild(skeletonCards({ rows: 3, variant: 'card', lines: 2 }));
     } else if (state.error) {
       listEl.appendChild(errorBanner(state.error, () => loadFeed()));
       if (state.requests.length) listEl.appendChild(h('div', { class: 'cmp-feed__stale small muted' }, 'Показаны данные с прошлого успешного обновления.'));

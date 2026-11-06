@@ -170,19 +170,75 @@
 .req-answer__body .markdown h3 { margin-top: 1.35em; font-size: var(--text-md); }
 .req-answer__body .markdown p { text-wrap: pretty; }
 .req-answer__body .markdown li { margin-top: 0.35em; }
-/* Таблицы ответа листаются внутри обёртки, а не растягивают страницу. */
+/* Таблицы «Свода» (WAVE17 B3): обёртка с горизонтальной прокруткой и
+   тенью-подсказкой с той стороны, где есть продолжение (data-edge ставит
+   request-util.wrapTables). Ячейки ПЕРЕНОСЯТ слова (раньше был
+   `white-space: nowrap` — таблица уходила за карточку на 600–1100 px), длинные
+   пути и коды без пробелов рвутся по `overflow-wrap: anywhere`. */
 .req-table {
-  max-width: 100%; margin: var(--space-3) 0; overflow-x: auto;
-  border: 1px solid var(--border-soft); border-radius: var(--radius-md);
-  background: var(--card); overscroll-behavior-x: contain;
+  position: relative;
+  max-width: 100%;
+  margin: var(--space-3) 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  overflow: hidden;
 }
-.req-table:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.req-table > table { width: max-content; min-width: 100%; margin: 0; }
+.req-table__scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  border-radius: inherit;
+}
+.req-table__scroll:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* Тень-подсказка «здесь продолжение» — только по факту переполнения. */
+.req-table::before,
+.req-table::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.req-table::before {
+  left: 0;
+  background: linear-gradient(to left, transparent, color-mix(in srgb, var(--foreground) 22%, transparent));
+}
+.req-table::after {
+  right: 0;
+  background: linear-gradient(to right, transparent, color-mix(in srgb, var(--foreground) 22%, transparent));
+}
+.req-table[data-edge='end']::after,
+.req-table[data-edge='both']::after { opacity: 1; }
+.req-table[data-edge='start']::before,
+.req-table[data-edge='both']::before { opacity: 1; }
+
+.req-table > .req-table__scroll > table { width: max-content; min-width: 100%; margin: 0; border-collapse: collapse; }
 .req-answer__body .markdown .req-table th,
-.req-answer__body .markdown .req-table td { white-space: nowrap; }
-.req-answer__body .markdown .req-table td { overflow-wrap: normal; }
+.req-answer__body .markdown .req-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  vertical-align: top;
+  /* Колонка не уже 9 знаков и не шире 26: слова переносятся целиком, а таблица
+     при необходимости прокручивается вбок внутри карточки. */
+  min-width: 9ch;
+  max-width: 26ch;
+}
+/* Прокрутка остаётся только для по-настоящему широкого: таблица занимает
+   ширину карточки, а не свою максимальную. */
+.req-answer__body .markdown .req-table table { table-layout: auto; }
 .req-answer__body .markdown .req-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--ui-base) 3%, transparent); }
 .req-answer__body .markdown .req-table tbody tr:hover { background: var(--ui-row-hover-background); }
+/* Блоки кода и длинные строки «Свода» — прокручиваются внутри карточки. */
+.req-answer__body .markdown pre { max-width: 100%; overflow-x: auto; }
+.req-answer__body .markdown code { overflow-wrap: anywhere; }
+.req-answer__body .markdown a { overflow-wrap: anywhere; }
 
 /* Ход работы: у завершённых — тихая строка с раскрытием, у идущих — открыта. */
 .req-pipe { border: 1px solid var(--border-soft); border-radius: var(--radius-md); min-width: 0; }
@@ -239,6 +295,131 @@
   flex-wrap: wrap;
 }
 
+/* W17-S §3: подпись версии причиной + «Что изменилось» + сравнение. */
+.req-answer__ver-meta { color: var(--ui-text-quaternary); font-size: var(--text-sm); }
+.req-answer__vcap {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: calc(var(--space-3) * -1 + 2px) 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+.req-answer__vcap .btn--link { padding: 0 2px; font-size: var(--text-sm); }
+
+.req-answer__changes {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--ui-base) 2%, transparent);
+}
+.req-answer__changes-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ui-text-secondary);
+  margin-bottom: 4px;
+}
+.req-answer__changes-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.req-answer__changes-list li { margin: 2px 0; }
+
+.req-answer__diff {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-editor);
+  max-height: 420px;
+  overflow: auto;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+.req-answer__diff-head { color: var(--muted-foreground); margin-bottom: var(--space-2); }
+.req-answer__diff-line { display: flex; gap: 6px; padding: 2px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+.req-answer__diff-sign { flex: none; width: 1ch; color: var(--ui-text-quaternary); }
+.req-answer__diff-line.is-add { background: color-mix(in srgb, var(--ok, var(--ui-green)) 12%, transparent); }
+.req-answer__diff-line.is-del { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.req-answer__diff-line.is-del span:last-child { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+/* W17-S §4: «свод устарел — есть K ваших ответов». */
+.req-answer__stale {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  font-size: var(--text-sm);
+}
+.req-answer__stale-text { min-width: 0; flex: 1 1 260px; }
+
+/* W17-S §2: окно «Доработать свод» и предпросмотр отправки. */
+.req-revise { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.req-revise__label { font-size: var(--text-sm); font-weight: 500; color: var(--ui-text-secondary); }
+.req-revise__note { min-height: 120px; max-height: 34vh; resize: vertical; }
+.req-revise__preview {
+  margin-top: var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--ui-base) 2%, transparent);
+  padding: var(--space-2) var(--space-3);
+}
+.req-revise__preview > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ui-text-secondary);
+  list-style: none;
+}
+.req-revise__preview > summary::-webkit-details-marker { display: none; }
+.req-revise__preview > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+.req-revise__list { margin: var(--space-2) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.req-revise__row { display: flex; gap: var(--space-2); font-size: var(--text-sm); min-width: 0; }
+.req-revise__key { flex: 0 0 172px; color: var(--muted-foreground); }
+.req-revise__value { flex: 1 1 auto; min-width: 0; color: var(--foreground); overflow-wrap: anywhere; }
+.req-revise__value--count { color: var(--ui-text-secondary); font-weight: 500; }
+.req-revise__more { margin: var(--space-2) 0 0 0; }
+.req-revise__more > summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+  list-style: none;
+}
+.req-revise__more > summary::-webkit-details-marker { display: none; }
+.req-revise__items { margin: var(--space-2) 0 0; padding-left: 16px; font-size: var(--text-sm); color: var(--muted-foreground); }
+.req-revise__items li { margin: 3px 0; overflow-wrap: anywhere; }
+.req-revise__q { display: block; color: var(--ui-text-secondary); }
+.req-revise__a { display: block; }
+.req-revise__honest {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border-soft);
+  font-size: var(--text-sm);
+  color: var(--ui-text-quaternary);
+}
+@media (max-width: 640px) {
+  .req-revise__key { flex-basis: 100%; }
+  .req-revise__row { flex-direction: column; gap: 0; }
+}
+
 /* Действия внутри дерева работ — обычные кнопки строки, не главный акцент. */
 .req__main [data-rp-tree] .btn--primary {
   background: var(--ui-bg-quaternary);
@@ -260,20 +441,18 @@
 .req-side__body { display: flex; flex-direction: column; min-width: 0; }
 .req-side__foot { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-soft); display: flex; gap: var(--space-2); }
 
+/* Шаг — ОДНА строка (WAVE17 B1). Здесь остаётся только безопасная основа:
+   прежняя сетка `15px minmax(0,1fr)` была под чекбокс, которого больше нет, и
+   весь текст шага попадал в колонку 15 px (побуквенный перенос, шаг на 900–1300 px).
+   Раскладку строки задаёт view-steps.css (`.req-steps .req-step__open`). */
 .req-step {
-  display: grid;
-  grid-template-columns: 15px minmax(0, 1fr);
-  gap: var(--space-2);
-  padding: var(--space-2) 0;
-  border-top: 1px solid var(--border-soft);
+  display: block;
+  padding: 0;
+  border-top: 0;
   min-width: 0;
 }
-.req-step:first-child { border-top: 0; padding-top: 0; }
-.req-step:last-child { padding-bottom: 0; }
-.req-step__check { width: 15px; height: 15px; margin-top: 2px; accent-color: var(--primary); cursor: pointer; }
 .req-step__text { font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
 .req-step.is-done .req-step__text { color: var(--muted-foreground); text-decoration: line-through; text-decoration-color: var(--ui-stroke-tertiary); }
-.req-step__meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); margin-top: 5px; }
 .req-step__row { display: flex; align-items: center; gap: var(--space-1); }
 .req-step__row .btn { color: var(--ui-text-quaternary); }
 .req-step__row .btn:hover { color: var(--foreground); }
@@ -291,7 +470,9 @@
 .req-owner__name { overflow: hidden; text-overflow: ellipsis; }
 
 /* ── Вопросы и ответы на них ─────────────────────────────────────────────── */
-.req-q { padding: var(--space-3) 0; border-top: 1px solid var(--border-soft); min-width: 0; }
+/* Компактная форма (P3/B15): вопрос занимает меньше места, подробности —
+   в ответе и в подсказках; длинный текст вопроса переносится целиком. */
+.req-q { padding: var(--space-2) 0; border-top: 1px solid var(--border-soft); min-width: 0; }
 .req-q:first-child { border-top: 0; padding-top: 0; }
 .req-q:last-child { padding-bottom: 0; }
 .req-q__top { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
@@ -301,7 +482,7 @@
    кнопкой (dictation-auto), как в composer — не поверх поля. */
 .req-q__row { display: flex; align-items: flex-end; gap: var(--space-2); min-width: 0; }
 .req-q__row .req-q__input { flex: 1 1 auto; min-width: 0; }
-.req-q__input { min-height: 52px; padding: var(--space-1) var(--space-2); font-size: var(--text-sm); resize: vertical; }
+.req-q__input { min-height: 44px; padding: var(--space-1) var(--space-2); font-size: var(--text-sm); resize: vertical; }
 .req-q__send { flex: none; }
 .req-q__actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
 .req-q__hint { font-size: var(--text-2xs); line-height: var(--leading-normal); min-width: 0; }
@@ -326,7 +507,20 @@
   font-weight: 600;
   line-height: var(--leading-normal);
 }
-.req-q__state { flex: none; height: auto; min-height: 21px; padding: 2px 7px; white-space: normal; text-align: left; line-height: 1.25; }
+/* Статус ответа может быть длинной фразой («ответ отправлен — руководитель ещё
+   не ответил»): чип ужимается и переносит слова, а не вылезает из карточки. */
+.req-q__state {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: 21px;
+  padding: 2px 7px;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
 .req-q__atext {
   color: var(--foreground);
   font-size: var(--text-sm);
@@ -369,6 +563,77 @@
 .req-q__pending.is-overdue .req-q__pending-label { color: var(--warn-ink); font-weight: 600; }
 .req-q__pending .codicon { font-size: 12px; }
 
+
+/* ── Колонка «Дальше»: закреплённый блок и свёрнутые блоки (P3) ──────────── */
+
+/* «Нужен ваш ответ (N)»: первым и всегда раскрыт. На широком экране заголовок
+   блока прилипает к верху колонки — счётчик виден при прокрутке. */
+.req-side--pin { padding-bottom: var(--space-3); }
+.req-side--pin > .section-header { position: sticky; top: 0; z-index: 2; background: var(--card); }
+.req-side__count-line { margin: calc(var(--space-1) * -1) 0 var(--space-2); line-height: var(--leading-normal); }
+.req-side__subhead { font-weight: 600; letter-spacing: 0.01em; margin: var(--space-3) 0 var(--space-1); }
+
+/* Свёрнутый блок: одна строка-заголовок со счётчиком, состояние запоминается. */
+.req-side--fold { padding: 0; }
+.req-side__fold-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-lg);
+  padding: var(--space-2) var(--space-4);
+  list-style: none;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  color: var(--ui-text-secondary);
+}
+.req-side__fold-head::-webkit-details-marker { display: none; }
+.req-side__fold-head:hover { background: var(--ui-row-hover-background); }
+.req-side__fold-head:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.req-side__fold-chev { color: var(--ui-text-quaternary); transition: transform var(--dur-fast) var(--ease); flex: none; }
+.req-side--fold[open] > .req-side__fold-head .req-side__fold-chev { transform: rotate(90deg); }
+.req-side__fold-title { font-weight: 600; font-size: var(--text-base); min-width: 0; }
+.req-side__fold-count { flex: none; }
+.req-side--fold > .req-side__hint {
+  padding: 0 var(--space-4) var(--space-1);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--muted-foreground);
+}
+.req-side--fold > .req-side__body,
+.req-side--fold > .req-stage,
+.req-side--fold > .req-steps__group { padding: 0 var(--space-4) var(--space-3); }
+.req-side--fold > .req-side__foot { margin: 0 var(--space-4) var(--space-3); }
+
+/* Заблокированные задачи: строка-ссылка (разбор — на вкладке «Дальше»). */
+.req-side__blocked {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  font-size: var(--text-sm);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.req-side__blocked:hover { text-decoration: underline; }
+.req-side__blocked:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Досылка накопленных ответов: кнопка + счётчик «N ответов без реакции». */
+.req-side__resend-row { flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.req-side__resend { white-space: normal; text-align: left; }
+
+/* Общая подсказка блока вопросов (одна на весь блок, не ×N). */
+.req-q__common-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  padding: var(--space-1) 0 var(--space-2);
+  line-height: var(--leading-normal);
+}
+.req-q__common-hint .codicon { margin-top: 2px; flex: none; }
 
 /* Решения */
 .req-decision { padding: var(--space-3) 0; border-top: 1px solid var(--border-soft); min-width: 0; }
@@ -505,6 +770,8 @@
   /* С 900 px и уже вопросы уходят под основной блок — горизонтального скролла нет. */
   .req__grid { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
   .req__aside { position: static; max-height: none; overflow: visible; }
+  /* Закреплённый заголовок прилипал бы к верху окна поверх шапки — не нужен. */
+  .req-side--pin > .section-header { position: static; }
   /* Строка «поле + Отправить» на узком — в столбик: кнопка во всю ширину. */
   .req-q__row { flex-wrap: wrap; }
   .req-q__row .req-q__input { flex: 1 1 100%; }

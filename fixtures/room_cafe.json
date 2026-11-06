@@ -162,7 +162,7 @@
   "archived": false,
   "counters": {
     "working": 3,
-    "needs_you": 3,
+    "needs_you": 5,
     "done_today": 2
   },
   "phase": {
@@ -275,6 +275,32 @@
       "source": "user",
       "note": "",
       "rolled_back": false
+    }
+  ],
+  "phases": [
+    {
+      "id": "idea",
+      "title": "Идея и стратегия"
+    },
+    {
+      "id": "legal",
+      "title": "Легализация"
+    },
+    {
+      "id": "brand",
+      "title": "Бренд и товарный знак"
+    },
+    {
+      "id": "packaging",
+      "title": "Упаковка"
+    },
+    {
+      "id": "production",
+      "title": "Производство"
+    },
+    {
+      "id": "sales",
+      "title": "Продажи"
     }
   ]
 }

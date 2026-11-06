@@ -52,23 +52,22 @@ from __future__ import annotations
 from typing import Any
 
 try:  # пакетный и «плоский» импорт (python server/app.py)
-    from .normalize_base import (PHASE_IDS, PHASE_TITLES, PHASES, STATES, _as_dict, _clean_keys,
-                                 artifact_kind, parse_due, stable_id)
+    from .normalize_base import (PHASE_STATUSES, STATES, _as_dict, _clean_keys,
+                                 artifact_kind, parse_due, phase_id, stable_id)
     from .normalize_meta import (_artifacts, _decisions, _future_questions, _issues, _next_steps,
                                  _open_questions, _parse_markdown, _report, _verdict)
     from .normalize_stage import canonical_phase_id, canonical_stage
 except ImportError:  # pragma: no cover
-    from normalize_base import (PHASE_IDS, PHASE_TITLES, PHASES, STATES, _as_dict, _clean_keys,  # type: ignore
-                                artifact_kind, parse_due, stable_id)
+    from normalize_base import (PHASE_STATUSES, STATES, _as_dict, _clean_keys,  # type: ignore
+                                artifact_kind, parse_due, phase_id, stable_id)
     from normalize_meta import (_artifacts, _decisions, _future_questions, _issues, _next_steps,  # type: ignore
                                 _open_questions, _parse_markdown, _report, _verdict)
     from normalize_stage import canonical_phase_id, canonical_stage  # type: ignore
 
 __all__ = [
-    "PHASES",
-    "PHASE_IDS",
-    "PHASE_TITLES",
+    "PHASE_STATUSES",
     "STATES",
+    "phase_id",
     "normalize_metadata",
     "normalize_plan_blocks",
     "empty_metadata",
@@ -92,9 +91,8 @@ def empty_metadata() -> dict:
         "next_steps": [],
         "open_questions": [],
         "decisions": [],
-        "stage": {"current": None, "phases": [
-            {"id": pid, "title": title, "status": "next", "note": ""} for pid, title in PHASES
-        ]},
+        # W17-R §1 (B-8): этапы — свойство комнаты; пустая форма без этапов.
+        "stage": {"current": None, "phases": []},
         "future_questions": [],
         "artifacts": [],
         "report": None,

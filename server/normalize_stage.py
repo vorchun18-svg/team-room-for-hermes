@@ -4,13 +4,12 @@
 """
 from __future__ import annotations
 
-import re
 from typing import Any
 
 try:  # пакетный и «плоский» импорт (python server/app.py)
-    from .normalize_base import PHASES, PHASE_IDS, PHASE_TITLES, _text
+    from .normalize_base import PHASE_STATUSES, _text, phase_id
 except ImportError:  # pragma: no cover
-    from normalize_base import PHASES, PHASE_IDS, PHASE_TITLES, _text  # type: ignore
+    from normalize_base import PHASE_STATUSES, _text, phase_id  # type: ignore
 
 # ---------------------------------------------------------------- статусы/фазы
 
@@ -33,31 +32,17 @@ _DONE = (
     "completed", "complete", "finished", "shipped", "принят",
 )
 
-PHASE_ALIASES: dict[str, tuple[str, ...]] = {
-    "idea": ("idea", "vision", "идея", "идеи", "концепция", "стратегия", "strategy"),
-    "legal": ("legal", "law", "юр", "легал", "юрид", "закон"),
-    "brand": ("brand", "роспатент", "trademark", "бренд", "торговая марка", "нейминг"),
-    "packaging": ("packaging", "package", "pack", "упаковка", "упак", "этикетк"),
-    "production": ("production", "ops", "производство", "операции", "кухня", "manufactur"),
-    "sales": ("sales", "vendas", "продажи", "продаж", "сбыт", "каналы"),
-}
-
-
 def canonical_phase_id(area: Any) -> str | None:
-    """«область» → id канонической фазы (точное совпадение приоритетнее алиаса)."""
-    key = _text(area).lower()
+    """«область» → id этапа: стабильный слаг из её названия (W17-R B-8).
+
+    Своего словаря этапов в коде нет: id выводится из того, что пришло в
+    metadata («legal», «Согласование», «Юридическая часть») или из настроек
+    комнаты. Пустое значение — этапа нет.
+    """
+    key = _text(area)
     if not key:
         return None
-    if key in PHASE_IDS:
-        return key
-    slug = re.sub(r"[^a-zа-я0-9]+", "-", key).strip("-")
-    if slug in PHASE_IDS:
-        return slug
-    for pid, aliases in PHASE_ALIASES.items():
-        for alias in aliases:
-            if alias in key:
-                return pid
-    return None
+    return phase_id(key)
 
 
 def _status_of(text: str) -> str | None:
@@ -93,13 +78,18 @@ def _legacy_status(text: str) -> str:
 def _phase_status(value: Any) -> str:
     """Нормализация статуса уже канонической фазы (терпимо к синонимам)."""
     raw = _text(value).lower()
-    if raw in ("done", "active", "next", "blocked"):
+    if raw in PHASE_STATUSES:
         return raw
     return _status_of(raw) or "next"
 
 
 def canonical_stage(stage: Any) -> dict:
-    """`stage` любого вида → `{current, phases[6]}` (API §3.4)."""
+    """`stage` любого вида → `{current, phases[]}` (API §3.4).
+
+    W17-R §1 (B-8): этапы берутся ТОЛЬКО из metadata — normalize не дорисовывает
+    чужих этапов и не знает названий ни одного проекта. Нет `stage` — пустой
+    список; какие этапы показывать, решает комната (`server/phase_book.py`).
+    """
     provided: list[dict] = []
     unmapped: dict = {}
     current_raw: Any = None
@@ -119,65 +109,45 @@ def canonical_stage(stage: Any) -> dict:
             if isinstance(value, dict):
                 merged = dict(value)
                 merged.setdefault("id", k)
+                merged.setdefault("title", k)
                 provided.append(merged)
                 continue
-            pid = canonical_phase_id(k)
             note = _text(value)
+            pid = canonical_phase_id(k)
             if pid is None:
+                continue
+            if not note:
                 unmapped[k] = note
                 continue
-            provided.append({"id": pid, "title": "", "status": _legacy_status(note),
-                             "note": note, "_exact": k.strip().lower() in PHASE_IDS})
+            provided.append({"id": pid, "title": k, "status": _legacy_status(note), "note": note})
     elif isinstance(stage, str) and stage.strip():
-        # «legal: в работе» — единственная строка, без области; в фазу не превращаем
-        pid = canonical_phase_id(stage.split(":", 1)[0])
+        # «legal: в работе» — одна строка, без области
+        head, _, tail = stage.partition(":")
+        pid = canonical_phase_id(head)
+        note = (tail or stage).strip()
         if pid:
-            note = stage.split(":", 1)[1].strip() if ":" in stage else stage.strip()
-            provided.append({"id": pid, "status": _legacy_status(note), "note": note})
+            provided.append({"id": pid, "title": head.strip(), "status": _legacy_status(note), "note": note})
 
-    by_id: dict[str, dict] = {}
-    extra: list[dict] = []
+    phases: list[dict] = []
+    index: dict[str, int] = {}
     for item in provided:
         pid = canonical_phase_id(item.get("id")) or canonical_phase_id(item.get("title"))
         if pid is None:
-            title = _text(item.get("title")) or _text(item.get("id"))
-            if not title:
-                continue
-            extra.append({
-                "id": re.sub(r"[^a-zа-я0-9]+", "-", title.lower()).strip("-") or "phase",
-                "title": title,
-                "status": _phase_status(item.get("status")),
-                "note": _text(item.get("note")),
-            })
             continue
+        title = _text(item.get("title")) or _text(item.get("id")) or pid
         note = _text(item.get("note"))
-        title = _text(item.get("title"))
-        exact = bool(item.get("_exact")) or _text(item.get("id")).strip().lower() in PHASE_IDS
-        prev = by_id.get(pid)
-        # Точное совпадение с id фазы приоритетнее алиаса («production» бьёт «ops»).
-        if prev is not None and prev.get("_exact") and not exact:
+        status = (_phase_status(item.get("status")) if item.get("status") is not None
+                  else (_legacy_status(note) if note else "next"))
+        if pid in index:
+            # тот же этап пришёл дважды (id и заголовок) — обновляем, не плодим
+            phases[index[pid]] = {"id": pid, "title": title or phases[index[pid]]["title"],
+                                  "status": status, "note": note or phases[index[pid]]["note"]}
             continue
-        by_id[pid] = {
-            "id": pid,
-            "title": title or PHASE_TITLES[pid],
-            "status": _phase_status(item.get("status")) if item.get("status") is not None
-            else (_legacy_status(note) if note else "next"),
-            "note": note,
-            "_exact": exact,
-        }
-
-    phases: list[dict] = []
-    for pid, title in PHASES:
-        found = by_id.get(pid)
-        if found:
-            phases.append({"id": pid, "title": found["title"] or title,
-                           "status": found["status"], "note": found["note"]})
-        else:
-            phases.append({"id": pid, "title": title, "status": "next", "note": ""})
-    phases.extend(extra)
+        index[pid] = len(phases)
+        phases.append({"id": pid, "title": title, "status": status, "note": note})
 
     current = canonical_phase_id(current_raw) if current_raw is not None else None
-    if current is None and by_id:
+    if current not in index:
         current = _derive_current(phases)
     result = {"current": current, "phases": phases}
     if unmapped:

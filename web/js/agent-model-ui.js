@@ -243,11 +243,31 @@ export async function mountAgentModel(container, ctx = {}, opts = {}) {
 }
 
 /**
+ * Факт последнего запуска участника («на какой модели ушла последняя карточка»).
+ *
+ * WAVE17 B-17/P2: на лице карточки этого нет — только предупреждение, если
+ * последняя карточка ушла НЕ на выбранную модель. Возвращает
+ * `{text, mismatch, confirmed}` или null.
+ * @param {object} member участник из /team (поле model_sent)
+ * @returns {{text: string, mismatch: boolean, confirmed: boolean}|null}
+ */
+export function modelSent(member) {
+  const sent = member && member.model_sent && typeof member.model_sent === 'object'
+    ? member.model_sent : null;
+  if (!sent) return null;
+  const text = String(sent.text || '').trim();
+  if (!text) return null;
+  return { text, mismatch: sent.mismatch === true, confirmed: sent.confirmed === true };
+}
+
+/**
  * Строка «модель: …» + «Изменить» для карточки участника на вкладке «Команда».
  * @param {object} room
  * @param {string} profile
  * @param {object} [member] участник из members[] (с model_settings/agent_default)
- * @param {{catalog?: object, onEdit?: Function, live?: boolean}} [opts]
+ * @param {{catalog?: object, onEdit?: Function, live?: boolean, compact?: boolean}} [opts]
+ *   `compact` — для компактной карточки (WAVE17 P2): ОДИН чип выбранной модели,
+ *   без «ушло на» и без кнопки (действия живут в меню «⋯»).
  * @returns {HTMLElement}
  */
 export function agentModelLine(room, profile, member, opts = {}) {
@@ -256,13 +276,25 @@ export function agentModelLine(room, profile, member, opts = {}) {
   const settings = modelSettingsOf(room, profile, member);
   const isRoom = String(settings.source || '') === 'room';
   const ids = [settings.provider, settings.model].filter(Boolean).join(' · ');
-  const title = settingsLabel(catalog, settings)
-    + (isRoom ? ' · изменено для этой комнаты' : ' · по умолчанию')
-    + (ids ? ' · ' + ids : '');
+  const compact = o.compact === true;
+  const known = Boolean(settings.model);
+  const title = 'Модель' + (isRoom ? ' в этой комнате' : ' из профиля Hermes') + ': '
+    + (known ? settingsLabel(catalog, settings) : 'не задана ни в комнате, ни в профиле')
+    + (ids ? ' · ' + ids : '')
+    + (compact ? '' : (isRoom ? ' · изменено для этой комнаты' : ' · по умолчанию'))
+    + ' (профиль: ' + String(profile || '') + ')';
+  const shortText = known ? shortModelText(catalog, settings) : 'не выбрана';
   const chip = h('span', {
     class: 'chip chip--outline agent-model__line-chip' + (isRoom ? ' agent-model__line-chip--room' : ''),
-    title: title + ' (профиль: ' + String(profile || '') + ')',
-  }, 'модель: ' + shortModelText(catalog, settings));
+    title,
+  }, (compact ? '' : 'модель: ') + shortText);
+
+  // WAVE17 P2: на лице карточки — ровно один чип. «ушло на: …» показывается
+  // только как предупреждение о расхождении (см. modelSent) и только если
+  // последняя карточка ушла не на выбранную модель.
+  if (o.compact === true) {
+    return h('span', { class: 'agent-model__line agent-model__line--solo', dataset: { profile: String(profile || '') } }, chip);
+  }
 
   const btn = h('button', {
     class: 'btn btn--ghost btn--sm agent-model__line-btn', type: 'button',
@@ -270,17 +302,13 @@ export function agentModelLine(room, profile, member, opts = {}) {
     onclick: () => { if (typeof o.onEdit === 'function') o.onEdit(profile); },
   }, icon('edit', { size: 11 }), h('span', null, 'Изменить'));
 
-  // W13-A: «ушло на: …» — факт последнего запуска участника (W13-A). Если он расходится
-  // с выбором комнаты, рядом стоит пометка: интерфейс не должен обещать выбранное.
-  const sent = member && member.model_sent && typeof member.model_sent === 'object'
-    ? member.model_sent : null;
-  const sentText = sent ? String(sent.text || '').trim() : '';
-  const sentChip = sentText
+  const sent = modelSent(member);
+  const sentChip = sent
     ? h('span', {
       class: 'chip chip--outline agent-model__line-chip' + (sent.mismatch ? ' chip--warn' : ''),
       title: (sent.confirmed ? 'Фактическая модель последнего запуска' : 'Записано в карточке')
         + (sent.mismatch ? ' · расходится с выбором комнаты' : ''),
-    }, sentText + (sent.mismatch ? ' · расходится с выбором комнаты' : ''))
+    }, sent.text + (sent.mismatch ? ' · расходится с выбором комнаты' : ''))
     : null;
 
   return h('div', { class: 'agent-model__line', dataset: { profile: String(profile || '') } },

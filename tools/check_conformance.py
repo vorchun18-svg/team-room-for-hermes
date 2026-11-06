@@ -62,7 +62,7 @@ WARNING_CODES = {"legacy_metadata", "missing_artifact", "no_synthesis", "report_
                  "partial_ingest", "dispatcher_down", "card_failed", "outside_room", "critic_failed",
                  "critic_rounds_exhausted"}
 TIMELINE_KINDS = {"created", "decomposed", "promoted", "claimed", "started", "commented", "completed",
-                  "blocked", "unblocked", "failed", "archived"}
+                  "blocked", "unblocked", "failed", "archived", "heartbeat"}
 JOURNAL_KINDS = {"request_created", "request_status", "request_done", "step_added", "step_done",
                  "question_open", "question_answered", "decision_proposed", "decision_accepted",
                  "report_added", "artifact_added", "member_added", "member_removed", "room_created",
@@ -561,6 +561,8 @@ def _fixture_requests(live: Live) -> list[dict]:
         {"file": "config.json", "path": "/api/config", "enums": NO_ENUMS},
         {"file": "profiles.json", "path": "/api/profiles", "enums": PROFILES_ENUMS},
         {"file": "rooms.json", "path": "/api/rooms", "enums": ROOMS_ENUMS},
+        # W17-B §1: одно чтение на всё боковое меню (счётчики + последние запросы)
+        {"file": "rooms_summary.json", "path": "/api/rooms/summary", "enums": ROOMS_ENUMS},
         {"file": "room_cafe.json", "path": "/api/rooms/cafe", "enums": ROOM_ENUMS},
         {"file": "room_fn.json", "path": "/api/rooms/fn", "enums": ROOM_ENUMS},
         {"file": "requests_cafe.json", "path": "/api/rooms/cafe/requests", "enums": FEED_ENUMS},
@@ -587,6 +589,26 @@ def _report_spec_check(live: Live) -> dict:
         key = str((payload["items"][0] or {}).get("key") or "")
     return {"file": "report_unit_economics.json", "path": "/api/reports/cafe/" + (key or "none"),
             "enums": NO_ENUMS, "shallow": {"blocks"}}
+
+
+def _preview_check(live: Live) -> Violations:
+    """`GET /api/dispatcher/preview` (W17-B §1): чтение доски без POST и без CLI."""
+    out = Violations("GET /api/dispatcher/preview")
+    status, payload, _headers = live.get("/api/dispatcher/preview")
+    if status != 200:
+        out.type.append("HTTP %s вместо 200: %s" % (status, str(payload)[:160]))
+        return out
+    if not isinstance(payload, dict):
+        out.type.append("ответ не объект")
+        return out
+    for key in ("ok", "preview", "report", "at"):
+        if key not in payload:
+            out.type.append("нет поля %s" % key)
+    if payload.get("preview") is not True:
+        out.type.append("preview != true")
+    if not isinstance(payload.get("report"), dict):
+        out.type.append("report не объект")
+    return out
 
 
 def _catalog_check(live: Live) -> tuple[Violations, str]:
@@ -719,6 +741,30 @@ def post_checks(live: Live) -> list[Violations]:
     status, payload, _ = live.post("/api/rooms/nope/requests", {"text": "текст"})
     if status != 404:
         out.type.append("HTTP %s вместо 404: %s" % (status, str(payload)[:160]))
+
+    # --- переименование названия (W17-B §4, B9 усилено)
+    if new_rid:
+        out = check("PATCH /api/requests/{rid} title (200) → user/locked")
+        status, payload, _ = live.patch("/api/requests/%s" % new_rid,
+                                        {"title": "Проверка названия"})
+        if status != 200 or not isinstance(payload, dict):
+            out.type.append("HTTP %s вместо 200: %s" % (status, str(payload)[:200]))
+        else:
+            _shape(payload, {"ok": bool, "action": str, "request": dict, "title_short": str,
+                             "title_source": str, "title_locked": bool}, "body", out)
+            if payload.get("title_source") != "user" or not payload.get("title_locked"):
+                out.type.append("title_source/locked: %r/%r" % (payload.get("title_source"),
+                                                                payload.get("title_locked")))
+        out = check("PATCH /api/requests/{rid} title=\"\" (200) → derived/unlocked")
+        status, payload, _ = live.patch("/api/requests/%s" % new_rid, {"title": ""})
+        if status != 200 or not isinstance(payload, dict):
+            out.type.append("HTTP %s вместо 200: %s" % (status, str(payload)[:200]))
+        elif payload.get("title_locked") or payload.get("title_source") == "user":
+            out.type.append("блокировка не снята: %r" % (payload.get("title_source"),))
+        out = check("PATCH /api/requests/{rid} без title (400)")
+        status, payload, _ = live.patch("/api/requests/%s" % new_rid, {})
+        if status != 400 or not isinstance(payload, dict) or "error" not in payload:
+            out.type.append("HTTP %s вместо 400 {error}: %s" % (status, str(payload)[:160]))
 
     # --- comment
     if new_rid:
@@ -924,6 +970,8 @@ def run(with_posts: bool = True, verbose: bool = False) -> int:
                 shallow = set(item.get("shallow") or ()) | DEFAULT_SHALLOW
                 compare(data[name], payload, [], item["enums"], out, shallow)
             get_results.append((item, out))
+        get_results.append(({"file": "(GET) dispatcher/preview", "path": "/api/dispatcher/preview",
+                             "enums": NO_ENUMS}, _preview_check(live)))
         catalog_out, catalog_note = _catalog_check(live)
         get_results.append(({"file": "models.json", "path": "/api/models",
                              "enums": NO_ENUMS}, catalog_out))

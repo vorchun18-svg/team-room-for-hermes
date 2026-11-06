@@ -17,8 +17,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -167,10 +169,20 @@ class ConfigDefaultsTest(unittest.TestCase):
 class MissingPiecesTest(unittest.TestCase):
     """Нет whisper / нет CLI / нет доски — работаем и объясняем по-русски."""
 
+    def scratch(self) -> Path:
+        """Свой временный каталог данных: тест не должен мусорить в дереве проекта.
+
+        Раньше `data_dir` указывал в `<проект>/data/_portable_tmp`, и `stt.status`
+        оставлял там `logs/stt.log` — после прогона в репозитории появлялся мусор.
+        """
+        path = Path(tempfile.mkdtemp(prefix="tr-portable-cfg-"))
+        self.addCleanup(shutil.rmtree, path, True)
+        return path
+
     def test_stt_without_faster_whisper_says_not_installed(self):
         cfg = config_mod.Cfg(hermes_home=Path.home() / ".hermes",
                              kanban_home=PROJECT_ROOT / "data" / "_none",
-                             data_dir=PROJECT_ROOT / "data" / "_portable_tmp",
+                             data_dir=self.scratch(),
                              vault_dir=None, vault_enabled=False)
         with mock.patch.object(stt.stt_worker, "find_python", return_value=None):
             status = stt.status(cfg)
@@ -204,7 +216,7 @@ class MissingPiecesTest(unittest.TestCase):
     def test_engine_write_reports_missing_board_without_cli_call(self):
         cfg = config_mod.Cfg(hermes_home=Path.home() / ".hermes",
                              kanban_home=PROJECT_ROOT / "data" / "_no_board_here",
-                             data_dir=PROJECT_ROOT / "data" / "_portable_tmp",
+                             data_dir=self.scratch(),
                              vault_dir=None, vault_enabled=False,
                              hermes_cli="hermes")
         with mock.patch.object(engine_cli.proc, "run") as run:

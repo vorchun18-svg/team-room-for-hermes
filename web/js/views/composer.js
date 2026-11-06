@@ -199,7 +199,7 @@ export async function mount(el, ctx) {
     h('label', {
       class: 'checkbox cmp-brief__check',
       for: 'cmp-brief',
-      title: 'Главный запрос проекта: руководитель комнаты предложит карту направлений',
+      title: 'Главный запрос проекта: руководитель комнаты предложит карту частей работы',
     }, briefInput, h('span', null, BRIEF_LABEL)),
     briefHint);
   briefInput.addEventListener('change', () => {
@@ -521,7 +521,8 @@ export async function mount(el, ctx) {
       const chip = h('button', {
         class: 'chip chip--outline cmp-idea', type: 'button',
         title: 'Вставить в поле запроса: ' + text,
-      }, icon('lightbulb', { size: 11 }), h('span', { class: 'cmp-idea__text' }, text));
+      // B8: чип обрезается многоточием — полный текст остаётся в подсказке.
+      }, icon('lightbulb', { size: 11 }), h('span', { class: 'cmp-idea__text', title: text }, text));
       chip.addEventListener('click', () => insertText(text));
       ideasHost.appendChild(chip);
     }

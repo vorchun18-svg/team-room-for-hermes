@@ -176,7 +176,7 @@
         "title": "Посчитать маржу по каналам",
         "status": "blocked",
         "finished_at": 1793160800,
-        "summary": "Две попытки упали: KeyError custo_embalagem."
+        "summary": "Две попытки упали: KeyError cost_packaging."
       },
       "counts": {
         "done": 8,

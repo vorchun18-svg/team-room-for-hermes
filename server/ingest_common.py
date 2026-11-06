@@ -10,16 +10,8 @@ import hashlib
 import re
 from pathlib import Path
 
-PHASES = [
-    ("idea", "Идея и стратегия"),
-    ("legal", "Легализация"),
-    ("brand", "Бренд и товарный знак"),
-    ("packaging", "Упаковка"),
-    ("production", "Производство"),
-    ("sales", "Продажи"),
-]
-PHASE_IDS = [p[0] for p in PHASES]
-PHASE_TITLES = dict(PHASES)
+# Этапы проекта — свойство КОМНАТЫ (WAVE17 §R, B-8): списка этапов в коде нет,
+# заголовки приходят из настроек комнаты и из metadata ответа.
 PHASE_STATUSES = ("done", "active", "next", "blocked")
 STATUSES = ("open", "asked", "done", "dismissed")
 KINDS = ("next_step", "future_question", "open_question", "decision")
@@ -87,7 +79,8 @@ def _as_int(value) -> int:
 
 
 def _phase_template(phase_id: str, title: str | None = None) -> dict:
-    return {"id": phase_id, "title": title or PHASE_TITLES.get(phase_id, phase_id), "status": "next",
+    """Заготовка этапа комнаты: заголовок только из данных, никаких значений по умолчанию."""
+    return {"id": phase_id, "title": title or phase_id, "status": "next",
             "note": "", "updated_at": None, "source_request": None, "source_at": 0}
 
 

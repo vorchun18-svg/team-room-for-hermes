@@ -1,11 +1,11 @@
 /**
- * plan-req.js — «Проектный режим» на страницах брифа и направления (волна 9).
+ * plan-req.js — «Проектный режим» на страницах брифа и части работы (волна 9).
  *
  * Что здесь (общее для composer.js, composer-feed.js, request.js, journal.js):
  *  • флажок «Это бриф проекта» и его подсказка — тексты и правило «по умолчанию»;
- *  • бейдж «бриф» и мини-счётчик «направлений: N, идёт: M» из `streams_summary`;
- *  • плашка «Предложенная карта» (список направлений + «Запустить всё»);
- *  • записи журнала плана: «добавил направление «…», потому что …».
+ *  • бейдж «бриф» и мини-счётчик «частей работы: N, идёт: M» из `streams_summary`;
+ *  • плашка «Предложенная карта» (список частей работы + «Запустить всё»);
+ *  • записи журнала плана: «добавил часть работы «…», потому что …».
  *
  * Данные — только из ответов сервера (`GET /api/rooms/{r}/plan`,
  * `POST /api/rooms/{r}/plan/approve`), схемы — `docs/WAVE9-RULES.md` §1, §4.
@@ -27,18 +27,18 @@ export const BRIEF_LABEL = 'Это бриф проекта';
 
 /** Подсказка под флажком (дословно из ТЗ волны 9). */
 export const BRIEF_HINT = 'Руководитель комнаты не будет глубоко исследовать: '
-  + 'он предложит карту направлений, а запуск — по вашему «Запустить»';
+  + 'он предложит карту частей работы, а запуск — по вашему «Запустить»';
 
-/** Пустая карта: что сказать, пока направлений нет. */
-export const PLAN_EMPTY_TEXT = 'Руководитель комнаты ещё не предложил направления — карта появится после его разбора.';
+/** Пустая карта: что сказать, пока частей работы нет. */
+export const PLAN_EMPTY_TEXT = 'Руководитель комнаты ещё не разделил запрос на части — карта появится после его разбора.';
 
 /** Нет связи: человеческий текст вместо кода ошибки. */
 export const PLAN_ERROR_TEXT = 'Не удалось показать карту: нет связи с приложением.';
 
-/** Максимум направлений в карте (та же цифра, что в §1 правил). */
+/** Максимум частей работы в карте (та же цифра, что в §1 правил). */
 export const STREAMS_MAX = 8;
 
-/** Статусы направления по-русски: подпись и тон чипа. */
+/** Статусы части работы по-русски: подпись и тон чипа. */
 const STREAM_STATUS = {
   proposed: { label: 'предложено', tone: 'outline' },
   queued: { label: 'в очереди', tone: 'muted' },
@@ -69,7 +69,7 @@ export function isBrief(detail) {
   return detail.brief === true || detail.is_brief === true;
 }
 
-/** Направления плана (только объекты). */
+/** Части работы плана (только объекты). */
 export function streamsOf(plan) {
   const list = plan && Array.isArray(plan.streams) ? plan.streams : [];
   return list.filter((s) => s && typeof s === 'object');
@@ -96,24 +96,24 @@ export function summaryOf(source) {
 }
 
 /**
- * Мини-счётчик: «направлений: 4, идёт: 2». Пустая строка — сводки нет.
+ * Мини-счётчик: «частей работы: 4, идёт: 2». Пустая строка — сводки нет.
  * @param {{total:number, running:number|null}|null} summary
  * @returns {string}
  */
 export function summaryText(summary) {
   if (!summary || !Number.isFinite(Number(summary.total))) return '';
-  const parts = ['направлений: ' + Number(summary.total)];
+  const parts = ['частей работы: ' + Number(summary.total)];
   if (summary.running !== null && summary.running !== undefined) parts.push('идёт: ' + Number(summary.running));
   return parts.join(', ');
 }
 
-/** Статус направления: подпись и тон (неизвестный — «предложено»). */
+/** Статус части работы: подпись и тон (неизвестный — «предложено»). */
 export function streamStatusInfo(status) {
   const key = String(status === null || status === undefined ? '' : status).trim() || 'proposed';
   return STREAM_STATUS[key] || STREAM_STATUS.proposed;
 }
 
-/** Сколько направлений ждёт запуска (status=proposed). */
+/** Сколько частей работы ждёт запуска (status=proposed). */
 export function proposedCount(plan) {
   return streamsOf(plan).filter((s) => {
     const st = String(s.status === null || s.status === undefined ? 'proposed' : s.status);
@@ -168,12 +168,12 @@ export function briefPayload(opts = {}) {
 export function briefBadge() {
   return h('span', {
     class: 'chip chip--info plan-badge',
-    title: 'Это бриф проекта: руководитель комнаты предложит карту направлений',
+    title: 'Это бриф проекта: руководитель комнаты предложит карту частей работы',
   }, icon('map', { size: 11 }), h('span', { class: 'plan-badge__text' }, BRIEF_BADGE));
 }
 
 /**
- * Мини-счётчик «направлений: N, идёт: M». `null` — сводки нет, не показываем.
+ * Мини-счётчик «частей работы: N, идёт: M». `null` — сводки нет, не показываем.
  * @param {{total:number, running:number|null}|null} summary
  * @returns {HTMLElement|null}
  */
@@ -220,18 +220,20 @@ function streamRow(stream, index, streams) {
     h('span', { class: 'plan-stream__num tnum', 'aria-hidden': 'true' }, String(index + 1)),
     h('div', { class: 'plan-stream__main' },
       h('div', { class: 'plan-stream__row' },
-        h('span', { class: 'plan-stream__title' }, String(stream.title || 'Направление')),
+        h('span', { class: 'plan-stream__title', title: String(stream.title || 'Часть работы') }, String(stream.title || 'Часть работы')),
         h('span', { class: ['chip', 'chip--' + st.tone, 'plan-stream__chip'] }, st.label)),
-      stream.goal ? h('div', { class: 'plan-stream__goal' }, oneLine(stream.goal, 160)) : null,
+      stream.goal
+        ? h('div', { class: 'plan-stream__goal', title: String(stream.goal) }, oneLine(stream.goal, 160))
+        : null,
       meta.childNodes.length ? meta : null));
 }
 
 /**
- * Плашка «Предложенная карта»: направления компактно, «Запустить всё»,
+ * Плашка «Предложенная карта»: части работы компактно, «Запустить всё»,
  * ссылка «Открыть карту проекта».
  *
  * Состояния: `error` (нет связи, кнопка «Повторить»), пустая карта, карта
- * с направлениями. Кнопки — не громче главной кнопки страницы.
+ * с частям работыи. Кнопки — не громче главной кнопки страницы.
  *
  * @param {{plan?:object|null, roomId?:string, error?:Error|string|null,
  *          launching?:boolean, onLaunchAll?:Function, onRetry?:Function}} opts
@@ -247,7 +249,7 @@ export function buildPlanCard(opts = {}) {
   const card = h('section', { class: 'card plan-card', 'data-plan': 'card' });
   const count = streams.length
     ? h('span', { class: 'chip chip--muted plan-card__count tnum' },
-      countNoun(streams.length, ['направление', 'направления', 'направлений']))
+      countNoun(streams.length, ['часть работы', 'части работы', 'частей работы']))
     : null;
 
   card.appendChild(h('div', { class: 'plan-card__head' },
@@ -289,7 +291,7 @@ export function buildPlanCard(opts = {}) {
     class: 'btn btn--primary btn--sm plan-card__launch',
     type: 'button',
     disabled: launching || !ready,
-    title: ready ? 'Запустить все предложенные направления' : 'Все направления уже запущены или убраны',
+    title: ready ? 'Запустить все предложенные части работы' : 'Все части работы уже запущены или убраны',
   },
   icon(launching ? 'loading' : 'play', { size: 13, className: launching ? 'codicon-modifier-spin' : null }),
   h('span', null, launching ? 'Запускаю…' : 'Запустить всё'));
@@ -301,7 +303,7 @@ export function buildPlanCard(opts = {}) {
   card.appendChild(h('div', { class: 'plan-card__actions row row--wrap' },
     launchBtn,
     ready ? h('span', { class: 'small muted plan-card__note' },
-      countNoun(ready, ['направление', 'направления', 'направлений'])
+      countNoun(ready, ['часть работы', 'части работы', 'частей работы'])
       + ' ' + pluralVerb(ready, ['ждёт', 'ждут']) + ' запуска') : null));
 
   return card;
@@ -347,26 +349,26 @@ export function planLogEvents(plan) {
       let text;
       switch (kind) {
         case 'added':
-          text = 'добавил направление ' + (name || 'в карту') + (why ? ', потому что ' + why : '');
+          text = 'добавил часть работы ' + (name || 'в карту') + (why ? ', потому что ' + why : '');
           break;
         case 'created':
-          // Текст сервера уже может быть «предложил карту: N направлений» —
+          // Текст сервера уже может быть «предложил карту: N частей работы» —
           // не удваиваем первую фразу.
-          text = !why ? 'предложил карту направлений'
+          text = !why ? 'предложил карту частей работы'
             : (/^предложил/i.test(why) ? why : 'предложил карту: ' + why);
           break;
         case 'launched':
-          text = 'запустил направление ' + (name || '');
+          text = 'запустил часть работы ' + (name || '');
           break;
         case 'dropped':
-          text = 'убрал направление ' + (name || '') + (why ? ', потому что ' + why : '');
+          text = 'убрал часть работы ' + (name || '') + (why ? ', потому что ' + why : '');
           break;
         case 'quota':
-          text = 'направление ' + (name || '') + ' ждёт лимита — очередь подождёт';
+          text = 'часть работы ' + (name || '') + ' ждёт лимита — очередь подождёт';
           break;
         case 'changed':
         default:
-          text = 'изменил направление ' + (name || 'в карте') + (why ? ': ' + why : '');
+          text = 'изменил часть работы ' + (name || 'в карте') + (why ? ': ' + why : '');
           break;
       }
       return {

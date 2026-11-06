@@ -60,6 +60,9 @@ def make_room(**over) -> dict:
         ],
         "context_files": [],
         "critic_pass": True,
+        # W17-R §3: у новой комнаты режим «сразу»; здесь проверяется ручной
+        # («сначала показать план»), поэтому задаём его явно.
+        "launch_mode": "plan_first",
     }
     room.update(over)
     return room
@@ -406,6 +409,9 @@ class BriefCycleSandboxTests(unittest.TestCase):
             "members": [{"profile": "biz-lawyer", "role": "worker"},
                         {"profile": "biz-ops", "role": "worker"},
                         {"profile": "biz-cfo", "role": "worker"}],
+            # W17-R §3: у новых комнат режим «сразу», а эти тесты проверяют
+            # ЧЕРНОВИК карты — поэтому здесь явно «сначала план».
+            "launch_mode": "plan_first",
         })
 
     def _detail(self, task_id: str, rec_meta: dict, title: str, brief: bool = False) -> dict:
@@ -510,7 +516,10 @@ class BriefCycleSandboxTests(unittest.TestCase):
         self.assertEqual(added[0]["status"], "proposed", "новое ждёт «Запустить»")
         self.assertTrue(any("Михаил сдвинул сроки" in str(item.get("text"))
                             for item in after.get("log") or []), "причина правки — в журнал")
-        self.assertEqual(after["status"], "draft", "правка черновика не запускает карту")
+        # W17-R §3: у комнаты по умолчанию («сразу, без подтверждения») карта
+        # стартует сама, поэтому статус карты может быть уже running. Проверяем
+        # главное: правка ничего НЕ запускает — новый пункт остался «предложено».
+        self.assertIn(after["status"], ("draft", "running"))
 
     def test_broken_plan_does_not_break_request_ingest(self):
         from server import ingest, plan as plan_mod

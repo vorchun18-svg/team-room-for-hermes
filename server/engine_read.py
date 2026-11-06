@@ -14,9 +14,11 @@ import sqlite3
 
 try:  # запуск как пакет (server.engine_read)
     from . import read_view as _view
+    from . import phase_book as _phases
     from .config import VERSION, path_allowed
 except ImportError:  # запуск как скрипт из каталога server/
     import read_view as _view  # type: ignore
+    import phase_book as _phases  # type: ignore
     from config import VERSION, path_allowed  # type: ignore
 
 try:  # тело карточки: на чтении показываем только текст пользователя (D1)
@@ -28,6 +30,11 @@ try:  # W14-D: статусы ответов и связка вопрос↔ша
     from . import answers as _answers
 except ImportError:  # pragma: no cover
     import answers as _answers  # type: ignore
+
+try:  # W17-B §4: короткое название запроса (≤ 60 знаков) — одно правило на весь API
+    from . import title_short as _title
+except ImportError:  # pragma: no cover
+    import title_short as _title  # type: ignore
 
 # --- раскладка по файлам: перенесённые имена доступны отсюда, как и раньше ---
 try:
@@ -51,7 +58,7 @@ except ImportError:  # pragma: no cover
 
 __all__ = [
     "EngineError", "health", "dispatcher_status", "list_roots", "list_candidates",
-    "request_summary", "request_detail", "team_state", "needs_human", "task_events",
+    "request_summary", "request_detail", "request_states", "team_state", "needs_human", "task_events",
     "is_decomposed", "root_assignee_status",
 ]
 
@@ -217,7 +224,9 @@ def _apply_answers(questions: list, answers, reactions=None) -> list:
     reactions = reactions if isinstance(reactions, dict) else {}
     for question in questions:
         qid = str(question.get("id"))
-        record = answers.get(qid)
+        # W17-B §7: ответ ищется и по id-близнецам/тексту — руководитель выдаёт
+        # тот же вопрос с новым id, а ответ один.
+        record = _answers.record_for(question, answers)
         if not isinstance(record, dict):
             # ответ мог прийти из metadata (старые версии ответа) — не теряем его
             if question.get("answered") and str(question.get("answer") or "").strip():
@@ -259,7 +268,16 @@ def _load(cfg, board, root_id, room=None, extra_cards=None, enabled=None, answer
         canons = _canons(nodes)
         if canons:
             canon = _merge_canon(canon, canons)
-        questions = _apply_answers(_all_questions(canon, canons), answers)
+        raw_questions = _all_questions(canon, canons)
+        # W17-B §7 (B7-3): служебные вопросы (раунды критика) не показываются и не
+        # считаются в «ждёт тебя»; факт отдаём приложению для записи в журнал.
+        hidden_questions = [q for q in raw_questions
+                            if isinstance(q, dict) and _answers.is_service_question(q.get("text"))]
+        questions = [q for q in raw_questions
+                     if isinstance(q, dict) and not _answers.is_service_question(q.get("text"))]
+        # B7-2: близнецы (тот же вопрос с новым id) схлопываются, id — в `aliases`
+        questions = _answers.dedupe_questions(questions)
+        questions = _apply_answers(questions, answers)
         critic = _critic_block(nodes, extra, room_dict, ctx, enabled)
         status, reason = _status(ctx["tasks"][root_id], nodes, questions, critic)
         # `needs_you` — флаг «нужен человек»: статус needs_you ИЛИ заблокированная карточка,
@@ -271,10 +289,12 @@ def _load(cfg, board, root_id, room=None, extra_cards=None, enabled=None, answer
         timeline = _timeline(con, ctx)
     return {"ctx": ctx, "nodes": nodes, "synth": synth, "canon": canon, "warnings": warns,
             "questions": questions, "critic": critic, "status": status, "reason": reason,
-            "needs_you": needs_you, "timeline": timeline, "room": room_dict}
+            "needs_you": needs_you, "timeline": timeline, "room": room_dict,
+            "hidden_questions": hidden_questions}
 
 
-def _summary_fields(ctx, nodes, status, reason, extra, critic=None, room=None, needs_you=None) -> dict:
+def _summary_fields(ctx, nodes, status, reason, extra, critic=None, room=None, needs_you=None,
+                    canon=None) -> dict:
     root, runs = ctx["tasks"][ctx["root_id"]], ctx["runs"].get(ctx["root_id"], [])
     last = _last_ok(runs) or (runs[-1] if runs else None)
     started = root.get("started_at") or (last or {}).get("started_at")
@@ -294,8 +314,18 @@ def _summary_fields(ctx, nodes, status, reason, extra, critic=None, room=None, n
         assignee = room.get("orchestrator")  # запрос ведёт директор комнаты
     if needs_you is None:
         needs_you = status == "needs_you"
+    title = root.get("title") or ""
+    # W17-B §4: короткое название — от руководителя (metadata.title), иначе первое
+    # предложение заголовка/текста без вводных «Так,…». Полный заголовок не меняется.
+    # W17-B §4 (B9 усилено): источник названия отдаём явно — `titles.overlay`
+    # сравнивает его с сохранённым (`llm`/`user`) по приоритету.
+    leader_title = _title.title_from_metadata(canon if isinstance(canon, dict) else {})
+    short = leader_title or _title.short_title(title or visible_text(root.get("body") or ""))
     return {"id": ctx["root_id"], "room": room_id,
-            "title": root.get("title") or "", "status": status, "status_reason": reason, "mode": "auto",
+            "title": title, "title_short": short,
+            "title_source": "leader" if leader_title else "derived",
+            "title_locked": False,
+            "status": status, "status_reason": reason, "mode": "auto",
             "critic": _critic_brief(critic), "created_at": root.get("created_at"),
             "started_at": started, "finished_at": finished, "duration_s": duration,
             "progress": _progress(nodes, status), "assignee": assignee,
@@ -308,24 +338,70 @@ def request_summary(cfg, board, root_id, extra_cards=None, room=None, critic=Non
     extra = _as_list(extra_cards)
     data = _load(cfg, board, root_id, room, extra, critic, answers)
     return _summary_fields(data["ctx"], data["nodes"], data["status"], data["reason"], extra,
-                           data["critic"], room=data["room"], needs_you=data["needs_you"])
+                           data["critic"], room=data["room"], needs_you=data["needs_you"],
+                           canon=data["canon"])
 
 
-def request_detail(cfg, board, root_id, room=None, extra_cards=None, critic=None, answers=None) -> dict:
+def _slim_runs(nodes: list) -> None:
+    """Убрать из ``runs`` поля, повторяющие данные узла (W17-B §5, B11).
+
+    ``run.summary`` и ``run.metadata`` — те же строки, что ``node.summary_md`` и
+    ``node.metadata`` (дерево боевого запроса: 30 КБ копий из 124). Фронтенд читает
+    из попытки статус, профиль, время и ошибку — их не трогаем.
+    """
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        meta = node.get("metadata") if isinstance(node.get("metadata"), dict) else None
+        summary = str(node.get("summary_md") or "")
+        for run in node.get("runs") or []:
+            if not isinstance(run, dict):
+                continue
+            if meta and isinstance(run.get("metadata"), dict) and run["metadata"] == meta:
+                run.pop("metadata", None)
+            if summary and str(run.get("summary") or "") == summary:
+                run.pop("summary", None)
+
+
+def _split_heartbeats(timeline: list, include: bool) -> tuple:
+    """(события для ответа, сводка heartbeat).
+
+    W17-B §5: «Признак жизни» — технический шум (117 из 214 событий боевого
+    запроса) и причина лишних перерисовок. По умолчанию не отдаём, но честно
+    сообщаем сколько их и когда был последний; ``include=True`` возвращает всё.
+    """
+    beats = [e for e in timeline or [] if isinstance(e, dict) and e.get("kind") == "heartbeat"]
+    if include:
+        events = list(timeline or [])
+    else:
+        events = [e for e in timeline or [] if not (isinstance(e, dict) and e.get("kind") == "heartbeat")]
+    last = max([int(e.get("at") or 0) for e in beats], default=0) or None
+    return events, {"count": len(beats), "last_at": last}
+
+
+def request_detail(cfg, board, root_id, room=None, extra_cards=None, critic=None, answers=None,
+                   include_heartbeat: bool = False) -> dict:
     """Полная карточка запроса (RequestDetail, docs/API.md §3.4 + ARCHITECTURE §12.5)."""
     extra = [c for c in _as_list(extra_cards) if isinstance(c, dict) and c.get("id")]
     data = _load(cfg, board, root_id, room, extra, critic, answers)
     ctx, nodes, canon, warnings = data["ctx"], data["nodes"], data["canon"], list(data["warnings"])
     out = _summary_fields(ctx, nodes, data["status"], data["reason"], extra, data["critic"],
-                          room=data["room"], needs_you=data["needs_you"])
+                          room=data["room"], needs_you=data["needs_you"], canon=canon)
+    _slim_runs(nodes)
+    timeline, heartbeats = _split_heartbeats(data["timeline"], bool(include_heartbeat))
+    hidden = data.get("hidden_questions") or []
+    if hidden:                       # служебные вопросы: приложение запишет в журнал и уберёт
+        out["hidden_questions"] = hidden
     out.update({"text": visible_text(ctx["tasks"][root_id].get("body") or ""),
                 "body_full": ctx["tasks"][root_id].get("body") or "",
                 "dispatcher": _dispatcher_short(cfg),
                 "synthesis": data["synth"], "next_steps": _steps_with_source(canon),
                 "open_questions": data["questions"],
-                "decisions": _decisions(canon, root_id, data["synth"].get("at")), "stage": _stage(canon),
+                "decisions": _decisions(canon, root_id, data["synth"].get("at")),
+                "stage": _stage(canon, _phases.phases_of(cfg, data["room"])),
                 "future_questions": _future(canon), "artifacts": _artifacts(cfg, canon, warnings),
-                "report": _report(cfg, canon), "tree": nodes, "timeline": data["timeline"],
+                "report": _report(cfg, canon), "tree": nodes, "timeline": timeline,
+                "heartbeats": heartbeats,
                 "warnings": _dedupe_warnings(warnings), "critic": data["critic"]})
     outside = [n for n in nodes if n.get("outside_room")]
     if outside:
@@ -424,6 +500,33 @@ def team_state(cfg, board, members: list, tenant=None) -> list:
                      "finished_at": prev.get("completed_at"), "at": prev.get("completed_at"),
                      "summary": (run.get("summary") or "")[:400]} if prev else None,
             "counts": cnt, "load": cnt["active"]})
+    return out
+
+
+def request_states(cfg, board, task_ids) -> dict:
+    """Статусы карточек одним запросом (W17-B: список запросов для бокового меню).
+
+    Возвращает ``{task_id: {"status": str, "finished_at": int|None}}`` — без сборки
+    детали запроса, поэтому дешёво для всех комнат сразу. Нет доски/таблицы или
+    сбой чтения — пустой словарь (меню просто не покажет статус).
+    """
+    ids = [str(i) for i in _as_list(task_ids) if i]
+    if not ids:
+        return {}
+    out: dict = {}
+    try:
+        with _conn(cfg, board) as con:
+            _require_tables(con, "tasks")
+            for chunk in _chunks(ids):
+                ph = ",".join("?" * len(chunk))
+                for row in con.execute("SELECT id, status, completed_at FROM tasks WHERE id IN (%s)"
+                                       % ph, chunk).fetchall():
+                    out[str(row["id"])] = {"status": row["status"] or "",
+                                           "finished_at": row["completed_at"]}
+    except EngineError:
+        return {}
+    except sqlite3.Error:
+        return {}
     return out
 
 

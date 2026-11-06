@@ -33,17 +33,18 @@ export function memberState(state) {
 }
 
 export const STAGE_STATES = {
-  done: { label: 'готово', tone: 'ok' },
-  active: { label: 'в работе', tone: 'info' },
-  next: { label: 'дальше', tone: 'muted' },
-  blocked: { label: 'заблокировано', tone: 'warn' },
+  // W17-R §4: у этапа — понятный статус и значок, а не шесть «дальше» подряд.
+  done: { label: 'готово', tone: 'ok', icon: 'check' },
+  active: { label: 'в работе', tone: 'info', icon: 'play' },
+  next: { label: 'не начат', tone: 'muted', icon: 'circle-outline' },
+  blocked: { label: 'ждёт решения', tone: 'warn', icon: 'warning' },
 };
 
-/** Статус этапа → {status,label,tone}; неизвестное значение считается «дальше». */
+/** Статус этапа → {status,label,tone,icon}; неизвестное значение считается «не начат». */
 export function stageMeta(status) {
   const key = STAGE_STATES[status] ? status : 'next';
   const meta = STAGE_STATES[key];
-  return { status: key, label: meta.label, tone: meta.tone };
+  return { status: key, label: meta.label, tone: meta.tone, icon: meta.icon || 'circle-outline' };
 }
 
 /** Русское склонение: plural(2, ['этап','этапа','этапов']) → 'этапа'. */

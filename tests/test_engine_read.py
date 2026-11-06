@@ -34,6 +34,29 @@ EXPECTED_STATUS = {"queued": "queued", "working": "working", "reviewing": "revie
                    "failed": "failed"}
 ENV_KEYS = ("TEAMROOM_HERMES_HOME", "TEAMROOM_DATA", "TEAMROOM_VAULT_DIR", "HERMES_KANBAN_HOME")
 
+#: Этапы демо-комнаты Лето — её собственные данные (W17-R §1, B-8): в коде списка
+#: этапов больше нет, поэтому тест, которому нужна полоса этапов, передаёт комнату
+#: с этапами, как это делает сервер (`room` в `request_detail`).
+AMI_PHASES = [
+    {"id": "idea", "title": "Идея и стратегия"},
+    {"id": "legal", "title": "Легализация"},
+    {"id": "brand", "title": "Бренд и товарный знак"},
+    {"id": "packaging", "title": "Упаковка"},
+    {"id": "production", "title": "Производство"},
+    {"id": "sales", "title": "Продажи"},
+]
+AMI_MEMBERS = ("biz-lawyer", "biz-ops", "biz-marketing", "biz-strategy", "biz-cfo",
+               "biz-runner", "biz-critic")
+
+
+def cafe_room(phases: list | None = None) -> dict:
+    """Комната Лето как её отдаёт API (этапы — данные комнаты, не константа)."""
+    return {"id": "cafe", "title": "Лето", "orchestrator": "biz-director",
+            "critic": "biz-critic",
+            "members": [{"profile": profile, "role": "critic" if profile == "biz-critic" else "worker"}
+                        for profile in AMI_MEMBERS],
+            "phases": AMI_PHASES if phases is None else phases}
+
 
 class EngineReadSandboxTest(unittest.TestCase):
     """Все состояния запроса на песочнице; каждый тест читает те же данные."""
@@ -155,7 +178,8 @@ class EngineReadSandboxTest(unittest.TestCase):
         self.assertEqual(human[0]["question_id"], q["id"])
 
     def test_08_done_modern_versions_and_critic(self):
-        d = self.detail("done_modern")
+        # этапы — данные комнаты (B-8): без комнаты полосы этапов нет
+        d = self.detail("done_modern", room=cafe_room())
         self.assertEqual(d["status"], "done")
         synth = d["synthesis"]
         self.assertEqual(synth["state"], "ready")
@@ -184,7 +208,7 @@ class EngineReadSandboxTest(unittest.TestCase):
         self.assertEqual(d["duration_s"], 56 * 60)
 
     def test_09_done_legacy_normalized(self):
-        d = self.detail("done_legacy")
+        d = self.detail("done_legacy", room=cafe_room())
         synth = d["synthesis"]
         self.assertTrue(synth["legacy"])
         self.assertEqual(synth["version"], 1)
@@ -491,12 +515,8 @@ class EngineReadRealBoardTest(unittest.TestCase):
         detail = None
         before = snapshot_real_db(cfg)
         try:
-            detail = er.request_detail(cfg, BOARD, "t_605613e0")
-            after = snapshot_real_db(cfg)
-            if after != before:  # живая доска могла измениться от диспетчера — перечитываем
-                before = after
-                detail = er.request_detail(cfg, BOARD, "t_605613e0")
-                assert_real_untouched(before, cfg)
+            detail = er.request_detail(cfg, BOARD, "t_605613e0", room=cafe_room())
+            assert_real_untouched(before, cfg)      # чужие записи Hermes не считаем
         finally:
             self.assertIsNotNone(detail)
         self.assertEqual(detail["status"], "done")

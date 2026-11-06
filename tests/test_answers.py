@@ -340,7 +340,9 @@ class CounterQuestionTests(_Base):
     def test_explanation_request_keeps_question_open(self):
         rid = self.rid(question="Какой канал продаж выбрать: бот, QR или вручную?")
         qid = self.question_of(rid)["id"]
-        status, payload, _ = self.answer(rid, qid, "поясни, что ты имеешь в виду под QR")
+        # W17-B §2: встречный вопрос — только явная кнопка (эвристика по тексту отключена)
+        status, payload, _ = self.answer(rid, qid, "поясни, что ты имеешь в виду под QR",
+                                        need_explanation=True)
         self.assertEqual(status, 200, payload)
         self.assertFalse(payload["question"]["answered"], "встречный вопрос — не ответ")
         self.assertEqual(payload["question"]["answer_state"], "waiting_explanation")
@@ -359,7 +361,7 @@ class CounterQuestionTests(_Base):
     def test_explanation_request_marks_thread_and_brief(self):
         rid = self.rid(question="Какой канал продаж выбрать: бот, QR или вручную?")
         qid = self.question_of(rid)["id"]
-        self.answer(rid, qid, "поясни, что это значит")
+        self.answer(rid, qid, "поясни, что это значит", need_explanation=True)
         texts = self.shim.comment_texts()
         self.assertTrue(any(t.startswith(answers_mod.EXPLAIN_MARK) for t in texts), texts)
         body = self.shim.bodies[0]
@@ -383,10 +385,28 @@ class CounterQuestionTests(_Base):
         self.assertEqual(payload["question"]["answer_state"], "waiting_explanation")
         self.assertFalse(payload["question"]["answered"])
 
+    def test_text_only_explanation_is_answer(self):
+        """W17-B §2 (B5): без кнопки «поясни…» в тексте — это ОТВЕТ, а не встречный вопрос.
+
+        Эвристика по тексту больше не меняет `answered`: она ловила ложные
+        срабатывания на старых записях (боевой `q_7985e685` — в ответе было решение).
+        """
+        rid = self.rid(question="Какой канал продаж выбрать: бот, QR или вручную?")
+        qid = self.question_of(rid)["id"]
+        status, payload, _ = self.answer(rid, qid, "поясни, что это значит")
+        self.assertEqual(status, 200, payload)
+        self.assertTrue(payload["question"]["answered"], "текст без кнопки — ответ")
+        self.assertEqual(payload["question"]["answer_state"], "sent")
+        self.assertFalse(payload["question"]["needs_explanation"])
+        question = self.question_of(rid)
+        self.assertTrue(question["answered"])
+        self.assertFalse(question["needs_explanation"])
+        self.assertEqual(question["answer_state"], "sent")
+
     def test_can_answer_again_after_explanation(self):
         rid = self.rid(question="Какой канал продаж выбрать: бот, QR или вручную?")
         qid = self.question_of(rid)["id"]
-        self.answer(rid, qid, "поясни, что это значит")
+        self.answer(rid, qid, "поясни, что это значит", need_explanation=True)
         status, payload, _ = self.answer(rid, qid, "Бот, остальное не нужно")
         self.assertEqual(status, 200, payload)
         self.assertTrue(payload["question"]["answered"])

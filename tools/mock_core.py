@@ -48,6 +48,10 @@ FIXTURE_BY_RID = {
     "t_3b7e9d11": "request_failed.json",
     "t_2a6f5c93": "request_queued.json",
     "t_4e91c7b2": "request_outside_room.json",
+    # W17-D: длинная фикстура колонки «Дальше» — 12 шагов, 10 вопросов, длинные тексты
+    "t_10e9f0a1": "request_long.json",
+    # W17-S: свод с тремя версиями, «что изменилось» и 3 ответа после версии 3
+    "t_5d0c11a2": "request_svod.json",
 }
 MIME = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
         ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
@@ -108,6 +112,20 @@ def child_id(rid: str, index: int) -> str:
     return "t_%08x" % (((int(rid[2:], 16) << 4) | (index & 0xF)) & 0xFFFFFFFF)
 
 
+def is_service_question(text) -> bool:
+    """Служебный вопрос, ответ на который уже задан настройками комнаты (B7-3, §7в).
+
+    Зеркало `server.answers.is_service_question`: «сколько раундов/прогонов критика?»
+    не показываем пользователю ни в детали запроса, ни в бэклоге, ни в счётчиках.
+    """
+    flat = " ".join(str(text or "").lower().split())
+    if not flat or "критик" not in flat:
+        return False
+    if "прогон" in flat or "раунд" in flat or "цикл" in flat:
+        return True
+    return "сколько" in flat and ("провер" in flat or "доработ" in flat)
+
+
 def compute_needs_you(d: dict) -> bool:
     """Флаг `needs_you` (API §3.3): статус needs_you, ИЛИ неотвеченный вопрос Михаилу
     (в т.ч. у `done`-запроса — статус остаётся `done`), ИЛИ карточка ждёт человека."""
@@ -125,10 +143,65 @@ def counts_as_waiting(summary: dict) -> bool:
     return status == "needs_you" or (status == "done" and bool(summary.get("needs_you")))
 
 
+_FILLERS_RU = ("так", "итак", "в общем", "в целом", "ну", "значит", "смотри", "смотрите", "вот",
+               "ладно", "хорошо", "окей", "ок", "короче", "давай", "давайте")
+_FILLER_RE = re.compile(r"^(?:%s)\s*[,.:;!\u2014\u2013-]\s*" % "|".join(_FILLERS_RU), re.IGNORECASE)
+_SENT_RE = re.compile(r"[.!?;](?=\s|$)")
+
+
+def short_title(text, limit: int = 60) -> str:
+    """Короткое название ≤ 60 знаков — зеркало `server/title_short.py` (W17-B §4).
+
+    Мок живёт без импорта сервера, поэтому правило повторено здесь; расхождение
+    ловится тестом `tests/test_mock_api.py`.
+    """
+    value = " ".join(str(text or "").split())
+    for _ in range(4):
+        match = _FILLER_RE.match(value)
+        if not match:
+            break
+        value = value[match.end():].strip()
+    rest, last = value, ""
+    while rest:
+        match = _SENT_RE.search(rest)
+        if match:
+            last = rest[: match.end()].strip(" .,:;\u2014\u2013-")
+            rest = rest[match.end():].strip()
+        else:
+            last, rest = rest.strip(" .,:;\u2014\u2013-"), ""
+        if len(last) >= 12:
+            break
+    value = last or value
+    if len(value) > limit:
+        head = value[: limit - 1]
+        if " " in head:
+            head = head[: head.rindex(" ")]
+        value = head.strip(" .,:;\u2014\u2013-") + "…"
+    value = value.strip()
+    if not value:
+        return "Запрос"
+    return value[:1].upper() + value[1:]
+
+
+def split_heartbeats(timeline, include: bool = False) -> tuple:
+    """(события без heartbeat, `{count, last_at}`) — контракт W17-B §5."""
+    events = [e for e in timeline or [] if isinstance(e, dict)]
+    beats = [e for e in events if e.get("kind") == "heartbeat"]
+    if not include:
+        events = [e for e in events if e.get("kind") != "heartbeat"]
+    last = max([int(e.get("at") or 0) for e in beats], default=0) or None
+    return events, {"count": len(beats), "last_at": last}
+
+
 def detail_to_summary(d: dict) -> dict:
     keys = ("id", "room", "title", "status", "status_reason", "mode", "critic", "created_at", "started_at",
             "finished_at", "duration_s", "progress", "assignee", "needs_you", "preview", "archived")
     out = {k: d.get(k) for k in keys}
+    out["title_short"] = d.get("title_short") or short_title(d.get("title") or d.get("text") or "")
+    # W17-B §4 / W17-G §1: откуда название и переименовал ли пользователь.
+    # Поля есть ВСЕГДА (контракт API §3.3): без названия от модели/руководителя — derived.
+    out["title_source"] = d.get("title_source") or "derived"
+    out["title_locked"] = bool(d.get("title_locked"))
     out["critic"] = critic_ref(out.get("critic"))
     out["needs_you"] = compute_needs_you(d)
     if out.get("preview") is None:
@@ -177,6 +250,7 @@ ROUTE_METHODS = (
     (r"^/api/rooms/%s/notes/journal/[A-Za-z0-9_-]{2,40}/rollback$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/notes/entries$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/notes/entries/[A-Za-z0-9_-]{2,40}$" % _ROOM, ("PATCH", "DELETE")),
+    (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/notes/entries/[A-Za-z0-9_-]{2,40}/pin$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/notes/review$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/model$" % _ROOM, ("PUT",)),
     (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/restart$" % _ROOM, ("POST",)),
@@ -186,7 +260,7 @@ ROUTE_METHODS = (
     (r"^/api/rooms/%s/plan/streams$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/plan/streams/[A-Za-z0-9_-]{1,16}$" % _ROOM, ("PATCH", "DELETE")),
     (r"^/api/rooms/%s/consolidate$" % _ROOM, ("POST",)),
-    (r"^/api/requests/%s$" % _RID, ("GET",)),
+    (r"^/api/requests/%s$" % _RID, ("GET", "PATCH")),   # W17-B §4: переименование
     (r"^/api/requests/%s/actions$" % _RID, ("POST",)),
     (r"^/api/requests/%s/messages$" % _RID, ("POST",)),
     (r"^/api/reports/%s/[a-z0-9-]{2,64}$" % _ROOM, ("GET",)),

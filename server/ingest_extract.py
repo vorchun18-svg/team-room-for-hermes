@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .ingest_common import IngestError, PHASES, PHASE_IDS, PHASE_STATUSES, _as_int, _clean, _sha
+from .ingest_common import IngestError, PHASE_STATUSES, _as_int, _clean, _sha
 
 def _normalizer():
     """server.normalize.normalize_metadata — единственная каноническая реализация (ARCH §12.8)."""
@@ -27,9 +27,8 @@ def _needs_normalize(detail: dict) -> bool:
         return True
     stage = detail.get("stage")
     if isinstance(stage, dict):
-        keys = list(stage.keys())
-        if "phases" not in keys and any(k not in PHASE_IDS for k in keys):
-            return True
+        keys = [str(k).strip() for k in stage.keys()]
+        # Legacy-форма «область → статус» без списка phases: приводим нормализатором.
         if keys and "phases" not in keys:
             return True
     return bool(detail.get("legacy"))
@@ -129,17 +128,23 @@ def _extract(detail: dict) -> dict:
     phases_raw = stage.get("phases") if isinstance(stage, dict) else None
     if isinstance(phases_raw, dict):  # «id фазы → статус» без нормализатора
         phases_raw = [{"id": k, "status": v} for k, v in phases_raw.items()]
-    index = {p["id"]: p for p in phases_raw or [] if isinstance(p, dict) and p.get("id") in PHASE_IDS}
-    for phase_id, title in PHASES:
-        if phase_id in index:
-            raw = index[phase_id]
-            status = str(raw.get("status") or "next")
-            out["phases"].append({
-                "id": phase_id,
-                "title": _clean(raw.get("title")) or title,
-                "status": status if status in PHASE_STATUSES else "next",
-                "note": _clean(raw.get("note")),
-            })
+    # W17-R §1 (B-8): этапы берём ровно те, что назвала команда в metadata ответа;
+    # каким этапам комнаты они соответствуют, решает карта комнаты (по id).
+    seen_phase = set()
+    for raw in phases_raw or []:
+        if not isinstance(raw, dict):
+            continue
+        phase_id = _clean(raw.get("id"))
+        if not phase_id or phase_id in seen_phase:
+            continue
+        seen_phase.add(phase_id)
+        status = str(raw.get("status") or "next")
+        out["phases"].append({
+            "id": phase_id,
+            "title": _clean(raw.get("title")) or phase_id,
+            "status": status if status in PHASE_STATUSES else "next",
+            "note": _clean(raw.get("note")),
+        })
 
     for raw in d.get("artifacts") or []:
         if isinstance(raw, str):

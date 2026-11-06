@@ -118,8 +118,10 @@ test('шапка: три зоны, min-width: 0 у сжимаемых, дейс�
 test('шапка: крошки режутся многоточием и несут title, поиск не ноль', () => {
   assert.match(COMPONENTS, /\.crumbs__link,\s*\.crumbs__here\s*\{[^}]*text-overflow:\s*ellipsis/);
   assert.match(COMPONENTS, /\.crumbs__link,\s*\.crumbs__here\s*\{[^}]*min-width:\s*0/);
-  assert.match(APP, /class: 'crumbs__link'[^)]*title: item\.text/);
-  assert.match(APP, /class: 'crumbs__here'[\s\S]{0,120}title: item\.text/);
+  // W17-G §1: подсказка крошки — полный текст запроса (`item.hint`), иначе сам текст.
+  assert.match(APP, /const hint = item\.hint \|\| item\.text;/);
+  assert.match(APP, /class: 'crumbs__link'[^)]*title: hint/);
+  assert.match(APP, /class: 'crumbs__here'[\s\S]{0,120}title: hint/);
   assert.match(COMPONENTS, /\.topbar__search\s*\{[^}]*min-width:\s*0/);
 });
 

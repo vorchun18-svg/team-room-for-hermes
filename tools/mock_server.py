@@ -25,6 +25,7 @@ import mimetypes
 import os
 import posixpath
 import re
+import socket
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -280,6 +281,28 @@ class MockServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
+def port_in_use(host: str, port: int) -> bool:
+    """Занят ли уже порт (STAB-3: на Windows SO_REUSEADDR даёт тихую «двойную привязку»).
+
+    `allow_reuse_address=True` на Windows означает НЕ «переиспользовать TIME_WAIT»,
+    а разрешение второму сокету встать на тот же порт: оба слушают, Windows отдаёт
+    соединение любому из них. Из-за этого прогон, у которого на порту остался
+    прежний/чужой мок, отвечал то «своим», то «чужим» состоянием (наблюдение:
+    «Комната с таким id уже есть» при создании комнаты в чистом прогоне).
+    Поэтому проверяем порт заранее и падаем с понятным текстом, а не тихо врём.
+    """
+    if not port:
+        return False
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.settimeout(0.35)
+    try:
+        return probe.connect_ex((host, port)) == 0
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
 def create_server(port: int = 0, web_dir: str | None = None, fixtures_dir: str | None = None,
                   phase_scale: float = 1.0, verbose: bool = False, host: str = "127.0.0.1",
                   extra_roots: list | None = None) -> MockServer:
@@ -290,6 +313,13 @@ def create_server(port: int = 0, web_dir: str | None = None, fixtures_dir: str |
     """
     if host not in ("127.0.0.1", "localhost", "::1"):
         raise ValueError("мок слушает только loopback")
+    if port_in_use(host, port):
+        # Иначе на Windows второй сокет тихо встанет на тот же порт и браузер будет
+        # попадать то в «наш» мок, то в чужой — прогон станет неповторяемым.
+        raise RuntimeError(
+            "порт %d уже занят — его слушает другой сервер (мок, приложение или "
+            "остаток прежнего прогона). Возьмите свободный порт: --port 0 или другой номер."
+            % port)
     app = App(web_dir or WEB_DIR, fixtures_dir or FIX_DIR, phase_scale=phase_scale, port=port,
               extra_roots=extra_roots)
     server = MockServer((host, port), Handler)
@@ -328,7 +358,11 @@ def main(argv=None) -> int:
                 pass
 
         atexit.register(_remove_pid)
-    server = create_server(args.port, args.web, args.fixtures, args.phase_scale, args.verbose, args.host)
+    try:
+        server = create_server(args.port, args.web, args.fixtures, args.phase_scale, args.verbose, args.host)
+    except RuntimeError as exc:            # STAB-3: занятый порт — без трейсбека
+        print("Отказ: %s" % exc, file=sys.stderr)
+        return 2
     url = "http://127.0.0.1:%d" % server.server_address[1]
     print("Мок «Комнаты команды»: %s  (Ctrl+C — остановить)" % url)
     try:

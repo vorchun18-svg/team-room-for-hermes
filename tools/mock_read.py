@@ -10,8 +10,10 @@ import time
 from urllib.parse import quote, unquote
 
 from mock_core import (ALLOWED_EXT, DENY_NAME_PARTS, FILE_ROOTS, MIME, MOCK, MOCK_PRIVATE, OFFICE_EXT, PHASES,
-                       ApiError, Raw, backlog_counts, child_id, export_html, export_markdown,
-                       ics_escape, inside, now)
+                       ApiError, Raw, backlog_counts, child_id, compute_needs_you, export_html,
+                       export_markdown, ics_escape, inside, is_service_question, now, short_title,
+                       split_heartbeats)
+import mock_backlog
 import mock_demo as demo
 import mock_stt
 
@@ -69,6 +71,10 @@ class MockRead:
             rooms = [self.room_summary(rid) for rid in self.room_details if include or not self.room(rid)["archived"]]
             return 200, {"rooms": rooms, "engine": {"ok": True, "board": "team", "warning": None},
                          "updated_at": now()}
+        if path == "/api/rooms/summary":
+            return 200, self.rooms_summary(query)          # W17-B §1: одно чтение на меню
+        if path == "/api/dispatcher/preview":
+            return 200, self.dispatcher_preview()          # W17-B §1: чтение без POST
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/notes", path)
         if m:
             return 200, self.room_notes(m.group(1))          # WAVE14 §13
@@ -100,7 +106,7 @@ class MockRead:
             return 200, self.candidates_for(m.group(1))
         m = re.fullmatch(r"/api/requests/(t_[0-9a-f]{8})", path)
         if m:
-            return 200, self.detail(m.group(1))
+            return 200, self.request_detail(m.group(1), query)
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/team", path)
         if m:
             return 200, self.team(m.group(1))
@@ -167,6 +173,125 @@ class MockRead:
         data["data"]["requests"] = len(self.requests) + len(self.live)
         return data
 
+    # --- W17-B §1/§5: меню одним запросом, деталь без heartbeat и дубля вопросов ---
+    DETAIL_FIELDS = {"text": "text", "body_full": "body_full", "dispatcher": "dispatcher",
+                     "synthesis": "synthesis", "steps": "next_steps", "questions": "open_questions",
+                     "answers": "answers", "decisions": "decisions", "stage": "stage",
+                     "future_questions": "future_questions", "artifacts": "artifacts", "report": "report",
+                     "tree": "tree", "timeline": "timeline", "thread": "thread", "warnings": "warnings",
+                     "critic": "critic", "heartbeats": "heartbeats"}
+    DETAIL_CORE = ("id", "room", "title", "title_short", "title_source", "title_locked",
+                   "status", "status_reason", "mode", "critic",
+                   "created_at", "started_at", "finished_at", "duration_s", "progress", "assignee",
+                   "needs_you", "preview", "archived", "brief", "plan_link", "streams_summary")
+
+    def request_detail(self, rid: str, query: dict) -> dict:
+        """Деталь запроса с `?include=heartbeat` и `?fields=…` (как бэкенд)."""
+        include = [part.strip() for part in (query.get("include") or [""])[0].split(",") if part.strip()]
+        bad = [value for value in include if value != "heartbeat"]
+        if bad:
+            raise ApiError(400, "bad_request", "Неизвестный include", {"include": bad[0],
+                                                                       "allowed": ["heartbeat"]})
+        fields = [part.strip() for part in (query.get("fields") or [""])[0].split(",") if part.strip()]
+        bad = [value for value in fields if value not in self.DETAIL_FIELDS]
+        if bad:
+            raise ApiError(400, "bad_request", "Неизвестное поле",
+                           {"fields": bad[0], "allowed": sorted(self.DETAIL_FIELDS)})
+        detail = self.detail(rid)
+        # W17-R §1 (B-8): этапы запроса — те, что объявила КОМНАТА (как на сервере).
+        detail["stage"] = self._stage_for_room(detail.get("room"), detail.get("stage"))
+        timeline, heartbeats = split_heartbeats(detail.get("timeline") or [], "heartbeat" in include)
+        detail["timeline"] = timeline
+        detail["heartbeats"] = heartbeats
+        if not detail.get("title_short"):
+            detail["title_short"] = short_title(detail.get("title") or detail.get("text") or "")
+        detail.setdefault("title_source", "derived")
+        detail.setdefault("title_locked", False)
+        detail.pop("questions", None)
+        # W17-B §7 (B7-3): служебный вопрос «сколько раундов критика» задан настройками
+        # комнаты — не показываем его и не держим на нём «ждёт тебя» (как сервер).
+        questions = detail.get("open_questions")
+        if isinstance(questions, list):
+            kept = [q for q in questions
+                    if not (isinstance(q, dict) and is_service_question(q.get("text")))]
+            if len(kept) != len(questions):
+                detail["open_questions"] = kept
+                detail["needs_you"] = compute_needs_you(detail)
+        if fields:
+            wanted = set(self.DETAIL_CORE)
+            for name in fields:
+                if name == "questions":
+                    wanted.add("open_questions")
+                else:
+                    wanted.add(self.DETAIL_FIELDS[name])
+            for key in [key for key in detail if key not in wanted]:
+                detail.pop(key, None)
+        return detail
+
+    def _stage_for_room(self, room_id, stage) -> dict:
+        """Stage по этапам комнаты: чужие этапы из фикстуры не показываем.
+
+        Демо должно вести себя как сервер: у комнаты без этапов полосы нет,
+        у комнаты со своими этапами — её заголовки и её порядок (по id).
+        """
+        try:
+            room = self.room(str(room_id or ""))
+        except Exception:  # noqa: BLE001 — карта не должна ронять демо
+            room = {}
+        declared = room.get("phases") if isinstance(room.get("phases"), list) else []
+        meta = {p.get("id"): p for p in ((stage or {}).get("phases") or []) if isinstance(p, dict)}
+        phases = []
+        for item in declared:
+            got = meta.get(item.get("id")) or {}
+            phases.append({"id": item.get("id"), "title": item.get("title"),
+                           "status": got.get("status") or "next", "note": got.get("note") or ""})
+        ids = {p["id"] for p in phases}
+        current = (stage or {}).get("current")
+        if current not in ids:
+            active = next((p["id"] for p in phases if p["status"] in ("active", "blocked")), None)
+            current = active or (phases[0]["id"] if phases else None)
+        return {"current": current, "phases": phases}
+
+    def rooms_summary(self, query: dict) -> dict:
+        """Счётчики и последние запросы всех комнат одним ответом (W17-B §1)."""
+        raw = (query.get("requests") or ["3"])[0].strip()
+        try:
+            per_room = int(raw)
+        except (TypeError, ValueError):
+            raise ApiError(400, "bad_request", "requests: число от 0 до 10", {"field": "requests"})
+        if not 0 <= per_room <= 10:
+            raise ApiError(400, "bad_request", "requests: от 0 до 10", {"field": "requests"})
+        include = (query.get("include_archived") or ["0"])[0] in ("1", "true", "yes")
+        only = (query.get("room") or [""])[0].strip()
+        rooms = []
+        for rid in self.room_details:
+            room = self.room(rid)
+            if only and rid != only:
+                continue
+            if not include and room.get("archived"):
+                continue
+            summaries = self.summaries(rid)
+            last = [{"id": item["id"], "room": rid, "title": item.get("title") or "",
+                     "title_short": item.get("title_short") or short_title(item.get("title") or ""),
+                     "title_source": item.get("title_source") or "derived",
+                     "title_locked": bool(item.get("title_locked")),
+                     "status": item.get("status"), "needs_you": bool(item.get("needs_you")),
+                     "created_at": item.get("created_at"), "finished_at": item.get("finished_at"),
+                     "preview": item.get("preview") or ""} for item in summaries[:per_room]]
+            entry = dict(self.room_summary(rid))
+            entry.update({"requests_count": len(summaries),
+                          "last_at": max([item.get("created_at") or 0 for item in summaries], default=0) or None,
+                          "last": last})
+            rooms.append(entry)
+        if only and not rooms:
+            raise ApiError(404, "not_found", "Комната не найдена", {"room": only})
+        return {"ok": True, "at": now(), "count": len(rooms),
+                "engine": {"ok": True, "board": "team", "warning": None}, "rooms": rooms}
+
+    def dispatcher_preview(self) -> dict:
+        """Состояние доски чтением, без POST и без CLI (W17-B §1)."""
+        return {"ok": True, "preview": True, "report": self.kick_report(True), "at": now()}
+
     def list_requests(self, room_id: str, query: dict) -> dict:
         self.room(room_id)
         items = self.summaries(room_id)
@@ -214,11 +339,16 @@ class MockRead:
                 "custom_label": "", "label_pending": False}
 
     def member_label(self, room: dict, profile: str) -> str:
-        """Ручная подпись участника из реестра комнаты демо."""
+        """Ручная подпись участника из реестра комнаты демо.
+
+        WAVE17 B-17: у руководителя и критика подпись хранится не в `members`,
+        а в карте `role_labels` (`{профиль: подпись}`) — демо ведёт себя как
+        живой сервер, иначе кнопка «Подпись» у них «не сохранялась» бы.
+        """
         for member in room.get("members") or []:
             if str(member.get("profile") or "") == str(profile):
                 return str(member.get("label") or "")
-        return ""
+        return str((room.get("role_labels") or {}).get(str(profile)) or "")
 
     def team(self, room_id: str) -> dict:
         room = self.room(room_id)
@@ -243,29 +373,40 @@ class MockRead:
         return data
 
     def roadmap(self, room_id: str) -> dict:
+        """Карта проекта: этапы — свойство комнаты (W17-R B-8), не список в коде.
+
+        В демо этапы есть только у комнаты, которая их задала (fixture
+        `roadmap_cafe.json`). У остальных полоса этапов пустая — как в жизни.
+        """
         room = self.room(room_id)
         if room["id"] == "cafe":
             return self.fixture("roadmap_cafe.json")
-        ids = ["idea", "legal", "brand", "packaging", "production", "sales"]
-        titles = ["Идея и стратегия", "Легализация", "Бренд и товарный знак", "Упаковка", "Производство", "Продажи"]
-        statuses = {"legal": "active", "production": "blocked"} if room["id"] == "fn" else {}
-        return {"room": room["id"], "updated_at": now(),
-                "current": {"id": "legal", "title": "Легализация", "status": "active"} if room["id"] == "fn" else None,
-                "phases": [{"id": i, "title": t, "status": statuses.get(i, "next"), "note": ""}
-                           for i, t in zip(ids, titles)],
-                "decisions": []}
+        return {"room": room["id"], "updated_at": now(), "current": None,
+                "phases": [], "decisions": []}
 
     def backlog_for(self, room_id: str, query: dict) -> dict:
         self.room(room_id)
         data = self.backlog_data(room_id)          # + недостающие шаги из всех запросов комнаты
         items = copy.deepcopy(data["items"])
+        # W17-B §7: статус вопроса — из ответа, близнецы схлопнуты, служебные скрыты
+        view = mock_backlog.apply_answers({"room": room_id, "updated_at": data["updated_at"],
+                                           "items": items}, self._room_details(room_id))
+        items = view.get("items") or items
         statuses = [s for s in query.get("status", [""])[0].split(",") if s]
         kinds = [s for s in query.get("kind", [""])[0].split(",") if s]
         if statuses:
             items = [i for i in items if i["status"] in statuses]
         if kinds:
             items = [i for i in items if i["kind"] in kinds]
-        return {"room": room_id, "updated_at": data["updated_at"], "counts": backlog_counts(items), "items": items}
+        counts = dict(view.get("counts") or {})
+        if statuses or kinds:
+            counts = backlog_counts(items)
+        out = {"room": room_id, "updated_at": data["updated_at"], "counts": counts, "items": items}
+        if view.get("sections"):
+            out["sections"] = view["sections"]
+        if view.get("hidden_service"):
+            out["hidden_service"] = view["hidden_service"]
+        return out
 
     def journal(self, room_id: str, query: dict) -> dict:
         self.room(room_id)

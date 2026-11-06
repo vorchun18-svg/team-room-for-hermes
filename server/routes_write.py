@@ -260,8 +260,13 @@ class WriteRoutes:
         members = res.get("members")
         if members is None:
             members = self._room(room_id).get("members") or []
+        # B-17: подписи руководителя и критика — отдельная карта реестра комнаты.
+        role_labels = res.get("role_labels")
+        if role_labels is None:
+            role_labels = self._room(room_id).get("role_labels") or {}
         return 200, {"ok": True, "profile": res.get("profile") or profile,
-                     "label": res.get("label") or "", "members": members}, {}
+                     "label": res.get("label") or "", "members": members,
+                     "role_labels": role_labels}, {}
 
     def h_agent_notes_put(self, query, body, room_id, profile):
         """PUT /api/rooms/{id}/agents/{profile}/notes — особые указания участнику (WAVE9 §9).
@@ -321,6 +326,7 @@ class WriteRoutes:
             if not isinstance(path, str) or not config.path_allowed(self.cfg, path):
                 raise err(403, "Вложение вне разрешённых путей", path=str(path))
         title = body.get("title")
+        user_title = False
         if title is not None:
             if not isinstance(title, str) or not title.strip():
                 raise err(400, "title пуст", field="title")
@@ -329,6 +335,7 @@ class WriteRoutes:
                 raise err(400, "В заголовке есть NUL-байт", field="title")
             if len(title) > 120:
                 raise err(400, "title длиннее 120 символов", field="title", length=len(title))
+            user_title = True          # W17-B §4: имя задал человек — не перезаписываем
         else:
             title = derive_title(text)
         brief = body.get("brief", False)
@@ -350,7 +357,8 @@ class WriteRoutes:
                 raise err(400, "max_rounds: целое от 1 до 5", field="max_rounds",
                           value=req_rounds)
         return self._create(room, text, title, critic, attach, mode="auto", brief=brief,
-                            critic_mode=critic_mode, max_rounds=req_rounds)
+                            critic_mode=critic_mode, max_rounds=req_rounds,
+                            user_title=user_title)
 
     def h_request_actions(self, query, body, rid):
         action = body.get("action")
@@ -409,6 +417,8 @@ class WriteRoutes:
                                        "rid": str(rid)})
         if action == "answer_remind":          # §2: «Напомнить руководителю»
             return self._remind_lead(room, rec, rid, kw)
+        if action == "answers_resend":         # W17-B §3: накопленные ответы — только по клику
+            return self._answers_resend(room, rec, rid)
         if action in ("step_agree", "step_comment", "step_move", "step_drop"):
             # §12: действия пользователя по шагу — «Согласен», «Прокомментировать»,
             # «Переместить», «Не согласен — убрать» (общий механизм ответа, §5/§6).
@@ -429,8 +439,12 @@ class WriteRoutes:
                 raise err(404, "Вопрос не найден", question_id=kw.get("question_id"))
             if question.get("answered"):
                 raise err(409, "Вопрос уже отвечен", question_id=kw.get("question_id"))
-            # §3: встречный вопрос не закрывает вопрос. Явная кнопка надёжнее эвристики.
-            need_explanation = bool(need_explanation) or answers_mod.is_counter_question(user_text)
+            # §3 / W17-B §2: встречный вопрос — ТОЛЬКО явная кнопка. Эвристика по
+            # тексту больше не решает: она ошибалась на старых записях (B5). Текст,
+            # похожий на просьбу пояснить, лишь подсказка для журнала.
+            need_explanation = bool(need_explanation)
+            if not need_explanation and answers_mod.explanation_hint({"text": user_text}):
+                self._answer_hint_journal(room.get("id"), kw.get("question_id"))
             # §1: ответ уходит в ветку с меткой, по которой видно, НА КАКОЙ вопрос отвечено
             kw["text"] = (answers_mod.explanation_comment(kw.get("question_id"), question.get("text"), user_text)
                           if need_explanation else
@@ -485,6 +499,12 @@ class WriteRoutes:
                 if note.get(key) is not None:
                     payload.setdefault("note", {})[key] = note[key]
             payload["unblocked"] = list(res.get("unblocked") or [])
+            # W17-B §4: существенное уточнение — пересчитать название (в фоне, с паузой).
+            try:
+                self.mod("titles").maybe_refresh(self.cfg, room, dict(rec, answers=answers),
+                                                 before, answers)
+            except Exception as exc:  # noqa: BLE001 - название вторично
+                self.log.warning("название после ответа %s: %s" % (rid, exc))
         payload["request"] = self._summary_or_local(
             room, rid, rec.get("text") or "", rec.get("title") or "",
             bool(rec.get("critic")), rec.get("mode") or "auto", answers)
@@ -547,6 +567,65 @@ class WriteRoutes:
         return 201, payload, {"Location": "/api/requests/" + str(rid),
                               "Cache-Control": "no-cache"}
 
+    # --- название запроса: переименование и приоритет источников (W17-B §4) ---
+
+    def _title_view(self, summary, rec):
+        """Наложить название из реестра на сводку (``derived`` < ``llm`` < ``leader`` < ``user``)."""
+        try:
+            return self.mod("titles").overlay(summary, rec)
+        except Exception as exc:  # noqa: BLE001 - название вторично
+            self.log.warning("название сводки: %s" % exc)
+            return summary
+
+    def _title_fields(self, text: str, title: str, user: bool = False) -> dict:
+        """Поля названия для новой записи реестра (``derived`` сразу, без моста)."""
+        try:
+            return self.mod("titles").seed(text, title, user=bool(user))
+        except Exception as exc:  # noqa: BLE001 - запись обязана создаться
+            self.log.warning("название нового запроса: %s" % exc)
+            return {"title_short": (title or text or "")[:60], "title_source": "derived",
+                    "title_locked": False}
+
+    def h_request_patch(self, query, body, rid):
+        """`PATCH /api/requests/{id}` — переименование названия пользователем.
+
+        Тело: ``{title}``. Непустое значение → ``title_source="user"``,
+        ``title_locked=true`` (автоматика и модель его больше не трогают).
+        Пустое значение снимает блокировку и возвращает автоматическое название.
+        Полный текст запроса не меняется — переименовывается только название.
+        """
+        room, rec = self._find_record(rid)
+        if "title" not in body:
+            raise err(400, "Нужно поле title (пустая строка снимает блокировку)", field="title")
+        title = body.get("title")
+        if title is None:
+            title = ""
+        if not isinstance(title, str):
+            raise err(400, "title: ожидается строка", field="title")
+        if has_nul(title):
+            raise err(400, "В названии есть NUL-байт", field="title")
+        flat = " ".join(title.split())
+        if len(flat) > 120:
+            raise err(400, "title длиннее 120 символов", field="title", length=len(flat))
+        try:
+            updated = self.mod("titles").rename(self.cfg, room.get("id"), rid, flat)
+        except ApiError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - реестр недоступен
+            raise ApiError(503, "Не удалось сохранить название — попробуйте ещё раз",
+                           detail={"rid": rid, "error": str(exc)[:200]}) from exc
+        if not isinstance(updated, dict):
+            raise err(404, "Запрос не найден", rid=rid)
+        summary = self._summary_or_local(
+            room, rid, rec.get("text") or "", rec.get("title") or "",
+            bool(rec.get("critic")), rec.get("mode") or "auto", updated.get("answers"))
+        self._title_view(summary, updated)
+        payload = {"ok": True, "action": "rename", "request": summary,
+                   "title_short": summary.get("title_short"),
+                   "title_source": summary.get("title_source"),
+                   "title_locked": summary.get("title_locked")}
+        return 200, payload, {"Cache-Control": "no-store"}
+
     # --- ответы на вопросы: реестр, напоминание, шаги (W14-D §2, §4) ----------
 
     def _save_answers(self, room: dict, rid: str, answers: dict) -> None:
@@ -561,6 +640,95 @@ class WriteRoutes:
         """`ns_1` → `<rid>:ns_1` (id шага в бэклоге комнаты)."""
         text = str(step_id or "")
         return text if ":" in text else "%s:%s" % (rid, text)
+
+    # --- накопленные ответы (W17-B §3, аудит B6) ------------------------------
+
+    def _answers_resend(self, room: dict, rec: dict, rid: str):
+        """«Отправить руководителю накопленные ответы» — одно действие по клику.
+
+        Собирает ответы реестра, у которых ЕСТЬ текст, нет просьбы пояснить и нет
+        реакции руководителя (`sent`), в порядке вопросов ответа, и передаёт их
+        одной карточкой (``thread.post_answers_digest``). Автоматически такие
+        ответы не отправляются никогда: это запускает настоящего агента.
+        """
+        stored = rec.get("answers") if isinstance(rec.get("answers"), dict) else {}
+        if not stored:
+            raise ApiError(409, "Нечего отправлять: ответов на вопросы нет.",
+                           code="conflict", detail={"reason": "nothing_to_resend", "pending": 0})
+        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), stored)
+        questions = [q for q in (detail.get("open_questions") or []) if isinstance(q, dict)]
+        try:
+            thread_items = self.call("thread", "get_thread",
+                                     ((self.cfg, rid), {"room": room})) or []
+        except Exception:  # noqa: BLE001 - без ленты реакций просто нет
+            thread_items = []
+        reactions = answers_mod.reactions_from_thread(thread_items, questions, stored,
+                                                      lead=room.get("orchestrator"))
+        order = {str(q.get("id")): index for index, q in enumerate(questions)}
+        pending: list = []
+        for qid, record in stored.items():
+            if not isinstance(record, dict):
+                continue
+            text = answers_mod.norm(record.get("text"))
+            if not text:
+                continue
+            state = answers_mod.state_of(record, reactions.get(str(qid)))
+            if state != "sent":
+                continue        # уже отреагировали / просьба пояснить / пустой ответ
+            question_text = str(record.get("question_text") or "")
+            if not question_text:
+                found = next((q for q in questions if str(q.get("id")) == str(qid)), None)
+                question_text = str((found or {}).get("text") or "")
+            pending.append({"question_id": str(qid), "question_text": question_text,
+                            "answer": text, "at": int(record.get("at") or 0),
+                            "order": order.get(str(qid), len(order) + len(pending))})
+        pending.sort(key=lambda item: (item["order"], item["at"]))
+        if not pending:
+            raise ApiError(409, "Нечего отправлять: на все ответы руководитель уже отреагировал.",
+                           code="conflict",
+                           detail={"reason": "nothing_to_resend", "pending": 0,
+                                   "answers": len(stored)})
+        with self.engine():
+            res = self.call("thread", "post_answers_digest",
+                            ((self.cfg, room, rid, [dict(item) for item in pending]), {}))
+        res = res if isinstance(res, dict) else {}
+        now = int(time.time())
+        updated = {key: dict(value) if isinstance(value, dict) else value
+                   for key, value in stored.items()}
+        for item in pending:
+            record = updated.get(item["question_id"]) or {}
+            record["resent_at"] = now
+            record["resend_count"] = int(record.get("resend_count") or 0) + 1
+            updated[item["question_id"]] = record
+        self._save_answers(room, rid, updated)
+        payload = {"ok": True, "action": "answers_resend", "sent": len(pending),
+                   "question_ids": [item["question_id"] for item in pending],
+                   "task_id": res.get("task_id"), "at": res.get("at") or now,
+                   "note": {"task_id": res.get("task_id"), "merged": res.get("merged"),
+                            "routed_to": res.get("routed_to")}}
+        payload["request"] = self._summary_or_local(
+            room, rid, rec.get("text") or "", rec.get("title") or "",
+            bool(rec.get("critic")), rec.get("mode") or "auto", updated)
+        return 200, payload, {}
+
+    def _answer_hint_journal(self, room_id, question_id) -> None:
+        """Запись в журнал: текст похож на просьбу пояснить, но это ответ (B5).
+
+        Только подсказка — статус ответа не меняется. Журнал вторичен: ошибка
+        записи не мешает ответу.
+        """
+        if not room_id:
+            return
+        try:
+            try:
+                from .routes_read import _journal_once
+            except ImportError:  # pragma: no cover
+                from routes_read import _journal_once  # type: ignore
+            _journal_once(self.cfg, room_id, "answer_hint",
+                          "Ответ на вопрос %s похож на просьбу пояснить, но записан как ОТВЕТ "
+                          "(решает только кнопка «Мне нужно пояснение»)." % question_id)
+        except Exception as exc:  # noqa: BLE001 - журнал вторичен
+            self.log.warning("журнал подсказки ответа: %s" % exc)
 
     def _cancel_steps(self, room: dict, rid: str, detail: dict, question: dict, text: str) -> list:
         """§4: ответ «нет/не нужно» снимает связанные шаги («снят по вашему ответу»)."""
@@ -586,28 +754,45 @@ class WriteRoutes:
         return out
 
     def _remind_lead(self, room: dict, rec: dict, rid: str, kw: dict):
-        """«Напомнить руководителю»: сигнал в ветке + отметка в реестре."""
+        """«Напомнить руководителю»: сигнал в ветке + отметка в реестре.
+
+        W17-B §8 (аудит B-12): реакция ищется ТОЙ ЖЕ функцией и по ТОМУ ЖЕ списку
+        вопросов, что окно вопроса (`answers.reaction_lookup`). Если реакция есть —
+        409 всегда вместе с ответом и найденной реакцией: пользователь обязан
+        увидеть, что именно руководитель ответил, а не сухое «уже ответил».
+        """
         qid = str(kw.get("question_id") or "")
         answers = rec.get("answers") if isinstance(rec.get("answers"), dict) else {}
         record = answers.get(qid)
         if not isinstance(record, dict) or not str(record.get("text") or "").strip():
             raise err(404, "Ответ на этот вопрос не найден", question_id=qid)
         detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), answers)
-        question = next((q for q in detail.get("open_questions") or []
-                         if str(q.get("id")) == qid), None)
+        questions = [q for q in (detail.get("open_questions") or []) if isinstance(q, dict)]
+        question = next((q for q in questions if str(q.get("id")) == qid), None)
         if question is None:
             raise err(404, "Вопрос не найден", question_id=qid)
-        # реакция руководителя живёт в ветке — проверяем её до напоминания
+        # Один поиск реакции: та же функция, тот же набор вопросов, что в окне.
         try:
-            reactions = answers_mod.reactions_from_thread(
-                self.call("thread", "get_thread", ((self.cfg, rid), {"room": room})) or [],
-                [question])
-        except Exception:  # noqa: BLE001 - лента не прочиталась, напоминать не мешает
-            reactions = {}
-        reaction = reactions.get(qid)
+            thread_items = self.call("thread", "get_thread", ((self.cfg, rid), {"room": room})) or []
+        except Exception:  # noqa: BLE001 - лента не прочиталась, реакции просто нет
+            thread_items = detail.get("thread") or []
+        record, reaction = answers_mod.reaction_lookup(question, questions, answers,
+                                                       thread_items, lead=room.get("orchestrator"))
+        if not isinstance(record, dict):
+            record = answers.get(qid) if isinstance(answers.get(qid), dict) else {}
+        applied = answers_mod.apply_question(dict(question), record, reaction)
         if isinstance(reaction, dict) and reaction.get("status") in ("received", "applied", "no_change"):
-            raise err(409, "Руководитель уже ответил на этот вопрос", question_id=qid,
-                      reaction=reaction)
+            # Ответ показываем ВМЕСТЕ с «уже ответил» — иначе окно пустое (B-12).
+            raise ApiError(409, "Руководитель уже ответил на этот вопрос", code="conflict",
+                           detail={"reason": "already_answered", "question_id": qid,
+                                   "answer": {"question_id": qid,
+                                              "text": record.get("text") or applied.get("answer"),
+                                              "at": record.get("at") or applied.get("answered_at"),
+                                              "state": applied.get("answer_state"),
+                                              "label": applied.get("answer_label")},
+                                   "reaction": dict(reaction),
+                                   "reaction_label": reaction.get("label") or applied.get("answer_label"),
+                                   "question": applied})
         ago = 0
         if record.get("at"):
             ago = max(0, int((int(time.time()) - int(record["at"])) // 60))
@@ -623,7 +808,8 @@ class WriteRoutes:
         payload = {"ok": True, "action": "answer_remind", "question_id": qid,
                    "reminded_at": record["reminded_at"], "reminders": record["reminders"],
                    "text": res.get("text"), "routed_to": res.get("routed_to"),
-                   "question": answers_mod.apply_question(dict(question), record)}
+                   "reaction": None,
+                   "question": answers_mod.apply_question(dict(question), record, None)}
         payload["request"] = self._summary_or_local(
             room, rid, rec.get("text") or "", rec.get("title") or "",
             bool(rec.get("critic")), rec.get("mode") or "auto", answers)
@@ -1105,7 +1291,7 @@ class WriteRoutes:
 
     def _new_request(self, room: dict, text: str, title: str, critic: bool, attach=None,
                      brief: bool = False, critic_mode: str | None = None,
-                     max_rounds: int | None = None) -> dict:
+                     max_rounds: int | None = None, user_title: bool = False) -> dict:
         """Создать корневую карточку через тот же путь, что POST /requests.
 
         contract.build_request_body → engine_write.create_request → registry.add_request.
@@ -1139,6 +1325,9 @@ class WriteRoutes:
                   "created_at": int(time.time()), "critic": bool(critic), "mode": "auto",
                   "critic_mode": mode, "critic_round_cap": cap,
                   "adopted": False, "extra_cards": [], "ingested": {}, "retargeted": False}
+        # W17-B §4 (B9 усилено): название сразу — мгновенное `derived` (у пользователя,
+        # задавшего имя при создании, — `user` + блокировка от перезаписи).
+        record.update(self._title_fields(text, title, user=bool(user_title)))
         if isinstance(max_rounds, int) and not isinstance(max_rounds, bool) and 1 <= max_rounds <= 5:
             record["max_rounds"] = max_rounds
         if brief:
@@ -1154,13 +1343,21 @@ class WriteRoutes:
 
     def _create(self, room: dict, text: str, title: str, critic: bool, attach, mode: str = "auto",
                 kind: str | None = None, brief: bool = False, critic_mode: str | None = None,
-                max_rounds: int | None = None):
+                max_rounds: int | None = None, user_title: bool = False):
         made = self._new_request(room, text, title, critic, attach, brief=brief,
-                                 critic_mode=critic_mode, max_rounds=max_rounds)
+                                 critic_mode=critic_mode, max_rounds=max_rounds,
+                                 user_title=user_title)
         if kind:
             self._register(room, dict(made["record"], kind=kind))  # пометка вида запроса
         root_id = made["root_id"]
-        payload = {"request": self._summary_or_local(room, root_id, text, title, critic, mode),
+        # W17-B §4: улучшение названия малой моделью Hermes — В ФОНЕ, создание не ждёт.
+        try:
+            self.mod("titles").start(self.cfg, room, root_id, text, user=bool(user_title))
+        except Exception as exc:  # noqa: BLE001 - название вторично
+            self.log.warning("название %s: %s" % (root_id, exc))
+        summary = self._summary_or_local(room, root_id, text, title, critic, mode)
+        self._title_view(summary, made["record"])
+        payload = {"request": summary,
                    "root_id": root_id, "dispatcher": self._dispatcher_short(),
                    "warning": made["warning"]}
         return 201, payload, {"Location": "/api/requests/" + str(root_id)}

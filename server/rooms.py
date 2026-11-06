@@ -12,10 +12,12 @@ from pathlib import Path
 
 try:                                    # import server.rooms
     from . import config as config_mod
+    from . import phase_book as phase_mod
     from . import project_dir as pdir
     from . import statefiles as sf
 except ImportError:                      # python server/app.py (плоский импорт)
     import config as config_mod         # type: ignore
+    import phase_book as phase_mod      # type: ignore
     import project_dir as pdir          # type: ignore
     import statefiles as sf              # type: ignore
 
@@ -24,7 +26,11 @@ MEMBER_ROLES = ("worker", "critic", "observer")
 MODES = ("auto",)
 # «Проектный режим» (волна 9, решения A1/A2): настройки КОНКРЕТНОЙ комнаты.
 LAUNCH_MODES = ("plan_first", "auto")          # «сначала план» | «сразу без подтверждения»
+# W17-R §3 (решение Михаила 06.11): НОВАЯ комната сразу запускает части работы
+# без подтверждения. У существующих комнат без поля режим прежний — «сначала
+# план»: их настройки по решению Михаила не меняем.
 DEFAULT_LAUNCH_MODE = "plan_first"
+DEFAULT_LAUNCH_MODE_NEW = "auto"
 DEFAULT_PARALLEL_STREAMS = 2
 MIN_PARALLEL_STREAMS = 1
 MAX_PARALLEL_STREAMS = 4
@@ -33,6 +39,9 @@ UPDATABLE = ("title", "icon", "orchestrator", "critic", "context_files", "projec
              # Режим критика (W13-E §9): «N раундов» либо «до полного одобрения».
              "critic_mode", "critic_round_cap",
              "launch_mode", "max_parallel_streams", "project_mode",
+             # Этапы проекта — свойство КОМНАТЫ (W17-R §1, B-8): необязательный
+             # список `[{id, title}]`, правится в настройках комнаты.
+             "phases",
              # Особые указания участникам этой комнаты (WAVE9 §9): только реестр комнаты,
              # файлы профилей (SOUL.md/config.yaml/skills) не меняются никогда.
              "agent_notes",
@@ -296,6 +305,25 @@ def _norm_parallel_streams(value) -> int:
     return number if MIN_PARALLEL_STREAMS <= number <= MAX_PARALLEL_STREAMS else DEFAULT_PARALLEL_STREAMS
 
 
+def _check_phases(value) -> list[dict]:
+    """Этапы проекта комнаты (W17-R §1, B-8): список `{id, title}`, пустой допустим.
+
+    Пустой список — «у комнаты этапов нет»: полосы этапов и блока «где мы сейчас»
+    на карте не будет, никаких заглушек. Шаблонов по умолчанию нет.
+    """
+    try:
+        return phase_mod.check(value)
+    except phase_mod.PhaseError as exc:
+        raise RoomsError(exc.message, "bad_request", dict(exc.detail or {})) from exc
+
+
+def _norm_phases(value) -> list[dict] | None:
+    """Чтение реестра: список этапов как есть; нет поля — `None` (миграция чтением)."""
+    if value is None:
+        return None
+    return phase_mod.norm(value)
+
+
 def _agent_notes_mod():
     """Модуль указаний (лениво: rooms ← agent_notes, обратной зависимости нет)."""
     try:
@@ -436,6 +464,25 @@ def _norm_member_label(value) -> str:
     return text[:120]
 
 
+def _norm_role_labels(value) -> dict:
+    """Подписи руководителя и критика (WAVE17 B-17): `{профиль: «Имя — должность»}`.
+
+    Руководитель и критик не лежат в `members` (они — настройки комнаты), поэтому
+    их подпись хранится отдельной картой реестра. Пустая подпись в карту не
+    попадает (значит «взять из описания профиля Hermes»). Профиль Hermes не
+    меняется: правка касается только этой комнаты.
+    """
+    if not isinstance(value, dict):
+        return {}
+    out: dict = {}
+    for profile, label in value.items():
+        name = str(profile or "").strip()
+        text = _norm_member_label(label)
+        if name and text:
+            out[name] = text
+    return out
+
+
 def _norm_member(member: dict, now: int | None = None) -> dict:
     if not isinstance(member, dict) or not str(member.get("profile") or "").strip():
         raise RoomsError("У участника должен быть profile", "bad_request", {"field": "profile"})
@@ -484,6 +531,9 @@ def _norm_room(room: dict) -> dict:
         # WAVE13 §11: у участника всегда есть поле подписи (`""` — из описания профиля).
         "members": [dict(m, label=str(m.get("label") or ""))
                     for m in (room.get("members") or []) if isinstance(m, dict)],
+        # WAVE17 B-17: подписи руководителя и критика — они не в members, а в
+        # настройках комнаты; храним отдельной картой `{профиль: подпись}`.
+        "role_labels": _norm_role_labels(room.get("role_labels")),
         "context_files": _norm_paths(room.get("context_files")),
         "project_dir": str(room.get("project_dir") or ""),
         "mode_default": str(room.get("mode_default") or "auto"),
@@ -496,6 +546,9 @@ def _norm_room(room: dict) -> dict:
         "launch_mode": _norm_launch_mode(room.get("launch_mode")),
         "max_parallel_streams": _norm_parallel_streams(room.get("max_parallel_streams")),
         "project_mode": _norm_project_mode(room.get("project_mode")),
+        # Этапы проекта — свойство комнаты (W17-R §1): нет поля в записи — `None`,
+        # и этапы подтягиваются миграцией чтением из карты самой комнаты.
+        "phases": _norm_phases(room["phases"]) if "phases" in room else None,
         # Особые указания участникам (WAVE9 §9): нет поля — пусто.
         "agent_notes": _norm_agent_notes(room.get("agent_notes")),
         # Журнал изменений указаний (WAVE14 §13): кто/что/зачем/источник, новые сверху.
@@ -573,11 +626,14 @@ def create_room(cfg, data: dict) -> dict:
         "critic_mode": _check_critic_mode(data.get("critic_mode")),
         "critic_round_cap": (_check_critic_cap(data["critic_round_cap"])
                              if "critic_round_cap" in data else DEFAULT_CRITIC_ROUND_CAP),
-        # Новая комната сразу работает в проектном режиме; режим запуска — «сначала план».
-        "launch_mode": _check_launch_mode(data.get("launch_mode")),
+        # Новая комната сразу работает в проектном режиме; части работы запускаются
+        # сразу, без подтверждения (W17-R §3, решение Михаила 06.11).
+        "launch_mode": _check_launch_mode(data["launch_mode"] if "launch_mode" in data else DEFAULT_LAUNCH_MODE_NEW),
         "max_parallel_streams": (_check_parallel_streams(data["max_parallel_streams"])
                                  if "max_parallel_streams" in data else DEFAULT_PARALLEL_STREAMS),
         "project_mode": _check_bool(data["project_mode"], "project_mode") if "project_mode" in data else True,
+        # Этапы проекта (W17-R §1): по умолчанию их НЕТ — пользователь задаёт сам.
+        "phases": _check_phases(data.get("phases")),
         # Указания — участникам этой комнаты (профили сверяем с составом этого же запроса).
         "agent_notes": _check_agent_notes(
             data.get("agent_notes"),
@@ -658,6 +714,8 @@ def update_room(cfg, room_id: str, patch: dict) -> dict:
                     room["project_dir"] = _check_project_dir(cfg, value)
                 elif key == "launch_mode":
                     room["launch_mode"] = _check_launch_mode(value)
+                elif key == "phases":
+                    room["phases"] = _check_phases(value)
                 elif key == "max_parallel_streams":
                     room["max_parallel_streams"] = _check_parallel_streams(value)
                 elif key == "project_mode":
@@ -718,11 +776,17 @@ def add_member(cfg, room_id: str, member: dict) -> dict:
 
 
 def set_member_label(cfg, room_id: str, profile: str, label: str) -> dict:
-    """Подпись участника в комнате (WAVE13 §11): `«Имя — должность»` или сброс.
+    """Подпись участника в комнате (WAVE13 §11 / WAVE17 B-17): `«Имя — должность»` или сброс.
+
+    Одна и та же операция для ВСЕХ участников (B-17): исполнитель — поле `label`
+    в `members`, руководитель комнаты и критик — карта `role_labels` реестра
+    комнаты. Раньше для руководителя/критика был отказ `room_lead` («подпись
+    меняется в настройках комнаты»), хотя такого поля там не было.
 
     Хранится только в реестре комнаты (`rooms.json`), файлы профиля Hermes не
     меняются. Пустая подпись — вернуться к описанию профиля. Возвращает
-    `{profile, label, members}` — как ждёт app.py (PUT …/agents/{profile}/label).
+    `{profile, label, members, role_labels}` — как ждёт app.py
+    (PUT …/agents/{profile}/label).
     """
     profile = str(profile or "").strip()
     text = _norm_member_label(label)
@@ -742,12 +806,21 @@ def set_member_label(cfg, room_id: str, profile: str, label: str) -> dict:
                 room["members"] = members
                 data["rooms"][idx] = room
                 _save(cfg, data)
-                return {"profile": profile, "label": text, "members": members}
-            if profile in (str(room.get("orchestrator") or ""), str(room.get("critic") or "")):
-                raise RoomsError(
-                    "Руководитель комнаты и критик задаются настройками комнаты — "
-                    "подпись меняется там же (в составе участников)",
-                    "bad_request", {"profile": profile, "reason": "room_lead"})
+                return {"profile": profile, "label": text, "members": members,
+                        "role_labels": _norm_role_labels(room.get("role_labels"))}
+            is_lead = profile in (str(room.get("orchestrator") or ""), str(room.get("critic") or ""))
+            if is_lead:
+                # B-17: подпись руководителя и критика — та же кнопка «Подпись».
+                labels = _norm_role_labels(room.get("role_labels"))
+                if text:
+                    labels[profile] = text
+                else:
+                    labels.pop(profile, None)
+                room["role_labels"] = labels
+                data["rooms"][idx] = room
+                _save(cfg, data)
+                return {"profile": profile, "label": text,
+                        "members": room.get("members") or [], "role_labels": labels}
             raise RoomsError("Участник не найден", "not_found", {"profile": profile})
     raise RoomsError("Комната не найдена", "not_found", {"room": str(room_id)})
 
@@ -869,6 +942,18 @@ def _seed_cafe(cfg) -> dict:
         "mode_default": "auto",
         "critic_pass": True,
         "max_rounds": 1,
+        # Демо-комната Лето ведёт свою карту проекта: этапы принадлежат ЕЙ
+        # (W17-R §1, B-8) — это её данные, а не список в коде.
+        # Настройки проектного режима у демо-комнат прежние (A1): включить их
+        # должен человек. Здесь только этапы — они и есть данные этой комнаты.
+        "phases": [
+            {"id": "idea", "title": "Идея и стратегия"},
+            {"id": "legal", "title": "Легализация"},
+            {"id": "brand", "title": "Бренд и товарный знак"},
+            {"id": "packaging", "title": "Упаковка"},
+            {"id": "production", "title": "Производство"},
+            {"id": "sales", "title": "Продажи"},
+        ],
         "created_at": SEED_CREATED,
         "archived": False,
         "seeded": True,
@@ -897,6 +982,8 @@ def _seed_fn(cfg) -> dict:
         "mode_default": "auto",
         "critic_pass": False,
         "max_rounds": 1,
+        # У «Руководства_FN» своих этапов нет — и полосы этапов не будет.
+        "phases": [],
         "created_at": SEED_CREATED + 400,
         "archived": False,
         "seeded": True,

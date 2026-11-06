@@ -13,8 +13,10 @@
         sb.assert_real_untouched(before)
 
 `snapshot_real()` читает реальную `kanban/boards/team/kanban.db` только в режиме
-`mode=ro` (размер, mtime, число карточек, максимальная отметка времени) —
-сравнение до/после доказывает, что тест не писал в живую доску (приёмка G).
+`mode=ro` и запоминает НАШ след в ней: карточки и комментарии с `created_by`
+нашего приложения и число карточек. Сравнение до/после доказывает, что тест не
+писал в живую доску, и при этом не падает от чужих записей Hermes (диспетчер,
+агенты руководителя) — размер и mtime файла меняются и без нас.
 """
 from __future__ import annotations
 
@@ -47,6 +49,9 @@ from tools.seed_sandbox import (                  # noqa: E402
 SANDBOX_ENV_KEYS = ("TEAMROOM_HERMES_HOME", "TEAMROOM_DATA",
                     "TEAMROOM_VAULT_DIR", "HERMES_KANBAN_HOME")
 REAL_BOARD = "team"
+#: `created_by`, которым наше приложение помечает СВОИ карточки и комментарии
+#: (`server/engine_write.py: CREATED_BY`). По нему и узнаём «наш след» в доске.
+OUR_CREATORS = ("Комната команды",)
 
 
 def _outside_hermes_base() -> Path:
@@ -85,30 +90,64 @@ def real_db_path(cfg: Any = None) -> Path:
 
 
 def snapshot_real_db(cfg: Any = None) -> dict:
-    """Слепок реальной kanban.db: размер, mtime, число задач, max(*_at), mode=ro."""
+    """Слепок «нашего следа» в реальной kanban.db — только чтение (`mode=ro`).
+
+    Почему не размер/mtime файла: в живой доске одновременно работает сам Hermes
+    (диспетчер, агенты, руководитель, Михаил). Любая чужая запись меняет и размер,
+    и mtime, поэтому сравнение «файл байт-в-байт» давало ложные падения
+    (устаревший тест, а не дефект продукта). Сравниваем то, что может изменить
+    ТОЛЬКО наш код: карточки и комментарии с `created_by` нашего приложения
+    (`OUR_CREATORS`), число карточек — для отчёта, размер/mtime — как справка.
+    """
     db = real_db_path(cfg)
     if not db.exists():
-        return {"exists": False, "size": 0, "mtime": 0, "tasks_count": 0, "max_updated": 0}
+        return {"exists": False, "tasks_count": 0, "ours": frozenset(),
+                "our_comments": 0, "board_bytes": 0, "board_mtime": 0}
     stat = db.stat()
     con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=10)
     try:
         tasks_count = con.execute("SELECT count(*) FROM tasks").fetchone()[0]
-        max_updated = con.execute(
-            "SELECT coalesce(max(max(coalesce(completed_at,0), "
-            "coalesce(started_at,0), coalesce(created_at,0))), 0) FROM tasks").fetchone()[0]
+        marks = ",".join("?" * len(OUR_CREATORS))
+        ours = frozenset(row[0] for row in con.execute(
+            "SELECT id FROM tasks WHERE COALESCE(created_by,'') IN (%s)" % marks, OUR_CREATORS))
+        try:
+            our_comments = con.execute(
+                "SELECT count(*) FROM task_comments WHERE COALESCE(author,'') IN (%s)" % marks,
+                OUR_CREATORS).fetchone()[0]
+        except sqlite3.Error:                  # старая/чужая схема — не падаем
+            our_comments = 0
     finally:
         con.close()
-    return {"exists": True, "size": stat.st_size, "mtime": int(stat.st_mtime),
-            "tasks_count": int(tasks_count), "max_updated": int(max_updated)}
+    return {"exists": True, "tasks_count": int(tasks_count), "ours": ours,
+            "our_comments": int(our_comments),
+            "board_bytes": int(stat.st_size), "board_mtime": int(stat.st_mtime)}
 
 
 def assert_real_untouched(before: dict, cfg: Any = None) -> dict:
-    """Упасть, если реальная доска изменилась после слепка `before`."""
+    """Упасть, если НАШ код оставил след в живой доске после слепка `before`.
+
+    Проверяем ровно то, за что отвечает приложение и тесты: новые карточки с
+    `created_by` нашего приложения, удаление/переименование наших карточек,
+    появление наших комментариев. Чужие записи Hermes (диспетчер, агенты
+    руководителя) — норма и ложным падением не считаются.
+    """
     after = snapshot_real_db(cfg)
-    if after != before:
-        changed = {k: (before.get(k), after.get(k)) for k in set(before) | set(after)
-                   if before.get(k) != after.get(k)}
-        raise AssertionError(f"реальная kanban.db изменилась: {changed}")
+    ours_before = frozenset(before.get("ours") or ())
+    problems: list[str] = []
+    if bool(after["exists"]) != bool(before.get("exists")):
+        problems.append("файл доски появился/исчез: %s → %s"
+                        % (before.get("exists"), after["exists"]))
+    added = sorted(after["ours"] - ours_before)
+    if added:
+        problems.append("наш код создал карточки в живой доске: %s" % ", ".join(added[:5]))
+    removed = sorted(ours_before - after["ours"])
+    if removed:
+        problems.append("наши карточки пропали из живой доски: %s" % ", ".join(removed[:5]))
+    if int(after["our_comments"]) > int(before.get("our_comments") or 0):
+        problems.append("наш код написал комментарий в живую доску (%s → %s)"
+                        % (before.get("our_comments"), after["our_comments"]))
+    if problems:
+        raise AssertionError("реальная kanban.db: " + "; ".join(problems))
     return after
 
 

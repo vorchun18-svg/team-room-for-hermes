@@ -384,7 +384,7 @@ def validate_plan(room: dict, streams, plan: dict | None = None) -> dict:
     if streams is None or streams == {}:
         return {"streams": [], "warnings": []}
     if not isinstance(streams, list):
-        return {"streams": [], "warnings": ["Блок «plan» должен быть списком направлений — карта не изменилась."]}
+        return {"streams": [], "warnings": ["Блок «plan» должен быть списком частей работы — карта не изменилась."]}
     if not streams:
         return {"streams": [], "warnings": []}
 
@@ -405,7 +405,7 @@ def validate_plan(room: dict, streams, plan: dict | None = None) -> dict:
             warnings.append("Название «%s…» длиннее %d знаков — сокращено." % (title[:40], TITLE_MAX))
             title = title[:TITLE_MAX]
         if title.lower() in titles:
-            warnings.append("Направление «%s» повторяется — второе пропущено." % title)
+            warnings.append("Часть работы «%s» повторяется — вторая пропущена." % title)
             continue
         owner = _text(raw.get("owner"), 64)
         if profiles and owner and owner not in profiles:
@@ -464,7 +464,7 @@ def validate_plan(room: dict, streams, plan: dict | None = None) -> dict:
         clean = []
         for dep in stream["depends_on"]:
             if dep == stream["id"]:
-                warnings.append("Направление «%s» не может зависеть от себя — связь убрана." % stream["title"])
+                warnings.append("Часть работы «%s» не может зависеть от себя — связь убрана." % stream["title"])
                 continue
             if dep not in index:
                 warnings.append("Зависимость «%s» у направления «%s» не найдена — связь убрана."
@@ -552,7 +552,7 @@ def ingest_plan(cfg, room_id, root_id, metadata, room=None) -> dict:
     block = metadata.get("plan") if isinstance(metadata, dict) else None
     if isinstance(block, dict) and "streams" in block and not isinstance(block.get("streams"), list):
         return {"ok": True, "changed": False, "skipped": "broken_block",
-                "warnings": ["Блок «plan» должен быть списком направлений — карта не изменилась."]}
+                "warnings": ["Блок «plan» должен быть списком частей работы — карта не изменилась."]}
     if not isinstance(block, dict) or not isinstance(block.get("streams"), list):
         return {"ok": True, "changed": False, "skipped": "no_block", "warnings": []}
     current = load(cfg, room_id)
@@ -580,7 +580,7 @@ def ingest_plan(cfg, room_id, root_id, metadata, room=None) -> dict:
         plan["brief_root_id"] = str(root_id or plan.get("brief_root_id") or "") or None
         plan["streams"] = streams
         plan["status"] = "draft"
-        _log(plan, "created", "Руководитель предложил карту: направлений — %d." % len(streams),
+        _log(plan, "created", "Руководитель предложил карту: частей работы — %d." % len(streams),
              who="manager")
         return plan
 
@@ -782,7 +782,7 @@ def _launch(cfg, room: dict, plan: dict, stream: dict) -> bool:
     stream["request_id"] = root_id
     stream["status"] = "running"
     stream["reason"] = ""
-    _log(plan, "launched", "Направление «%s» запущено (карточка %s)." % (stream.get("title"), root_id),
+    _log(plan, "launched", "Часть работы «%s» запущена (карточка %s)." % (stream.get("title"), root_id),
          stream_id=stream.get("id"))
     _register(cfg, room, stream, root_id, "plan-%s-%s" % (room.get("id"), stream.get("id")),
               stream.get("goal") or stream.get("title") or "")
@@ -814,12 +814,12 @@ def _sync_stream(cfg, room: dict, plan: dict, stream: dict) -> bool:
         if detail and quota_limited(cfg, detail):
             if stream.get("status") != "waiting_quota":
                 stream["status"] = "waiting_quota"
-                _log(plan, "quota", "Направление «%s» ждёт лимит провайдера."
+                _log(plan, "quota", "Часть работы «%s» ждёт лимит провайдера."
                      % stream.get("title"), stream_id=stream.get("id"))
                 return True
     elif stream.get("status") == "waiting_quota":
         stream["status"] = fresh if fresh in ("done", "review") else "running"
-        _log(plan, "quota", "Лимит снят — направление «%s» продолжает работу."
+        _log(plan, "quota", "Лимит снят — часть работы «%s» продолжает работу."
              % stream.get("title"), stream_id=stream.get("id"))
         return True
     return changed
@@ -963,7 +963,7 @@ def _queue_chosen(cfg, room_id, chosen_ids, room, note, who="mikhail") -> dict:
 
 
 #: журнал запуска без подтверждения (``launch_mode: auto``, WAVE 9 §6)
-AUTO_NOTE = "Запуск без подтверждения — режим комнаты «сразу»: направлений — %d."
+AUTO_NOTE = "Запуск без подтверждения — режим комнаты «сразу»: частей работы — %d."
 
 
 def _auto_start(cfg, room_id, room) -> dict:
@@ -1054,7 +1054,7 @@ def _patch_change(plan: dict, room: dict, item: dict, source: str, warnings: lis
     if not changed:
         return False
     reason = _text((item or {}).get("reason") or "", 200)
-    _log(plan, "changed", "Изменено направление «%s» (%s)%s."
+    _log(plan, "changed", "Изменена часть работы «%s» (%s)%s."
          % (stream.get("title"), ", ".join(changed), (" — " + reason) if reason else ""),
          who=source, stream_id=stream.get("id"))
     return True
@@ -1092,7 +1092,7 @@ def apply_patch(cfg, room_id, patch, source="manager", room=None) -> dict:
                 stream["created_by"] = who
                 stream["reason"] = note or "Предложено руководителем"
                 plan.setdefault("streams", []).append(stream)
-                _log(plan, "added", "Новое направление «%s» — нужно «Запустить»%s."
+                _log(plan, "added", "Новая часть работы «%s» — нужно «Запустить»%s."
                      % (stream.get("title"), (" — " + note) if note else ""),
                      who=who, stream_id=stream.get("id"))
                 added.append(stream["id"])
@@ -1104,7 +1104,7 @@ def apply_patch(cfg, room_id, patch, source="manager", room=None) -> dict:
                 continue
             reason = _text((item or {}).get("reason") if isinstance(item, dict) else "", 200)
             stream["status"] = "dropped"
-            _log(plan, "dropped", "Направление «%s» отложено%s."
+            _log(plan, "dropped", "Часть работы «%s» отложена%s."
                  % (stream.get("title"), (" — " + reason) if reason else ""),
                  who=who, stream_id=stream.get("id"))
             dropped.append(sid)
@@ -1146,7 +1146,7 @@ def add_stream(cfg, room_id, data, source="mikhail", room=None) -> dict:
         stream["status"] = "proposed"
         stream["created_by"] = "mikhail" if str(source) == "mikhail" else "manager"
         current.setdefault("streams", []).append(stream)
-        _log(current, "added", "Добавлено направление «%s»." % stream.get("title"),
+        _log(current, "added", "Добавлена часть работы «%s»." % stream.get("title"),
              who=source, stream_id=stream.get("id"))
         return current
 

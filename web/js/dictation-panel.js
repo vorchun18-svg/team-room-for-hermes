@@ -369,7 +369,8 @@ export function createPanel(handlers = {}) {
       row.appendChild(actionBtn('Распознать запись', 'btn--secondary', () => item.onRecover()));
     }
     if (typeof item.onDismiss === 'function') {
-      row.appendChild(actionBtn('Убрать', 'btn--ghost', () => item.onDismiss()));
+      row.appendChild(actionBtn(String(item.dismissLabel || 'Убрать'), 'btn--ghost',
+                                () => item.onDismiss()));
     }
     els.recover.appendChild(row);
   }

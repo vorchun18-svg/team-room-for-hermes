@@ -47,6 +47,7 @@ ROUTES = [
     ("POST", BASE + r"/agents/" + PROFILE_RE + r"/notes/entries", "h_notes_add"),
     ("PATCH", BASE + r"/agents/" + PROFILE_RE + r"/notes/entries/" + ENTRY_RE, "h_notes_update"),
     ("DELETE", BASE + r"/agents/" + PROFILE_RE + r"/notes/entries/" + ENTRY_RE, "h_notes_remove"),
+    ("POST", BASE + r"/agents/" + PROFILE_RE + r"/notes/entries/" + ENTRY_RE + r"/pin", "h_notes_pin"),
     ("POST", BASE + r"/agents/" + PROFILE_RE + r"/notes/review", "h_notes_review"),
     ("POST", BASE + r"/agents/" + PROFILE_RE + r"/notes/used", "h_notes_used"),
     ("GET", BASE + r"/notes/journal", "h_notes_journal"),
@@ -212,6 +213,28 @@ class NotesRoutes:
         res = self._notes_call("remove_entry", (self.cfg, room_id, name, entry_id), {
             "why": str(data.get("why") or self._q(query, "why")),
             "actor": str(data.get("actor") or ""), "force": force})
+        payload = {"ok": True}
+        payload.update(res if isinstance(res, dict) else {})
+        return 200, payload, {}
+
+    def h_notes_pin(self, query, body, room_id, profile, entry_id):
+        """``POST …/notes/entries/{entry}/pin`` — закрепить или снять закрепление.
+
+        Закрепление защищает запись от переоценки и от удаления руководителем
+        (он снимает закрепление, а не удаляет). Событие — в журнале комнаты.
+        """
+        room = self._notes_room(room_id)
+        name = self._profile(profile)
+        self._in_room(room, name)
+        data = self._body(body)
+        pinned = data.get("pinned")
+        if pinned is None:
+            raise err(400, "Нужно поле pinned: true или false", field="pinned")
+        res = self._notes_call("set_pinned", (self.cfg, room_id, name, entry_id), {
+            "pinned": bool(pinned) if not isinstance(pinned, str)
+            else pinned.strip().lower() in ("1", "true", "yes", "on"),
+            "actor": str(data.get("actor") or ""),
+        })
         payload = {"ok": True}
         payload.update(res if isinstance(res, dict) else {})
         return 200, payload, {}

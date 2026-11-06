@@ -8,8 +8,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .ingest_common import (PHASES,
-        STATUSES,
+from .ingest_common import (STATUSES,
         _as_int,
         _backlog_path,
         _clean,
@@ -20,6 +19,7 @@ from .ingest_common import (PHASES,
         _phase_template,
         _reports_path,
         _roadmap_path)
+from . import phase_book as phase_mod
 from . import statefiles as sf
 from . import rooms as rooms_mod
 
@@ -30,11 +30,15 @@ def _merge_roadmap(cfg, room_id: str, root_id: str, at: int, phases: list[dict])
         if not isinstance(data, dict):
             data = {"room": room_id, "phases": [], "updated_at": 0}
         stored = {p.get("id"): p for p in (data.get("phases") or []) if isinstance(p, dict)}
+        # W17-R §1 (B-8): порядок и заголовки этапов — из настроек КОМНАТЫ, а не
+        # из константы. Комната без этапов карту не ведёт: файл остаётся пустым.
+        declared = phase_mod.phases_of(cfg, rooms_mod.get_room(cfg, room_id) or {"id": room_id})
         ordered = []
-        for phase_id, title in PHASES:
+        for item in declared:
+            phase_id, title = item["id"], item["title"]
             base = _phase_template(phase_id, title)
             base.update({k: v for k, v in (stored.get(phase_id) or {}).items() if v is not None})
-            base["id"], base["title"] = phase_id, (stored.get(phase_id) or {}).get("title") or title
+            base["id"], base["title"] = phase_id, title
             ordered.append(base)
         changed: list[str] = []
         for incoming in phases:

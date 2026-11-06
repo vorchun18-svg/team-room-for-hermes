@@ -154,6 +154,12 @@
 .thr__urgent { max-width: 100%; }
 .thr__urgent span { font-size: var(--text-sm); color: var(--ui-text-secondary); line-height: var(--leading-normal); }
 
+/* W17-S §1: «и доработать свод по этому сообщению» — вместо второй кнопки. */
+.thr__revise { max-width: 100%; }
+.thr__revise span { font-size: var(--text-sm); color: var(--ui-text-secondary); line-height: var(--leading-normal); }
+.thr__revise input { accent-color: var(--primary); }
+.thr__hint--revise { margin-top: 2px; }
+
 .thr__files { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); min-width: 0; }
 .thr__file { display: inline-flex; align-items: center; gap: 2px; min-width: 0; max-width: 100%; }
 .thr__file .path-chip { min-width: 0; }

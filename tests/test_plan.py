@@ -153,7 +153,11 @@ class PlanBase(unittest.TestCase):
     def make_room(self, **extra):
         data = {"title": "Моти", "orchestrator": ORCH,
                 "members": [{"profile": p} for p in WORKERS],
-                "max_parallel_streams": self.max_parallel}
+                "max_parallel_streams": self.max_parallel,
+                # W17-R §3: у НОВОЙ комнаты режим «сразу, без подтверждения».
+                # Здесь проверяется ручной путь («Сначала показать план»), поэтому
+                # режим задаём явно, как это делает человек в настройках комнаты.
+                "launch_mode": "plan_first"}
         data.update(extra)
         return rooms.create_room(self.cfg, data)
 
@@ -264,7 +268,8 @@ class IngestTests(PlanBase):
         self.assertEqual([s["status"] for s in stored["streams"]], ["proposed", "proposed"])
         logs = [(item["kind"], item["text"]) for item in stored["log"]]
         self.assertEqual(logs[-1][0], "created")
-        self.assertIn("направлений — 2", logs[-1][1])
+        # W17-R §3 (B-10): единый понятный термин — «части работы», не «направления».
+        self.assertIn("частей работы — 2", logs[-1][1])
 
     def test_empty_or_broken_block_changes_nothing(self):
         self.ingest([mkstream("Рецептура")])

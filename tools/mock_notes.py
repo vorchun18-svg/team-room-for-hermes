@@ -124,13 +124,21 @@ def _entries(room: dict, profile: str) -> list:
 
 
 def _sync(room: dict) -> None:
-    """Пересобрать старое поле `agent_notes` (текст) из записей — его читают другие ответы."""
+    """Пересобрать старое поле `agent_notes` (текст) из записей — его читают другие ответы.
+
+    Форма — как у настоящего реестра (`_item`): `{text, updated_at, entries, review}`.
+    Без `entries` карточка участника и ссылка «Особенности (N)» в демо показывали 0.
+    """
     notes = {}
     for profile, entries in (room.get("agent_notes_entries") or {}).items():
-        texts = [one["text"] for one in entries if str(one.get("text") or "").strip()]
+        kept = [dict(one) for one in entries if str(one.get("text") or "").strip()]
+        texts = [one["text"] for one in kept]
         if texts:
             notes[profile] = {"text": "\n".join(texts),
-                              "updated_at": entries[-1].get("created_at") or now()}
+                              "updated_at": kept[-1].get("created_at") or now(),
+                              "entries": kept,
+                              "review": {"count_at_review": len(kept), "reviewed_at": now(),
+                                         "due": False}}
     room["agent_notes"] = notes
 
 
@@ -280,6 +288,26 @@ class MockNotesEntries:
                source="user", before=before, after=entries)
         _sync(room)
         return _payload(room, profile, removed=target, cleared=not entries)
+
+    def pin_note_entry(self, room_id: str, profile: str, entry_id: str, body: dict) -> dict:
+        """Закрепить/снять закрепление записи (WAVE17): как `agent_notes.set_pinned`."""
+        room = self.room(room_id)
+        entries = _entries(room, profile)
+        target = next((one for one in entries if one["id"] == entry_id), None)
+        if target is None:
+            raise ApiError(404, "not_found", "Запись не найдена", {"entry_id": entry_id})
+        pinned = (body or {}).get("pinned")
+        if pinned is None:
+            raise ApiError(400, "bad_request", "Нужно поле pinned: true или false",
+                           {"field": "pinned"})
+        if isinstance(pinned, str):
+            pinned = pinned.strip().lower() in ("1", "true", "yes", "on")
+        before = [dict(one) for one in entries]
+        target["pinned"] = bool(pinned)
+        _event(room, "pinned" if target["pinned"] else "unpin", profile, target["text"],
+               why="", source="user", before=before, after=[dict(one) for one in entries])
+        _sync(room)
+        return _payload(room, profile, entry=dict(target))
 
     def review_notes(self, room_id: str, profile: str, body: dict) -> dict:
         room = self.room(room_id)

@@ -56,7 +56,10 @@ export function ownerChip(owner) {
   return h('span', {
     class: 'chip chip--outline owner-chip',
     title: owner === 'mikhail' ? 'Решение за Михаилом' : 'Исполнитель: ' + owner,
-  }, icon('person', { size: 11 }), h('span', { class: 'owner-chip__text truncate' }, ownerName(owner)));
+  }, icon('person', { size: 11 }), h('span', {
+    class: 'owner-chip__text truncate',
+    title: owner === 'mikhail' ? 'Решение за Михаилом' : 'Исполнитель: ' + ownerName(owner),
+  }, ownerName(owner)));
 }
 
 /** Ссылка-кнопка «в календарь»: файл .ics для одного шага. */
@@ -92,7 +95,11 @@ export function dueChip(item, { busy = false, onChange } = {}) {
     class: 'due-chip' + (due ? '' : ' due-chip--empty'),
     title: due ? 'Срок: ' + due + ' — нажмите, чтобы изменить' : 'Срок не задан — нажмите, чтобы выбрать',
   }, icon('calendar', { size: 11 }),
-  h('span', { class: 'due-chip__text' }, due ? dueChipLabel(due, new Date()) : 'Срок'), input);
+  h('span', {
+    class: 'due-chip__text',
+    // B8: у обрезанной подписи срока своя подсказка с полной датой.
+    title: due ? 'Срок: ' + due + ' — нажмите, чтобы изменить' : 'Срок не задан — нажмите, чтобы выбрать',
+  }, due ? dueChipLabel(due, new Date()) : 'Срок'), input);
 }
 
 /** Чип «Только этот запрос ✕» и кнопка «Все дела комнаты». */

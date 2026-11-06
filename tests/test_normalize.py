@@ -18,7 +18,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from server.normalize import (  # noqa: E402
-    PHASE_IDS,
     artifact_kind,
     canonical_phase_id,
     canonical_stage,
@@ -124,14 +123,17 @@ class LegacyMetadataTest(unittest.TestCase):
 
     def test_stage_legacy_map(self):
         stage = self.out["stage"]
-        self.assertEqual([p["id"] for p in stage["phases"]], list(PHASE_IDS))
+        # W17-R §1 (B-8): своих этапов код не знает — id и порядок берутся из
+        # metadata как есть («ops» больше не подменяется на «production»),
+        # человеческие названия даёт комната (server/phase_book.py).
+        self.assertEqual([p["id"] for p in stage["phases"]],
+                         ["idea", "legal", "brand", "ops", "packaging", "production", "sales"])
         self.assertEqual([p["status"] for p in stage["phases"]],
-                         ["done", "blocked", "blocked", "active", "next", "next"])
+                         ["done", "blocked", "blocked", "done", "active", "next", "next"])
         self.assertEqual(stage["current"], "legal")
         self.assertTrue(stage["phases"][1]["note"].startswith("в работе → ждёт действия"))
-        self.assertEqual(stage["phases"][0]["title"], "Идея и стратегия")
-        # "ops" — алиас production, но точный ключ production приоритетнее
-        self.assertEqual(stage["phases"][4]["note"], LEGACY["stage"]["production"])
+        self.assertEqual(stage["phases"][0]["title"], "idea")
+        self.assertEqual(stage["phases"][5]["note"], LEGACY["stage"]["production"])
 
     def test_artifacts_from_paths(self):
         arts = self.out["artifacts"]
@@ -241,14 +243,14 @@ class NewContractTest(unittest.TestCase):
         for d in decisions:
             self.assertRegex(d["id"], ID_RE)
 
-    def test_stage_fills_six_phases(self):
+    def test_stage_keeps_only_declared_phases(self):
+        # Список этапов пришёл в metadata — код его не дополняет до шести.
         stage = self.setUp_out()["stage"]
-        self.assertEqual([p["id"] for p in stage["phases"]], list(PHASE_IDS))
+        self.assertEqual([p["id"] for p in stage["phases"]], ["idea", "legal"])
+        self.assertEqual([p["title"] for p in stage["phases"]], ["Идея и стратегия", "Легализация"])
         self.assertEqual(stage["phases"][0]["status"], "done")
         self.assertEqual(stage["phases"][1]["status"], "active")
-        self.assertEqual(stage["phases"][2]["status"], "next")
-        self.assertEqual(stage["phases"][2]["note"], "")
-        self.assertEqual(stage["current"], "packaging")
+        self.assertEqual(stage["current"], "legal", "current вне списка — берём из статусов")
 
     def test_future_questions_and_artifacts(self):
         out = self.setUp_out()
@@ -295,7 +297,7 @@ class ToleranceTest(unittest.TestCase):
                 for key in ("next_steps", "open_questions", "decisions", "future_questions",
                             "artifacts", "issues"):
                     self.assertIsInstance(out[key], list)
-                self.assertEqual([p["id"] for p in out["stage"]["phases"]], list(PHASE_IDS))
+                self.assertIsInstance(out["stage"]["phases"], list)
                 self.assertIsInstance(out["extra"], dict)
 
     def test_json_string_and_bytes(self):
@@ -306,9 +308,12 @@ class ToleranceTest(unittest.TestCase):
         self.assertEqual(normalize_metadata('{"broken": ')["stage"]["current"], None)
 
     def test_stage_unknown_area_preserved_in_extra(self):
+        # W17-R §1 (B-8): незнакомая область — это этап с её же названием,
+        # а не «потерянный» ключ и не дополнение до шести канонических.
         out = normalize_metadata({"stage": {"финансы": "в работе", "legal": "готов"}})
-        self.assertEqual(len(out["stage"]["phases"]), 6)
-        self.assertEqual(out["extra"]["stage_unmapped"], {"финансы": "в работе"})
+        self.assertEqual([p["id"] for p in out["stage"]["phases"]], ["финансы", "legal"])
+        self.assertEqual([p["title"] for p in out["stage"]["phases"]], ["финансы", "legal"])
+        self.assertEqual(out["stage"]["phases"][0]["status"], "active")
         self.assertEqual(out["stage"]["phases"][1]["status"], "done")
 
     def test_duplicate_texts_get_unique_ids(self):
@@ -320,7 +325,7 @@ class ToleranceTest(unittest.TestCase):
     def test_empty_metadata_helper(self):
         out = empty_metadata()
         self.assertEqual(set(out), CANON_KEYS)
-        self.assertEqual([p["status"] for p in out["stage"]["phases"]], ["next"] * 6)
+        self.assertEqual(out["stage"]["phases"], [])  # этапов по умолчанию нет
         self.assertEqual(normalize_metadata(None), out)
 
 
@@ -406,12 +411,14 @@ class HelpersTest(unittest.TestCase):
         self.assertNotEqual(stable_id("ns", "a"), stable_id("q", "a"))
 
     def test_canonical_phase_id(self):
+        # Своих алиасов этапов нет: id — стабильный слаг из того, что пришло.
         self.assertEqual(canonical_phase_id("production"), "production")
-        self.assertEqual(canonical_phase_id("ops"), "production")
+        self.assertEqual(canonical_phase_id("ops"), "ops")
         self.assertEqual(canonical_phase_id("Legal"), "legal")
-        self.assertEqual(canonical_phase_id("юр-вопросы"), "legal")
-        self.assertEqual(canonical_phase_id("упаковка"), "packaging")
-        self.assertIsNone(canonical_phase_id("неизвестно"))
+        self.assertEqual(canonical_phase_id("юр-вопросы"), "юр-вопросы")
+        self.assertEqual(canonical_phase_id("упаковка и этикетка"), "упаковка-и-этикетка")
+        self.assertEqual(canonical_phase_id("неизвестно"), "неизвестно")
+        self.assertIsNone(canonical_phase_id("")) 
         self.assertIsNone(canonical_phase_id(None))
 
     def test_canonical_stage_derives_current(self):

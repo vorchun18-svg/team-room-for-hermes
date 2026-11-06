@@ -158,7 +158,9 @@ class ConformanceSemanticsTest(unittest.TestCase):
     def test_09_real_board_untouched(self):
         before = snapshot_real_db()
         after = assert_real_untouched(before)
-        self.assertEqual(before, after)
+        # сравниваем НАШ след, а не файл: чужие записи Hermes — норма
+        self.assertEqual(after["ours"], before["ours"])
+        self.assertEqual(after["our_comments"], before["our_comments"])
 
 
 class RealLegacyFixtureTest(unittest.TestCase):
@@ -241,7 +243,10 @@ class RealLegacyFixtureTest(unittest.TestCase):
             self.assertEqual(detail["synthesis"]["version"], 1)
             self.assertTrue(detail["synthesis"]["legacy"])
             self.assertFalse(detail["critic"]["enabled"])
-            self.assertEqual(detail["stage"]["current"], "legal")
+            # W17-R §1 (B-8): текущий этап берётся из ответа руководителя и
+            # сопоставляется с этапами комнаты по названию — раньше он терялся
+            # («Бренд и товарный знак» не совпадал с id) и подменялся первым блокером.
+            self.assertEqual(detail["stage"]["current"], "brand")
             self.assertEqual(len(detail["next_steps"]), 5)
             self.assertEqual(len(detail["open_questions"]), 7)
             self.assertEqual(detail["room"], "cafe")        # tenant карточки остался NULL
@@ -260,7 +265,8 @@ class RealLegacyFixtureTest(unittest.TestCase):
                 else:
                     os.environ[key] = value
             shutil.rmtree(tmp, ignore_errors=True)
-            self.assertEqual(assert_real_untouched(before), before)
+            after = assert_real_untouched(before)
+            self.assertEqual(after["ours"], before["ours"])
 
 
 if __name__ == "__main__":

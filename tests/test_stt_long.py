@@ -347,6 +347,39 @@ class LongRecordingHttpCase(unittest.TestCase):
         self.assertEqual(got[2][0], 200)
         self.assertEqual([text for code, text in got if code == 200], ["часть 3", "часть 6"])
 
+    def test_delete_removes_recording_for_good(self):
+        """«Убрать» в интерфейсе = DELETE: записи нет ни в списке, ни в частях.
+
+        Иначе при следующем открытии панели серверная копия (72 часа) снова
+        предложила бы «Есть нерасшифрованная запись» — то самое «убрал, а оно
+        снова висит». Повторный DELETE не ошибка: строку можно убирать дважды.
+        """
+        base = "/api/stt/recordings/" + self.rid
+        for number, size in enumerate((4, 5), start=1):
+            code, _, _ = self.call("PUT", "%s/parts/%d" % (base, number),
+                                   b"a" * size, "audio/webm")
+            self.assertEqual(code, 200)
+        code, listing, _ = self.call("GET", "/api/stt/recordings?limit=50")
+        self.assertIn(self.rid, [row["rid"] for row in listing["items"]])
+
+        code, payload, _ = self.call("DELETE", base)
+        self.assertEqual(code, 200)
+        self.assertTrue(payload["removed"])
+
+        code, listing, _ = self.call("GET", "/api/stt/recordings?limit=50")
+        self.assertEqual(code, 200)
+        self.assertNotIn(self.rid, [row["rid"] for row in listing["items"]],
+                         "удалённой записи в списке нет — всплыть нечему")
+        code, view, _ = self.call("GET", base)
+        self.assertEqual(view["parts_total"], 0)
+        for number in (1, 2):
+            code, _, _ = self.call("GET", "%s/parts/%d" % (base, number), raw=True)
+            self.assertEqual(code, 404, "частей удалённой записи нет")
+
+        code, again, _ = self.call("DELETE", base)
+        self.assertEqual(code, 200)
+        self.assertFalse(again["removed"], "повторное «Убрать» — не ошибка")
+
     def test_bad_requests(self):
         # путь с несуществующим по форме номером — это чужой маршрут, а не аудио
         code, payload, _ = self.call("PUT", "/api/stt/recordings/nope/parts/1",

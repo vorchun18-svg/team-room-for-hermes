@@ -1,12 +1,12 @@
 /**
- * plan-streams.js — блок «Направления» на вкладке «Карта проекта» (волна 9).
+ * plan-streams.js — блок «Части работы» на вкладке «Карта проекта» (волна 9).
  *
- * Карта проекта — это список направлений, которые руководитель комнаты
+ * Карта проекта — это список частей работы, которые руководитель комнаты
  * предложил по главному запросу (брифу). Здесь только показ и действия:
  * данные приносит roadmap.js (GET /api/rooms/{r}/plan), запись — через него же.
  *
  * Наружу:
- *   streamStatusMeta / streamStatusChip   — статус направления по-русски;
+ *   streamStatusMeta / streamStatusChip   — статус части работы по-русски;
  *   streamOrigin                          — «предложил руководитель» / «добавил вы»;
  *   streamsSummary / launchableIds        — счётчики и что можно запустить;
  *   peopleIndex / ownerLabelOf            — люди комнаты и ответственный по-русски;
@@ -81,7 +81,7 @@ export function ownerLabelOf(stream, people) {
   return { name: role ? upperFirst(roleTitle(role)) : 'Исполнитель', hint: raw };
 }
 
-/** Человеческая подпись любого профиля (участники направления). */
+/** Человеческая подпись любого профиля (участники части работы). */
 function personName(raw, index) {
   const value = String(raw || '').trim();
   if (!value) return '';
@@ -101,14 +101,14 @@ function personName(raw, index) {
 const STATUS = {
   proposed: {
     label: 'Предложено', tone: 'muted', hint:
-    'Руководитель комнаты предложил направление — работа начнётся после «Запустить»',
+    'Руководитель комнаты предложил часть работы — работа начнётся после «Запустить»',
   },
   queued: {
     label: 'В очереди', tone: 'outline', hint:
-    'Ждёт своей очереди: впереди другие направления или места в работе нет',
+    'Ждёт своей очереди: впереди другие части работы или места в работе нет',
   },
   running: {
-    label: 'Идёт', tone: 'info', pulse: true, hint: 'Команда работает над направлением',
+    label: 'Идёт', tone: 'info', pulse: true, hint: 'Команда работает над этой частью работы',
   },
   waiting_quota: {
     label: 'Ждёт лимит', tone: 'warn', hint:
@@ -117,7 +117,7 @@ const STATUS = {
   review: {
     label: 'На проверке', tone: 'info', pulse: true, hint: 'Критик проверяет результат',
   },
-  done: { label: 'Готово', tone: 'ok', hint: 'Направление завершено' },
+  done: { label: 'Готово', tone: 'ok', hint: 'Часть работы завершено' },
   dropped: { label: 'Отложено', tone: 'muted', hint: 'Отложено: можно вернуть и запустить позже' },
 };
 
@@ -136,7 +136,7 @@ function norm(v) {
 }
 
 /**
- * Подпись и цвет статуса направления.
+ * Подпись и цвет статуса части работы.
  * @param {string} status proposed|queued|running|waiting_quota|review|done|dropped
  * @returns {StreamStatus & {status: string}}
  */
@@ -151,7 +151,7 @@ export function streamStatusMeta(status) {
 }
 
 /**
- * Чип статуса направления. Неизвестный статус — нейтральная рамка.
+ * Чип статуса части работы. Неизвестный статус — нейтральная рамка.
  * @param {string} status
  * @returns {HTMLElement}
  */
@@ -173,17 +173,17 @@ export const STREAM_STATUSES = STATUS_ORDER.slice();
 /* ------------------------------------------------------------------ источники */
 
 /**
- * Кто добавил направление. Причина (reason) — в title и в раскрывающемся блоке.
+ * Кто добавил часть работы. Причина (reason) — в title и в раскрывающемся блоке.
  * @param {'manager'|'mikhail'|string} createdBy
  * @returns {{label: string, hint: string}}
  */
 export function streamOrigin(createdBy) {
   const who = norm(createdBy);
   if (who === 'mikhail') {
-    return { label: 'добавил вы', hint: 'Вы добавили это направление вручную' };
+    return { label: 'добавил вы', hint: 'Вы добавили эту часть работы вручную' };
   }
   return {
-    label: 'предложил руководитель', hint: 'Направление предложил руководитель комнаты по главному запросу',
+    label: 'предложил руководитель', hint: 'Часть работы предложил руководитель комнаты по главному запросу',
   };
 }
 
@@ -223,7 +223,7 @@ export function streamsSummary(plan) {
 /**
  * Что имеет смысл запускать: предложенное и стоящее в очереди.
  * @param {{streams?: object[]}|null} plan
- * @returns {string[]} id направлений
+ * @returns {string[]} id частей работы
  */
 export function launchableIds(plan) {
   return listOf(plan)
@@ -232,11 +232,11 @@ export function launchableIds(plan) {
     .filter(Boolean);
 }
 
-/** Строка «3 направления · идёт 1» для шапки блока. */
+/** Строка «3 части работы · идёт 1» для шапки блока. */
 export function streamsCountLine(plan) {
   const c = streamsSummary(plan);
   if (!c.total) return 'пока пусто';
-  const parts = [countNoun(c.total, ['направление', 'направления', 'направлений'])];
+  const parts = [countNoun(c.total, ['часть работы', 'части работы', 'частей работы'])];
   if (c.running) parts.push('идёт ' + c.running);
   if (c.waiting) parts.push('ждёт лимит ' + c.waiting);
   if (c.proposed) parts.push('предложено ' + c.proposed);
@@ -259,7 +259,7 @@ export function dependencyNote(stream, byId) {
     if (!id) continue;
     const dep = byId && byId[id];
     const title = dep && dep.title ? String(dep.title).trim() : '';
-    names.push(title || 'направления без названия');
+    names.push(title || 'части работы без названия');
   }
   if (!names.length) return '';
   const quoted = names.map((n) => '«' + n + '»').join(', ');
@@ -269,7 +269,7 @@ export function dependencyNote(stream, byId) {
 /* ------------------------------------------------------------- подтверждение */
 
 /**
- * Текст подтверждения «Запустить всё»: сколько направлений, сколько
+ * Текст подтверждения «Запустить всё»: сколько частей работы, сколько
  * одновременно, что начнут настоящие агенты. Без технических слов.
  * @param {{streams?: object[]}|null} plan
  * @param {number} maxParallel 1..4
@@ -280,15 +280,15 @@ export function launchConfirm(plan, maxParallel, ids) {
   const list = Array.isArray(ids) && ids.length ? ids.slice() : launchableIds(plan);
   const n = list.length;
   const limit = Math.max(1, Math.min(4, Math.floor(Number(maxParallel)) || 2));
-  const one = countNoun(n, ['направление', 'направления', 'направлений']);
-  const title = n === 1 ? 'Запустить направление?' : 'Запустить все направления?';
+  const one = countNoun(n, ['часть работы', 'части работы', 'частей работы']);
+  const title = n === 1 ? 'Запустить часть работы?' : 'Запустить все части работы?';
   const parts = [];
   parts.push(n
     ? `Начнут работу ${one}.`
-    : 'Сейчас запускать нечего: все направления уже идут или закрыты.');
+    : 'Сейчас запускать нечего: все части работы уже идут или закрыты.');
   if (n) {
-    // После «до» — родительный падеж: «до 1 направления», «до 2 направлений».
-    parts.push(`Одновременно — до ${limit} ${fromForm(limit, ['направление', 'направления', 'направлений'])}:`
+    // После «до» — родительный падеж: «до 1 части работы», «до 2 частей работы».
+    parts.push(`Одновременно — до ${limit} ${fromForm(limit, ['часть работы', 'части работы', 'частей работы'])}:`
       + ' остальные подождут своей очереди и начнутся сами.');
     parts.push('Это настоящие агенты команды: они начнут выполнять задачи и тратить время модели.');
   }
@@ -374,26 +374,28 @@ function streamCard(stream, ctx) {
     h('h3', { class: 'ps-card__title' }, String(stream.title || 'Без названия')),
     originNode(stream)),
   stream.goal
-    ? h('p', { class: 'ps-card__goal' }, String(stream.goal))
+    ? h('p', { class: 'ps-card__goal', title: String(stream.goal) }, String(stream.goal))
     : null,
   h('div', { class: 'ps-card__meta small muted' },
     owner,
     members,
     due,
     dep ? h('span', { class: 'ps-card__dep', title: 'Начнётся после: ' + dep.replace(/^после /, '') },
-      icon('arrow-swap', { size: 11 }), h('span', { class: 'truncate' }, dep)) : null,
+      icon('arrow-swap', { size: 11 }),
+      // W17-R: обрезка всегда с подсказкой — полный текст доступен наведением.
+      h('span', { class: 'truncate', title: dep }, dep)) : null,
     rid
       ? h('a', {
         class: 'ps-card__request',
         href: requestHrefOf(ctx, rid),
-        title: 'Открыть под-запрос этого направления',
+        title: 'Открыть под-запрос этой части работы',
       }, icon('link-external', { size: 11 }), 'под-запрос')
       : null),
   h('div', { class: 'ps-card__actions' },
     canLaunch
       ? actionButton('Запустить', {
         variant: 'btn--secondary', icon: 'play',
-        title: 'Поставить направление в работу',
+        title: 'Запустить часть работы',
         onclick: () => ctx.onLaunch(id),
       })
       : null,
@@ -414,7 +416,7 @@ function streamCard(stream, ctx) {
 /* -------------------------------------------------------------------- блок */
 
 /**
- * Показывать ли блок «Направления» в комнате.
+ * Показывать ли блок «Части работы» в комнате.
  * @param {{project_mode?: boolean}|null} room
  * @returns {boolean}
  */
@@ -424,7 +426,7 @@ export function planBlockVisible(room) {
 }
 
 /**
- * Собрать блок «Направления».
+ * Собрать блок «Части работы».
  *
  * @param {{
  *   plan: object|null, roomId: string, room?: object|null, now?: Date,
@@ -450,7 +452,7 @@ export function renderStreams(opts) {
 
   const header = h('div', { class: 'card__head ps-head' },
     h('div', { class: 'ps-head__titles' },
-      h('div', { class: 'card__title' }, 'Направления'),
+      h('div', { class: 'card__title' }, 'Части работы'),
       h('div', { class: 'ps-head__sub small muted' },
         plan ? (PLAN_STATUS[norm(plan.status)] || 'карта проекта') : 'карта проекта',
         h('span', { class: 'ps-head__count tnum' }, streamsCountLine(plan)))),
@@ -460,7 +462,7 @@ export function renderStreams(opts) {
           class: 'btn btn--primary btn--sm ps-launch-all',
           type: 'button',
           disabled: busy || undefined,
-          title: 'Поставить в работу все предложенные направления',
+          title: 'Поставить в работу все предложенные части работы',
           onclick: () => o.onLaunchAll && o.onLaunchAll(launchIds.slice()),
         }, icon('rocket', { size: 13 }), 'Запустить всё')
         : null,
@@ -468,9 +470,9 @@ export function renderStreams(opts) {
         class: 'btn btn--secondary btn--sm',
         type: 'button',
         disabled: busy || undefined,
-        title: 'Добавить направление в карту вручную',
+        title: 'Добавить часть работы в карту вручную',
         onclick: () => o.onAdd && o.onAdd(),
-      }, icon('add', { size: 13 }), 'Добавить направление'),
+      }, icon('add', { size: 13 }), 'Добавить часть работы'),
       h('button', {
         class: 'btn btn--ghost btn--sm ps-rebuild',
         type: 'button',
@@ -485,7 +487,7 @@ export function renderStreams(opts) {
       icon('map', { size: 22 }),
       h('div', { class: 'empty__title' }, 'Карты пока нет'),
       h('div', { class: 'empty__text' },
-        'Напишите главный запрос — руководитель комнаты предложит направления.'),
+        'Напишите главный запрос — руководитель комнаты предложит части работы.'),
       h('div', { class: 'empty__actions' },
         o.onComposer
           ? h('button', {
@@ -507,21 +509,25 @@ export function renderStreams(opts) {
     }))));
     if (summary.waiting) {
       body.appendChild(h('p', { class: 'ps-note small muted' },
-        'Ждёт лимит — направление продолжится само, когда лимит модели снимется.'
-        + ' Пока лимит занят, новые направления не начинаются.'));
+        'Ждёт лимит — часть работы продолжится сама, когда лимит модели снимется.'
+        + ' Пока лимит занят, новые части работы не начинаются.'));
     }
   }
 
   return h('section', { class: 'card ps', dataset: { plan: plan ? 'yes' : 'no' } }, header, body);
 }
 
-/** Тихая ссылка, если проектный режим в комнате выключен. */
+/** Тихая ссылка, если проектный режим в комнате выключен (W17-R §2, B-9).
+ *
+ * Открывает настройки ЭТОЙ комнаты на разделе «Проектный режим» — раньше
+ * открывался диалог создания новой комнаты.
+ */
 export function projectModeHint(onOpen) {
   return h('button', {
     class: 'btn btn--link btn--sm ps-off', type: 'button',
-    title: 'Проектный режим включает «Карту проекта» в настройках комнаты',
-    onclick: () => onOpen && onOpen(),
-  }, 'Включить проектный режим в настройках комнаты');
+    title: 'Откроются настройки этой комнаты на разделе «Проектный режим»',
+    onclick: () => onOpen && onOpen('project_mode'),
+  }, 'Включить проектный режим');
 }
 
 /** Снять узел с родителя: браузер, мини-DOM в тестах или обычный массив детей. */
@@ -551,7 +557,7 @@ function closeOnEscape(overlay, close) {
 }
 
 /**
- * Диалог «Изменить» / «Добавить направление». Поля получают микрофон сами.
+ * Диалог «Изменить» / «Добавить часть работы». Поля получают микрофон сами.
  *
  * @param {{mode?: 'edit'|'add', stream?: object|null, members?: Array,
  *          people?: Map|object|Array|null,
@@ -627,7 +633,7 @@ export function openStreamEditor(opts) {
     },
     h('div', { class: 'dialog__head' },
       h('h2', { class: 'dialog__title', id: titleId },
-        isEdit ? 'Изменить направление' : 'Добавить направление'),
+        isEdit ? 'Изменить часть работы' : 'Добавить часть работы'),
       h('button', {
         class: 'btn btn--icon btn--ghost btn--sm', type: 'button',
         title: 'Закрыть', 'aria-label': 'Закрыть',

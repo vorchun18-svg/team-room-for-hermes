@@ -88,8 +88,10 @@
 a.step-group__title:hover { color: var(--link); text-decoration: underline; }
 .step-group__head .chip { height: 18px; }
 .step-list { display: flex; flex-direction: column; }
+/* W17-G: три колонки остались от убранной галочки — текст уезжал в узкую
+   колонку, а кнопка «в календарь» вылезала из карточки (B1/B8). */
 .step-row {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-3); padding: var(--space-3) var(--space-4);
   align-items: start; min-width: 0;
 }
@@ -100,7 +102,7 @@ a.step-group__title:hover { color: var(--link); text-decoration: underline; }
 .step-row__body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .step-row__text { font-size: var(--text-base); line-height: var(--leading-normal); overflow-wrap: anywhere; }
 .step-row__meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px var(--space-2); min-width: 0; }
-.step-row__actions { display: flex; align-items: center; gap: var(--space-1); }
+.step-row__actions { display: flex; align-items: center; gap: var(--space-1); flex: none; }
 .owner-chip { gap: 4px; height: 20px; max-width: 15ch; }
 .owner-chip__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .backlog__date {
@@ -170,8 +172,8 @@ a.step-group__title:hover { color: var(--link); text-decoration: underline; }
 
 /* ── адаптив ─────────────────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
-  .step-row { grid-template-columns: auto minmax(0, 1fr); }
-  .step-row__actions { grid-column: 2; justify-content: flex-start; padding-top: 2px; }
+  .step-row { grid-template-columns: minmax(0, 1fr); }
+  .step-row__actions { grid-column: 1; justify-content: flex-start; padding-top: 2px; }
 }
 
 @media (max-width: 900px) {

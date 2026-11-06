@@ -72,7 +72,7 @@
 
 .rc-graph__btn--fit {
   padding: 0 8px;
-  font-size: 10.5px;
+  font-size: 12px;
 }
 
 .rc-graph__btn:hover {
@@ -251,7 +251,7 @@
 .rc-graph__panel-sub {
   margin: 6px 0 3px;
   color: var(--rc-muted);
-  font-size: 10.5px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -299,7 +299,7 @@
   max-width: 46%;
   overflow: hidden;
   color: var(--rc-muted);
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -35,7 +35,7 @@ if str(ROOT) not in sys.path:
 
 import server.app as app_mod                       # noqa: E402
 import server.search as search_mod                 # noqa: E402
-from tests.helpers import Sandbox, SimAgents, snapshot_real_db   # noqa: E402
+from tests.helpers import Sandbox, SimAgents, assert_real_untouched, snapshot_real_db   # noqa: E402
 
 #: Запреты на весь модуль: часть классов работает на реальной доске (только чтение)
 #: и на настоящем сервере — запись в реальный Hermes/Vault и агентский CLI запрещены.
@@ -563,9 +563,9 @@ class RealBoardAdoptTest(unittest.TestCase):
                     os.environ[key] = value
             import shutil
             shutil.rmtree(cls.tmp, ignore_errors=True)
-            after = snapshot_real_db()
-            if after != cls.before:
-                raise AssertionError("реальная kanban.db изменилась: %r → %r" % (cls.before, after))
+            after = assert_real_untouched(cls.before)
+            if after["ours"] != cls.before["ours"]:
+                raise AssertionError("наш код оставил карточки в живой доске")
 
     def test_real_legacy_adopt_and_ingest(self):
         self.assertFalse(self.cfg.sandbox)
@@ -593,9 +593,15 @@ class RealBoardAdoptTest(unittest.TestCase):
         self.assertFalse(detail["critic"]["enabled"])          # adopted → критик выключен
         self.assertTrue(detail["next_steps"])
         self.assertTrue(detail["open_questions"])
+        # W17-R §1 (B-8): порядок и названия этапов — данные комнаты, статусы — из
+        # metadata ответа. Точный `current` здесь задаёт сам ответ руководителя
+        # (его порядок областей), а карта комнаты берёт первый незакрытый этап в
+        # порядке комнаты, поэтому проверяем смысл: этап существует и ещё не закрыт.
         self.assertEqual([p["id"] for p in detail["stage"]["phases"]],
                          ["idea", "legal", "brand", "packaging", "production", "sales"])
-        self.assertEqual(detail["stage"]["current"], "legal")
+        current = next(p for p in detail["stage"]["phases"]
+                       if p["id"] == detail["stage"]["current"])
+        self.assertIn(current["status"], ("active", "blocked"))
 
         # watcher: adopted-запрос не создаёт карточек, но доносит версию до здания проекта
         stats = self.server.http_app.watcher.tick_once()

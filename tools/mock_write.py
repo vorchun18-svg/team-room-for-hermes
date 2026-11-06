@@ -8,7 +8,7 @@ import re
 from urllib.parse import unquote
 
 from mock_core import (MAX_NOTE, MAX_TEXT, ROOT, ApiError, backlog_counts, compute_needs_you,
-                       detail_to_summary, now, slugify)
+                       detail_to_summary, now, short_title, slugify)
 from mock_versions import normalize_v2
 import mock_backlog
 import mock_notes
@@ -253,6 +253,9 @@ class MockWrite:
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/entries", path)
         if m:
             return 201, self.post_note_entry(m.group(1), m.group(2), body or {})
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/entries/([A-Za-z0-9_-]{2,40})/pin", path)
+        if m:
+            return 200, self.pin_note_entry(m.group(1), m.group(2), m.group(3), body or {})
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/review", path)
         if m:
             return 200, self.review_notes(m.group(1), m.group(2), body or {})
@@ -343,7 +346,44 @@ class MockWrite:
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/plan/streams/([A-Za-z0-9_-]{1,16})", path)
         if m:
             return self.patch_stream(m.group(1), m.group(2), body)
+        m = re.fullmatch(r"/api/requests/(t_[A-Za-z0-9_]+)", path)
+        if m:
+            return 200, self.patch_request(m.group(1), body or {})
         raise ApiError(404, "not_found", "Неизвестный эндпоинт", {"path": path})
+
+    # W17-B §4: переименование названия запроса — в памяти демо, как реестр бэкенда
+    def patch_request(self, rid: str, body: dict) -> dict:
+        """`PATCH /api/requests/{id} {title}` → `title_source=user`, `title_locked`.
+        Пустая строка снимает блокировку (название снова автоматическое).
+        """
+        detail = self.detail(rid)
+        if "title" not in body:
+            raise ApiError(400, "bad_request", "Нужно поле title (пустая строка снимает блокировку)",
+                           {"field": "title"})
+        title = body.get("title")
+        if title is None:
+            title = ""
+        if not isinstance(title, str):
+            raise ApiError(400, "bad_request", "title: ожидается строка", {"field": "title"})
+        flat = " ".join(title.split())
+        if len(flat) > 120:
+            raise ApiError(400, "bad_request", "title длиннее 120 символов",
+                           {"field": "title", "length": len(flat)})
+        store = getattr(self, "title_overrides", None)
+        if not isinstance(store, dict):
+            store = {}
+            self.title_overrides = store
+        if not flat:
+            store.pop(str(rid), None)
+            short = short_title(detail.get("title") or detail.get("text") or "")
+            saved = {"title_short": short, "title_source": "derived", "title_locked": False}
+        else:
+            saved = {"title_short": flat, "title_source": "user", "title_locked": True}
+            store[str(rid)] = dict(saved)
+        summary = detail_to_summary(dict(self.detail(rid), **saved))
+        return {"ok": True, "action": "rename", "request": summary,
+                "title_short": saved["title_short"], "title_source": saved["title_source"],
+                "title_locked": saved["title_locked"]}
 
     def delete(self, path: str, query: dict, body: dict) -> tuple:
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/entries/([A-Za-z0-9_-]{2,40})", path)
@@ -381,11 +421,20 @@ class MockWrite:
             if str(member.get("profile") or "") != profile:
                 continue
             member["label"] = " ".join(str(label or "").split())[:120]
-            return {"ok": True, "profile": profile, "label": member["label"], "members": members}
+            return {"ok": True, "profile": profile, "label": member["label"], "members": members,
+                    "role_labels": room.get("role_labels") or {}}
         if profile in (room.get("orchestrator"), room.get("critic")):
-            raise ApiError(400, "bad_request",
-                           "Руководитель комнаты и критик задаются настройками комнаты",
-                           {"profile": profile, "reason": "room_lead"})
+            # WAVE17 B-17: у руководителя и критика та же кнопка «Подпись» —
+            # подпись хранится в реестре комнаты (карта role_labels).
+            text = " ".join(str(label or "").split())[:120]
+            labels = dict(room.get("role_labels") or {})
+            if text:
+                labels[profile] = text
+            else:
+                labels.pop(profile, None)
+            room["role_labels"] = labels
+            return {"ok": True, "profile": profile, "label": text, "members": members,
+                    "role_labels": labels}
         raise ApiError(404, "not_found", "Участника нет в комнате", {"profile": profile})
 
     def put_notes(self, room_id: str, profile: str, body: dict) -> dict:
@@ -689,7 +738,9 @@ class MockWrite:
                    "decompose", "revise", "critique",
                    # W14-D §2/§4: «Напомнить руководителю» и «Убрать» шаг
                    # W14-H §12: действия пользователя по шагу
-                   "answer_remind", "step_drop", "step_agree", "step_comment", "step_move"]
+                   "answer_remind", "step_drop", "step_agree", "step_comment", "step_move",
+                   # W17-B §3: «Отправить руководителю накопленные ответы»
+                   "answers_resend"]
         if action not in allowed:
             raise ApiError(400, "bad_request", "Неизвестное действие", {"action": action, "allowed": allowed})
         extra = {"ok": True, "action": action}
@@ -786,7 +837,7 @@ class MockWrite:
                 raise ApiError(404, "not_found", "Ответ на этот вопрос не найден", {"question_id": qid})
             if question.get("reaction"):
                 raise ApiError(409, "conflict", "Руководитель уже ответил на этот вопрос",
-                               {"question_id": qid})
+                               {"question_id": qid, "reaction": question.get("reaction")})
             question["leader_pending"] = True
             question["reminded_at"] = now()
             question["can_remind"] = True
@@ -797,6 +848,33 @@ class MockWrite:
                     {"id": self.comment_seq, "author": "mikhail", "text": text, "at": now()})
             extra.update({"question_id": qid, "reminded_at": question["reminded_at"],
                           "reminders": 1, "text": text, "question": question})
+        elif action == "answers_resend":
+            # W17-B §3: одна карточка со всеми ответами без реакции — только по клику
+            pending = [q for q in detail.get("open_questions") or []
+                       if q.get("answer") and q.get("answer_state") == "sent"]
+            if not pending:
+                raise ApiError(409, "conflict",
+                               "Нечего отправлять: на все ответы руководитель уже отреагировал.",
+                               {"reason": "nothing_to_resend", "pending": 0})
+            items = [{"question_id": q["id"], "question_text": q.get("text") or "",
+                      "answer": q.get("answer") or ""} for q in pending]
+            text = mock_answers.digest_comment(items)
+            self.comment_seq = getattr(self, "comment_seq", 0) + 1
+            if root is not None:
+                root.setdefault("comments", []).append(
+                    {"id": self.comment_seq, "author": "mikhail", "text": text, "at": now()})
+            store = getattr(self, "thread_store", None)
+            if isinstance(store, dict):
+                store.setdefault(rid, []).append(
+                    {"id": "c%d" % self.comment_seq, "at": now(), "author_kind": "mikhail",
+                     "author": "mikhail", "author_label": "Михаил", "text": text,
+                     "task_id": rid, "kind": "message"})
+            for question in pending:
+                question["resent_at"] = now()
+            extra.update({"sent": len(items), "question_ids": [q["id"] for q in pending],
+                          "task_id": root.get("id") if isinstance(root, dict) else rid,
+                          "at": now(),
+                          "note": {"task_id": None, "merged": False, "routed_to": None}})
         elif action == "step_drop":
             step_id = (check_str(body, "step_id", required=True, maxlen=64) or "").strip()
             step = next((s for s in detail.get("next_steps") or [] if s.get("id") == step_id), None)

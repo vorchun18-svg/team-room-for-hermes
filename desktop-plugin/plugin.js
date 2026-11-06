@@ -21,7 +21,7 @@ import * as SDK from '@hermes/plugin-sdk'
 import * as ReactNS from 'react'
 import * as JSXNS from 'react/jsx-runtime'
 
-export const PLUGIN_VERSION = '1.0.2'
+export const PLUGIN_VERSION = '1.0.3'
 
 const ID = 'team-room'
 const NAME = 'Командные комнаты'
@@ -98,7 +98,159 @@ function detectTheme() {
 }
 
 function frameUrl() {
-  return BASE_URL + '?theme=' + detectTheme()
+  // B-16: при пересоздании webview открываем ТОТ ЖЕ маршрут, а не «дом».
+  return BASE_URL + '?theme=' + detectTheme() + (lastHash ? lastHash : '')
+}
+
+// ── Память маршрута (B-16) ──────────────────────────────────────────────────
+/* Страница сообщает маршрут: `postMessage({type:'team-room:route', hash})`.
+   В браузере и в <iframe> это доходит до хозяина напрямую; в <webview> между
+   процессами postMessage не ходит, поэтому там же читаем адрес гостя
+   (`did-navigate-in-page` + `location.hash`) — источник правды один: адрес. */
+let lastHash = ''
+
+/** Хэш из строки вида `#/room/…` или полного адреса. '' — не наш маршрут. */
+function hashOf(value) {
+  const raw = String(value == null ? '' : value).trim()
+  if (!raw) return ''
+  if (raw.charAt(0) === '#') return raw.length <= 512 ? raw : ''
+  try {
+    const url = new URL(raw)
+    return String(url.hash || '').slice(0, 512)
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Запомнить маршрут гостя. `#` и `#/` — это «дом», старый маршрут забываем;
+ * пустое/непонятное значение память не портит.
+ * @returns {string} актуальный хэш
+ */
+function rememberRoute(value) {
+  const hash = hashOf(value)
+  if (!hash) return lastHash
+  if (hash === '#' || hash === '#/') {
+    lastHash = ''
+    return lastHash
+  }
+  if (hash.charAt(0) === '#' && hash.charAt(1) === '/') lastHash = hash
+  return lastHash
+}
+
+/** Прочитать адрес гостя (webview: без этого postMessage-путь недоступен). */
+function readGuestHash(view) {
+  if (!view || typeof view.executeJavaScript !== 'function') return
+  try {
+    const result = view.executeJavaScript('location.hash')
+    if (result && typeof result.then === 'function') {
+      result.then(hash => rememberRoute(hash)).catch(() => {
+        // страница ещё грузится или уже уехала
+      })
+    }
+  } catch {
+    // webview не готов — маршрут придёт следующим событием
+  }
+}
+
+/** Сообщение страницы о маршруте (iframe и встроенные варианты). */
+function routeFromMessage(data) {
+  if (!data || typeof data !== 'object') return ''
+  if (data.type !== 'team-room:route') return ''
+  return rememberRoute(data.hash)
+}
+
+// ── Тема хозяина: читаем токены и передаём странице ─────────────────────────
+/* Страница комнаты умеет принимать тему (web/js/theme-bridge.js): поверхности,
+   текст, штрихи, акцент и радиус. Здесь мы ТОЛЬКО читаем вычисленные значения
+   у приложения-хозяина — ничего не пишем в его DOM (правило волны 17). */
+const HOST_TOKENS = [
+  '--ui-bg-chrome', '--ui-bg-sidebar', '--ui-bg-editor', '--ui-bg-elevated',
+  '--ui-accent', '--ui-base',
+  '--ui-text-primary', '--ui-text-secondary', '--ui-text-tertiary', '--ui-text-quaternary',
+  '--ui-stroke-primary', '--ui-stroke-secondary', '--ui-stroke-tertiary', '--ui-stroke-quaternary'
+]
+const RADIUS_TOKENS = ['--ui-radius-lg', '--ui-radius', '--radius-lg', '--radius']
+
+function hostThemePayload() {
+  const payload = { type: 'team-room:theme', version: 1, scheme: detectTheme(), tokens: {} }
+
+  try {
+    const root = document.documentElement
+    const nodes = [root, document.body]
+
+    try {
+      const extra = document.querySelectorAll('[data-theme], .app, #root')
+      for (let i = 0; i < extra.length && nodes.length < 6; i += 1) {
+        nodes.push(extra[i])
+      }
+    } catch {
+      // селектор не сработал — читаем с :root и body
+    }
+
+    const tokens = {}
+    let radius = null
+
+    for (const node of nodes) {
+      if (!node) continue
+      const style = window.getComputedStyle(node)
+      if (!style) continue
+
+      for (const name of HOST_TOKENS) {
+        if (tokens[name]) continue
+        const value = String(style.getPropertyValue(name) || '').trim()
+        if (value) tokens[name] = value
+      }
+
+      if (radius === null) {
+        for (const name of RADIUS_TOKENS) {
+          const value = parseFloat(String(style.getPropertyValue(name) || '').trim())
+          if (Number.isFinite(value) && value > 0 && value <= 32) {
+            radius = Math.round(value)
+            break
+          }
+        }
+      }
+
+      if (Object.keys(tokens).length >= HOST_TOKENS.length && radius !== null) break
+    }
+
+    payload.tokens = tokens
+    if (radius !== null) payload.radius = radius
+  } catch (error) {
+    warn('чтение токенов темы: ' + String((error && error.message) || error))
+  }
+
+  return payload
+}
+
+/** Отдать тему странице внутри <webview> (executeJavaScript → window.postMessage). */
+function sendThemeToView(view) {
+  if (!view || typeof view.executeJavaScript !== 'function') return
+
+  try {
+    const code = 'window.postMessage(' + JSON.stringify(hostThemePayload()) + ", '*');"
+    const result = view.executeJavaScript(code)
+
+    if (result && typeof result.catch === 'function') {
+      result.catch(() => {
+        // страница ещё грузится — отдадим по did-finish-load
+      })
+    }
+  } catch (error) {
+    warn('передача темы в webview: ' + String((error && error.message) || error))
+  }
+}
+
+/** Отдать тему странице в <iframe> (у iframe есть contentWindow). */
+function sendThemeToFrame(frame) {
+  try {
+    const target = frame && frame.contentWindow
+    if (!target) return
+    target.postMessage(hostThemePayload(), '*')
+  } catch (error) {
+    warn('передача темы в iframe: ' + String((error && error.message) || error))
+  }
 }
 
 function openInBrowser(url) {
@@ -170,14 +322,33 @@ const cardStyle = {
   textAlign: 'center'
 }
 
+// Плашка «сервер перезапускается»: страница остаётся живой, ничего не сносим.
+const offlineStyle = {
+  alignItems: 'center',
+  background: 'var(--ui-bg-elevated, rgba(127,127,127,0.12))',
+  borderBottom: '1px solid var(--ui-stroke-tertiary, rgba(127,127,127,0.25))',
+  color: 'var(--ui-text-tertiary)',
+  display: 'flex',
+  fontSize: '0.75rem',
+  justifyContent: 'center',
+  left: 0,
+  padding: '0.25rem 0.75rem',
+  pointerEvents: 'none',
+  position: 'absolute',
+  right: 0,
+  top: 0
+}
+
 // ── Страница ────────────────────────────────────────────────────────────────
 function TeamRoomPage() {
   const { useState, useRef, useEffect, useCallback } = React
   const [mode, setMode] = useState('webview') // 'webview' | 'iframe'
-  const [status, setStatus] = useState('loading') // 'loading' | 'ready' | 'failed'
+  // 'offline' — страница уже была загружена и жива, но сервер сейчас недоступен.
+  const [status, setStatus] = useState('loading') // 'loading' | 'ready' | 'offline' | 'failed'
   const [detail, setDetail] = useState('')
   const [tick, setTick] = useState(0)
   const holder = useRef(null)
+  const guest = useRef(null)
 
   const retry = useCallback(() => {
     setDetail('')
@@ -194,6 +365,9 @@ function TeamRoomPage() {
 
     let disposed = false
     let watchdog = null
+    let pushGuest = null
+    // Страница хоть раз загрузилась в этом webview: её больше не сносим.
+    let loaded = false
     const src = frameUrl()
 
     const clear = () => {
@@ -207,10 +381,26 @@ function TeamRoomPage() {
     }
 
     const onReady = () => {
-      if (!disposed) {
-        setStatus('ready')
-        setDetail('')
+      if (disposed) {
+        return
       }
+
+      loaded = true
+      setStatus('ready')
+      setDetail('')
+
+      // Тема хозяина — после загрузки страницы: её модули к этому моменту поднялись.
+      setTimeout(() => {
+        if (disposed || !pushGuest) {
+          return
+        }
+
+        try {
+          pushGuest()
+        } catch {
+          // страница уже могла уехать — не беда
+        }
+      }, 250)
     }
 
     const onFailed = (errorCode, errorDescription) => {
@@ -220,6 +410,15 @@ function TeamRoomPage() {
 
       // -3 = ERR_ABORTED (обычное дело при быстром повторном переходе)
       if (errorCode === -3) {
+        return
+      }
+
+      // B-16: кратковременная недоступность сервера (перезапуск ~10 с) НЕ должна
+      // разрушать уже загруженную страницу: не пересоздаём её и не сбрасываем
+      // маршрут — страница сама переподключится к API. Только тонкая плашка.
+      if (loaded) {
+        setStatus('offline')
+        setDetail(String(errorDescription || errorCode || ''))
         return
       }
 
@@ -275,18 +474,43 @@ function TeamRoomPage() {
         onFailed(data.errorCode, data.errorDescription)
       }
 
-      const handleCrash = () => onFailed(0, 'окно модуля закрылось')
+      const handleCrash = () => {
+        // Окно гостя умерло — пересоздадим (маршрут уже запомнен событиями
+        // навигации, поэтому откроется то же место).
+        if (disposed) {
+          return
+        }
+        setStatus('failed')
+        setDetail('окно модуля закрылось')
+      }
+
+      // B-16: адрес гостя — источник правды о маршруте. Ставим его же в
+      // lastHash, чтобы пересоздание открыло то же место.
+      const handleNavigate = event => {
+        const data = event || {}
+        if (data.isMainFrame === false) {
+          return
+        }
+        rememberRoute(data.url || (typeof view.getURL === 'function' ? view.getURL() : ''))
+        readGuestHash(view)
+        setStatus(current => (current === 'offline' ? 'ready' : current))
+      }
 
       try {
         view.addEventListener('did-fail-load', handleFail)
         view.addEventListener('did-finish-load', onReady)
         view.addEventListener('crashed', handleCrash)
         view.addEventListener('render-process-gone', handleCrash)
+        view.addEventListener('did-navigate', handleNavigate)
+        view.addEventListener('did-navigate-in-page', handleNavigate)
+        view.addEventListener('dom-ready', () => readGuestHash(view))
       } catch (error) {
         warn('события webview: ' + String((error && error.message) || error))
       }
 
       box.appendChild(view)
+      guest.current = { kind: 'webview', node: view }
+      pushGuest = () => sendThemeToView(view)
 
       // Тег <webview> существует, только если приложение его разрешило.
       // Проверяем сам факт: у настоящего webview есть getWebContentsId.
@@ -307,6 +531,8 @@ function TeamRoomPage() {
           view.removeEventListener('did-finish-load', onReady)
           view.removeEventListener('crashed', handleCrash)
           view.removeEventListener('render-process-gone', handleCrash)
+          view.removeEventListener('did-navigate', handleNavigate)
+          view.removeEventListener('did-navigate-in-page', handleNavigate)
         } catch {
           // элемент уже мог уехать
         }
@@ -342,6 +568,8 @@ function TeamRoomPage() {
     frame.addEventListener('load', onReady)
     frame.addEventListener('error', () => onFailed(0, ''))
     box.appendChild(frame)
+    guest.current = { kind: 'iframe', node: frame }
+    pushGuest = () => sendThemeToFrame(frame)
     armWatchdog()
 
     return () => {
@@ -354,6 +582,110 @@ function TeamRoomPage() {
       }
 
       clear()
+    }
+  }, [mode, tick])
+
+  // Тема хозяина: отдаём странице при старте и при каждой смене темы приложения.
+  // Следим за атрибутами корня/тела и системной схемой — Hermes меняет их сам,
+  // когда пользователь переключает тему или правит оформление в настройках.
+  useEffect(() => {
+    const push = () => {
+      const current = guest.current
+      if (!current || !current.node) {
+        return
+      }
+
+      if (current.kind === 'webview') {
+        sendThemeToView(current.node)
+      } else {
+        sendThemeToFrame(current.node)
+      }
+    }
+
+    // Странице нужно время сменить режим загрузки — первый заход дублируем.
+    const first = setTimeout(push, 1200)
+    let pending = null
+    const schedule = () => {
+      if (pending) {
+        clearTimeout(pending)
+      }
+
+      pending = setTimeout(push, 150)
+    }
+
+    let observer = null
+
+    try {
+      if (typeof MutationObserver === 'function') {
+        observer = new MutationObserver(schedule)
+        const filter = ['data-theme', 'data-color-scheme', 'data-appearance', 'class', 'style']
+        observer.observe(document.documentElement, { attributes: true, attributeFilter: filter })
+
+        if (document.body) {
+          observer.observe(document.body, { attributes: true, attributeFilter: filter })
+        }
+      }
+    } catch (error) {
+      warn('наблюдение за темой: ' + String((error && error.message) || error))
+    }
+
+    let media = null
+
+    try {
+      media = window.matchMedia('(prefers-color-scheme: dark)')
+      if (media && typeof media.addEventListener === 'function') {
+        media.addEventListener('change', schedule)
+      }
+    } catch {
+      // нет matchMedia — тема придёт по следующей загрузке страницы
+    }
+
+    // Безопасный запрос страницы: «дай тему» — отвечаем только своим гостем.
+    // Заодно принимаем сообщение о маршруте (B-16): так его присылает страница
+    // в <iframe>; в <webview> адрес читается событиями навигации.
+    const onRequest = (event) => {
+      const data = event && event.data
+      if (data && data.type === 'team-room:theme:request') {
+        push()
+      }
+      if (routeFromMessage(data) && guest.current) {
+        setStatus(current => (current === 'offline' ? 'ready' : current))
+      }
+    }
+
+    try {
+      window.addEventListener('message', onRequest)
+    } catch {
+      // окно хозяина закрыто
+    }
+
+    return () => {
+      clearTimeout(first)
+      if (pending) {
+        clearTimeout(pending)
+      }
+
+      try {
+        if (observer) {
+          observer.disconnect()
+        }
+      } catch {
+        // уже отключён
+      }
+
+      try {
+        if (media && typeof media.removeEventListener === 'function') {
+          media.removeEventListener('change', schedule)
+        }
+      } catch {
+        // ничего
+      }
+
+      try {
+        window.removeEventListener('message', onRequest)
+      } catch {
+        // ничего
+      }
     }
   }, [mode, tick])
 
@@ -384,6 +716,13 @@ function TeamRoomPage() {
         ref: holder,
         style: { display: 'flex', flex: '1 1 auto', minHeight: 0, width: '100%' }
       }),
+      status === 'offline'
+        ? jsx('div', {
+            style: offlineStyle,
+            role: 'status',
+            children: 'Сервер перезапускается: страница останется открытой, данные подтянутся сами.'
+          })
+        : null,
       failed
         ? jsx('div', {
             style: overlayStyle,

@@ -168,7 +168,6 @@
           "outcome": "completed",
           "started_at": 1793170130,
           "ended_at": 1793170430,
-          "summary": "Свод готов.",
           "error": null
         }
       ],
@@ -198,7 +197,6 @@
           "outcome": "completed",
           "started_at": 1793170150,
           "ended_at": 1793170300,
-          "summary": "Котировки собраны.",
           "error": null
         }
       ],
@@ -229,7 +227,6 @@
           "outcome": "completed",
           "started_at": 1793170160,
           "ended_at": 1793170260,
-          "summary": "Требования описаны.",
           "error": null
         }
       ],
@@ -259,7 +256,6 @@
           "outcome": "completed",
           "started_at": 1793170170,
           "ended_at": 1793170280,
-          "summary": "Расчёт готов.",
           "error": null
         }
       ],
@@ -299,7 +295,6 @@
           "outcome": "completed",
           "started_at": 1793170320,
           "ended_at": 1793170410,
-          "summary": "Принять без замечаний.",
           "error": null
         }
       ],
@@ -418,5 +413,10 @@
       "task_id": "t_c4d2e118",
       "kind": "event"
     }
-  ]
+  ],
+  "title_short": "Поставщики упаковки: шорт-лист и MOQ",
+  "heartbeats": {
+    "count": 0,
+    "last_at": null
+  }
 }

@@ -21,8 +21,10 @@ import { countNoun } from '../text-ru.js';
 import {
   projectDirButton, CHECK_DELAY_MS, dirVerdict, suggestProjectDir, MOVE_NOTE,
 } from '../project-dir-button.js';
-// Особенности для этой комнаты (WAVE9 §9 → WAVE14 §13): записи, журнал, откат.
-import { mountAgentNotes, mountNotesLive, notesOf } from '../agent-notes-ui.js';
+// Особенности для этой комнаты (WAVE9 §9 → WAVE14 §13 → WAVE17 P6):
+// записи живут в большом окне-«блокноте», здесь — только ссылки «Особенности (N)».
+import { notesOf, entriesOfItem } from '../agent-notes-ui.js';
+import { notesLink } from '../notes-editor.js';
 // Модель, провайдер и мышление участников (WAVE10): одна точка монтирования.
 import { mountAgentModel, normalizeReasoning } from '../agent-model-ui.js';
 
@@ -144,11 +146,14 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   /* Проектный режим — настройки ИМЕННО ЭТОЙ комнаты (A1/A2 WAVE9-RULES).
      У новой комнаты он включён, у старой (полей в записи нет) — выключен. */
   let projectMode = full && full.project_mode !== undefined ? Boolean(full.project_mode) : true;
-  let launchMode = String((full && full.launch_mode) || 'plan_first');
+  // Новая комната (W17-R §3, решение Михаила): запускать части сразу, без
+  // подтверждения. У существующей комнаты — её сохранённый режим, без правок.
+  let launchMode = String((full && full.launch_mode) || (isEdit ? 'plan_first' : 'auto'));
   if (launchMode !== 'plan_first' && launchMode !== 'auto') launchMode = 'plan_first';
   let maxStreams = Number(full && full.max_parallel_streams);
   if (!Number.isInteger(maxStreams) || maxStreams < 1 || maxStreams > 4) maxStreams = 2;
-  const STREAM_FORMS = ['направление', 'направления', 'направлений'];
+  // Один термин вместо «направление» (B-10): «часть работы».
+  const STREAM_FORMS = ['часть работы', 'части работы', 'частей работы'];
 
   /* ──────────────────────────────────────────────────────────────── каркас */
 
@@ -244,8 +249,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   }
 
   const membersHost = h('div', { class: 'roomdlg__members', role: 'group', 'aria-label': 'Состав комнаты' });
-  // Интерфейсы указаний и модели монтируются ниже одной точкой; здесь только ссылки.
-  let notesUi = null;
+  // Модели монтируются ниже одной точкой; особенности — ссылками в блокнот (P6).
   let modelUi = null;
 
   /** Кто сейчас в составе — по одному правилу для указаний и для модели. */
@@ -447,22 +451,33 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   });
   renderFiles();
 
-  /* ── проектный режим: один главный запрос → карта направлений ──────────── */
+  /* ── проектный режим (W17-R §3, B-10): большой запрос → части работы ───── */
 
   const projectModeInput = h('input', { type: 'checkbox', id: 'roomdlg-project-mode' });
   projectModeInput.checked = projectMode;
   const projectModeBox = h('label', { class: 'checkbox' }, projectModeInput,
-    h('span', null, 'Руководитель сам строит карту проекта из главного запроса'));
+    h('span', null, 'Руководитель делит большой запрос на части работы'));
 
+  const PROJECT_MODE_HINT =
+    'Проектный режим: большой запрос руководитель делит на несколько частей '
+    + '(например: «юридическая часть», «закупки», «упаковка»). Каждая часть — '
+    + 'отдельный запрос со своим ходом работы и своим исполнителем. Включайте, '
+    + 'если одна задача — это целый проект; выключен — руководитель отвечает '
+    + 'одним общим ответом.';
+  const projectModeState = h('div', { class: 'roomdlg__hint roomdlg__state' });
+
+  // Один термин вместо «направления» (B-10): «часть работы» — везде одинаково.
   const LAUNCH_CHOICES = [
-    ['plan_first', 'Сначала план: направления ждут кнопки «Запустить». Рекомендуем'],
-    ['auto', 'Сразу, без подтверждения'],
+    ['auto', 'Сразу, без подтверждения',
+      'Команда начинает работу, как только руководитель разделил запрос.'],
+    ['plan_first', 'Сначала показать план — я запускаю сам кнопкой «Запустить»',
+      'Вы увидите список частей и решите, что запускать.'],
   ];
   const launchHost = h('div', {
-    class: 'roomdlg__launch', role: 'radiogroup', 'aria-label': 'Как запускать направления',
+    class: 'roomdlg__launch', role: 'radiogroup', 'aria-label': 'Как запускать части работы',
   });
   const launchInputs = [];
-  for (const [value, text] of LAUNCH_CHOICES) {
+  for (const [value, text, hint] of LAUNCH_CHOICES) {
     const input = h('input', {
       type: 'radio', name: 'roomdlg-launch', value, id: 'roomdlg-launch-' + value,
     });
@@ -470,10 +485,12 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     input.addEventListener('change', () => { if (input.checked) { launchMode = value; renderModeState(); } });
     launchInputs.push(input);
     // обёртка-блок: варианты стоят друг под другом и не слипаются в строку
-    launchHost.appendChild(h('div', null, h('label', { class: 'checkbox' }, input, h('span', null, text))));
+    launchHost.appendChild(h('div', { class: 'roomdlg__choice' },
+      h('label', { class: 'checkbox' }, input, h('span', null, text)),
+      h('div', { class: 'roomdlg__choice-hint' }, hint)));
   }
 
-  const streamsSelect = h('select', { class: 'select', 'aria-label': 'Одновременно направлений' });
+  const streamsSelect = h('select', { class: 'select', 'aria-label': 'Одновременно частей работы' });
   for (let n = 1; n <= 4; n += 1) {
     streamsSelect.appendChild(h('option', { value: String(n) }, countNoun(n, STREAM_FORMS)));
   }
@@ -481,11 +498,89 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   streamsSelect.addEventListener('change', () => { maxStreams = Number(streamsSelect.value) || 2; });
 
   const modeCostHint = h('div', { class: 'roomdlg__hint' },
-    'Больше направлений одновременно — быстрее работа, но быстрее расходуется лимит модели. '
-    + 'Остальные ждут в очереди.');
-  const modeOffHint = h('div', { class: 'roomdlg__hint' },
-    'Проектный режим выключен: руководитель комнаты ответит одним ответом, без карты направлений. '
-    + 'Включить можно в любой момент.');
+    'Больше частей одновременно — быстрее работа, но больше расходов и нагрузки на модели. '
+    + 'Остальные ждут своей очереди.');
+
+  /* Этапы проекта — свойство КОМНАТЫ (W17-R §1, B-8): своих шаблонов нет. */
+  let phases = Array.isArray(full && full.phases)
+    ? full.phases.map((p) => ({ id: String((p && p.id) || ''), title: String((p && p.title) || '') }))
+        .filter((p) => p.title)
+    : [];
+
+  /** Заголовок → id этапа: переименование сохраняет id, привязка не рвётся. */
+  function phaseId(title, taken) {
+    const base = String(title || '').toLowerCase().replace(/[^a-zа-я0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
+      || 'etap';
+    let candidate = base;
+    let n = 2;
+    while (taken.has(candidate)) { candidate = base + '-' + n; n += 1; }
+    return candidate;
+  }
+
+  const phasesHost = h('div', { class: 'roomdlg__phases' });
+  const phasesHint = h('div', { class: 'roomdlg__hint' },
+    'Необязательно. Полоса этапов на вкладке «Карта проекта» — например «Идея», '
+    + '«Согласование», «Запуск». Порядок можно менять, этап — переименовать или убрать.');
+
+  function renderPhases() {
+    phasesHost.replaceChildren();
+    if (!phases.length) {
+      phasesHost.appendChild(h('div', { class: 'roomdlg__phases-empty muted' },
+        'Этапов пока нет — полосы этапов на карте не будет.'));
+      return;
+    }
+    phases.forEach((phase, index) => {
+      const input = h('input', {
+        class: 'input', type: 'text', maxlength: '80', value: phase.title,
+        'aria-label': 'Название этапа ' + (index + 1), placeholder: 'Например: Согласование',
+      });
+      input.addEventListener('input', () => { phase.title = input.value; });
+      const up = iconButton({
+        icon: 'chevron-up', size: 'sm', title: 'Выше',
+        disabled: index === 0,
+        onclick: () => { phases.splice(index - 1, 0, phases.splice(index, 1)[0]); renderPhases(); },
+      });
+      const down = iconButton({
+        icon: 'chevron-down', size: 'sm', title: 'Ниже',
+        disabled: index === phases.length - 1,
+        onclick: () => { phases.splice(index + 1, 0, phases.splice(index, 1)[0]); renderPhases(); },
+      });
+      const del = iconButton({
+        icon: 'trash', size: 'sm', title: 'Убрать этап',
+        onclick: () => { phases.splice(index, 1); renderPhases(); },
+      });
+      phasesHost.appendChild(h('div', { class: 'roomdlg__phase' },
+        h('span', { class: 'roomdlg__phase-no tnum' }, String(index + 1)), input,
+        h('div', { class: 'roomdlg__phase-actions' }, up, down, del)));
+    });
+  }
+
+  const addPhaseBtn = h('button', { class: 'btn btn--secondary btn--sm', type: 'button' },
+    icon('add', { size: 13 }), 'Добавить этап');
+  addPhaseBtn.addEventListener('click', () => {
+    if (phases.length >= 24) { toast('Не больше 24 этапов в комнате', 'warn'); return; }
+    const taken = new Set(phases.map((p) => p.id));
+    phases.push({ id: phaseId('', taken), title: '' });
+    renderPhases();
+    const inputs = phasesHost.querySelectorAll('input');
+    const last = inputs[inputs.length - 1];
+    if (last && typeof last.focus === 'function') last.focus();
+  });
+  renderPhases();
+
+  /** Список этапов для PATCH: id сохраняется, пустые строки не отправляем. */
+  function phasesPayload() {
+    const taken = new Set();
+    const out = [];
+    for (const phase of phases) {
+      const title = String(phase.title || '').trim();
+      if (!title) continue;
+      const id = phase.id && !taken.has(phase.id) ? phase.id : phaseId(title, taken);
+      taken.add(id);
+      out.push({ id, title });
+    }
+    return out;
+  }
 
   function renderModeState() {
     const on = Boolean(projectModeInput.checked);
@@ -493,7 +588,12 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     for (const input of launchInputs) input.disabled = !on;
     streamsSelect.disabled = !on;
     modeCostHint.classList.toggle('hidden', !on);
-    modeOffHint.classList.toggle('hidden', on);
+    launchHost.classList.toggle('roomdlg__launch--off', !on);
+    // Состояние словами (B-10): что человек увидит на вкладке «Карта проекта».
+    projectModeState.textContent = on
+      ? 'Сейчас: включён — на вкладке «Карта проекта» будут части работы, этапы и прогресс.'
+      : 'Сейчас: выключен — руководитель ответит одним общим ответом, карты частей не будет. '
+        + 'Включить можно в любой момент.';
   }
   projectModeInput.addEventListener('change', renderModeState);
 
@@ -536,14 +636,14 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       const sb = selectedMembers.has(profileName(b)) ? 0 : 1;
       return sa - sb;
     });
-    if (!list.length) { if (notesUi) notesUi.refresh(); if (modelUi) modelUi.refresh(); return; }
+    if (!list.length) { paintNotesLinks(); if (modelUi) modelUi.refresh(); return; }
     for (const p of list) {
       const name = profileName(p);
       const input = h('input', { type: 'checkbox', id: 'roomdlg-m-' + name });
       input.checked = selectedMembers.has(name);
       input.addEventListener('change', () => {
         if (input.checked) selectedMembers.add(name); else selectedMembers.delete(name);
-        if (notesUi) notesUi.refresh();          // указания — только у выбранных
+        paintNotesLinks();                        // указания — только у выбранных
         if (modelUi) modelUi.refresh();          // модель — тоже
       });
       // WAVE13 §11: заголовок — имя и должность («Анна — финансы и экономика (CFO)»),
@@ -566,7 +666,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   criticSelect.addEventListener('change', () => { renderHints(); renderMembers(); });
 
   form.appendChild(errBanner);
-  form.appendChild(field({ label: 'Название', control: titleInput, hint: 'Коротко: проект или направление.' }));
+  form.appendChild(field({ label: 'Название', control: titleInput, hint: 'Коротко: о чём эта комната.' }));
   form.appendChild(h('div', { class: 'roomdlg__row' },
     field({ label: 'Иконка', control: iconsHost }),
     h('div', { class: 'roomdlg__section' },
@@ -604,35 +704,47 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     membersHost,
   ));
 
-  /* ── ЕДИНСТВЕННАЯ точка монтирования особенностей (WAVE9 §9 → WAVE14 §13) ── */
+  /* ── ЕДИНСТВЕННАЯ точка особенностей (WAVE17 P6): ссылки в блокнот ────── */
   const notesHost = h('div', { class: 'roomdlg__notes' });
   form.appendChild(h('div', { class: 'roomdlg__section' },
     h('div', { class: 'roomdlg__label' }, 'Особенности для этой комнаты'),
     h('div', { class: 'roomdlg__hint' },
-      'Добавка к роли участника, действует только здесь: его SOUL.md и профиль не меняются. '
-      + 'Руководитель комнаты пополняет записи сам; каждая правка — в журнале с откатом.'),
+      'Добавка к SOUL.md только для этой комнаты. Профиль Hermes не меняется. '
+      + 'Записи правятся в блокноте: поиск, диктовка, журнал и откат.'),
     notesHost,
   ));
-  // Существующая комната: записи правятся по одной сразу в реестре (журнал + откат).
-  // Новая комната: черновик полного текста, он уходит вместе с POST /api/rooms.
-  const notesLive = Boolean(full && full.id);
   const participantsNow = () => currentParticipants().map((p) => ({
     profile: p.profile,
     role: p.role,
     roleLabel: p.role === 'orchestrator' ? 'руководитель комнаты'
       : (p.role === 'critic' ? 'критик' : 'исполнитель'),
   }));
-  if (notesLive) {
-    mountNotesLive(notesHost, ctx, { room: full, roomId: String(full.id), live: true },
-      participantsNow).then((ui) => { notesUi = ui; }).catch(() => { notesUi = null; });
-  } else {
-    mountAgentNotes(notesHost, ctx, {
-      room: full,
-      profiles,
-      values: notesOf(full),
-      participants: currentParticipants,
-    }).then((ui) => { notesUi = ui; }).catch(() => { notesUi = null; });
+  /** Список участников со ссылкой «Особенности (N)» — обновляется при смене состава. */
+  function paintNotesLinks() {
+    if (!full || !full.id) {
+      notesHost.replaceChildren(h('div', { class: 'agent-notes__empty' },
+        'Записи появятся после создания комнаты — у каждого участника свой блокнот.'));
+      return;
+    }
+    const notes = notesOf(full);
+    const rows = participantsNow().map((person) => {
+      // WAVE13 §11: подпись — имя и должность; техническое имя профиля — в подсказке.
+      const label = participantLabel(person.profile, { role: person.role });
+      const who = String(label.title || person.profile);
+      return h('div', { class: 'roomdlg__notesrow' },
+        h('span', { class: 'roomdlg__noteswho', title: 'Профиль Hermes: ' + person.profile }, who),
+        h('span', { class: 'roomdlg__notesrole' }, person.roleLabel || 'участник'),
+        notesLink(ctx, {
+          room: full,
+          roomId: String(full.id),
+          profile: person.profile,
+          label: who,
+          count: entriesOfItem(notes[person.profile] || null).length,
+        }));
+    });
+    notesHost.replaceChildren(...rows);
   }
+  paintNotesLinks();
 
   /* ── ЕДИНСТВЕННАЯ точка монтирования модели (WAVE10) ─────────────────── */
   const modelsHost = h('div', { class: 'roomdlg__models' });
@@ -650,20 +762,24 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     participants: currentParticipants,
   }).then((ui) => {
     modelUi = ui;
-    if (notesUi) notesUi.refresh();
+    paintNotesLinks();                      // состав мог измениться — ссылки те же
   }).catch(() => { modelUi = null; });
-  form.appendChild(h('div', { class: 'roomdlg__section' },
+  form.appendChild(h('div', { class: 'roomdlg__section roomdlg__section--project', id: 'roomdlg-project-section' },
     h('div', { class: 'roomdlg__label' }, 'Проектный режим'),
-    h('div', { class: 'roomdlg__hint' },
-      'Один главный запрос — руководитель комнаты сам раскладывает его на направления, '
-      + 'каждое станет отдельным запросом комнаты.'),
+    h('div', { class: 'roomdlg__hint' }, PROJECT_MODE_HINT),
     projectModeBox,
-    field({ label: 'Как запускать направления', control: launchHost }),
+    projectModeState,
+    field({ label: 'Как запускать части работы', control: launchHost }),
     h('div', { class: 'roomdlg__row' },
-      field({ label: 'Одновременно направлений', control: streamsSelect }),
+      field({ label: 'Одновременно частей работы', control: streamsSelect }),
       h('div', { class: 'roomdlg__section' }, modeCostHint),
     ),
-    modeOffHint,
+  ));
+  form.appendChild(h('div', { class: 'roomdlg__section roomdlg__section--phases', id: 'roomdlg-phases-section' },
+    h('div', { class: 'roomdlg__label' }, 'Этапы проекта'),
+    phasesHint,
+    phasesHost,
+    addPhaseBtn,
   ));
   form.appendChild(h('div', { class: 'roomdlg__section' },
     h('div', { class: 'roomdlg__label' }, 'Файлы контекста'),
@@ -702,7 +818,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       return { field: membersHost, message: 'Отметьте хотя бы одного исполнителя в блоке «Состав».' };
     }
     if (!Number.isInteger(maxStreams) || maxStreams < 1 || maxStreams > 4) {
-      return { field: streamsSelect, message: 'Одновременно направлений: от 1 до 4.' };
+      return { field: streamsSelect, message: 'Одновременно частей работы: от 1 до 4.' };
     }
     for (const path of files) {
       if (!path.trim()) return { field: fileInput, message: 'Пустой путь в файлах контекста.' };
@@ -754,6 +870,8 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       project_mode: Boolean(projectModeInput.checked),
       launch_mode: launchMode === 'auto' ? 'auto' : 'plan_first',
       max_parallel_streams: Number.isInteger(maxStreams) && maxStreams >= 1 && maxStreams <= 4 ? maxStreams : 2,
+      // Этапы проекта (W17-R §1): у комнаты свои, пустой список — «этапов нет».
+      phases: phasesPayload(),
     };
 
     try {
@@ -762,7 +880,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
           board: BOARD,
           members: membersPayload,
           // Указания и модели уходят вместе с комнатой: профили уже в этом же составе.
-          agent_notes: notesUi ? notesUi.value() : {},
+          agent_notes: {},
           agent_models: modelUi ? modelUi.allValues() : {},
         }));
         await refreshRooms(api, store).catch(() => {});
@@ -789,22 +907,8 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
         try { await api.del('/api/rooms/' + enc(roomId) + '/members/' + enc(profile)); }
         catch (err) { problems.push(profile + ': ' + (err && err.message ? err.message : 'не убран')); }
       }
-      // Особенности (WAVE14 §13): у существующей комнаты записи правятся сразу —
-      // полный текст здесь НЕ перезаписываем, иначе слетит структура и журнал.
-      if (!notesLive) try {
-        const wasNotes = notesOf(full);
-        const nowNotes = notesUi ? notesUi.value() : {};
-        for (const [profile, text] of Object.entries(nowNotes)) {
-          if (String((wasNotes[profile] || {}).text || '') === text) continue;
-          await api.put('/api/rooms/' + enc(roomId) + '/agents/' + enc(profile) + '/notes', { text });
-        }
-        for (const profile of Object.keys(wasNotes)) {
-          if (nowNotes[profile]) continue;
-          await api.put('/api/rooms/' + enc(roomId) + '/agents/' + enc(profile) + '/notes', { text: '' });
-        }
-      } catch (err) {
-        problems.push('указания: ' + (err && err.message ? err.message : 'не сохранены'));
-      }
+      // Особенности (WAVE17 P6): записи правятся в блокноте сразу через API —
+      // при сохранении комнаты полный текст НЕ перезаписываем (журнал и структура).
       // Модели участников (WAVE10): у существующей комнаты — точечно, по человеку,
       // чтобы не затереть настройки тех, кого в диалоге не трогали.
       try {
@@ -917,7 +1021,20 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
 
   // W10: «Задать папку» из шапки открывает тот же диалог, но с курсором в поле
   // «Папка проекта» — человек сразу печатает путь, а не ищет поле глазами.
-  if (String((opts && opts.focus) || '') === 'project_dir') {
+  // B-9: «Включить проектный режим» на карте открывает НАСТРОЙКИ ЭТОЙ комнаты
+  // сразу на разделе проектного режима — прокрутка и фокус, без поиска глазами.
+  const focusTarget = String((opts && opts.focus) || '');
+  const scrollTo = (node) => {
+    if (!node) return;
+    try { node.scrollIntoView({ block: 'center' }); } catch { /* not in DOM */ }
+  };
+  if (focusTarget === 'project_mode') {
+    scrollTo(projectModeInput.parentNode && projectModeInput.parentNode.parentNode);
+    projectModeInput.focus();
+  } else if (focusTarget === 'phases') {
+    scrollTo(document.getElementById('roomdlg-phases-section'));
+    if (typeof addPhaseBtn.focus === 'function') addPhaseBtn.focus();
+  } else if (focusTarget === 'project_dir') {
     pathInput.focus();
     try { pathInput.setSelectionRange(pathInput.value.length, pathInput.value.length); } catch { /* ignore */ }
   } else {

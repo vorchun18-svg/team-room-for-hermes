@@ -152,7 +152,6 @@
           "outcome": null,
           "started_at": 1793168930,
           "ended_at": null,
-          "summary": "",
           "error": null
         }
       ],
@@ -188,7 +187,6 @@
           "outcome": "completed",
           "started_at": 1793168960,
           "ended_at": 1793169800,
-          "summary": "Шорт-лист готов.",
           "error": null
         }
       ],
@@ -219,7 +217,6 @@
           "outcome": "completed",
           "started_at": 1793168970,
           "ended_at": 1793169680,
-          "summary": "Спека SKU.",
           "error": null
         }
       ],
@@ -249,7 +246,6 @@
           "outcome": null,
           "started_at": 1793169850,
           "ended_at": null,
-          "summary": "",
           "error": null
         }
       ],
@@ -385,5 +381,10 @@
       "task_id": "t_9f3c2a13",
       "kind": "comment"
     }
-  ]
+  ],
+  "title_short": "Упаковка: котировки у поставщиков в городе",
+  "heartbeats": {
+    "count": 0,
+    "last_at": null
+  }
 }

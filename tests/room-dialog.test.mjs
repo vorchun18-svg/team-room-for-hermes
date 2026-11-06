@@ -268,34 +268,36 @@ const PM_ROOM = {
 
 function modeNodes(doc) {
   const all = walk(doc.body);
+  // W17-R §3: пояснение про расходы и нагрузку на модели (слова Михаила).
   const hint = all.find((el) => String(el.className).includes('roomdlg__hint')
-    && el.textContent.includes('лимит модели')) || null;
+    && el.textContent.includes('нагрузки на модели')) || null;
   return {
     box: all.find((el) => el.getAttribute('id') === 'roomdlg-project-mode') || null,
     radios: all.filter((el) => el.getAttribute('name') === 'roomdlg-launch'),
-    streams: all.find((el) => el.getAttribute('aria-label') === 'Одновременно направлений') || null,
+    streams: all.find((el) => el.getAttribute('aria-label') === 'Одновременно частей работы') || null,
     hint,
   };
 }
 
-test('диалог: «Проектный режим» новой комнаты — включён, план, 2 направления', async () => {
+test('диалог: «Проектный режим» новой комнаты — включён, запуск сразу, 2 части работы', async () => {
   const doc = installDom();
   const { openRoomDialog } = await import('../web/js/views/room-dialog.js');
   const done = openRoomDialog(dialogCtx(), null);
   await sleep(30);
 
   const { box, radios, streams, hint } = modeNodes(doc);
-  assert.ok(box, 'переключатель «Руководитель сам строит карту проекта»');
+  assert.ok(box, 'переключатель «Руководитель делит большой запрос на части работы»');
   assert.equal(box.checked, true, 'у новой комнаты проектный режим включён');
   assert.equal(radios.length, 2);
-  assert.equal(radios[0].getAttribute('value'), 'plan_first');
-  assert.equal(radios[0].checked, true, 'по умолчанию «сначала план»');
+  // W17-R §3 (решение Михаила 06.11): у НОВОЙ комнаты части запускаются сразу.
+  assert.equal(radios[0].getAttribute('value'), 'auto');
+  assert.equal(radios[0].checked, true, 'по умолчанию «сразу, без подтверждения»');
   assert.equal(radios[1].checked, false);
-  assert.equal(streams.value, '2', 'одновременно 2 направления');
+  assert.equal(streams.value, '2', 'одновременно 2 части работы');
   assert.equal(streams.childNodes.filter((n) => n.nodeType === 1).length, 4, '1..4');
   assert.deepEqual(streams.childNodes.filter((n) => n.nodeType === 1)
     .map((n) => n.textContent.trim()),
-  ['1 направление', '2 направления', '3 направления', '4 направления']);
+  ['1 часть работы', '2 части работы', '3 части работы', '4 части работы']);
   assert.ok(hint && !hint.className.includes('hidden'), 'пояснение про расход лимита видно');
 
   const text = doc.body.textContent;
@@ -318,7 +320,7 @@ test('диалог: выключенный проектный режим — п�
   assert.equal(nodes.box.checked, false);
   assert.equal(nodes.radios[0].disabled, true, 'режим запуска неактивен');
   assert.equal(nodes.streams.disabled, true);
-  assert.ok(doc.body.textContent.includes('Проектный режим выключен'));
+  assert.ok(doc.body.textContent.includes('Сейчас: выключен'), 'состояние словами');
   assert.ok(nodes.hint.className.includes('hidden'), 'пояснение про лимит скрыто');
 
   nodes.box.checked = true;
@@ -332,7 +334,7 @@ test('диалог: выключенный проектный режим — п�
   await done;
 });
 
-test('диалог: «сразу» и 4 направления уходят в PATCH, папка и название сохраняются', async () => {
+test('диалог: «сразу» и 4 части работы уходят в PATCH, папка и название сохраняются', async () => {
   const doc = installDom();
   const { openRoomDialog } = await import('../web/js/views/room-dialog.js');
   const ctx = dialogCtx();
@@ -343,8 +345,9 @@ test('диалог: «сразу» и 4 направления уходят в P
   await sleep(30);
 
   const nodes = modeNodes(doc);
-  nodes.radios[1].checked = true;
-  nodes.radios[1].dispatch('change', { type: 'change', target: nodes.radios[1] });
+  // radios[0] — «сразу» (auto), radios[1] — «сначала план» (plan_first).
+  nodes.radios[0].checked = true;
+  nodes.radios[0].dispatch('change', { type: 'change', target: nodes.radios[0] });
   nodes.streams.value = '4';
   nodes.streams.dispatch('change');
 
@@ -369,9 +372,9 @@ test('диалог: «сразу» и 4 направления уходят в P
 test('room-dialog.js: слова для человека, без «директора» и общих режимов', () => {
   const source = readFileSync(new URL('../web/js/views/room-dialog.js', import.meta.url), 'utf8');
   assert.ok(!/директор/i.test(source), 'в диалоге — «руководитель комнаты», не «директор»');
-  assert.ok(source.includes('Руководитель сам строит карту проекта из главного запроса'));
-  assert.ok(source.includes('Как запускать направления'));
-  assert.ok(source.includes('Одновременно направлений'));
+  assert.ok(source.includes('Руководитель делит большой запрос на части работы'));
+  assert.ok(source.includes('Как запускать части работы'));
+  assert.ok(source.includes('Одновременно частей работы'));
   assert.ok(source.includes('max_parallel_streams: Number.isInteger(maxStreams)'));
   assert.ok(!/launch_mode[^\n]*все комнаты/i.test(source));
 });

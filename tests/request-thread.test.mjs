@@ -21,7 +21,7 @@ FakeElement.prototype.focus = function focus() { this._focused = true; };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const {
-  mountThread, secondAction, ruText, roleLabel, authorTitle, mergeThreads,
+  mountThread, secondAction, canReviseWithMessage, ruText, roleLabel, authorTitle, mergeThreads,
   EMPTY_TEXT, SEND_HINT,
 } = await import('../web/js/views/request-thread.js');
 
@@ -134,15 +134,19 @@ test('пустая лента объясняет, зачем писать', () =
   assert.match(String(ta.getAttribute('class')), /thr__input/);
 });
 
-test('кнопки по статусу: в работе одна, готово — доработка, ошибка — повтор', () => {
+test('кнопки по статусу: в работе одна, готово — переключатель доработки, ошибка — повтор', () => {
   const working = mount({ id: 't_root', status: 'working', thread: [] });
   assert.equal(byClass(working.host, 'thr__second').length, 0, 'в работе второй кнопки нет');
   assert.equal(textOf(byClass(working.host, 'thr__send')[0]).trim(), 'Отправить руководителю');
   assert.equal(byClass(working.host, 'thr__urgent').length, 1, 'галочка «Срочно» доступна во время работы');
+  assert.equal(byClass(working.host, 'thr__revise').length, 0, 'пока свода нет — дорабатывать нечего');
 
   const done = mount({ id: 't_root', status: 'done', thread: [] });
-  const secondDone = byClass(done.host, 'thr__second')[0];
-  assert.equal(textOf(secondDone).trim(), 'Отправить на доработку');
+  // W17-S §1: второй кнопки «Отправить на доработку» больше нет.
+  assert.equal(byClass(done.host, 'thr__second').length, 0, 'второй кнопки доработки в ленте нет');
+  const reviseBox = byClass(done.host, 'thr__revise')[0];
+  assert.ok(reviseBox, 'у готового свода есть переключатель «и доработать свод»');
+  assert.match(textOf(reviseBox), /и доработать свод по этому сообщению/);
   assert.equal(byClass(done.host, 'thr__urgent').length, 0, 'после ответа пересматривать нечего');
 
   const failed = mount({ id: 't_root', status: 'failed', thread: [] });
@@ -150,8 +154,10 @@ test('кнопки по статусу: в работе одна, готово �
 
   assert.equal(secondAction('working'), null);
   assert.equal(secondAction('queued'), null);
-  assert.equal(secondAction('done').key, 'revise');
+  assert.equal(secondAction('done'), null, 'доработка живёт только в блоке «Свод команды»');
   assert.equal(secondAction('failed').key, 'retry');
+  assert.equal(canReviseWithMessage('done'), true);
+  assert.equal(canReviseWithMessage('working'), false);
 });
 
 /* ─────────────────────────────────────────────────────────── отправка */
@@ -310,18 +316,38 @@ test('ошибка сети: человеческий текст, чернови
   assert.equal(toasts.length, 0, 'ошибка — строкой под полем, а не тостом');
 });
 
-test('готовый запрос: «Отправить на доработку» шлёт revise с этим текстом', async () => {
+test('готовый запрос: переключатель «и доработать свод» шлёт сообщение и revise', async () => {
   const { host, calls, sent } = mount({ id: 't_root', status: 'done', thread: [] });
 
   const ta = host.find('textarea');
   ta.value = 'Добавь срок подачи и MOQ';
-  click(byClass(host, 'thr__second')[0]);
+  ta.dispatch('input', { type: 'input', target: ta });
+  const box = byClass(host, 'thr__revise')[0];
+  const input = collect(box, (el) => String(el.tagName).toUpperCase() === 'INPUT')[0];
+  input.checked = true;
+  input.dispatch('change', { type: 'change', target: input });
+
+  click(byClass(host, 'thr__send')[0]);
+  await tick();
   await tick();
 
-  assert.equal(calls[0].path, '/api/requests/t_root/actions');
-  assert.equal(calls[0].body.action, 'revise');
+  assert.equal(calls[0].path, '/api/requests/t_root/messages', 'сначала обычное сообщение');
   assert.equal(calls[0].body.text, 'Добавь срок подачи и MOQ');
+  assert.equal(calls[1].path, '/api/requests/t_root/actions', 'потом доработка тем же текстом');
+  assert.equal(calls[1].body.action, 'revise');
+  assert.equal(calls[1].body.text, 'Добавь срок подачи и MOQ');
   assert.equal(sent.length, 1);
+});
+
+test('готовый запрос: без переключателя доработка не запускается', async () => {
+  const { host, calls } = mount({ id: 't_root', status: 'done', thread: [] });
+  const ta = host.find('textarea');
+  ta.value = 'Просто уточнение';
+  ta.dispatch('input', { type: 'input', target: ta });
+  click(byClass(host, 'thr__send')[0]);
+  await tick();
+  assert.equal(calls.length, 1, 'только сообщение — руководитель сам решит, что делать');
+  assert.equal(calls[0].path, '/api/requests/t_root/messages');
 });
 
 test('Ctrl+Enter отправляет, пустой текст — нет', async () => {
