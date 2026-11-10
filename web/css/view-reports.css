@@ -1,0 +1,140 @@
+/* ============================================================================
+   view-reports.css — вкладка «Отчёты»: галерея карточек и просмотр отчёта.
+   Только токены из tokens.css; разметку даёт views/reports.js.
+   ========================================================================== */
+
+.rep { gap: var(--space-4); }
+
+/* Просмотр — на всю ширину: каркас ограничивает 1180px, здесь расширяем. */
+.rep--wide { max-width: 1680px; }
+
+.rep__head { display: flex; flex-direction: column; gap: var(--space-1); }
+.rep__hint { max-width: 78ch; line-height: var(--leading-relaxed); margin-top: calc(var(--space-1) * -1); }
+
+/* ── Галерея ─────────────────────────────────────────────────────────────── */
+
+.rep-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-3);
+}
+
+.rep-card {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); min-width: 0;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.rep-card:hover { border-color: color-mix(in srgb, var(--primary) 28%, var(--border)); }
+.rep-card--clickable { cursor: pointer; }
+.rep-card--missing { border-style: dashed; }
+
+.rep-card__main { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+
+.rep-card__title {
+  font-size: var(--text-md); font-weight: 600; line-height: var(--leading-tight);
+  color: var(--foreground); text-decoration: none;
+}
+.rep-card__title:hover { color: var(--primary); text-decoration: none; }
+.rep-card__title:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 70%, transparent); outline-offset: 2px; }
+
+.rep-card__sub {
+  font-size: var(--text-sm); color: var(--muted-foreground);
+  line-height: var(--leading-relaxed);
+}
+
+.rep-card__meta {
+  display: flex; align-items: center; gap: var(--space-2);
+  flex-wrap: wrap; margin-top: var(--space-1);
+}
+.rep-card__date { margin-left: auto; }
+.rep-card__meta .chip { gap: 4px; }
+
+.rep-card__foot {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: auto; padding-top: var(--space-3);
+  border-top: 1px solid var(--border-soft);
+}
+.rep-card__src, .rep-card__open {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--muted-foreground); text-decoration: none;
+}
+.rep-card__src:hover, .rep-card__open:hover { color: var(--primary); text-decoration: none; }
+
+.rep-card__warn {
+  display: flex; align-items: center; gap: 4px;
+  color: var(--warn-ink); font-size: var(--text-sm);
+}
+
+/* ── Просмотр одного отчёта ──────────────────────────────────────────────── */
+
+.rep-toolbar {
+  display: flex; align-items: center; gap: var(--space-2);
+  flex-wrap: wrap; min-width: 0;
+}
+.rep-toolbar__crumbs { min-width: 0; max-width: 32ch; }
+.rep-toolbar__actions { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+
+.rep-detail__head { display: flex; flex-direction: column; gap: 2px; }
+.rep-detail__title { font-size: var(--text-xl); font-weight: 600; line-height: var(--leading-tight); }
+.rep-detail__meta { line-height: var(--leading-relaxed); }
+
+.rep-detail__body { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+
+.rep-doc {
+  padding: 0;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); min-width: 0; overflow: hidden;
+}
+
+/* Отчёт рисует собственную шапку с заголовком и кнопкой печати — убираем
+   дубли: печать живёт в тулбаре вьюхи, шапка отчёта остаётся. */
+.rep-doc--spec .report { max-width: none; padding: var(--space-5) var(--space-6) var(--space-8); }
+.rep-doc--spec .report__actions { display: none; }
+
+/* Пустое оглавление скрыто, но grid всё равно держит 216px — тянем main
+   на всю ширину (иначе текст отчёта сжимается в узкую колонку). */
+.rep-doc--spec .report__toc.is-empty + .report__main { grid-column: 1 / -1; }
+
+.rep-frame {
+  width: 100%;
+  height: clamp(520px, calc(100dvh - 260px), 1200px);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--card); display: block;
+}
+.rep-frame__note { display: flex; align-items: center; gap: 6px; padding-left: 2px; }
+
+.rep-warn { align-items: flex-start; }
+.rep-issues__banner { align-items: flex-start; flex-wrap: wrap; }
+.rep-issues { list-style: disc; padding-left: 1.2em; margin-top: var(--space-1); font-size: var(--text-sm); }
+.rep-issues li + li { margin-top: 2px; }
+
+/* ── Печать: только отчёт, без каркаса ───────────────────────────────────── */
+
+@media print {
+  .sidebar, .topbar, .toasts, .skip-link, .rep-toolbar, .rep-frame__note,
+  .report__actions, .report__toc { display: none !important; }
+  .rep-doc--spec .report { padding: 0; max-width: none; }
+  .app { display: block; height: auto; }
+  .app__main { display: block; }
+  .view { overflow: visible; padding: 0; }
+  .view__inner, .rep--wide { max-width: none; }
+  .rep-doc { border: 0; padding: 0; }
+  .rep-frame { height: 100vh; border: 0; }
+}
+
+/* ── Узкий экран ─────────────────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .rep-grid { grid-template-columns: 1fr; }
+  .rep-doc { padding: var(--space-4); }
+  .rep__hint { max-width: none; }
+  .rep-toolbar__crumbs { max-width: 18ch; }
+}
+
+@media (max-width: 640px) {
+  .rep-toolbar { gap: var(--space-1); }
+  .rep-doc { padding: var(--space-3); }
+  .rep-frame { height: 70dvh; }
+}

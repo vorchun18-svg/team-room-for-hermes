@@ -1,0 +1,360 @@
+/* report-graph.css — граф связей отчёта (узлы, рёбра, панель узла, легенда).
+   Вынесен из report-charts.css, чтобы оба файла держались под 600 строк. */
+/* ---------------------------------- граф --------------------------------- */
+.rc-graph {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.rc-graph__hint {
+  font-size: 11px;
+  color: var(--rc-muted);
+}
+
+.rc-graph__body {
+  position: relative;
+  border: 1px solid var(--rc-border);
+  border-radius: 12px;
+  background: var(--rc-card);
+  overflow: hidden;
+}
+
+.rc-graph__canvas {
+  position: relative;
+  width: 100%;
+}
+
+.rc-graph__svg {
+  display: block;
+  width: 100%;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.rc-graph__svg.is-panning {
+  cursor: grabbing;
+}
+
+.rc-graph__svg:focus-visible {
+  outline: 2px solid var(--rc-accent);
+  outline-offset: -2px;
+}
+
+.rc-graph__tools {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  display: flex;
+  gap: 4px;
+}
+
+.rc-graph__btn {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--rc-border);
+  border-radius: 7px;
+  background: var(--rc-card);
+  color: var(--rc-fg);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rc-graph__btn--fit {
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.rc-graph__btn:hover {
+  border-color: var(--rc-accent);
+}
+
+.rc-graph__btn:focus-visible {
+  outline: 2px solid var(--rc-accent);
+  outline-offset: 1px;
+}
+
+.rc-node {
+  cursor: pointer;
+  outline: none;
+}
+
+.rc-node__box {
+  fill-opacity: 0.14;
+  stroke-width: 1.2;
+  transition: fill-opacity 0.15s ease, stroke-width 0.15s ease;
+}
+
+.rc-node__label {
+  fill: var(--rc-fg);
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+.rc-node:hover .rc-node__box {
+  fill-opacity: 0.24;
+}
+
+.rc-node:focus-visible .rc-node__box {
+  fill-opacity: 0.2;
+  stroke: var(--rc-accent);
+  stroke-width: 2.4;
+}
+
+.rc-node.is-active .rc-node__box {
+  fill-opacity: 0.3;
+  stroke-width: 2.2;
+}
+
+.rc-node.is-neighbor .rc-node__box {
+  fill-opacity: 0.2;
+}
+
+.rc-node.is-dim {
+  opacity: 0.26;
+}
+
+.rc-node.is-dim .rc-node__label {
+  opacity: 0.7;
+}
+
+.rc-node,
+.rc-edge {
+  transition: opacity 0.14s ease;
+}
+
+.rc-edge {
+  fill: none;
+  stroke: var(--rc-muted);
+  stroke-width: var(--rc-w, 1);
+  opacity: 0.72;
+}
+
+.rc-edge--dashed {
+  stroke-dasharray: 5 4;
+}
+
+.rc-edge.is-active {
+  stroke: var(--rc-accent);
+  opacity: 1;
+}
+
+.rc-edge.is-dim {
+  opacity: 0.14;
+}
+
+.rc-edge__label {
+  fill: var(--rc-muted);
+  font-size: 11px;
+  paint-order: stroke;
+  stroke: var(--rc-card);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.rc-edge__label.is-on {
+  fill: var(--rc-accent);
+}
+
+.rc-arrow {
+  fill: var(--rc-muted);
+}
+
+.rc-arrow--on {
+  fill: var(--rc-accent);
+}
+
+/* ------------------------------ панель узла ------------------------------ */
+.rc-graph__panel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  width: min(290px, calc(100% - 20px));
+  max-height: calc(100% - 20px);
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--rc-border);
+  border-radius: 10px;
+  background: var(--rc-card);
+  color: var(--rc-fg);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rc-graph__panel[hidden] {
+  display: none;
+}
+
+.rc-graph__panel-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.rc-graph__panel-title {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.rc-graph__panel-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--rc-muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rc-graph__panel-close:hover {
+  border-color: var(--rc-border);
+  color: var(--rc-fg);
+}
+
+.rc-graph__panel-meta {
+  margin-top: 2px;
+  color: var(--rc-muted);
+  font-size: 11px;
+}
+
+.rc-graph__panel-note {
+  margin: 8px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.rc-graph__panel-note--muted {
+  color: var(--rc-muted);
+}
+
+.rc-graph__panel-sub {
+  margin: 6px 0 3px;
+  color: var(--rc-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.rc-graph__panel-empty {
+  color: var(--rc-muted);
+  font-size: 11.5px;
+}
+
+.rc-graph__link {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rc-graph__link:hover {
+  border-color: var(--rc-border);
+  background: var(--muted, rgba(127, 127, 127, 0.1));
+}
+
+.rc-graph__link-dir {
+  flex: none;
+  color: var(--rc-muted);
+  font-size: 11px;
+}
+
+.rc-graph__link-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rc-graph__link-kind {
+  margin-left: auto;
+  max-width: 46%;
+  overflow: hidden;
+  color: var(--rc-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------ легенда графа ---------------------------- */
+.rc-graph__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.rc-graph__legend:empty {
+  display: none;
+}
+
+.rc-graph__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--rc-muted);
+  font-size: 11px;
+}
+
+.rc-graph__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* --------------------------------- тема ---------------------------------- */
+/* Тёмная тема наследуется от токенов; ниже — только тени, которые в темноте глуше. */
+@media (prefers-color-scheme: dark) {
+  .rc-tip {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  .rc-graph__panel {
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  }
+}
+
+[data-theme="dark"] .rc-tip {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="dark"] .rc-graph__panel {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+@media (max-width: 640px) {
+  .rc-graph__panel {
+    width: calc(100% - 20px);
+    max-height: 55%;
+  }
+  .rc-graph__hint {
+    display: none;
+  }
+}

@@ -1,0 +1,311 @@
+/* ============================================================================
+   Комната команды — токены оформления.
+   Слой 1 (сырьё) повторяет пайплайн Hermes Desktop (apps/desktop/src/styles.css):
+   всё выводится color-mix-ом из трёх «семян» фона, одного акцента и нейтралей,
+   поэтому смена темы = смена ~20 переменных, остальное пересчитывается само.
+   Слой 2 — привычные имена (--background … --destructive) для компонентов.
+   Правило: компоненты НИКОГДА не пишут цвет буквально, только var(--token).
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* ── 1. Сырьё темы ─────────────────────────────────────────────────────── */
+  --theme-foreground: #17171a;
+  --theme-primary: #0053fd;
+  --theme-secondary: color-mix(in srgb, #0053fd 7%, #fff);
+  --theme-accent-soft: color-mix(in srgb, #0053fd 10%, #fff);
+  --theme-midground: #0053fd;
+  --theme-warm: #cf806d;
+  --theme-background-seed: #f8faff;
+  --theme-sidebar-seed: #f3f7ff;
+  --theme-card-seed: #ffffff;
+  --theme-elevated-seed: #ffffff;
+  --theme-neutral-chrome: #f3f3f3;
+  --theme-neutral-sidebar: #f3f3f3;
+  --theme-neutral-card: #fcfcfc;
+  --theme-mix-chrome: 92%;
+  --theme-mix-sidebar: 100%;
+  --theme-mix-card: 22%;
+  --theme-mix-elevated: 28%;
+  --theme-fill-primary-accent-mix: 16%;
+  --theme-fill-secondary-accent-mix: 11%;
+  --theme-fill-tertiary-accent-mix: 8%;
+  --theme-fill-quaternary-accent-mix: 5%;
+  --theme-fill-quinary-accent-mix: 3%;
+  --theme-stroke-primary-accent-mix: 24%;
+  --theme-stroke-secondary-accent-mix: 16%;
+  --theme-stroke-tertiary-accent-mix: 10%;
+  --theme-stroke-quaternary-accent-mix: 6%;
+  --theme-row-hover-accent-mix: 4%;
+  --theme-row-active-accent-mix: 8%;
+  --theme-control-hover-accent-mix: 6%;
+  --theme-control-active-accent-mix: 8%;
+
+  --ui-base: var(--theme-foreground);
+  --ui-accent: var(--theme-midground);
+  --ui-warm: var(--theme-warm);
+
+  /* Палитра статусов Hermes (приглушённая, не «светофор»).
+     Значения подобраны под WCAG AA на --background/--card: текст ≥ 4.5:1
+     (warn #996419 — 4.77/4.91, ok #1b7f5e — 4.72), иконки/точки ≥ 3:1.
+     Для графиков отдельные --chart-*: они проверяются по норме 3:1. */
+  --ui-red: #cf2d56;
+  --ui-orange: #db704b;
+  --ui-yellow: #996419;
+  --ui-green: #1b7f5e;
+  --ui-cyan: #4c7f8c;
+  --ui-blue: #0053fd;
+  --ui-purple: #8b7fd0;
+
+  /* ── 2. Поверхности ────────────────────────────────────────────────────── */
+  --ui-bg-chrome: color-mix(in srgb, var(--theme-background-seed) var(--theme-mix-chrome), var(--theme-neutral-chrome));
+  --ui-bg-sidebar: color-mix(in srgb, var(--theme-sidebar-seed) var(--theme-mix-sidebar), var(--theme-neutral-sidebar));
+  --ui-bg-editor: color-mix(in srgb, var(--theme-card-seed) var(--theme-mix-card), var(--theme-neutral-card));
+  --ui-bg-elevated: color-mix(in srgb, var(--theme-elevated-seed) var(--theme-mix-elevated), var(--theme-neutral-card));
+  --ui-bg-input: var(--ui-bg-editor);
+  --ui-bg-primary: color-mix(in srgb, var(--ui-accent) var(--theme-fill-primary-accent-mix), color-mix(in srgb, var(--ui-base) 10%, transparent));
+  --ui-bg-secondary: color-mix(in srgb, var(--ui-accent) var(--theme-fill-secondary-accent-mix), color-mix(in srgb, var(--ui-base) 7%, transparent));
+  --ui-bg-tertiary: color-mix(in srgb, var(--ui-accent) var(--theme-fill-tertiary-accent-mix), color-mix(in srgb, var(--ui-base) 5%, transparent));
+  --ui-bg-quaternary: color-mix(in srgb, var(--ui-accent) var(--theme-fill-quaternary-accent-mix), color-mix(in srgb, var(--ui-base) 4%, transparent));
+  --ui-bg-quinary: color-mix(in srgb, var(--ui-accent) var(--theme-fill-quinary-accent-mix), color-mix(in srgb, var(--ui-base) 3%, transparent));
+  --ui-row-hover-background: color-mix(in srgb, var(--ui-accent) var(--theme-row-hover-accent-mix), color-mix(in srgb, var(--ui-base) 3%, transparent));
+  --ui-row-active-background: color-mix(in srgb, var(--ui-accent) var(--theme-row-active-accent-mix), color-mix(in srgb, var(--ui-base) 5%, transparent));
+  --ui-control-hover-background: color-mix(in srgb, var(--ui-accent) var(--theme-control-hover-accent-mix), color-mix(in srgb, var(--ui-base) 4%, transparent));
+  --ui-control-active-background: color-mix(in srgb, var(--ui-accent) var(--theme-control-active-accent-mix), color-mix(in srgb, var(--ui-base) 5%, transparent));
+
+  /* ── 3. Текст и штрихи (альфа-лестница от --ui-base) ────────────────────── */
+  --ui-text-primary: color-mix(in srgb, var(--ui-base) 94%, transparent);
+  --ui-text-secondary: color-mix(in srgb, var(--ui-base) 74%, transparent);
+  /* 62 %, а не 54 %: 54 % давал 3.8–3.9:1 на --background/--card — ниже AA.
+     Текущее значение — 4.9/5.1 в светлой и 6.4+ в тёмной, при этом текст
+     остаётся явно «вторичным» рядом с primary. */
+  --ui-text-tertiary: color-mix(in srgb, var(--ui-base) 62%, transparent);
+  --ui-text-quaternary: color-mix(in srgb, var(--ui-base) 36%, transparent);
+  --ui-stroke-primary: color-mix(in srgb, var(--ui-accent) var(--theme-stroke-primary-accent-mix), color-mix(in srgb, var(--ui-base) 10%, transparent));
+  --ui-stroke-secondary: color-mix(in srgb, var(--ui-accent) var(--theme-stroke-secondary-accent-mix), color-mix(in srgb, var(--ui-base) 7%, transparent));
+  --ui-stroke-tertiary: color-mix(in srgb, var(--ui-accent) var(--theme-stroke-tertiary-accent-mix), color-mix(in srgb, var(--ui-base) 5%, transparent));
+  --ui-stroke-quaternary: color-mix(in srgb, var(--ui-accent) var(--theme-stroke-quaternary-accent-mix), color-mix(in srgb, var(--ui-base) 3%, transparent));
+  --ui-selection-background: color-mix(in srgb, #ffd24a 55%, transparent);
+  --ui-inline-code-background: color-mix(in srgb, #141414 6%, transparent);
+
+  /* Тонировка полей ввода: 0% = поле прозрачное, только штрих. */
+  --dt-input-border: 8%;
+
+  /* ── 4. Имена для компонентов (shadcn-подобные) ─────────────────────────── */
+  --background: var(--ui-bg-chrome);
+  --foreground: var(--ui-text-primary);
+  --sidebar: var(--ui-bg-sidebar);
+  --sidebar-foreground: var(--ui-text-primary);
+  --muted: var(--ui-bg-tertiary);
+  --muted-foreground: var(--ui-text-tertiary);
+  --card: var(--ui-bg-editor);
+  --card-foreground: var(--ui-text-primary);
+  --popover: var(--ui-bg-elevated);
+  --popover-foreground: var(--ui-text-primary);
+  --border: var(--ui-stroke-secondary);
+  --border-soft: var(--ui-stroke-tertiary);
+  --input: var(--ui-stroke-primary);
+  --ring: var(--ui-stroke-primary);
+  --accent: var(--theme-accent-soft);
+  --accent-foreground: var(--ui-text-primary);
+  --accent-strong: var(--theme-primary);
+  --primary: var(--theme-primary);
+  --primary-foreground: #fcfcfc;
+  --link: var(--theme-primary);
+  --destructive: var(--ui-red);
+  --destructive-foreground: #fff;
+  --sidebar-accent: var(--ui-control-active-background);
+
+  /* Статусы: приглушённые, читаемые на любой поверхности. */
+  --ok: var(--ui-green);
+  --warn: var(--ui-yellow);
+  --danger: var(--ui-red);
+  --info: var(--ui-blue);
+  --ok-soft: color-mix(in srgb, var(--ok) 12%, transparent);
+  --warn-soft: color-mix(in srgb, var(--warn) 14%, transparent);
+  --danger-soft: color-mix(in srgb, var(--danger) 12%, transparent);
+  --info-soft: color-mix(in srgb, var(--info) 10%, transparent);
+  --ok-ink: color-mix(in srgb, var(--ok) 78%, var(--ui-base));
+  --warn-ink: color-mix(in srgb, var(--warn) 74%, var(--ui-base));
+  --danger-ink: color-mix(in srgb, var(--danger) 84%, var(--ui-base));
+  --info-ink: color-mix(in srgb, var(--info) 84%, var(--ui-base));
+
+  /* ── 5. Графики (SVG-отчёты): 8 различимых серий в обеих темах ──────────── */
+  --chart-1: #0053fd;
+  --chart-2: #1f8a65;
+  --chart-3: #db704b;
+  --chart-4: #8b7fd0;
+  --chart-5: #4c7f8c;
+  --chart-6: #cf2d56;
+  --chart-7: #c08532;
+  --chart-8: #b06a8f;
+  --chart-grid: color-mix(in srgb, var(--ui-base) 10%, transparent);
+
+  /* ── 6. Геометрия (скругления 8–12 px, как у Hermes Desktop) ─────────────── */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-full: 999px;
+
+  --space-05: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --sidebar-width: 248px;
+  --sidebar-width-narrow: 208px;
+  --topbar-height: 52px;
+  --tabbar-height: 38px;
+  --control-sm: 28px;
+  --control-md: 32px;
+  --control-lg: 36px;
+  --content-max: 1180px;
+
+  /* ── 7. Типографика (шкала Hermes: 1rem = 16, базовый текст 14) ───────────
+     Гарнитура и кегль взяты у Hermes Desktop (--dt-font-sans, text-sm = 14 px),
+     чтобы окно комнаты не выглядело «старше» приложения-хозяина.
+     Шкала: подпись 12 · текст 14 · подзаголовок 16 · заголовок раздела 18–20 ·
+     заголовок страницы 22–24. Мельче 12 px — только счётные бейджи (11) и
+     буквы в аватарах: это не читаемый текст. */
+  --font-sans: 'Segoe WPC', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Noto Sans', Arial, sans-serif, 'Segoe UI Emoji';
+  /* JetBrains Mono — локальный файл из пакета Hermes (web/fonts, OFL-1.1).
+     Первым идёт local(): если гарнитура установлена в системе, файл не грузится. */
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', 'Cascadia Code', 'DejaVu Sans Mono', Consolas, ui-monospace, monospace;
+  --font-kbd: 'Segoe WPC', 'Segoe UI', system-ui, sans-serif;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --leading-tight: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+  --tracking-tight: -0.01em;
+
+  /* ── 8. Тени, кольцо фокуса, слои ──────────────────────────────────────── */
+  --shadow-xs: 0 1px 2px color-mix(in srgb, #000 5%, transparent);
+  --shadow-sm: 0 0 0 1px color-mix(in srgb, var(--ui-base) 6%, transparent), 0 2px 8px color-mix(in srgb, #000 4%, transparent);
+  --shadow-md: 0 0 0 1px color-mix(in srgb, var(--ui-base) 8%, transparent), 0 4px 16px color-mix(in srgb, #000 8%, transparent), 0 16px 32px -24px color-mix(in srgb, #000 18%, transparent);
+  --shadow-nous: 0 2px 4px -2px color-mix(in srgb, #000 7%, transparent), 0 8px 12px -6px color-mix(in srgb, #000 6%, transparent), 0 20px 28px -14px color-mix(in srgb, #000 6%, transparent), 0 36px 48px -28px color-mix(in srgb, #000 5%, transparent);
+  --stroke-nous: color-mix(in srgb, currentColor 3%, transparent);
+  --ring-width: 3px;
+  --focus-ring: 0 0 0 1px var(--background), 0 0 0 3px color-mix(in srgb, var(--ring) 62%, transparent);
+
+  /* ── 9. Слои (единая шкала, только эти токены в компонентах) ─────────────
+     sticky < dropdown < затемнение сайдбара < сайдбар < подложка диалога
+     < диалог < поповер < тост < палитра Ctrl+K.
+     Сайдбар ОБЯЗАН быть ниже подложки диалога (иначе диалог «под меню»),
+     но выше своего затемнения (иначе панель темнеет и не кликается). */
+  --z-sticky: 10;
+  --z-dropdown: 40;
+  --z-nav-scrim: 90;
+  --z-sidebar: 100;
+  --z-backdrop: 120;
+  --z-modal: 130;
+  --z-popover: 140;
+  --z-toast: 200;
+  --z-palette: 210;
+
+  --dur-fast: 90ms;
+  --dur-base: 160ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ── Тёмная тема: только сырьё, производные пересчитываются сами ─────────── */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --theme-foreground: #e7e7ea;
+  --theme-background-seed: #17171a;
+  --theme-sidebar-seed: #0a0a0b;
+  --theme-card-seed: #1d1d21;
+  --theme-elevated-seed: #232327;
+  --theme-secondary: color-mix(in srgb, #0053fd 14%, #0d0d0e);
+  --theme-accent-soft: color-mix(in srgb, #0053fd 26%, #0d0d0e);
+  --link: #7ba4ff;
+  --theme-mix-chrome: 74%;
+  --theme-mix-card: 38%;
+  --theme-mix-elevated: 46%;
+  --theme-neutral-chrome: #0d0d0e;
+  --theme-neutral-sidebar: #0a0a0b;
+  --theme-neutral-card: #161618;
+  --ui-red: #e75e78;
+  --ui-green: #55a583;
+  --ui-cyan: #6f9ba6;
+  --ui-purple: #a99ce0;
+  /* Без этих двух строк тёмная тема брала светлые warn/info: info #0053fd
+     давал 3.2:1, warn-ink — 3.8:1 (ниже AA). Значения совпадают с chart-1/7. */
+  --ui-blue: #6e9bff;
+  --ui-yellow: #c08532;
+  --dt-input-border: 5%;
+  --ui-selection-background: color-mix(in srgb, #ffd24a 34%, transparent);
+  --ui-inline-code-background: color-mix(in srgb, #fff 7%, transparent);
+  --chart-1: #6e9bff;
+  --chart-2: #55a583;
+  --chart-3: #e08a63;
+  --chart-4: #a99ce0;
+  --chart-5: #7fb0bb;
+  --chart-6: #e75e78;
+  --chart-7: #d8a95a;
+  --chart-8: #c98aa9;
+  --chart-grid: color-mix(in srgb, #fff 12%, transparent);
+}
+
+/* auto = «как в системе»: те же сырые значения до загрузки JS и без него. */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='auto'] {
+    color-scheme: dark;
+    --theme-foreground: #e7e7ea;
+    --theme-background-seed: #17171a;
+    --theme-sidebar-seed: #0a0a0b;
+    --theme-card-seed: #1d1d21;
+    --theme-elevated-seed: #232327;
+    --theme-secondary: color-mix(in srgb, #0053fd 14%, #0d0d0e);
+    --theme-accent-soft: color-mix(in srgb, #0053fd 26%, #0d0d0e);
+    --link: #7ba4ff;
+    --theme-mix-chrome: 74%;
+    --theme-mix-card: 38%;
+    --theme-mix-elevated: 46%;
+    --theme-neutral-chrome: #0d0d0e;
+    --theme-neutral-sidebar: #0a0a0b;
+    --theme-neutral-card: #161618;
+    --ui-red: #e75e78;
+    --ui-green: #55a583;
+    --ui-cyan: #6f9ba6;
+    --ui-purple: #a99ce0;
+    --ui-blue: #6e9bff;
+    --ui-yellow: #c08532;
+    --dt-input-border: 5%;
+    --ui-selection-background: color-mix(in srgb, #ffd24a 34%, transparent);
+    --ui-inline-code-background: color-mix(in srgb, #fff 7%, transparent);
+    --chart-1: #6e9bff;
+    --chart-2: #55a583;
+    --chart-3: #e08a63;
+    --chart-4: #a99ce0;
+    --chart-5: #7fb0bb;
+    --chart-6: #e75e78;
+    --chart-7: #d8a95a;
+    --chart-8: #c98aa9;
+    --chart-grid: color-mix(in srgb, #fff 12%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+  }
+}

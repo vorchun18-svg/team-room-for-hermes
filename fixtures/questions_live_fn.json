@@ -1,0 +1,181 @@
+{
+  "source": "Образец вопросов бэклога и ответов (вымышленные данные для проверки).",
+  "request": "t_1b0aa253",
+  "backlog_questions": [
+    {
+      "id": "t_1b0aa253:q_22b45cc3",
+      "kind": "open_question",
+      "text": "Задачи агентам в TaskFlow: вариант А (ставит default, работа карточками комнаты) или Б (4 учётки агентов)",
+      "status": "open"
+    },
+    {
+      "id": "t_1b0aa253:q_6f877b08",
+      "kind": "open_question",
+      "text": "Порог обязательного прогона через критика (рекомендация: всё, что уходит наружу, и выводы с деньгами от 100 000 ₽)",
+      "status": "open"
+    },
+    {
+      "id": "t_1b0aa253:q_789a8dce",
+      "kind": "open_question",
+      "text": "Первая работа: дело ООО Каменка (Заречное-1)?",
+      "status": "open"
+    },
+    {
+      "id": "t_1b0aa253:q_d47fe5e7",
+      "kind": "open_question",
+      "text": "Ольга К. (маркшейдер, TaskFlow): передавать маркшейдерские части или вне контура?",
+      "status": "open"
+    },
+    {
+      "id": "t_1b0aa253:q_e7b16109",
+      "kind": "open_question",
+      "text": "Не к спеху: права на D:\\Photos объекта и D:\\Scans диск; правка Context\\Storage-Policy.md",
+      "status": "open"
+    },
+    {
+      "id": "t_1b0aa253:fq_1",
+      "kind": "future_question",
+      "text": "Нужен ли отдельный профиль/учётки агентов в TaskFlow при росте потока задач",
+      "status": "open"
+    },
+    {
+      "id": "t_1b0aa253:fq_2",
+      "kind": "future_question",
+      "text": "Как привести SOUL lawyer/surveyor/biz-critic к реалиям комнаты (Глеб/Роман/Лето) — только с согласия Михаила",
+      "status": "open"
+    },
+    {
+      "id": "t_1b0aa253:q_d5b4abf0",
+      "kind": "open_question",
+      "text": "Ольга К. (маркшейдер): передавать маркшейдерские части или вне контура?",
+      "status": "open"
+    },
+    {
+      "id": "t_1b0aa253:q_036fe948",
+      "kind": "open_question",
+      "text": "Актуальность реестров договоров (самый свежий 14.11.2025)",
+      "status": "done"
+    },
+    {
+      "id": "t_1b0aa253:q_7985e685",
+      "kind": "open_question",
+      "text": "Относится ли папка рабочего стола «гранит 2026» (вне ФН) к юр. раскладке",
+      "status": "done"
+    },
+    {
+      "id": "t_1b0aa253:q_7decf20e",
+      "kind": "open_question",
+      "text": "Добавляем ли биз-финансиста (biz-cfo) и геолога; кто отвечает за учётную систему до этого (default/lawyer/Анна)?",
+      "status": "done"
+    },
+    {
+      "id": "t_1b0aa253:q_96dfdc90",
+      "kind": "open_question",
+      "text": "Порог обязательного прогона через критика для FN",
+      "status": "done"
+    },
+    {
+      "id": "t_1b0aa253:q_a37572d5",
+      "kind": "open_question",
+      "text": "Где текущий полный пакет лицензий",
+      "status": "done"
+    },
+    {
+      "id": "t_1b0aa253:q_f69f0d34",
+      "kind": "open_question",
+      "text": "Кто 'Саша' в памяти lawyer/surveyor — Михаил или прежнее имя агента?",
+      "status": "done"
+    }
+  ],
+  "detail_questions": [
+    {
+      "id": "q_18b309bf",
+      "text": "Задачи агентам в TaskFlow: вариант А (ставит default, работа карточками комнаты) или Б (4 учётки агентов)",
+      "answered": false,
+      "answer_state": "open"
+    },
+    {
+      "id": "q_d5b4abf0",
+      "text": "Ольга К. (маркшейдер): передавать маркшейдерские части или вне контура?",
+      "answered": false,
+      "answer_state": "open"
+    },
+    {
+      "id": "q_2a6cce56",
+      "text": "Первая работа: дело ООО Каменка (Заречное-1)?",
+      "answered": false,
+      "answer_state": "open"
+    },
+    {
+      "id": "q_f04ae28e",
+      "text": "Почта «Моя» = <почта> — подтвердить",
+      "answered": false,
+      "answer_state": "open"
+    },
+    {
+      "id": "q_e7b16109",
+      "text": "Не к спеху: права на D:\\Photos объекта и D:\\Scans диск; правка Context\\Storage-Policy.md",
+      "answered": false,
+      "answer_state": "open"
+    },
+    {
+      "id": "q_7decf20e",
+      "text": "Добавляем ли биз-финансиста (biz-cfo) и геолога; кто отвечает за учётную систему до этого (default/lawyer/Анна)?",
+      "answered": true,
+      "answer_state": "sent"
+    },
+    {
+      "id": "q_f69f0d34",
+      "text": "Кто 'Саша' в памяти lawyer/surveyor — Михаил или прежнее имя агента?",
+      "answered": true,
+      "answer_state": "applied"
+    },
+    {
+      "id": "q_036fe948",
+      "text": "Актуальность реестров договоров (самый свежий 14.11.2025)",
+      "answered": true,
+      "answer_state": "sent"
+    },
+    {
+      "id": "q_a37572d5",
+      "text": "Где текущий полный пакет лицензий",
+      "answered": true,
+      "answer_state": "sent"
+    },
+    {
+      "id": "q_7985e685",
+      "text": "Относится ли папка рабочего стола «гранит 2026» (вне ФН) к юр. раскладке",
+      "answered": false,
+      "answer_state": "waiting_explanation"
+    }
+  ],
+  "answers_registry": {
+    "q_e7b16109": {
+      "text": "Эта папка не относится к юристу — передайте в другую комнату.",
+      "at": 1793910000,
+      "answered": true,
+      "status": "sent",
+      "question_text": "Не к спеху: права на D:\\Photos объекта и D:\\Scans диск; правка Context\\Storage-Policy.md",
+      "steps_at_answer": [],
+      "unblocked": []
+    },
+    "q_18b309bf": {
+      "text": "Вариант А — ставит default, работа карточками комнаты.",
+      "at": 1793910500,
+      "answered": true,
+      "status": "sent",
+      "question_text": "Задачи агентам в TaskFlow: вариант А (ставит default, работа карточками комнаты) или Б (4 учётки агентов)",
+      "steps_at_answer": [],
+      "unblocked": []
+    },
+    "q_7985e685": {
+      "text": "Прошу пояснить, что значит «юр. раскладка»",
+      "at": 1793910600,
+      "answered": false,
+      "status": "waiting_explanation",
+      "question_text": "Относится ли папка рабочего стола «гранит 2026» (вне ФН) к юр. раскладке",
+      "steps_at_answer": [],
+      "unblocked": []
+    }
+  }
+}

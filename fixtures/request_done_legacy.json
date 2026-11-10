@@ -1,0 +1,542 @@
+{
+  "id": "t_605613e0",
+  "room": "cafe",
+  "title": "Картина по проекту «Лето»: где мы сейчас и 5 следующих шагов",
+  "status": "done",
+  "status_reason": null,
+  "mode": "auto",
+  "critic": {
+    "enabled": false,
+    "round": 0,
+    "max_rounds": 1,
+    "state": "off",
+    "verdict": null,
+    "issues": [],
+    "task_id": null
+  },
+  "created_at": 1793147584,
+  "started_at": 1793148315,
+  "finished_at": 1793148391,
+  "duration_s": 76,
+  "progress": {
+    "done": 5,
+    "total": 5,
+    "percent": 100
+  },
+  "assignee": "biz-director",
+  "needs_you": true,
+  "preview": "Нужна одна сводная картина по проекту «Лето» (Заозёрье) и понятный следующий шаг.",
+  "archived": false,
+  "brief": true,
+  "streams_summary": {
+    "total": 5,
+    "running": 2,
+    "done": 1,
+    "status": "running"
+  },
+  "plan_link": null,
+  "text": "# Запрос Михаила (канбан-вариант)\n\nНужна одна сводная картина по проекту «Лето» (Заозёрье) и понятный следующий шаг.\n\n## Что собрать\n\n1. Срез состояния по источникам: 01-Legal, 03-Ops, 05-Strategy, Decisions.md, план 90 дней, доска team.\n2. Что готово — списком, с указанием артефактов.\n3. Что висит и почему: блокеры, зависимости, чьё решение требуется.\n4. Где мы по этапам: идея → легализация → бренд и знак → упаковка → производство → продажи.\n5. 5 следующих шагов на ближайшие 2 недели: что, кто, зачем, результат.\n\n## Границы\n\nНикаких новых трат и внешних сервисов. Только чтение vault/доски.",
+  "dispatcher": {
+    "ok": true,
+    "warning": null
+  },
+  "synthesis": {
+    "state": "ready",
+    "text_md": "## Один сводный ответ (корень · 27.10.2026)\nПолный документ: `D:\\Проекты\\Vault\\Projects\\Team\\00-Director\\Tasks\\svod-leto-2026-10-27.md`\n\n**Картина.** Подготовительная фаза завершена: 48/48 done-карточек с артефактами, готово 6 блоков — стратегия план-90 Rev.2, юр-гайды (ИП/СанПиН/Alvará), проверка в Роспатенте: свободно «Лето» кл.30/43/35, бренд-пак рев.1–3, упаковка-исследование (10 произв. городе, ~16–24 ₽/уп), D19-план. Продающих фактов 0: ИП/ИНН — нет данных, продажи 0, тестовых партий нет.\n\n**Этапы:** идея — готов · легализация — ждёт действия Михаила (факт ИП не подтверждён; свидетельство о регистрации и разрешение по зонированию не получены; 4 вопроса в СЭС PMF открыты) · бренд и знак — ждёт решения (свободно 08.10, подачи нет) · упаковка — в работе (котировки не отправлены, MOQ не подтверждены) · производство — не начат · продажи — не начат (0, гейт G1 не закрыт).\n\n**5 шагов (2 недели):** канал TG/WA (Михаил) → поле D19; ратификация гайда по товарному знаку и чек-лист ИП (Антон); регистрация ИП (Михаил); 4 запроса в СЭС (Марина); «Лист решений Михаила» (Илья → Глеб).\n\n**От Михаила сейчас:** Q1 канал D19 · Q2 go/no-go Роспатент (440 или 8 800 ₽) · Q4 kill-критерии D8 · Q6/бренд-пак: ник IG/TikTok, домен leto-cafe.ru, лейаут, слоган.\n\nЗатраты 0 ₽, внешних сервисов нет; источники — срезы 01-Legal / 03-Ops / 05-Strategy / 06-Runner от 27.10; 7 противоречий источников помечены явно (П1–П7 в документе).",
+    "author": "biz-director",
+    "at": 1793148391,
+    "source_task": "t_605613e0",
+    "legacy": true,
+    "version": 1,
+    "history": [
+      {
+        "version": 1,
+        "kind": "initial",
+        "task_id": "t_605613e0",
+        "author": "biz-director",
+        "at": 1793148391,
+        "verdict": null,
+        "note": "Единственный свод корня (legacy-metadata)."
+      }
+    ]
+  },
+  "next_steps": [
+    {
+      "id": "ns_1",
+      "text": "Ш1 Михаил (1–2 мин, 0 ₽): снять блокер канала исходящих TG/WA — V1 бот @BotFather → токен в gateway / V2 QR Telegram Web / V3 вручную; → Марина стартует поле D19 (6 дней, ≥15 completes)",
+      "owner": null,
+      "due": null,
+      "state": "open"
+    },
+    {
+      "id": "ns_2",
+      "text": "Ш2 Антон (0 ₽, без Михаила): ратификация TRADEMARK-GUIDE.md по LUKA-METHOD + чек-лист «ИП за один вечер» (ОКВЭД 10.71, не 56.10)",
+      "owner": null,
+      "due": null,
+      "state": "open"
+    },
+    {
+      "id": "ns_3",
+      "text": "Ш3 Михаил (по чек-листу Ш2, 0 ₽, ~1 ч): регистрация ИП + запросы свидетельство о регистрации и заключение о размещении → регистрацией на руках",
+      "owner": null,
+      "due": null,
+      "state": "open"
+    },
+    {
+      "id": "ns_4",
+      "text": "Ш4 Марина+Михаил (0 ₽): 4 готовых запроса к СЭС (диспенса, такса 56.10, зонирование апартаментов, atestado)",
+      "owner": null,
+      "due": null,
+      "state": "open"
+    },
+    {
+      "id": "ns_5",
+      "text": "Ш5 Илья → Глеб: «Лист решений Михаила» одним документом (6 решений дайджеста 26.10 + 4 бренд-решения + кому писать по упаковке)",
+      "owner": null,
+      "due": null,
+      "state": "open"
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "q_1",
+      "text": "Q1 Канал для D19: V1 (реком. Марины) / V2 / V3 + новый дедлайн (старый 05.10 истёк) — Михаил",
+      "for": "mikhail",
+      "answered": false,
+      "answer": null,
+      "answered_at": null
+    },
+    {
+      "id": "q_2",
+      "text": "Q2 Подача в Роспатент «Лето»: кл.30 (4 400 ₽) или 30+43 (8 800 ₽ со скидкой для ИП)? Необратимо; риск R5 — Михаил",
+      "for": "mikhail",
+      "answered": false,
+      "answer": null,
+      "answered_at": null
+    },
+    {
+      "id": "q_3",
+      "text": "Q3 Фактический статус ИП / свидетельство о регистрации / заключение о размещении — нет данных в vault",
+      "for": "mikhail",
+      "answered": false,
+      "answer": null,
+      "answered_at": null
+    },
+    {
+      "id": "q_4",
+      "text": "Q4 Утвердить kill-критерии D8 (<50 наборов/мес на 60-й день → ревизия) — Михаил",
+      "for": "mikhail",
+      "answered": false,
+      "answer": null,
+      "answered_at": null
+    },
+    {
+      "id": "q_5",
+      "text": "Q5 Бренд-пак: ник IG/TikTok, домен leto-cafe.ru, финал лейаута, слоган — Михаил",
+      "for": "mikhail",
+      "answered": false,
+      "answer": null,
+      "answered_at": null
+    },
+    {
+      "id": "q_6",
+      "text": "Q6 Шесть решений дайджеста 26.10 за Михаилом (05-Strategy/prodazhi-plan.md)",
+      "for": "mikhail",
+      "answered": false,
+      "answer": null,
+      "answered_at": null
+    },
+    {
+      "id": "q_7",
+      "text": "Q7 Единица мощности моти vs наборы (разброс 4× — пересчёт у Анны); замер ёмкости морозилки (0 ₽, 30 мин)",
+      "for": "mikhail",
+      "answered": false,
+      "answer": null,
+      "answered_at": null
+    }
+  ],
+  "decisions": [],
+  "stage": {
+    "current": "legal",
+    "phases": [
+      {
+        "id": "idea",
+        "title": "Идея и стратегия",
+        "status": "done",
+        "note": "готов: VISION/брифы утверждены 14–16.09, карта решений D1–D20 отработана, экономика и план 90 дней просчитаны"
+      },
+      {
+        "id": "legal",
+        "title": "Легализация",
+        "status": "blocked",
+        "note": "в работе → ждёт действия/решения Михаила: нормы/гайды готовы, факт ИП — нет данных; свидетельство о регистрации и заключение о размещении не получены; 4 вопроса в СЭС PMF открыты"
+      },
+      {
+        "id": "brand",
+        "title": "Бренд и товарный знак",
+        "status": "blocked",
+        "note": "в работе → ждёт решения: «Лето» утверждён 24.09, бренд-пак рев.1–3; проверка в Роспатенте: свободно кл.30/43/35 (08.10); подачи нет — go/no-go Михаила"
+      },
+      {
+        "id": "packaging",
+        "title": "Упаковка",
+        "status": "active",
+        "note": "в работе: исследование готово (10 произв. городе, старт-вариант ~16–24 ₽/уп — оценка), котировки не отправлены, MOQ тиража 100 не подтверждены"
+      },
+      {
+        "id": "production",
+        "title": "Производство",
+        "status": "next",
+        "note": "не начат: кухня есть, замер смены 150/нед (18.09), аудит СанПиН готов; тестовых партий и закупок — нет данных"
+      },
+      {
+        "id": "sales",
+        "title": "Продажи",
+        "status": "next",
+        "note": "не начат: 0 продаж/заказов, гейт G1 не закрыт, валидация D19 = 0 разговоров (blocked 32 дня)"
+      }
+    ]
+  },
+  "future_questions": [],
+  "artifacts": [
+    {
+      "path": "D:/Проекты/Vault/Projects/Team/00-Director/Tasks/svod-leto-2026-10-27.md",
+      "title": "svod-leto-2026-10-27.md",
+      "kind": "md",
+      "exists": true,
+      "size": 16299
+    }
+  ],
+  "report": {
+    "available": false,
+    "kind": null,
+    "path": null,
+    "title": null
+  },
+  "tree": [
+    {
+      "id": "t_605613e0",
+      "parent_ids": [],
+      "title": "Картина по проекту «Лето»: где мы сейчас и 5 следующих шагов",
+      "assignee": "biz-director",
+      "role": "root",
+      "status": "done",
+      "started_at": 1793148315,
+      "finished_at": 1793148391,
+      "summary_md": "## Один сводный ответ (корень · 27.10.2026)\nПолный документ: `D:\\Проекты\\Vault\\Projects\\Team\\00-Director\\Tasks\\svod-leto-2026-10-27.md`\n\n**Картина.** Подготовительная фаза завершена: 48/48 done-карточек с артефактами, готово 6 блоков — стратегия план-90 Rev.2, юр-гайды (ИП/СанПиН/Alvará), проверка в Роспатенте: свободно «Лето» кл.30/43/35, бренд-пак рев.1–3, упаковка-исследование (10 произв. городе, ~16–24 ₽/уп), D19-план. Продающих фактов 0: ИП/ИНН — нет данных, продажи 0, тестовых партий нет.\n\n**Этапы:** идея — готов · легализация — ждёт действия Михаила (факт ИП не подтверждён; свидетельство о регистрации и разрешение по зонированию не получены; 4 вопроса в СЭС PMF открыты) · бренд и знак — ждёт решения (свободно 08.10, подачи нет) · упаковка — в работе (котировки не отправлены, MOQ не подтверждены) · производство — не начат · продажи — не начат (0, гейт G1 не закрыт).\n\n**5 шагов (2 недели):** канал TG/WA (Михаил) → поле D19; ратификация гайда по товарному знаку и чек-лист ИП (Антон); регистрация ИП (Михаил); 4 запроса в СЭС (Марина); «Лист решений Михаила» (Илья → Глеб).\n\n**От Михаила сейчас:** Q1 канал D19 · Q2 go/no-go Роспатент (440 или 8 800 ₽) · Q4 kill-критерии D8 · Q6/бренд-пак: ник IG/TikTok, домен leto-cafe.ru, лейаут, слоган.\n\nЗатраты 0 ₽, внешних сервисов нет; источники — срезы 01-Legal / 03-Ops / 05-Strategy / 06-Runner от 27.10; 7 противоречий источников помечены явно (П1–П7 в документе).",
+      "metadata": {
+        "artifacts_doc": "D:/Проекты/Vault/Projects/Team/00-Director/Tasks/svod-leto-2026-10-27.md",
+        "spend": "0 ₽, внешних сервисов нет",
+        "worker_session_id": "local-a47197ca"
+      },
+      "comments": [
+        {
+          "author": "auto-decomposer",
+          "text": "Decomposed into t_8fa84d38, t_1444b542, t_bb2379b1, t_e8823716, t_8d05509a. Root will wake when all children complete.",
+          "at": 1793147644
+        }
+      ],
+      "runs": [
+        {
+          "id": 62,
+          "profile": "biz-director",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793148315,
+          "ended_at": 1793148391,
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    },
+    {
+      "id": "t_8fa84d38",
+      "parent_ids": [
+        "t_605613e0"
+      ],
+      "title": "Срез 01-Legal: статус легализации и юридические блокеры проекта",
+      "assignee": "biz-lawyer",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793147644,
+      "finished_at": 1793147869,
+      "summary_md": "Срез готов: Team\\01-Legal\\STATUS-SNAPSHOT-2026-10-27.md. ИП — решение принято, регистрация не подтверждена; за ИНН стоят Роспатент и свидетельство. Кухня СанПиН — аудит готов (~600–9 000 ₽ без ремонта), исполнение не начато. PMF — 4 вопроса в СЭС открыты.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 63,
+          "profile": "biz-lawyer",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793147644,
+          "ended_at": 1793147869,
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    },
+    {
+      "id": "t_1444b542",
+      "parent_ids": [
+        "t_605613e0"
+      ],
+      "title": "Срез 03-Ops: производство, поставщики, доставка",
+      "assignee": "biz-ops",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793147644,
+      "finished_at": 1793147969,
+      "summary_md": "Срез 03-Ops (11 файлов). Готово: rynok-leto (рынок, 3 игрока моти), prodazhi-kanaly, channels-detail (28 TG-каналов), b2b-targets (20 кофейней), sales-agents, geo-leto, D19-инструмент Mom Test 6Q. Закупок и тестовых партий нет.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 64,
+          "profile": "biz-ops",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793147644,
+          "ended_at": 1793147969,
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    },
+    {
+      "id": "t_bb2379b1",
+      "parent_ids": [
+        "t_605613e0"
+      ],
+      "title": "Срез 05-Strategy и бренд: стратегия, бренд и знак, продажи",
+      "assignee": "biz-strategy",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793147644,
+      "finished_at": 1793147936,
+      "summary_md": "План 90 дней Rev.2 (25.09) актуален; ROADMAP.md (16.09) устарел — R17. Бренд: «Лето» утверждён 24.09, материалы рев.1–3, проверка в Роспатенте: свободно 30/43/35 (08.10) — подачи нет. Продажи 0, гейт G1 не закрыт.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 65,
+          "profile": "biz-strategy",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793147644,
+          "ended_at": 1793147936,
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    },
+    {
+      "id": "t_e8823716",
+      "parent_ids": [
+        "t_605613e0"
+      ],
+      "title": "Срез Decisions.md и доски team: принятые решения, done и blocked",
+      "assignee": "biz-runner",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793147644,
+      "finished_at": 1793148089,
+      "summary_md": "Срез 27.10: 11 решений из Decisions.md 14.09–25.09. Доска: 61 карточка — done 48 (42 Лето), blocked 2: D19 и канал TG. Все артефакты проверены по путям.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 66,
+          "profile": "biz-runner",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793147644,
+          "ended_at": 1793148089,
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    },
+    {
+      "id": "t_8d05509a",
+      "parent_ids": [
+        "t_605613e0"
+      ],
+      "title": "Свести картину по проекту: этапы и 5 следующих шагов для Михаила",
+      "assignee": "biz-director",
+      "role": "synthesizer",
+      "status": "done",
+      "started_at": 1793148132,
+      "finished_at": 1793148299,
+      "summary_md": "Сводный ответ собран из четырёх срезов в один документ. Картина: готово 6 блоков артефактов, но 0 продаж — проект стоит на решениях Михаила.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 67,
+          "profile": "biz-director",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793148132,
+          "ended_at": 1793148299,
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    }
+  ],
+  "timeline": [
+    {
+      "at": 1793147584,
+      "kind": "created",
+      "task_id": "t_605613e0",
+      "actor": "mikhail",
+      "text": "Запрос создан"
+    },
+    {
+      "at": 1793147644,
+      "kind": "decomposed",
+      "task_id": "t_605613e0",
+      "actor": "system",
+      "text": "Разложен на 4 среза и свод"
+    },
+    {
+      "at": 1793147869,
+      "kind": "completed",
+      "task_id": "t_8fa84d38",
+      "actor": "biz-lawyer",
+      "text": "Срез 01-Legal закрыт"
+    },
+    {
+      "at": 1793147936,
+      "kind": "completed",
+      "task_id": "t_bb2379b1",
+      "actor": "biz-strategy",
+      "text": "Срез 05-Strategy закрыт"
+    },
+    {
+      "at": 1793147969,
+      "kind": "completed",
+      "task_id": "t_1444b542",
+      "actor": "biz-ops",
+      "text": "Срез 03-Ops закрыт"
+    },
+    {
+      "at": 1793148089,
+      "kind": "completed",
+      "task_id": "t_e8823716",
+      "actor": "biz-runner",
+      "text": "Срез решений и доски закрыт"
+    },
+    {
+      "at": 1793148299,
+      "kind": "completed",
+      "task_id": "t_8d05509a",
+      "actor": "biz-director",
+      "text": "Свод собран"
+    },
+    {
+      "at": 1793148315,
+      "kind": "claimed",
+      "task_id": "t_605613e0",
+      "actor": "biz-director",
+      "text": "Корень взят в работу"
+    },
+    {
+      "at": 1793148391,
+      "kind": "commented",
+      "task_id": "t_605613e0",
+      "actor": "biz-director",
+      "text": "Опубликован сводный ответ"
+    },
+    {
+      "at": 1793148391,
+      "kind": "completed",
+      "task_id": "t_605613e0",
+      "actor": "biz-director",
+      "text": "Запрос завершён"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "legacy_metadata",
+      "message": "Ответ карточки в старом формате: next_steps строками, stage словарём «область → статус». Показан нормализованным.",
+      "detail": {
+        "fields": [
+          "next_steps",
+          "stage",
+          "open_questions"
+        ]
+      }
+    }
+  ],
+  "thread": [
+    {
+      "id": "c1",
+      "at": 1793088000,
+      "author_kind": "mikhail",
+      "author": "mikhail",
+      "author_label": "Михаил",
+      "text": "Сведи всё, что уже накоплено по проекту, в один документ — без новых исследований.",
+      "task_id": "t_605613e0",
+      "kind": "message"
+    },
+    {
+      "id": "c2",
+      "at": 1793088030,
+      "author_kind": "agent",
+      "author": "biz-director",
+      "author_label": "Глеб · руководитель комнаты",
+      "text": "Принял; передал Антону — юр-гайды, Илье — стратегию и бренд, Марине — план D19, Сергею — упаковку. Свод соберу по срезам.",
+      "task_id": "t_605613e0",
+      "kind": "comment"
+    },
+    {
+      "id": "c3",
+      "at": 1793088400,
+      "author_kind": "agent",
+      "author": "biz-strategy",
+      "author_label": "Илья · исполнитель",
+      "text": "План 90 дней рев.2 и бренд-пак готовы: проверка в Роспатенте: свободно по классам 30/43/35, домен leto-cafe.ru свободен.",
+      "task_id": "t_605613e0",
+      "kind": "comment"
+    },
+    {
+      "id": "v1",
+      "at": 1793088700,
+      "author_kind": "system",
+      "author": "system",
+      "author_label": "Комната команды",
+      "text": "Версия 1 готова: свод собран по срезам команды",
+      "task_id": "t_605613e0",
+      "kind": "event"
+    },
+    {
+      "id": "c4",
+      "at": 1793088760,
+      "author_kind": "agent",
+      "author": "biz-director",
+      "author_label": "Глеб · руководитель комнаты",
+      "text": "Принял: свод собран, продающих фактов ноль — так и написал. Передал: Антону — ратифицировать юр-гайд, Михаилу — 6 решений в «Листе решений».",
+      "task_id": "t_605613e0",
+      "kind": "comment"
+    }
+  ],
+  "title_short": "Картина по проекту «Лето»: где мы сейчас и 5 следующих шагов",
+  "heartbeats": {
+    "count": 0,
+    "last_at": null
+  }
+}

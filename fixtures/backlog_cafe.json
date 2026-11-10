@@ -1,0 +1,130 @@
+{
+  "room": "cafe",
+  "updated_at": 1793171200,
+  "counts": {
+    "open": 6,
+    "asked": 1,
+    "done": 1,
+    "dismissed": 1,
+    "total": 9
+  },
+  "items": [
+    {
+      "id": "t_a1b2c3d4:ns_1",
+      "kind": "next_step",
+      "text": "Выбрать канал исходящих TG/WA и запустить поле D19",
+      "owner": "mikhail",
+      "due": "2026-10-30",
+      "status": "open",
+      "source_request": "t_a1b2c3d4",
+      "source_title": "Дорожная карта проекта: где мы сейчас и что дальше",
+      "asked_request": null,
+      "created_at": 1793164590,
+      "updated_at": 1793164590
+    },
+    {
+      "id": "t_a1b2c3d4:ns_2",
+      "kind": "next_step",
+      "text": "Подать заявление на ИП через Госуслуги по чек-листу (ОКВЭД 10.71)",
+      "owner": "mikhail",
+      "due": "2026-11-01",
+      "status": "open",
+      "source_request": "t_a1b2c3d4",
+      "source_title": "Дорожная карта проекта: где мы сейчас и что дальше",
+      "asked_request": null,
+      "created_at": 1793164590,
+      "updated_at": 1793164590
+    },
+    {
+      "id": "t_a1b2c3d4:ns_3",
+      "kind": "next_step",
+      "text": "Запросить свидетельство о регистрации и заключение о размещении",
+      "owner": "biz-ops",
+      "due": "2026-11-05",
+      "status": "asked",
+      "source_request": "t_a1b2c3d4",
+      "source_title": "Дорожная карта проекта: где мы сейчас и что дальше",
+      "asked_request": "t_7d21b8c4",
+      "created_at": 1793164590,
+      "updated_at": 1793165900
+    },
+    {
+      "id": "t_a1b2c3d4:ns_4",
+      "kind": "next_step",
+      "text": "Отправить 4 запроса котировок упаковки по городскому шорт-листу",
+      "owner": "biz-ops",
+      "due": "2026-11-06",
+      "status": "open",
+      "source_request": "t_a1b2c3d4",
+      "source_title": "Дорожная карта проекта: где мы сейчас и что дальше",
+      "asked_request": null,
+      "created_at": 1793164590,
+      "updated_at": 1793164590
+    },
+    {
+      "id": "t_a1b2c3d4:ns_5",
+      "kind": "next_step",
+      "text": "Свести «Лист решений Михаила»: Роспатент, канал, kill-критерии",
+      "owner": "biz-director",
+      "due": "2026-11-02",
+      "status": "done",
+      "source_request": "t_a1b2c3d4",
+      "source_title": "Дорожная карта проекта: где мы сейчас и что дальше",
+      "asked_request": null,
+      "created_at": 1793164590,
+      "updated_at": 1793165800
+    },
+    {
+      "id": "t_a1b2c3d4:fq_1",
+      "kind": "future_question",
+      "text": "Нужен ли отдельный бренд для B2B-линейки?",
+      "owner": "mikhail",
+      "due": null,
+      "status": "open",
+      "source_request": "t_a1b2c3d4",
+      "source_title": "Дорожная карта проекта: где мы сейчас и что дальше",
+      "asked_request": null,
+      "created_at": 1793164590,
+      "updated_at": 1793164590
+    },
+    {
+      "id": "t_a1b2c3d4:fq_2",
+      "kind": "future_question",
+      "text": "Когда нанимать кондитера на подработку?",
+      "owner": "mikhail",
+      "due": null,
+      "status": "dismissed",
+      "source_request": "t_a1b2c3d4",
+      "source_title": "Дорожная карта проекта: где мы сейчас и что дальше",
+      "asked_request": null,
+      "created_at": 1793164590,
+      "updated_at": 1793165900
+    },
+    {
+      "id": "t_5c8e4a02:q_1",
+      "kind": "open_question",
+      "text": "Подача в Роспатент: класс 30 (4 400 ₽) или 30+43 (8 800 ₽)?",
+      "owner": "mikhail",
+      "due": "2026-10-31",
+      "status": "open",
+      "source_request": "t_5c8e4a02",
+      "source_title": "Бренд: подача в Роспатент — go/no-go",
+      "asked_request": null,
+      "created_at": 1793163720,
+      "updated_at": 1793163720
+    },
+    {
+      "id": "t_a1b2c3d4:d_3",
+      "kind": "decision",
+      "text": "Стартовать с набора из 6 моти, не с поштучной продажи",
+      "owner": "mikhail",
+      "due": null,
+      "status": "open",
+      "source_request": "t_a1b2c3d4",
+      "source_title": "Дорожная карта проекта: где мы сейчас и что дальше",
+      "asked_request": null,
+      "created_at": 1793164800,
+      "updated_at": 1793164800
+    }
+  ]
+}

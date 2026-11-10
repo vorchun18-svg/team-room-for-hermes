@@ -1,0 +1,759 @@
+{
+ "version": 1,
+ "title": "Юнит-экономика «Лето», IV квартал 2026",
+ "subtitle": "Сводка по каналам, марже и готовности запуска · черновик от 28.10.2026",
+ "summary": "Выручка за июль–ноябрь растёт на **8–11% в месяц**, но маржа marketplace держится на 21–22% против 32–33% у Instagram. Узкое место — логистика поп-апа и корпоративных заказов: без подтверждённой сметы декабрьский план теряет около `R$ 24 000`.",
+ "blocks": [
+  {
+   "type": "heading",
+   "text": "Ключевые показатели",
+   "level": 1
+  },
+  {
+   "type": "text",
+   "md": "Ниже — сводка **за пять месяцев**. Все суммы в бразильских реалах, если не указано иное. Маржа считается после себестоимости и доставки, но до налогов.\n\n* данные сверены с выпиской PagSeguro;\n* прогнозные месяцы помечены отдельным статусом."
+  },
+  {
+   "type": "callout",
+   "tone": "info",
+   "title": "Как читать отчёт",
+   "md": "Таблицы сортируются по клику на заголовок, фильтр ищет по всем колонкам сразу. Кнопка **CSV** выгружает текущую выборку, **Печать / PDF** — весь отчёт."
+  },
+  {
+   "type": "stats",
+   "items": [
+    {
+     "label": "Выручка, июл–ноя",
+     "value": "R$ 460 100",
+     "delta": 11.2,
+     "hint": "против плана +4,1%"
+    },
+    {
+     "label": "Средняя маржа",
+     "value": "28,4%",
+     "delta": -0.6,
+     "hint": "тянет marketplace"
+    },
+    {
+     "label": "Заказов",
+     "value": "2 037",
+     "delta": 186,
+     "hint": "рост за счёт Instagram"
+    },
+    {
+     "label": "Средний чек",
+     "value": "R$ 226",
+     "delta": 4.8,
+     "hint": "без доставки"
+    },
+    {
+     "label": "Риск декабря",
+     "value": "R$ 24 000",
+     "tone": "warn",
+     "hint": "смета поп-апа не подписана"
+    }
+   ]
+  },
+  {
+   "type": "heading",
+   "text": "Каналы продаж",
+   "level": 2
+  },
+  {
+   "type": "table",
+   "title": "Выручка и маржа по каналам",
+   "sortable": true,
+   "filter": true,
+   "columns": [
+    {
+     "key": "month",
+     "label": "Месяц",
+     "type": "date"
+    },
+    {
+     "key": "channel",
+     "label": "Канал"
+    },
+    {
+     "key": "orders",
+     "label": "Заказы",
+     "type": "number"
+    },
+    {
+     "key": "revenue",
+     "label": "Выручка",
+     "type": "money",
+     "currency": "BRL"
+    },
+    {
+     "key": "margin",
+     "label": "Маржа",
+     "type": "percent",
+     "ratio": true,
+     "decimals": 1
+    },
+    {
+     "key": "status",
+     "label": "Статус",
+     "type": "status"
+    },
+    {
+     "key": "doc",
+     "label": "Документ",
+     "type": "link"
+    }
+   ],
+   "rows": [
+    {
+     "month": "2026-07-01",
+     "channel": "Instagram",
+     "orders": 184,
+     "revenue": 41250.0,
+     "margin": 0.286,
+     "status": "готово",
+     "doc": {
+      "title": "Отчёт за июль",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/july.md"
+     }
+    },
+    {
+     "month": "2026-07-01",
+     "channel": "Marketplace",
+     "orders": 96,
+     "revenue": 18900.0,
+     "margin": 0.214,
+     "status": "готово",
+     "doc": {
+      "title": "Сверка",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/mp-july.md"
+     }
+    },
+    {
+     "month": "2026-08-01",
+     "channel": "Instagram",
+     "orders": 214,
+     "revenue": 49800.0,
+     "margin": 0.301,
+     "status": "готово",
+     "doc": {
+      "title": "Отчёт за август",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/august.md"
+     }
+    },
+    {
+     "month": "2026-08-01",
+     "channel": "Marketplace",
+     "orders": 118,
+     "revenue": 22150.0,
+     "margin": 0.208,
+     "status": "в работе",
+     "doc": {
+      "title": "Сверка",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/mp-aug.md"
+     }
+    },
+    {
+     "month": "2026-09-01",
+     "channel": "Instagram",
+     "orders": 268,
+     "revenue": 63400.0,
+     "margin": 0.322,
+     "status": "готово",
+     "doc": {
+      "title": "Отчёт за сентябрь",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/september.md"
+     }
+    },
+    {
+     "month": "2026-09-01",
+     "channel": "Marketplace",
+     "orders": 141,
+     "revenue": 26700.0,
+     "margin": 0.219,
+     "status": "на проверке",
+     "doc": {
+      "title": "Сверка",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/mp-sep.md"
+     }
+    },
+    {
+     "month": "2026-10-01",
+     "channel": "Instagram",
+     "orders": 302,
+     "revenue": 74800.0,
+     "margin": 0.334,
+     "status": "в работе",
+     "doc": {
+      "title": "Отчёт за октябрь",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/october.md"
+     }
+    },
+    {
+     "month": "2026-10-01",
+     "channel": "Marketplace",
+     "orders": 163,
+     "revenue": 31200.0,
+     "margin": 0.226,
+     "status": "ждёт данных",
+     "doc": {
+      "title": "Сверка",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/mp-oct.md"
+     }
+    },
+    {
+     "month": "2026-11-01",
+     "channel": "Instagram",
+     "orders": 276,
+     "revenue": 68100.0,
+     "margin": 0.318,
+     "status": "прогноз",
+     "doc": {
+      "title": "Прогноз",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/nov.md"
+     }
+    },
+    {
+     "month": "2026-11-01",
+     "channel": "Marketplace",
+     "orders": 151,
+     "revenue": 28900.0,
+     "margin": 0.221,
+     "status": "прогноз",
+     "doc": {
+      "title": "Прогноз",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/nov-mp.md"
+     }
+    },
+    {
+     "month": "2026-12-01",
+     "channel": "Pop-up",
+     "orders": 88,
+     "revenue": 24300.0,
+     "margin": 0.352,
+     "status": "блокировано",
+     "doc": {
+      "title": "Смета поп-апа",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/popup.md"
+     }
+    },
+    {
+     "month": "2026-12-01",
+     "channel": "Корпоративы",
+     "orders": 42,
+     "revenue": 39600.0,
+     "margin": 0.401,
+     "status": "в работе",
+     "doc": {
+      "title": "Договор",
+      "href": "data/reports/cafe/r-20261028-0931-ab12/corp.md"
+     }
+    }
+   ],
+   "totals": {
+    "orders": "sum",
+    "revenue": "sum",
+    "margin": "avg"
+   },
+   "footnote": "Итоги считаются по видимой выборке: отфильтруйте канал — суммы пересчитаются."
+  },
+  {
+   "type": "heading",
+   "text": "Готовность запуска",
+   "level": 2
+  },
+  {
+   "type": "phases",
+   "items": [
+    {
+     "title": "Рецептуры",
+     "status": "done",
+     "note": "12 позиций, дегустация 12.09"
+    },
+    {
+     "title": "Упаковка",
+     "status": "done",
+     "note": "тираж 5 000 шт."
+    },
+    {
+     "title": "Логистика",
+     "status": "active",
+     "note": "договор с курьером — на подписи"
+    },
+    {
+     "title": "Поп-ап",
+     "status": "blocked",
+     "note": "нет сметы площадки"
+    },
+    {
+     "title": "Масштаб",
+     "status": "next",
+     "note": "q1 2027"
+    }
+   ]
+  },
+  {
+   "type": "timeline",
+   "items": [
+    {
+     "date": "2026-09-12",
+     "title": "Дегустация и фиксация рецептур",
+     "status": "done",
+     "owner": "biz-ops",
+     "md": "Принято 12 позиций, 3 отложены из-за стоимости ингредиентов."
+    },
+    {
+     "date": "2026-10-02",
+     "title": "Запуск Instagram-витрины",
+     "status": "done",
+     "owner": "biz-marketing"
+    },
+    {
+     "date": "2026-10-21",
+     "title": "Сверка с PagSeguro за сентябрь",
+     "status": "done",
+     "owner": "biz-cfo",
+     "md": "Расхождение 0,4% — в пределах допустимого."
+    },
+    {
+     "date": "2026-11-05",
+     "title": "Подписать смету поп-апа",
+     "status": "active",
+     "owner": "Михаил",
+     "md": "Нужно решение по площадке: Pinheiros или Vila Madalena."
+    },
+    {
+     "date": "2026-12-01",
+     "title": "Старт продаж поп-апа",
+     "status": "blocked",
+     "owner": "biz-runner",
+     "md": "Зависит от предыдущего шага."
+    }
+   ]
+  },
+  {
+   "type": "heading",
+   "text": "Варианты площадки",
+   "level": 2
+  },
+  {
+   "type": "compare",
+   "criteria": [
+    "Аренда",
+    "Трафик",
+    "Сроки",
+    "Риск"
+   ],
+   "options": [
+    {
+     "name": "Pinheiros",
+     "score": 8.2,
+     "pros": [
+      "Плотный поток в выходные",
+      "Готовые витрины",
+      "Знакомая логистика"
+     ],
+     "cons": [
+      "Аренда R$ 9 800/мес",
+      "Свободные слоты только с 15.12"
+     ],
+     "verdict": "Лучший баланс при условии скидки за 3 месяца."
+    },
+    {
+     "name": "Vila Madalena",
+     "score": 7.4,
+     "pros": [
+      "Дешевле на 22%",
+      "Можно заехать 01.12",
+      "Хорошая съёмка для соцсетей"
+     ],
+     "cons": [
+      "Слабее поток в будни",
+      "Нет склада на месте"
+     ],
+     "verdict": "Запасной вариант, если Pinheiros не даст слот."
+    },
+    {
+     "name": "Без поп-апа",
+     "score": 5.1,
+     "pros": [
+      "Нулевые затраты",
+      "Команда не распыляется"
+     ],
+     "cons": [
+      "Минус R$ 24 000 выручки",
+      "Не тестируем офлайн-спрос"
+     ],
+     "verdict": "Приемлемо только при провале переговоров."
+    }
+   ]
+  },
+  {
+   "type": "heading",
+   "text": "Риски и сильные стороны",
+   "level": 2
+  },
+  {
+   "type": "matrix",
+   "kind": "heat",
+   "rows": [
+    "Логистика",
+    "Найм",
+    "Ингредиенты",
+    "Спрос"
+   ],
+   "cols": [
+    "Ноя",
+    "Дек",
+    "Янв",
+    "Фев",
+    "Мар"
+   ],
+   "cells": [
+    [
+     3,
+     4,
+     4,
+     3,
+     2
+    ],
+    [
+     2,
+     3,
+     4,
+     4,
+     3
+    ],
+    [
+     2,
+     2,
+     3,
+     4,
+     4
+    ],
+    [
+     1,
+     2,
+     3,
+     3,
+     2
+    ]
+   ]
+  },
+  {
+   "type": "matrix",
+   "kind": "swot",
+   "swot": {
+    "strengths": [
+     "Собственные рецептуры",
+     "Лояльная аудитория 4,2 тыс.",
+     "Маржа Instagram 33%"
+    ],
+    "weaknesses": [
+     "Один курьер",
+     "Нет склада",
+     "Маржа marketplace 21%"
+    ],
+    "opportunities": [
+     "Корпоративы к декабрю",
+     "Поп-ап в Pinheiros",
+     "Подписка на наборы"
+    ],
+    "threats": [
+     "Рост цен на какао",
+     "Сезонный спад в январе",
+     "Демпинг конкурента"
+    ]
+   }
+  },
+  {
+   "type": "heading",
+   "text": "Что сделать",
+   "level": 2
+  },
+  {
+   "type": "checklist",
+   "items": [
+    {
+     "text": "Подписать смету поп-апа",
+     "done": false,
+     "owner": "Михаил",
+     "due": "2026-11-05"
+    },
+    {
+     "text": "Закрыть договор с курьером на декабрь",
+     "done": false,
+     "owner": "biz-runner",
+     "due": "2026-11-12"
+    },
+    {
+     "text": "Сверка PagSeguro за октябрь",
+     "done": true,
+     "owner": "biz-cfo",
+     "due": "2026-11-08"
+    },
+    {
+     "text": "Обновить карточки marketplace",
+     "done": true,
+     "owner": "biz-marketing"
+    },
+    {
+     "text": "Посчитать сценарий «без поп-апа»",
+     "done": false,
+     "owner": "biz-cfo",
+     "due": "2026-11-20"
+    }
+   ]
+  },
+  {
+   "type": "kanban",
+   "lanes": [
+    {
+     "title": "Сделать",
+     "cards": [
+      {
+       "title": "Смета поп-апа",
+       "note": "жадём ответ площадки",
+       "tag": "блокер"
+      },
+      {
+       "title": "Договор курьера",
+       "tag": "логистика"
+      }
+     ]
+    },
+    {
+     "title": "В работе",
+     "cards": [
+      {
+       "title": "Корпоративные КП",
+       "note": "3 из 7 отправлены",
+       "tag": "продажи"
+      },
+      {
+       "title": "Фотосессия",
+       "tag": "маркетинг"
+      }
+     ]
+    },
+    {
+     "title": "Готово",
+     "cards": [
+      {
+       "title": "Сверка сентября",
+       "tag": "финансы"
+      },
+      {
+       "title": "Упаковка",
+       "tag": "производство"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "heading",
+   "text": "Материалы",
+   "level": 2
+  },
+  {
+   "type": "tabs",
+   "tabs": [
+    {
+     "title": "Документы",
+     "blocks": [
+      {
+       "type": "links",
+       "items": [
+        {
+         "title": "Сводка по каналам",
+         "path": "data/reports/cafe/r-20261028-0931-ab12/channels.md",
+         "note": "исходная таблица"
+        },
+        {
+         "title": "Смета поп-апа",
+         "path": "data/reports/cafe/r-20261028-0931-ab12/popup.md",
+         "note": "черновик"
+        },
+        {
+         "title": "PagSeguro",
+         "url": "https://pagseguro.uol.com.br",
+         "note": "внешняя ссылка (пример)"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "title": "Источники",
+     "blocks": [
+      {
+       "type": "sources",
+       "items": [
+        {
+         "title": "Выписка PagSeguro",
+         "ref": "data/reports/cafe/r-20261028-0931-ab12/pagseguro.csv",
+         "note": "июл–окт 2026"
+        },
+        {
+         "title": "Договор с курьером",
+         "ref": "data/reports/cafe/r-20261028-0931-ab12/courier.pdf"
+        },
+        {
+         "title": "Заметка о дегустации",
+         "ref": "C:/TeamRoom/Vault/Projects/Rooms/cafe/tasting.md"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "accordion",
+   "items": [
+    {
+     "title": "Методика расчёта маржи",
+     "open": true,
+     "blocks": [
+      {
+       "type": "text",
+       "md": "Маржа = (выручка − себестоимость − доставка) / выручка. Налоги и эквайринг не включены: они одинаковы для всех каналов."
+      }
+     ]
+    },
+    {
+     "title": "Допущения прогноза",
+     "blocks": [
+      {
+       "type": "text",
+       "md": "Ноябрь и декабрь — прогноз по среднему темпу **+9%** в месяц. Поп-ап учтён только в оптимистичном сценарии."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "columns",
+   "widths": [
+    2,
+    1
+   ],
+   "cols": [
+    [
+     {
+      "type": "text",
+      "md": "**Вывод.** Instagram остаётся основным каналом: он даёт 63% выручки и лучшую маржу. Marketplace нужен для объёма, но требует пересмотра комиссии."
+     }
+    ],
+    [
+     {
+      "type": "callout",
+      "tone": "success",
+      "title": "Хорошая новость",
+      "md": "Корпоративы уже дают маржу **40%** — это самый выгодный сегмент."
+     }
+    ]
+   ]
+  },
+  {
+   "type": "heading",
+   "text": "Графики",
+   "level": 2
+  },
+  {
+   "kind": "line",
+   "title": "Выручка по месяцам, R$",
+   "x": [
+    "Июл",
+    "Авг",
+    "Сен",
+    "Окт",
+    "Ноя"
+   ],
+   "series": [
+    {
+     "name": "Instagram",
+     "data": [
+      41250,
+      49800,
+      63400,
+      74800,
+      68100
+     ]
+    },
+    {
+     "name": "Marketplace",
+     "data": [
+      18900,
+      22150,
+      26700,
+      31200,
+      28900
+     ]
+    }
+   ],
+   "unit": "R$",
+   "note": "Данные из таблицы «Выручка и маржа по каналам».",
+   "type": "chart"
+  },
+  {
+   "type": "graph",
+   "layout": "layered",
+   "title": "Связи каналов",
+   "nodes": [
+    {
+     "id": "ig",
+     "label": "Instagram"
+    },
+    {
+     "id": "mp",
+     "label": "Marketplace"
+    },
+    {
+     "id": "pop",
+     "label": "Поп-ап"
+    },
+    {
+     "id": "corp",
+     "label": "Корпоративы"
+    }
+   ],
+   "edges": [
+    {
+     "from": "ig",
+     "to": "pop"
+    },
+    {
+     "from": "mp",
+     "to": "pop"
+    },
+    {
+     "from": "ig",
+     "to": "corp"
+    }
+   ]
+  },
+  {
+   "type": "gallery",
+   "images": [
+    {
+     "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc4MDAnIGhlaWdodD0nNjAwJyB2aWV3Qm94PScwIDAgODAwIDYwMCc+CjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0nZycgeDE9JzAnIHkxPScwJyB4Mj0nMScgeTI9JzEnPjxzdG9wIG9mZnNldD0nMCcgc3RvcC1jb2xvcj0nI2Y0NzJiNicvPjxzdG9wIG9mZnNldD0nMScgc3RvcC1jb2xvcj0nIzdjM2FlZCcvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPgo8cmVjdCB3aWR0aD0nODAwJyBoZWlnaHQ9JzYwMCcgZmlsbD0ndXJsKCNnKScvPgo8Y2lyY2xlIGN4PSc2MjAnIGN5PScxNTAnIHI9JzEyMCcgZmlsbD0nI2ZmZmZmZicgb3BhY2l0eT0nMC4xOCcvPgo8Y2lyY2xlIGN4PScxNzAnIGN5PSc0NzAnIHI9JzkwJyBmaWxsPScjZmZmZmZmJyBvcGFjaXR5PScwLjEyJy8+Cjx0ZXh0IHg9JzYwJyB5PSczMDAnIGZvbnQtZmFtaWx5PSdTZWdvZSBVSSxBcmlhbCcgZm9udC1zaXplPSc1NCcgZm9udC13ZWlnaHQ9JzcwMCcgZmlsbD0nI2ZmZmZmZic+QW1pIMK3INCy0LjRgtGA0LjQvdCwPC90ZXh0Pgo8dGV4dCB4PSc2MCcgeT0nMzUwJyBmb250LWZhbWlseT0nU2Vnb2UgVUksQXJpYWwnIGZvbnQtc2l6ZT0nMjYnIGZpbGw9JyNmZmZmZmYnIG9wYWNpdHk9JzAuOSc+0LTQtdGB0LXRgNGC0YssIFE0IDIwMjY8L3RleHQ+Cjwvc3ZnPg==",
+     "caption": "Витрина (макет)"
+    },
+    {
+     "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc4MDAnIGhlaWdodD0nNjAwJyB2aWV3Qm94PScwIDAgODAwIDYwMCc+CjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0nZycgeDE9JzAnIHkxPScwJyB4Mj0nMScgeTI9JzEnPjxzdG9wIG9mZnNldD0nMCcgc3RvcC1jb2xvcj0nIzBlYTVlOScvPjxzdG9wIG9mZnNldD0nMScgc3RvcC1jb2xvcj0nIzE2YTM0YScvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPgo8cmVjdCB3aWR0aD0nODAwJyBoZWlnaHQ9JzYwMCcgZmlsbD0ndXJsKCNnKScvPgo8Y2lyY2xlIGN4PSc2MjAnIGN5PScxNTAnIHI9JzEyMCcgZmlsbD0nI2ZmZmZmZicgb3BhY2l0eT0nMC4xOCcvPgo8Y2lyY2xlIGN4PScxNzAnIGN5PSc0NzAnIHI9JzkwJyBmaWxsPScjZmZmZmZmJyBvcGFjaXR5PScwLjEyJy8+Cjx0ZXh0IHg9JzYwJyB5PSczMDAnIGZvbnQtZmFtaWx5PSdTZWdvZSBVSSxBcmlhbCcgZm9udC1zaXplPSc1NCcgZm9udC13ZWlnaHQ9JzcwMCcgZmlsbD0nI2ZmZmZmZic+QW1pIMK3INGO0L3QuNGCLdGN0LrQvtC90L7QvNC40LrQsDwvdGV4dD4KPHRleHQgeD0nNjAnIHk9JzM1MCcgZm9udC1mYW1pbHk9J1NlZ29lIFVJLEFyaWFsJyBmb250LXNpemU9JzI2JyBmaWxsPScjZmZmZmZmJyBvcGFjaXR5PScwLjknPtC80LDRgNC20LAg0L/QviDQutCw0L3QsNC70LDQvDwvdGV4dD4KPC9zdmc+",
+     "caption": "Схема маржи по каналам"
+    }
+   ]
+  },
+  {
+   "type": "code",
+   "lang": "python",
+   "text": "margin = (revenue - cogs - delivery) / revenue\nprint(f'{margin:.1%}')  # 0.334 -> 33.4%"
+  },
+  {
+   "type": "text",
+   "md": "---\n_Демонстрационный отчёт: цифры вымышлены, структура — настоящая._"
+  }
+ ]
+}

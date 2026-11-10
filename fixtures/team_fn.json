@@ -1,0 +1,180 @@
+{
+  "room": "fn",
+  "generated_at": 1793171860,
+  "dispatcher": {
+    "ok": true,
+    "state": "running",
+    "pid": 9608,
+    "warning": null
+  },
+  "members": [
+    {
+      "profile": "default",
+      "title": "Руководитель комнаты (оркестратор)",
+      "role": "orchestrator",
+      "note": "Разбирает запрос, раздаёт работу, сводит ответ",
+      "pinned": true,
+      "state": "working",
+      "current": {
+        "task_id": "t_6b02d9f1",
+        "title": "Смета на подъездную дорогу",
+        "status": "running",
+        "started_at": 1793171200
+      },
+      "last": {
+        "task_id": "t_4e91c7b2",
+        "title": "Участок под базу: зона, обременения, доступ к воде",
+        "status": "done",
+        "finished_at": 1793161200,
+        "summary": "Свод по участку: три риска и четыре запроса."
+      },
+      "counts": {
+        "done": 2,
+        "blocked": 0,
+        "active": 1
+      },
+      "name": "",
+      "job": "",
+      "label": "",
+      "label_source": "role",
+      "custom_label": "",
+      "label_pending": false
+    },
+    {
+      "profile": "lawyer",
+      "title": "Юрист",
+      "role": "worker",
+      "note": "Земля, обременения, лицензии",
+      "pinned": true,
+      "state": "idle",
+      "current": null,
+      "last": {
+        "task_id": "t_4e91c7b3",
+        "title": "Зона и категория земли",
+        "status": "done",
+        "finished_at": 1793160900,
+        "summary": "Участок сельхозземли, но в зоне расширения посёлка."
+      },
+      "counts": {
+        "done": 4,
+        "blocked": 0,
+        "active": 0
+      },
+      "model_settings": {
+        "provider": "ollama-cloud",
+        "model": "claude-haiku-5-5",
+        "reasoning": "max",
+        "source": "room",
+        "updated_at": 1793171000
+      },
+      "model_sent": {
+        "provider": "ollama-cloud",
+        "model": "glm-5.3-flash",
+        "reasoning": "high",
+        "label": "ollama-cloud · glm-5.3-flash · высокие",
+        "text": "ушло на: ollama-cloud · glm-5.3-flash · высокие",
+        "confirmed": true,
+        "run_id": 41,
+        "at": 1793080000,
+        "expected": {"provider": "ollama-cloud", "model": "claude-haiku-5-5", "reasoning": "max"},
+        "mismatch": false,
+        "note": "",
+        "changed_at": 1793171000,
+        "run_at": 1793080000,
+        "pending": true,
+        "pending_text": "Новая модель применится со следующей задачи"
+      },
+      "name": "Лев",
+      "job": "договоры и визы",
+      "label": "Лев — договоры и визы",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
+    },
+    {
+      "profile": "coder",
+      "title": "Код и автоматизация",
+      "role": "worker",
+      "note": "Схемы, расчёты, скрипты",
+      "pinned": false,
+      "state": "idle",
+      "current": null,
+      "last": {
+        "task_id": "t_4e91c7b6",
+        "title": "Карта участка и схема коммуникаций",
+        "status": "done",
+        "finished_at": 1793160700,
+        "summary": "SVG-схема участка и точек подключения."
+      },
+      "counts": {
+        "done": 2,
+        "blocked": 0,
+        "active": 0
+      },
+      "model_settings": {
+        "provider": "llamacpp",
+        "model": "qwen36",
+        "reasoning": "high",
+        "source": "room",
+        "updated_at": 1793000000
+      },
+      "model_sent": {
+        "provider": "ollama-cloud",
+        "model": "glm-5.3-flash",
+        "reasoning": "ultra",
+        "label": "ollama-cloud · glm-5.3-flash · предельные",
+        "text": "ушло на: ollama-cloud · glm-5.3-flash · предельные",
+        "confirmed": true,
+        "run_id": 44,
+        "at": 1793169000,
+        "expected": {"provider": "llamacpp", "model": "qwen36", "reasoning": "high"},
+        "mismatch": true,
+        "note": "расходится с выбором комнаты",
+        "changed_at": 1793000000,
+        "run_at": 1793169000,
+        "pending": false,
+        "pending_text": ""
+      },
+      "name": "Тимур",
+      "job": "код и автоматизация",
+      "label": "Тимур — код и автоматизация",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
+    },
+    {
+      "profile": "surveyor",
+      "title": "Проверка фактов",
+      "role": "worker",
+      "note": "Источники, кадастр, сверки",
+      "pinned": false,
+      "state": "waiting",
+      "current": null,
+      "last": {
+        "task_id": "t_4e91c7b5",
+        "title": "Доступ к воде и ЛЭП",
+        "status": "done",
+        "finished_at": 1793161000,
+        "summary": "водоохранная зона ручья 30 м; подключение 380 В только через соседа."
+      },
+      "counts": {
+        "done": 3,
+        "blocked": 1,
+        "active": 0
+      },
+      "model_settings": {
+        "provider": "ollama-cloud",
+        "model": "deepseek-v4.1-flash:1017",
+        "reasoning": "max",
+        "source": "room",
+        "updated_at": 1793130000
+      },
+      "name": "Ратмир",
+      "job": "маркшейдерия, горные отводы, землеустройство и согласования с ресурсоснабжающими организациями",
+      "label": "Ратмир — маркшейдерия, горные отводы, землеустройство и согласования",
+      "label_source": "profile",
+      "custom_label": "",
+      "label_pending": false
+    }
+  ]
+}

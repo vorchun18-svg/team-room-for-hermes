@@ -1,0 +1,151 @@
+/* ============================================================================
+   view-diagnostics.css — экран «Проверка системы» (#/settings/diagnostics).
+
+   Список пунктов проверки: иконка статуса, значение, подсказка, действие.
+   Цвета — только токены tokens.css: ok/warn/danger в обеих темах читаются
+   (подписи статусов живут в .chip с контрастом ≥ 4.5:1, иконки — ≥ 3:1).
+   ========================================================================== */
+
+/* Каркас: у .app__main нет min-height:0 (см. view-settings.css) — включаем
+   то же правило для своей страницы, иначе длинный список обрезается. */
+.app:has(#view .diag) { grid-template-rows: minmax(0, 1fr); }
+
+.diag { gap: var(--space-4); max-width: 920px; }
+
+/* ── Шапка ────────────────────────────────────────────────────────────────── */
+
+.diag__head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--space-4); flex-wrap: wrap;
+}
+.diag__headline { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; flex: 1 1 320px; }
+.diag__title {
+  margin: 0; font-size: var(--text-xl); font-weight: 600;
+  line-height: var(--leading-tight, 1.25); color: var(--foreground);
+}
+.diag__lead {
+  margin: 0; max-width: 74ch; font-size: var(--text-sm);
+  line-height: var(--leading-relaxed, 1.55);
+}
+.diag__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+
+/* ── Сводка ───────────────────────────────────────────────────────────────── */
+
+.diag__summary {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
+}
+.diag__verdict { margin: 0; font-size: var(--text-md); font-weight: 600; line-height: var(--leading-snug, 1.35); }
+.diag__chips { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.diag__count { gap: 6px; }
+.diag__count .tnum { font-weight: 600; }
+
+/* ── Список пунктов ───────────────────────────────────────────────────────── */
+
+.diag__list { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.diag-item {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.diag-item__icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; flex: 0 0 24px; margin-top: 1px;
+  border-radius: var(--radius-full);
+  background: var(--ui-bg-quaternary); color: var(--muted-foreground);
+}
+.diag-item__body { display: flex; flex-direction: column; gap: var(--space-1); flex: 1 1 auto; min-width: 0; }
+.diag-item__head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-2); flex-wrap: wrap;
+}
+.diag-item__title {
+  margin: 0; font-size: var(--text-md); font-weight: 600;
+  color: var(--foreground); overflow-wrap: anywhere;
+}
+.diag-item__chip { flex: none; }
+.diag-item__value {
+  margin: 0; font-size: var(--text-sm); color: var(--ui-text-secondary);
+  overflow-wrap: anywhere;
+}
+.diag-item__hint {
+  margin: 0; max-width: 76ch; line-height: var(--leading-relaxed, 1.55);
+  overflow-wrap: anywhere;
+}
+.diag-item__details {
+  margin: 0; padding-left: var(--space-4);
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: var(--text-xs); color: var(--muted-foreground);
+}
+.diag-item__details li { overflow-wrap: anywhere; }
+.diag-item__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: 2px; }
+.diag-item__actions .btn { text-decoration: none; }
+
+/* Цвет статуса: полоска слева, иконка и её подложка. */
+.diag-item--ok { border-left-color: color-mix(in srgb, var(--ok) 70%, transparent); }
+.diag-item--ok .diag-item__icon { background: var(--ok-soft); color: var(--ok-ink); }
+.diag-item--warn { border-left-color: color-mix(in srgb, var(--warn) 70%, transparent); }
+.diag-item--warn .diag-item__icon { background: var(--warn-soft); color: var(--warn-ink); }
+.diag-item--fail { border-left-color: color-mix(in srgb, var(--danger) 70%, transparent); }
+.diag-item--fail .diag-item__icon { background: var(--danger-soft); color: var(--danger-ink); }
+.diag-item--off { border-left-color: var(--border); }
+.diag-item--off .diag-item__icon { color: var(--muted-foreground); }
+
+/* ── Документация ────────────────────────────────────────────────────────── */
+
+.diag-doc {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden;
+}
+.diag-doc__summary {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4); cursor: pointer;
+  font-size: var(--text-sm); color: var(--ui-text-secondary);
+  list-style: none; min-height: 36px;
+}
+.diag-doc__summary::-webkit-details-marker { display: none; }
+.diag-doc__summary:hover { background: var(--ui-row-hover-background); }
+.diag-doc[open] .diag-doc__summary { border-bottom: 1px solid var(--border-soft); }
+.diag-doc__body { padding: var(--space-4); }
+.diag-doc__body .markdown { font-size: var(--text-sm); }
+
+.diag-banner { margin: 0; align-items: flex-start; }
+
+/* ── Подвал ──────────────────────────────────────────────────────────────── */
+
+.diag__foot {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  margin: 0; padding-top: var(--space-2);
+}
+.diag__link {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--ui-text-secondary); text-decoration: none;
+}
+.diag__link:hover { color: var(--foreground); text-decoration: underline; }
+.diag__dot { color: var(--ui-text-quaternary); }
+
+/* ── Адаптив ──────────────────────────────────────────────────────────────── */
+
+@media (max-width: 899px) {
+  .diag__head { flex-direction: column; align-items: stretch; }
+  /* flex-basis: 320px считался бы высотой колонки — возвращаем авто. */
+  .diag__headline { flex: 0 1 auto; }
+  .diag__actions { justify-content: flex-start; }
+}
+
+@media (max-width: 699px) {
+  .diag__title { font-size: var(--text-lg); }
+  .diag-item { padding: var(--space-3); gap: var(--space-2); }
+  .diag-item__value, .diag-item__hint { font-size: var(--text-sm); }
+}
+
+@media (max-width: 559px) {
+  .diag__actions .btn { flex: 1 1 100%; justify-content: center; min-height: 36px; }
+  .diag-item__icon { width: 20px; height: 20px; flex-basis: 20px; }
+  .diag-item__head { align-items: flex-start; }
+}

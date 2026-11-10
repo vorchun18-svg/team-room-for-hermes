@@ -1,0 +1,284 @@
+{
+  "id": "t_3b7e9d11",
+  "room": "cafe",
+  "title": "Юнит-экономика набора из 6 моти",
+  "status": "failed",
+  "status_reason": "Воркер расчёта упал дважды (exit 1)",
+  "mode": "auto",
+  "critic": {
+    "enabled": true,
+    "round": 0,
+    "max_rounds": 1,
+    "state": "waiting",
+    "verdict": null,
+    "task_id": null,
+    "issues": []
+  },
+  "created_at": 1793159900,
+  "started_at": 1793159930,
+  "finished_at": null,
+  "duration_s": null,
+  "progress": {
+    "done": 1,
+    "total": 2,
+    "percent": 50
+  },
+  "assignee": "biz-director",
+  "needs_you": false,
+  "preview": "Посчитай юнит-экономику набора из 6 моти по каналам. Срок — до пятницы.",
+  "archived": false,
+  "text": "Посчитай юнит-экономику набора из 6 моти по каналам: Telegram, «Едок», B2B-кофейни. Нужны маржа и точка безубыточности. Срок — до пятницы.",
+  "dispatcher": {
+    "ok": true,
+    "warning": null
+  },
+  "synthesis": {
+    "state": "pending",
+    "text_md": "",
+    "author": null,
+    "at": null,
+    "source_task": null,
+    "legacy": false,
+    "version": 0,
+    "history": []
+  },
+  "next_steps": [
+    {
+      "id": "ns_1",
+      "text": "Починить формулу: в таблице поставщика нет колонки cost_packaging",
+      "owner": "biz-cfo",
+      "due": "2026-10-29",
+      "state": "open"
+    }
+  ],
+  "open_questions": [],
+  "decisions": [],
+  "stage": {
+    "current": "legal",
+    "phases": [
+      {
+        "id": "idea",
+        "title": "Идея и стратегия",
+        "status": "done",
+        "note": "VISION, экономика и план 90 дней утверждены 14–16.09"
+      },
+      {
+        "id": "legal",
+        "title": "Легализация",
+        "status": "active",
+        "note": "Заявление на ИП подано 27.10, ждём свидетельство; 4 вопроса в СЭС открыты"
+      },
+      {
+        "id": "brand",
+        "title": "Бренд и товарный знак",
+        "status": "blocked",
+        "note": "Проверка в Роспатенте: свободно по кл. 30/43/35; подача ждёт go/no-go Михаила"
+      },
+      {
+        "id": "packaging",
+        "title": "Упаковка",
+        "status": "active",
+        "note": "Шорт-лист 10 поставщиков в городе, котировки не отправлены"
+      },
+      {
+        "id": "production",
+        "title": "Производство",
+        "status": "next",
+        "note": "Кухня есть, тестовой партии нет"
+      },
+      {
+        "id": "sales",
+        "title": "Продажи",
+        "status": "next",
+        "note": "0 продаж, 0 разговоров D19"
+      }
+    ]
+  },
+  "future_questions": [],
+  "artifacts": [],
+  "report": {
+    "available": false,
+    "kind": null,
+    "path": null,
+    "title": null
+  },
+  "tree": [
+    {
+      "id": "t_3b7e9d11",
+      "parent_ids": [],
+      "title": "Юнит-экономика набора из 6 моти",
+      "assignee": "biz-director",
+      "role": "root",
+      "status": "blocked",
+      "started_at": 1793159930,
+      "finished_at": null,
+      "summary_md": "",
+      "metadata": {},
+      "comments": [],
+      "runs": [],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    },
+    {
+      "id": "t_3b7e9d12",
+      "parent_ids": [
+        "t_3b7e9d11"
+      ],
+      "title": "Собрать себестоимость ингредиентов",
+      "assignee": "biz-ops",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793159960,
+      "finished_at": 1793160500,
+      "summary_md": "Себестоимость набора из 6 моти: 128,5 ₽ моти + 73 ₽ упаковка + 20 ₽ наклейка = 221,5 ₽.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 92,
+          "profile": "biz-ops",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793159960,
+          "ended_at": 1793160500,
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    },
+    {
+      "id": "t_3b7e9d13",
+      "parent_ids": [
+        "t_3b7e9d11"
+      ],
+      "title": "Посчитать маржу по каналам",
+      "assignee": "biz-cfo",
+      "role": "worker",
+      "status": "blocked",
+      "started_at": 1793160510,
+      "finished_at": 1793160800,
+      "summary_md": "",
+      "metadata": {},
+      "comments": [
+        {
+          "author": "biz-cfo",
+          "text": "Дважды упало на отсутствующее поле cost_packaging в таблице поставщика: в листе «Котировки» после строки с итогами идут пустые строки, из-за чего заголовки читаются со сдвигом, и колонка с ценой короба не находится. Пересобирать таблицу без согласования не стал — цена короба входит в себестоимость, от неё зависит маржа по всем трём каналам, поэтому нужен ваш ответ: правим таблицу или считаем по цене из прошлой версии файла (128,5 ₽ за моти с упаковкой и наклейкой).",
+          "at": 1793160805
+        }
+      ],
+      "runs": [
+        {
+          "id": 93,
+          "profile": "biz-cfo",
+          "status": "failed",
+          "outcome": "failed",
+          "started_at": 1793160510,
+          "ended_at": 1793160660,
+          "error": "exit 1: KeyError('cost_packaging')\nTraceback (most recent call last):\n  File \"C:\\Work\\Rooms\\demo\\workers\\margin_calc.py\", line 214, in build_margin\n    cost = row['cost_packaging']\nKeyError: 'cost_packaging'"
+        },
+        {
+          "id": 94,
+          "profile": "biz-cfo",
+          "status": "failed",
+          "outcome": "failed",
+          "started_at": 1793160700,
+          "ended_at": 1793160800,
+          "error": "exit 1: KeyError('cost_packaging') (повтор после правки файла C:\\Work\\Rooms\\demo\\2026-11-06 Письмо Лебедев — ответ\\Котировки упаковка городе — финал.xlsx)"
+        }
+      ],
+      "needs_human": false,
+      "error": {
+        "code": "worker_crashed",
+        "message": "Процесс воркера завершился с кодом 1: KeyError('cost_packaging') — при разборе таблицы поставщика «C:\\Work\\Rooms\\demo\\2026-11-06 Письмо Лебедев — ответ\\Котировки упаковка городе — финал.xlsx» не нашлось колонки с ценой короба, поэтому расчёт маржи по каналам (Telegram, «Едок», B2B-кофейни) остановлен на шаге свода; проверьте, что в листе «Котировки» есть столбец cost_packaging и что строка итогов не сдвинута вниз пустыми строками."
+      },
+      "outside_room": false
+    }
+  ],
+  "timeline": [
+    {
+      "at": 1793159900,
+      "kind": "created",
+      "task_id": "t_3b7e9d11",
+      "actor": "mikhail",
+      "text": "Запрос создан"
+    },
+    {
+      "at": 1793159960,
+      "kind": "claimed",
+      "task_id": "t_3b7e9d12",
+      "actor": "biz-ops",
+      "text": "Сергей собирает себестоимость"
+    },
+    {
+      "at": 1793160500,
+      "kind": "completed",
+      "task_id": "t_3b7e9d12",
+      "actor": "biz-ops",
+      "text": "Себестоимость готова"
+    },
+    {
+      "at": 1793160660,
+      "kind": "failed",
+      "task_id": "t_3b7e9d13",
+      "actor": "biz-cfo",
+      "text": "Воркер упал: KeyError cost_packaging"
+    },
+    {
+      "at": 1793160800,
+      "kind": "failed",
+      "task_id": "t_3b7e9d13",
+      "actor": "biz-cfo",
+      "text": "Повтор упал с той же ошибкой"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "card_failed",
+      "message": "Карточка расчёта маржи упала дважды (exit 1: KeyError('cost_packaging')); запрос остановлен и ждёт перезапуска после правки таблицы поставщика — подробности и обе попытки ниже, в дереве работ.",
+      "detail": {
+        "task_id": "t_3b7e9d13",
+        "attempts": 2
+      }
+    }
+  ],
+  "thread": [
+    {
+      "id": "c1",
+      "at": 1793150000,
+      "author_kind": "mikhail",
+      "author": "mikhail",
+      "author_label": "Михаил",
+      "text": "Посчитай юнит-экономику набора из 6 моти по актуальной таблице поставщика.",
+      "task_id": "t_3b7e9d11",
+      "kind": "message"
+    },
+    {
+      "id": "c2",
+      "at": 1793150100,
+      "author_kind": "agent",
+      "author": "biz-director",
+      "author_label": "Глеб · руководитель комнаты",
+      "text": "Принял; передал Вере — расчёт по таблице поставщика, Сергею — сверить цены упаковки.",
+      "task_id": "t_3b7e9d11",
+      "kind": "comment"
+    },
+    {
+      "id": "e1",
+      "at": 1793150600,
+      "author_kind": "system",
+      "author": "system",
+      "author_label": "Комната команды",
+      "text": "Ошибка: в таблице поставщика нет колонки с ценой короба — расчёт остановлен, запрос можно повторить с уточнением",
+      "task_id": "t_3b7e9d11",
+      "kind": "event"
+    }
+  ],
+  "title_short": "Юнит-экономика набора из 6 моти",
+  "heartbeats": {
+    "count": 0,
+    "last_at": null
+  }
+}

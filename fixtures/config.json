@@ -1,0 +1,37 @@
+{
+  "app": {
+    "name": "team-room",
+    "version": "1.0.0",
+    "port": 8777,
+    "started_at": 1793171000,
+    "sandbox": false,
+    "tz": "Europe/Moscow"
+  },
+  "paths": {
+    "data": "D:/Проекты/Комната/data",
+    "vault": "D:/Проекты/Vault",
+    "project_dir": "D:/Проекты/Комната",
+    "reports": "D:/Проекты/Комната/data/reports"
+  },
+  "allowed_roots": [
+    "D:/Проекты/Комната/data",
+    "D:/Проекты/Vault",
+    "D:/Проекты"
+  ],
+  "limits": {
+    "request_text_max": 1000000,
+    "note_text_max": 200000,
+    "body_bytes_max": 8388608,
+    "attach_max": 10,
+    "attach_bytes_max": 26214400,
+    "page_size_max": 100,
+    "journal_page_max": 200
+  },
+  "features": {
+    "reports": true,
+    "ics": true,
+    "export_html": true,
+    "adopt": true,
+    "stt": true
+  }
+}

@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UI-кит — Комната команды</title>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/view-ui.css">
+  <style>
+    /* Витрина: только раскладка и токены, ничего «продуктового». */
+    html, body { height: auto; min-height: 100%; overflow: auto; }
+    body { background: var(--background); }
+    .demo { max-width: 1120px; margin: 0 auto; padding: var(--space-6) var(--space-6) var(--space-12); display: flex; flex-direction: column; gap: var(--space-5); }
+    .demo__head { display: flex; align-items: flex-end; gap: var(--space-3); flex-wrap: wrap; }
+    .demo__title { font-size: var(--text-2xl); }
+    .demo__sub { color: var(--muted-foreground); font-size: var(--text-sm); max-width: 62ch; }
+    .demo__themes { margin-left: auto; display: flex; gap: var(--space-2); }
+    .demo__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--space-4); align-items: start; }
+    .demo__card { display: flex; flex-direction: column; gap: var(--space-3); }
+    .demo__label { font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ui-text-quaternary); }
+    .demo__row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+    .demo__stack { display: flex; flex-direction: column; gap: var(--space-2); }
+    .demo__output { min-height: 18px; font-size: var(--text-sm); color: var(--ui-text-secondary); }
+    #js-errors { display: none; }
+    #js-errors:not(:empty) { display: flex; }
+    @media (max-width: 640px) { .demo { padding: var(--space-4); } .demo__themes { margin-left: 0; } }
+  </style>
+</head>
+<body>
+  <main class="demo" id="app">
+    <div class="banner banner--error" id="js-errors" role="alert"></div>
+  </main>
+
+  <script>
+    // Тема для скриншотов: ?theme=dark перекрывает системную.
+    (function () {
+      var t = new URLSearchParams(location.search).get('theme');
+      if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+      window.addEventListener('error', function (e) {
+        var box = document.getElementById('js-errors');
+        if (box) box.textContent = 'Ошибка JS: ' + (e.message || e.error);
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var box = document.getElementById('js-errors');
+        if (box) box.textContent = 'Необработанный отказ: ' + ((e.reason && e.reason.message) || e.reason);
+      });
+    })();
+  </script>
+
+  <script type="module">
+    import { h } from './js/util.js';
+    import * as ui from './js/ui.js';
+
+    const app = document.getElementById('app');
+    const grid = (...cards) => h('div', { class: 'demo__grid' }, cards);
+    const card = (title, ...body) => h('section', { class: 'card demo__card' },
+      h('div', { class: 'card__head' }, h('div', { class: 'card__title' }, title)),
+      h('div', { class: 'stack stack--tight' }, body));
+    const label = (t) => h('div', { class: 'demo__label' }, t);
+    const row = (...kids) => h('div', { class: 'demo__row' }, kids);
+
+    /* ── шапка ─────────────────────────────────────────────────────────── */
+    app.appendChild(h('header', { class: 'demo__head' },
+      h('div', { class: 'stack stack--tight' },
+        h('div', { class: 'demo__label' }, 'Комната команды · web/js/ui.js'),
+        h('h1', { class: 'demo__title' }, 'UI-кит'),
+        h('p', { class: 'demo__sub' }, 'Все элементы общей библиотеки: статусы, роли, сроки, диалоги, состояния и Markdown. Только токены и классы components.css.')),
+      h('div', { class: 'demo__themes' },
+        h('a', { class: 'btn btn--sm btn--secondary', href: '?theme=light' }, 'Светлая'),
+        h('a', { class: 'btn btn--sm btn--secondary', href: '?theme=dark' }, 'Тёмная'))));
+
+    /* ── статусы запроса ───────────────────────────────────────────────── */
+    const REQ = ['queued', 'working', 'reviewing', 'synthesizing', 'needs_you', 'done', 'failed'];
+    const CARD = ['triage', 'todo', 'ready', 'running', 'review', 'blocked', 'done', 'archived', 'scheduled', 'failed'];
+    app.appendChild(grid(
+      card('Статусы запроса',
+        label('7 состояний из контракта API'),
+        row(...REQ.map((s) => ui.statusChip(s)))),
+      card('Статусы карточек',
+        label('10 состояний канбана'),
+        row(...CARD.map((s) => ui.statusChip(s)))),
+      card('Роли',
+        label('дерево запроса'),
+        row(...['root', 'worker', 'synthesizer', 'critic', 'revision'].map((r) => ui.roleChip(r))),
+        label('участники комнаты'),
+        row(...['orchestrator', 'worker', 'critic', 'observer'].map((r) => ui.roleChip(r))))));
+
+    /* ── аватары и сроки ───────────────────────────────────────────────── */
+    const today = new Date();
+    const plus = (n) => {
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + n);
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    };
+
+    app.appendChild(grid(
+      card('Аватары и профили',
+        label('размеры: md / sm / lg'),
+        row(ui.avatar('Михаил Петров'), ui.avatar('Директор Лето', { size: 'sm' }), ui.avatar('biz-critic', { size: 'lg' }), ui.avatar('coder')),
+        label('profileLabel'),
+        h('div', { class: 'demo__stack' },
+          ui.profileLabel({ profile: 'biz-director', name: 'Директор Лето' }),
+          ui.profileLabel('biz-critic'),
+          ui.profileLabel({ profile: 'lawyer', name: 'Юрист' }))),
+      card('Сроки',
+        label('просрочено / сегодня / завтра / дальше'),
+        row(ui.dueBadge(plus(-3), today), ui.dueBadge(plus(0), today), ui.dueBadge(plus(1), today), ui.dueBadge(plus(7), today)),
+        label('дальний срок и пустое значение'),
+        row(ui.dueBadge(plus(68), today) || '—', ui.dueBadge('', today) || h('span', { class: 'small muted' }, 'null — чип не рисуется')))));
+
+    /* ── заголовки, пути, кнопки ───────────────────────────────────────── */
+    app.appendChild(grid(
+      card('Заголовок секции и действия',
+        ui.sectionHeader('Бэклог комнаты', { count: 7, actions: ui.iconButton({ icon: 'refresh', title: 'Обновить', size: 'sm' }) }),
+        ui.sectionHeader('Без счётчика'),
+        label('иконочные кнопки'),
+        row(
+          ui.iconButton({ icon: 'refresh', title: 'Обновить' }),
+          ui.iconButton({ icon: 'copy', title: 'Копировать', variant: 'secondary' }),
+          ui.iconButton({ icon: 'trash', title: 'Удалить', variant: 'danger' }),
+          ui.iconButton({ icon: 'check', title: 'Готово', variant: 'primary', size: 'sm' }))),
+      card('Пути к файлам',
+        label('короткий и длинный путь'),
+        h('div', { class: 'demo__stack' },
+          ui.pathChip('docs/reports/cafe/report.md'),
+          ui.pathChip('C:/TeamRoom/Team/team-room/docs/reports/cafe/2026-10-28-svod-po-zaprosu-o-desertah.md'),
+          ui.pathChip('C:/TeamRoom/Team/team-room/reportkit/examples/cafe.report.json')))));
+
+    /* ── поля и переключатели ──────────────────────────────────────────── */
+    const nameInput = h('input', { class: 'input', type: 'text', value: 'Свод за неделю', placeholder: 'Название' });
+    const noteArea = h('textarea', { class: 'textarea', rows: 3, placeholder: 'Коротко' });
+    noteArea.value = 'Проверено критиком, замечаний нет.';
+    let picked = 'week';
+    const seg = ui.segmented({
+      options: [{ value: 'day', label: 'День' }, { value: 'week', label: 'Неделя' }, { value: 'month', label: 'Месяц' }],
+      value: picked,
+      onchange: (v) => { picked = v; segOut.textContent = 'выбрано: ' + v; },
+    });
+    const segOut = h('div', { class: 'demo__output' }, 'выбрано: ' + picked);
+
+    app.appendChild(grid(
+      card('Поля',
+        ui.field({ label: 'Название', control: nameInput, hint: 'Видно в списке запросов' }),
+        ui.field({ label: 'Заметка', control: noteArea, hint: 'Markdown поддерживается' }),
+        ui.field({ label: 'Ошибка поля', control: h('input', { class: 'input', type: 'text', placeholder: 'Пусто' }), error: 'Обязательное поле' })),
+      card('Сегментированный переключатель',
+        label('radio-группа: клик и стрелки'),
+        seg,
+        segOut,
+        label('в тесной колонке'),
+        h('div', { style: { maxWidth: '260px' } }, ui.segmented({
+          options: [{ value: 'all', label: 'Все' }, { value: 'mine', label: 'Мои' }, { value: 'you', label: 'Ждут меня' }],
+          value: 'all',
+        })))));
+
+    /* ── состояния ─────────────────────────────────────────────────────── */
+    const errorEl = ui.errorBanner({ code: 'network', message: 'Нет связи с локальным сервером' }, () => {
+      out.textContent = 'Повторить: нажато';
+    });
+    const out = h('div', { class: 'demo__output' }, 'Результат: —');
+    app.appendChild(grid(
+      card('Загрузка', ui.skeleton(4)),
+      card('Пусто',
+        ui.emptyState({
+          icon: 'lightbulb',
+          title: 'Пока нет запросов',
+          text: 'Напишите первый запрос — директор сам разложит его по команде.',
+          action: { label: 'Новый запрос', onclick: () => { out.textContent = 'Кнопка пустого состояния: нажата'; } },
+        })),
+      card('Ошибка', errorEl, out)));
+
+    /* ── markdown ──────────────────────────────────────────────────────── */
+    const md = [
+      '# Свод по запросу',
+      '',
+      'Короткий **вывод**: данные собраны, спорных мест нет. Дальше — `план` из трёх шагов.',
+      '',
+      '> Проверено критиком: замечаний нет, версия 1 принята.',
+      '',
+      '## Что сделать',
+      '',
+      '- [x] Собрать данные по комнате',
+      '- [ ] Сверить сроки с движком',
+      '  - вложенный пункт для проверки отступов',
+      '',
+      '| Шаг | Срок | Статус |',
+      '|---|---|---|',
+      '| Декомпозиция | 28 окт. | готово |',
+      '| Свод | 30 окт. | в работе |',
+      '',
+      '```js',
+      "const ok = 1 < 2; // <b>не тег</b>",
+      'console.log(ok);',
+      '```',
+      '',
+      'Файл: [отчёт по комнате](docs/reports/cafe/report.md)',
+      '',
+      '<' + 'script>alert("xss")<' + '/script>',
+    ].join('\n');
+
+    app.appendChild(h('section', { class: 'card demo__card' },
+      h('div', { class: 'card__head' },
+        h('div', { class: 'card__title' }, 'Markdown'),
+        h('div', { class: 'card__sub' }, 'renderMarkdown → узлы, без innerHTML; скрипт в конце остаётся текстом')),
+      ui.mdBlock(md)));
+
+    /* ── диалоги и буфер ───────────────────────────────────────────────── */
+    const dlgOut = h('div', { class: 'demo__output' }, 'Результат диалога: —');
+    app.appendChild(h('section', { class: 'card demo__card' },
+      h('div', { class: 'card__head' }, h('div', { class: 'card__title' }, 'Диалоги и буфер обмена')),
+      h('div', { class: 'demo__row' },
+        h('button', {
+          class: 'btn btn--secondary', type: 'button',
+          onclick: async () => {
+            const ok = await ui.confirmDialog({
+              title: 'Удалить запрос?',
+              text: 'Запрос и его ответ исчезнут из комнаты. Карточки движка останутся.',
+              confirmLabel: 'Удалить',
+              danger: true,
+            });
+            dlgOut.textContent = 'confirmDialog → ' + ok;
+          },
+        }, 'Подтверждение (danger)'),
+        h('button', {
+          class: 'btn btn--secondary', type: 'button',
+          onclick: async () => {
+            const v = await ui.promptDialog({
+              title: 'Название запроса',
+              label: 'Как назвать?',
+              placeholder: 'Например: свод за неделю',
+              initial: 'Свод за неделю',
+              submitLabel: 'Сохранить',
+            });
+            dlgOut.textContent = 'promptDialog → ' + (v === null ? 'null' : JSON.stringify(v));
+          },
+        }, 'Ввод (Enter)'),
+        h('button', {
+          class: 'btn btn--secondary', type: 'button',
+          onclick: async () => {
+            const v = await ui.promptDialog({
+              title: 'На доработку',
+              label: 'Что поправить?',
+              multiline: true,
+              placeholder: 'Опишите замечания',
+              submitLabel: 'Отправить',
+            });
+            dlgOut.textContent = 'promptDialog (multiline) → ' + (v === null ? 'null' : JSON.stringify(v));
+          },
+        }, 'Ввод (Ctrl+Enter)'),
+        h('button', {
+          class: 'btn btn--ghost', type: 'button',
+          onclick: async () => {
+            const ok = await ui.copyText('Свод по запросу: данные собраны.');
+            dlgOut.textContent = 'copyText → ' + ok;
+          },
+        }, 'Копировать текст')),
+      dlgOut,
+      h('div', { class: 'small muted' }, 'Esc закрывает, фокус возвращается на кнопку. Enter подтверждает, в многострочном поле — Ctrl+Enter.')));
+    /* ── страховка витрины: горизонтальный скролл виден на скриншоте ───── */
+    const errBox = document.getElementById('js-errors');
+    const checkOverflow = () => {
+      const doc = document.documentElement;
+      if (doc.scrollWidth > doc.clientWidth + 1) {
+        errBox.textContent = 'Горизонтальный скролл: ' + doc.scrollWidth + ' > ' + doc.clientWidth;
+      }
+    };
+    window.addEventListener('load', checkOverflow);
+    window.addEventListener('resize', checkOverflow);
+
+    /* ── ?dlg=confirm|prompt|multiline — открыть диалог для скриншота ───── */
+    const dlg = new URLSearchParams(location.search).get('dlg');
+    if (dlg) {
+      setTimeout(async () => {
+        if (dlg === 'confirm') {
+          await ui.confirmDialog({
+            title: 'Удалить запрос?',
+            text: 'Запрос и его ответ исчезнут из комнаты. Карточки движка останутся.',
+            confirmLabel: 'Удалить',
+            danger: true,
+          });
+        } else {
+          await ui.promptDialog({
+            title: dlg === 'multiline' ? 'На доработку' : 'Название запроса',
+            label: dlg === 'multiline' ? 'Что поправить?' : 'Как назвать?',
+            placeholder: dlg === 'multiline' ? 'Опишите замечания' : 'Например: свод за неделю',
+            initial: dlg === 'multiline' ? '' : 'Свод за неделю',
+            multiline: dlg === 'multiline',
+            submitLabel: dlg === 'multiline' ? 'Отправить' : 'Сохранить',
+          });
+        }
+      }, 80);
+    }
+  </script>
+</body>
+</html>

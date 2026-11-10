@@ -1,0 +1,57 @@
+{
+  "q": "Роспатент",
+  "room": null,
+  "total": 5,
+  "items": [
+    {
+      "kind": "request",
+      "id": "t_5c8e4a02",
+      "room": "cafe",
+      "title": "Бренд: подача в Роспатент — go/no-go",
+      "snippet": "…Подготовь подачу в Роспатент «Лето» и посчитай таксы: класс 30 или 30+43…",
+      "score": 0.94,
+      "at": 1793162900,
+      "route": "#/room/cafe/request/t_5c8e4a02"
+    },
+    {
+      "kind": "decision",
+      "id": "d_cafe_2",
+      "room": "cafe",
+      "title": "Название бренда — «Лето»",
+      "snippet": "Проверка в Роспатенте: по классам 30/43/35, домен свободен",
+      "score": 0.88,
+      "at": 1793088000,
+      "route": "#/room/cafe/roadmap"
+    },
+    {
+      "kind": "journal",
+      "id": "j_0007",
+      "room": "cafe",
+      "title": "Предложено подавать в Роспатент в классах 30 и 43",
+      "snippet": "biz-lawyer · 28.10 01:33 · решение d_1",
+      "score": 0.81,
+      "at": 1793163200,
+      "route": "#/room/cafe/journal"
+    },
+    {
+      "kind": "report",
+      "id": "legal-checklist",
+      "room": "cafe",
+      "title": "Чек-лист легализации Лето",
+      "snippet": "…подача в Роспатент, свидетельство о регистрации, такса 56.10…",
+      "score": 0.77,
+      "at": 1793148391,
+      "route": "#/room/cafe/reports/legal-checklist"
+    },
+    {
+      "kind": "backlog",
+      "id": "t_5c8e4a02:q_1",
+      "room": "cafe",
+      "title": "Подача в Роспатент: класс 30 или 30+43?",
+      "snippet": "Ждёт Михаила · срок 31.10 · источник: Бренд: подача в Роспатент",
+      "score": 0.72,
+      "at": 1793163720,
+      "route": "#/room/cafe/next"
+    }
+  ]
+}

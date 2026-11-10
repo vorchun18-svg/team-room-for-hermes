@@ -1,0 +1,99 @@
+/* ============================================================================
+   view-search.css — глобальный поиск (#/search?q=).
+   Подсветка — <mark class="srch-mark"> из h(); стили только токенами.
+   ========================================================================== */
+
+.srch { gap: var(--space-4); }
+
+/* ── Поле и фильтры ──────────────────────────────────────────────────────── */
+
+.srch-form { display: flex; align-items: center; gap: var(--space-2); }
+.srch-form .search-field { flex: 1 1 auto; }
+
+.srch-input { height: var(--control-lg); font-size: var(--text-md); }
+.srch-input::-webkit-search-cancel-button { cursor: pointer; }
+
+.srch-filter { gap: var(--space-3); }
+.srch-filter__rooms { gap: var(--space-2); flex-wrap: wrap; }
+.srch-filter__hint { max-width: 46ch; line-height: var(--leading-normal); }
+
+/* ── Сводка и группы ─────────────────────────────────────────────────────── */
+
+.srch-meta {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-height: 18px; flex-wrap: wrap;
+}
+.srch-meta .codicon-modifier-spin { font-size: 12px; vertical-align: -1px; }
+
+.srch-results { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
+
+.srch-section { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+
+.srch-group__head { display: flex; align-items: center; gap: var(--space-2); }
+.srch-group__title {
+  font-size: var(--text-sm); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--ui-text-tertiary);
+}
+
+.srch-list {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--card); overflow: hidden; min-width: 0;
+}
+
+/* ── Строка результата ───────────────────────────────────────────────────── */
+
+.srch-hit {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-soft);
+  color: inherit; text-decoration: none; min-width: 0;
+}
+.srch-hit:last-child { border-bottom: 0; }
+.srch-hit:hover, .srch-hit:focus-visible {
+  background: var(--ui-row-hover-background);
+  text-decoration: none; outline: none;
+}
+.srch-hit:focus-visible { box-shadow: inset 2px 0 0 var(--primary); }
+
+.srch-hit__icon { color: var(--ui-text-tertiary); padding-top: 2px; flex: 0 0 auto; }
+.srch-hit__main { display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; min-width: 0; }
+.srch-hit__title { font-size: var(--text-base); font-weight: 500; color: var(--foreground); }
+.srch-hit__snippet {
+  font-size: var(--text-sm); color: var(--muted-foreground);
+  line-height: var(--leading-relaxed);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.srch-hit__meta { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: 2px; }
+.srch-hit__go { color: var(--ui-text-tertiary); flex: 0 0 auto; align-self: center; }
+
+/* ── Подсветка совпадений ────────────────────────────────────────────────── */
+
+.srch-mark {
+  /* Подсветка не должна «съедать» текст: цвет — обычный, фон — акцентная заливка (D14). */
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  color: var(--foreground); border-radius: var(--radius-xs);
+  padding: 0 1px;
+}
+
+/* ── Подсказки в пустом состоянии ────────────────────────────────────────── */
+
+.srch-examples {
+  display: flex; align-items: center; justify-content: center;
+  gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3);
+}
+
+/* ── Узкий экран ─────────────────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .srch-form { flex-wrap: wrap; }
+  .srch-form .btn { flex: 0 0 auto; }
+  .srch-filter__hint { max-width: none; }
+  .srch-hit { padding: var(--space-3); gap: var(--space-2); }
+}
+
+@media (max-width: 640px) {
+  .srch-input { height: var(--control-md); font-size: var(--text-base); }
+  .srch-hit__snippet { -webkit-line-clamp: 3; }
+}

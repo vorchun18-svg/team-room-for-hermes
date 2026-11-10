@@ -1,0 +1,404 @@
+{
+  "id": "t_5c8e4a02",
+  "room": "cafe",
+  "title": "Бренд: подача в Роспатент — go/no-go",
+  "status": "needs_you",
+  "status_reason": "Ждёт ответа Михаила на вопрос q_1 (блокирует канал продаж)",
+  "mode": "auto",
+  "critic": {
+    "enabled": true,
+    "round": 0,
+    "max_rounds": 1,
+    "state": "waiting",
+    "verdict": null,
+    "task_id": null,
+    "issues": []
+  },
+  "created_at": 1793162900,
+  "started_at": 1793162930,
+  "finished_at": null,
+  "duration_s": null,
+  "progress": {
+    "done": 2,
+    "total": 3,
+    "percent": 66
+  },
+  "assignee": "biz-director",
+  "needs_you": true,
+  "preview": "Подготовь подачу в Роспатент и скажи, сколько это стоит. Срок — до пятницы.",
+  "archived": false,
+  "text": "Подготовь подачу в Роспатент «Лето» и посчитай таксы: класс 30 или 30+43. Нужен go/no-go. Срок — до пятницы.",
+  "dispatcher": {
+    "ok": true,
+    "warning": null
+  },
+  "synthesis": {
+    "state": "pending",
+    "version": 0,
+    "text_md": "",
+    "author": null,
+    "at": null,
+    "source_task": null,
+    "legacy": false,
+    "history": []
+  },
+  "next_steps": [
+    {
+      "id": "ns_1",
+      "text": "Решить: класс 30 (4 400 ₽) или 30+43 (8 800 ₽)",
+      "owner": "mikhail",
+      "due": "2026-10-31",
+      "state": "open"
+    },
+    {
+      "id": "ns_2",
+      "text": "После решения — оплатить таксу и подать заявку",
+      "owner": "biz-marketing",
+      "due": "2026-11-03",
+      "state": "open"
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "q_1",
+      "text": "Подача в Роспатент: класс 30 (4 400 ₽) или 30+43 (8 800 ₽ со скидкой для ИП)? Такса необратима.",
+      "for": "mikhail",
+      "answered": false,
+      "answer": null,
+      "answered_at": null
+    },
+    {
+      "id": "q_2",
+      "text": "Добавляем ли в команду ещё одного участника — биз-финансиста (biz-cfo)?",
+      "for": "mikhail",
+      "answered": true,
+      "answer": "Нет, никакого финансиста не добавляем: команда заточена на Россию, лишний участник только замедлит.",
+      "answered_at": 1793161560,
+      "answer_state": "applied",
+      "answer_label": "учтено: работа пересмотрена",
+      "needs_explanation": false,
+      "reaction": {
+        "text": "Принято: biz-cfo не добавляем, шаг по составу команды снят.",
+        "at": 1793161660,
+        "status": "applied",
+        "cards": [
+          "t_643c9d89"
+        ],
+        "author": "default",
+        "author_label": "Глеб · руководитель комнаты",
+        "implicit": false,
+        "task_id": "t_643c9d89"
+      },
+      "leader_pending": false,
+      "can_remind": false,
+      "reaction_waited_s": null,
+      "reaction_overdue": false,
+      "reminded_at": null,
+      "answer_changes_done": true
+    },
+    {
+      "id": "q_3",
+      "text": "Публиковать прайс на маркетплейсе до регистрации бренда?",
+      "for": "mikhail",
+      "answered": true,
+      "answer": "Да, публикуйте — регистрация идёт параллельно, цену всё равно придётся назвать.",
+      "answered_at": 1793161980,
+      "answer_state": "sent",
+      "answer_label": "ответ отправлен — руководитель ещё не ответил",
+      "needs_explanation": false,
+      "reaction": null,
+      "leader_pending": true,
+      "can_remind": true,
+      "reaction_waited_s": 420,
+      "reaction_overdue": true,
+      "reminded_at": null,
+      "answer_changes_done": false
+    },
+    {
+      "id": "q_service1",
+      "text": "Нужно ли гонять свод через критика и сколько раундов проверки задать (рекомендация: 1 раунд)",
+      "for": "mikhail",
+      "answered": false,
+      "answer": null,
+      "answered_at": null,
+      "answer_state": "open",
+      "answer_label": "ждёт вашего ответа",
+      "needs_explanation": false,
+      "reaction": null
+    }
+  ],
+  "decisions": [
+    {
+      "id": "d_1",
+      "text": "Подавать на «Лето» в кл. 30 и 43",
+      "why": "Кл. 30 — десерты, кл. 43 — кафе/доставка; проверка в Роспатенте: свободно",
+      "status": "accepted",
+      "at": 1793163200,
+      "source_request": "t_5c8e4a02"
+    },
+    {
+      "id": "d_2",
+      "text": "Не подавать в кл. 35 (реклама/ритейл)",
+      "why": "На первом этапе не нужен, экономия 4 400 ₽",
+      "status": "accepted",
+      "at": 1793163220,
+      "source_request": "t_5c8e4a02"
+    }
+  ],
+  "stage": {
+    "current": "legal",
+    "phases": [
+      {
+        "id": "idea",
+        "title": "Идея и стратегия",
+        "status": "done",
+        "note": "VISION, экономика и план 90 дней утверждены 14–16.09"
+      },
+      {
+        "id": "legal",
+        "title": "Легализация",
+        "status": "active",
+        "note": "Заявление на ИП подано 27.10, ждём свидетельство; 4 вопроса в СЭС открыты"
+      },
+      {
+        "id": "brand",
+        "title": "Бренд и товарный знак",
+        "status": "blocked",
+        "note": "Проверка в Роспатенте: свободно по кл. 30/43/35; подача ждёт go/no-go Михаила"
+      },
+      {
+        "id": "packaging",
+        "title": "Упаковка",
+        "status": "active",
+        "note": "Шорт-лист 10 поставщиков в городе, котировки не отправлены"
+      },
+      {
+        "id": "production",
+        "title": "Производство",
+        "status": "next",
+        "note": "Кухня есть, тестовой партии нет"
+      },
+      {
+        "id": "sales",
+        "title": "Продажи",
+        "status": "next",
+        "note": "0 продаж, 0 разговоров D19"
+      }
+    ]
+  },
+  "future_questions": [],
+  "artifacts": [
+    {
+      "path": "D:/Проекты/Vault/Projects/Business areas/Лето/05-Strategy/brand-package-2026-10-28.md",
+      "title": "Пакет для подачи в Роспатент",
+      "kind": "md",
+      "exists": false,
+      "size": null
+    }
+  ],
+  "report": {
+    "available": false,
+    "kind": null,
+    "path": null,
+    "title": null
+  },
+  "tree": [
+    {
+      "id": "t_5c8e4a02",
+      "parent_ids": [],
+      "title": "Бренд: подача в Роспатент — go/no-go",
+      "assignee": "biz-director",
+      "role": "root",
+      "status": "todo",
+      "started_at": 1793162930,
+      "finished_at": null,
+      "summary_md": "",
+      "metadata": {},
+      "comments": [],
+      "runs": [],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    },
+    {
+      "id": "t_5c8e4a03",
+      "parent_ids": [
+        "t_5c8e4a02"
+      ],
+      "title": "Подготовить подачу в Роспатент",
+      "assignee": "biz-marketing",
+      "role": "worker",
+      "status": "blocked",
+      "started_at": 1793162960,
+      "finished_at": null,
+      "summary_md": "Пакет документов готов: логотип в vetor, перечень классов 30/43, скан паспорта. Жду решения по классам и оплате таксы.",
+      "metadata": {},
+      "comments": [
+        {
+          "author": "biz-marketing",
+          "text": "Без решения Михаила подать не могу: такса необратима.",
+          "at": 1793163620
+        }
+      ],
+      "runs": [
+        {
+          "id": 89,
+          "profile": "biz-marketing",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793162960,
+          "ended_at": 1793163600,
+          "error": null
+        }
+      ],
+      "needs_human": true,
+      "error": null,
+      "outside_room": false,
+      "model_label": "Облако-А · Дилижанс миди · низкие"
+    },
+    {
+      "id": "t_5c8e4a04",
+      "parent_ids": [
+        "t_5c8e4a02"
+      ],
+      "title": "Проверить риск чужой подачи",
+      "assignee": "biz-lawyer",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793162970,
+      "finished_at": 1793163700,
+      "summary_md": "Проверила базу Роспатента: прямых заявок на «Лето» нет, но в кл.30 есть похожая «Сладкое Лето» (подана 12.08). Риск R5 средний, подавать лучше в течение 2 недель.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 90,
+          "profile": "biz-lawyer",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793162970,
+          "ended_at": 1793163700,
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    },
+    {
+      "id": "t_5c8e4a05",
+      "parent_ids": [
+        "t_5c8e4a02"
+      ],
+      "title": "Смета подачи: классы и таксы",
+      "assignee": "biz-cfo",
+      "role": "worker",
+      "status": "done",
+      "started_at": 1793162980,
+      "finished_at": 1793163660,
+      "summary_md": "Класс 30 — 4 400 ₽; классы 30+43 — 8 800 ₽ со скидкой для ИП. Плюс 1 200 ₽ за доверенность, если подаёт представитель.",
+      "metadata": {},
+      "comments": [],
+      "runs": [
+        {
+          "id": 91,
+          "profile": "biz-cfo",
+          "status": "done",
+          "outcome": "completed",
+          "started_at": 1793162980,
+          "ended_at": 1793163660,
+          "error": null
+        }
+      ],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false,
+      "model_label": "Облако-А · Дилижанс ультра · очень высокие"
+    }
+  ],
+  "timeline": [
+    {
+      "at": 1793162900,
+      "kind": "created",
+      "task_id": "t_5c8e4a02",
+      "actor": "mikhail",
+      "text": "Запрос создан"
+    },
+    {
+      "at": 1793162960,
+      "kind": "claimed",
+      "task_id": "t_5c8e4a03",
+      "actor": "biz-marketing",
+      "text": "Марина готовит пакет Роспатент"
+    },
+    {
+      "at": 1793163660,
+      "kind": "completed",
+      "task_id": "t_5c8e4a05",
+      "actor": "biz-cfo",
+      "text": "Смета готова"
+    },
+    {
+      "at": 1793163700,
+      "kind": "completed",
+      "task_id": "t_5c8e4a04",
+      "actor": "biz-lawyer",
+      "text": "Риск R5 оценён"
+    },
+    {
+      "at": 1793163720,
+      "kind": "blocked",
+      "task_id": "t_5c8e4a03",
+      "actor": "biz-marketing",
+      "text": "Нужен go/no-go Михаила по классам и таксе"
+    }
+  ],
+  "warnings": [],
+  "thread": [
+    {
+      "id": "c1",
+      "at": 1793158000,
+      "author_kind": "mikhail",
+      "author": "mikhail",
+      "author_label": "Михаил",
+      "text": "Разберись с подачей Роспатент по бренду «Лето»: класс 30 или 30+43 и сколько это стоит.",
+      "task_id": "t_5c8e4a02",
+      "kind": "message"
+    },
+    {
+      "id": "c2",
+      "at": 1793158060,
+      "author_kind": "agent",
+      "author": "biz-director",
+      "author_label": "Глеб · руководитель комнаты",
+      "text": "Принял; передал Антону — классы и такса, Илье — объём защиты по линейке. Своду нужен твой выбор, вопрос внизу.",
+      "task_id": "t_5c8e4a02",
+      "kind": "comment"
+    },
+    {
+      "id": "c3",
+      "at": 1793158200,
+      "author_kind": "agent",
+      "author": "biz-lawyer",
+      "author_label": "Антон · исполнитель",
+      "text": "Класс 30 — 4 400 ₽ со скидкой для ИП, класс 30+43 — 8 800 ₽. Подача необратима, поэтому решение за Михаилом.",
+      "task_id": "t_5c8e4a02",
+      "kind": "comment"
+    },
+    {
+      "id": "e1",
+      "at": 1793158300,
+      "author_kind": "system",
+      "author": "system",
+      "author_label": "Комната команды",
+      "text": "Ответ приостановлен: ждёт решения Михаила по классу Роспатент",
+      "task_id": "t_5c8e4a02",
+      "kind": "event"
+    }
+  ],
+  "title_short": "Бренд: подача в Роспатент — go/no-go",
+  "heartbeats": {
+    "count": 0,
+    "last_at": null
+  }
+}

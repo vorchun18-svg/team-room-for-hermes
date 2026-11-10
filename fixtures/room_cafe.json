@@ -1,0 +1,306 @@
+{
+  "id": "cafe",
+  "title": "Лето",
+  "icon": "cake",
+  "board": "team",
+  "tenant": "room:cafe",
+  "orchestrator": "biz-director",
+  "critic": "biz-critic",
+  "members": [
+    {
+      "profile": "biz-lawyer",
+      "role": "worker",
+      "note": "Юрист: ИП, СЭС, Роспатент, договоры",
+      "pinned": true,
+      "added_at": 1793060000,
+      "model_settings": {
+        "provider": "oblako-a",
+        "model": "dilizhans-midi",
+        "reasoning": "medium",
+        "source": "agent",
+        "updated_at": 0
+      },
+      "agent_default": {
+        "provider": "oblako-a",
+        "model": "dilizhans-midi",
+        "reasoning": "medium"
+      },
+      "label": ""
+    },
+    {
+      "profile": "biz-ops",
+      "role": "worker",
+      "note": "Операции: поставщики, упаковка, доставка",
+      "pinned": true,
+      "added_at": 1793060000,
+      "model_settings": {
+        "provider": "oblako-a",
+        "model": "dilizhans-ultra",
+        "reasoning": "high",
+        "source": "room",
+        "updated_at": 1793171700
+      },
+      "agent_default": {
+        "provider": "lokal",
+        "model": "dilizhans-home",
+        "reasoning": "medium"
+      },
+      "label": ""
+    },
+    {
+      "profile": "biz-strategy",
+      "role": "worker",
+      "note": "Стратегия, бренд, план 90 дней",
+      "pinned": false,
+      "added_at": 1793060000,
+      "model_settings": {
+        "provider": "oblako-b",
+        "model": "vektor-3",
+        "reasoning": "high",
+        "source": "agent",
+        "updated_at": 0
+      },
+      "agent_default": {
+        "provider": "oblako-b",
+        "model": "vektor-3",
+        "reasoning": "high"
+      },
+      "label": ""
+    },
+    {
+      "profile": "biz-marketing",
+      "role": "worker",
+      "note": "Каналы, контент, D19",
+      "pinned": false,
+      "added_at": 1793060100,
+      "model_settings": {
+        "provider": "oblako-a",
+        "model": "dilizhans-midi",
+        "reasoning": "low",
+        "source": "agent",
+        "updated_at": 0
+      },
+      "agent_default": {
+        "provider": "oblako-a",
+        "model": "dilizhans-midi",
+        "reasoning": "low"
+      },
+      "label": ""
+    },
+    {
+      "profile": "biz-cfo",
+      "role": "worker",
+      "note": "Экономика, налоги, сметы",
+      "pinned": false,
+      "added_at": 1793060100,
+      "model_settings": {
+        "provider": "oblako-a",
+        "model": "dilizhans-ultra",
+        "reasoning": "xhigh",
+        "source": "agent",
+        "updated_at": 0
+      },
+      "agent_default": {
+        "provider": "oblako-a",
+        "model": "dilizhans-ultra",
+        "reasoning": "xhigh"
+      },
+      "label": ""
+    },
+    {
+      "profile": "biz-runner",
+      "role": "worker",
+      "note": "Сбор фактов по Vault и доске",
+      "pinned": false,
+      "added_at": 1793060200,
+      "model_settings": {
+        "provider": "lokal",
+        "model": "dilizhans-kompakt",
+        "reasoning": "minimal",
+        "source": "agent",
+        "updated_at": 0
+      },
+      "agent_default": {
+        "provider": "lokal",
+        "model": "dilizhans-kompakt",
+        "reasoning": "minimal"
+      },
+      "label": ""
+    },
+    {
+      "profile": "biz-critic",
+      "role": "critic",
+      "note": "Проверяет свод перед ответом Михаилу",
+      "pinned": true,
+      "added_at": 1793060200,
+      "model_settings": {
+        "provider": "oblako-b",
+        "model": "vektor-4",
+        "reasoning": "high",
+        "source": "agent",
+        "updated_at": 0
+      },
+      "agent_default": {
+        "provider": "oblako-b",
+        "model": "vektor-4",
+        "reasoning": "high"
+      },
+      "label": ""
+    }
+  ],
+  "context_files": [
+    "D:/Проекты/Vault/Projects/Rooms/cafe/STATE.md",
+    "D:/Проекты/Vault/Projects/Business areas/Лето/CONTEXT.md"
+  ],
+  "project_dir": "D:\\Проекты\\Лето",
+  "launch_mode": "plan_first",
+  "max_parallel_streams": 2,
+  "project_mode": true,
+  "mode_default": "auto",
+  "critic_pass": true,
+  "created_at": 1793059000,
+  "archived": false,
+  "counters": {
+    "working": 3,
+    "needs_you": 5,
+    "done_today": 2
+  },
+  "phase": {
+    "id": "legal",
+    "title": "Легализация",
+    "status": "active"
+  },
+  "dispatcher": {
+    "ok": true,
+    "state": "running",
+    "warning": null
+  },
+  "max_rounds": 1,
+  "seeded": true,
+  "agent_notes": {
+    "biz-ops": {
+      "text": "Отвечай коротко и только цифрами, когда речь о поставщиках: цена, MOQ, срок.\nВсегда указывай источник и дату котировки — без них ответ не принимаю.",
+      "updated_at": 1793155000,
+      "entries": [
+        {
+          "id": "n_demo01",
+          "text": "Отвечай коротко и только цифрами, когда речь о поставщиках: цена, MOQ, срок.",
+          "source": "user",
+          "origin": "правка в интерфейсе",
+          "created_at": 1793155000,
+          "used_count": 3,
+          "pinned": true
+        },
+        {
+          "id": "n_demo02",
+          "text": "Всегда указывай источник и дату котировки — без них ответ не принимаю.",
+          "source": "leader",
+          "origin": "комментарий Михаила, 04.11",
+          "created_at": 1793155400,
+          "used_count": 1,
+          "pinned": false
+        }
+      ],
+      "review": {
+        "count_at_review": 2,
+        "reviewed_at": 1793155400,
+        "due": false
+      }
+    },
+    "biz-cfo": {
+      "text": "Считай в ₽ и отдельно показывай долю каждого расхода.\nНе предлагай цену с маржой ниже 35% — это наше правило.",
+      "updated_at": 1793155400,
+      "entries": [
+        {
+          "id": "n_demo03",
+          "text": "Считай в ₽ и отдельно показывай долю каждого расхода.",
+          "source": "user",
+          "origin": "",
+          "created_at": 1793155000,
+          "used_count": 2,
+          "pinned": true
+        },
+        {
+          "id": "n_demo04",
+          "text": "Не предлагай цену с маржой ниже 35% — это наше правило.",
+          "source": "leader",
+          "origin": "комментарий Михаила, 05.11",
+          "created_at": 1793155400,
+          "used_count": 0,
+          "pinned": false
+        }
+      ],
+      "review": {
+        "count_at_review": 2,
+        "reviewed_at": 1793155400,
+        "due": false
+      }
+    }
+  },
+  "agent_models": {
+    "biz-ops": {
+      "provider": "oblako-a",
+      "model": "dilizhans-ultra",
+      "reasoning": "high",
+      "updated_at": 1793171700
+    }
+  },
+  "critic_mode": "rounds",
+  "critic_round_cap": 12,
+  "agent_notes_log": [
+    {
+      "id": "j_demo0002",
+      "at": 1793155400,
+      "action": "add",
+      "profile": "biz-cfo",
+      "entry_id": "n_demo04",
+      "text": "Не предлагай цену с маржой ниже 35% — это наше правило.",
+      "why": "правило комнаты",
+      "origin": "комментарий Михаила, 05.11",
+      "actor": "biz-director",
+      "source": "leader",
+      "note": "",
+      "rolled_back": false
+    },
+    {
+      "id": "j_demo0001",
+      "at": 1793155000,
+      "action": "add",
+      "profile": "biz-ops",
+      "entry_id": "n_demo01",
+      "text": "Отвечай коротко и только цифрами, когда речь о поставщиках: цена, MOQ, срок.",
+      "why": "ручная запись",
+      "origin": "правка в интерфейсе",
+      "actor": "Михаил",
+      "source": "user",
+      "note": "",
+      "rolled_back": false
+    }
+  ],
+  "phases": [
+    {
+      "id": "idea",
+      "title": "Идея и стратегия"
+    },
+    {
+      "id": "legal",
+      "title": "Легализация"
+    },
+    {
+      "id": "brand",
+      "title": "Бренд и товарный знак"
+    },
+    {
+      "id": "packaging",
+      "title": "Упаковка"
+    },
+    {
+      "id": "production",
+      "title": "Производство"
+    },
+    {
+      "id": "sales",
+      "title": "Продажи"
+    }
+  ]
+}

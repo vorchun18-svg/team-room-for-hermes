@@ -1,0 +1,112 @@
+{
+  "id": "fn",
+  "title": "Рабочее пространство",
+  "icon": "law",
+  "board": "team",
+  "tenant": "room:fn",
+  "orchestrator": "default",
+  "critic": null,
+  "members": [
+    {
+      "profile": "lawyer",
+      "role": "worker",
+      "note": "Юридические вопросы",
+      "pinned": true,
+      "added_at": 1793060400,
+      "model_settings": {
+        "provider": "oblako-b",
+        "model": "vektor-5",
+        "reasoning": "high",
+        "source": "room",
+        "updated_at": 1793171750
+      },
+      "agent_default": {
+        "provider": "oblako-a",
+        "model": "dilizhans-pro",
+        "reasoning": "high"
+      },
+      "label": ""
+    },
+    {
+      "profile": "coder",
+      "role": "worker",
+      "note": "Код и автоматизация",
+      "pinned": false,
+      "added_at": 1793060400,
+      "model_settings": {
+        "provider": "oblako-b",
+        "model": "vektor-5",
+        "reasoning": "medium",
+        "source": "agent",
+        "updated_at": 0
+      },
+      "agent_default": {
+        "provider": "oblako-b",
+        "model": "vektor-5",
+        "reasoning": "medium"
+      },
+      "label": ""
+    },
+    {
+      "profile": "surveyor",
+      "role": "worker",
+      "note": "Проверка фактов и источников",
+      "pinned": false,
+      "added_at": 1793060500,
+      "model_settings": {
+        "provider": "lokal",
+        "model": "dilizhans-home-2",
+        "reasoning": "low",
+        "source": "agent",
+        "updated_at": 0
+      },
+      "agent_default": {
+        "provider": "lokal",
+        "model": "dilizhans-home-2",
+        "reasoning": "low"
+      },
+      "label": ""
+    }
+  ],
+  "context_files": [
+    "D:/Проекты/Vault/Projects/Rooms/fn/STATE.md"
+  ],
+  "project_dir": "D:\\Проекты\\Рабочее пространство",
+  "launch_mode": "plan_first",
+  "max_parallel_streams": 1,
+  "project_mode": true,
+  "mode_default": "auto",
+  "critic_pass": false,
+  "created_at": 1793060400,
+  "archived": false,
+  "counters": {
+    "working": 1,
+    "needs_you": 0,
+    "done_today": 1
+  },
+  "phase": null,
+  "dispatcher": {
+    "ok": true,
+    "state": "running",
+    "warning": null
+  },
+  "max_rounds": 1,
+  "seeded": true,
+  "agent_notes": {
+    "lawyer": {
+      "text": "Всегда проверяй по действующему закону и указывай номер статьи. Если не уверен — пиши «нужна проверка», а не догадку.",
+      "updated_at": 1793162000
+    }
+  },
+  "agent_models": {
+    "lawyer": {
+      "provider": "oblako-b",
+      "model": "vektor-5",
+      "reasoning": "high",
+      "updated_at": 1793171750
+    }
+  },
+  "critic_mode": "rounds",
+  "critic_round_cap": 12,
+  "phases": []
+}

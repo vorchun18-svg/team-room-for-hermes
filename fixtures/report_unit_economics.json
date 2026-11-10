@@ -1,0 +1,304 @@
+{
+  "version": 1,
+  "title": "Юнит-экономика набора «Лето 6»",
+  "subtitle": "Заозёрье, октябрь 2026 · оценка, не факт продаж",
+  "summary": "Набор из 6 моти при цене 420 ₽ даёт 47,3 % маржи при прямых продажах. Telegram и B2B-кофейни выгоднее агрегаторов: Развоз забирает 18 %, Едок — 23 % цены.",
+  "blocks": [
+    {
+      "type": "heading",
+      "text": "Что считали",
+      "level": 2
+    },
+    {
+      "type": "text",
+      "md": "Черновик отчёта: цифры предварительные. Себестоимость собрана из моти, упаковки и наклейки; комиссии взяты из публичных тарифов сервисов «Едок» и «Развоз» на октябрь 2026. Цены — в рублях, продаж ещё нет."
+    },
+    {
+      "type": "stats",
+      "items": [
+        {
+          "label": "Цена набора",
+          "value": "420 ₽",
+          "hint": "6 моти + бокс",
+          "tone": "info"
+        },
+        {
+          "label": "Себестоимость",
+          "value": "221,5 ₽",
+          "delta": "+7 % к сентябрю",
+          "tone": "warn"
+        },
+        {
+          "label": "Маржа Telegram",
+          "value": "47%",
+          "delta": "+4 п.п.",
+          "tone": "success"
+        },
+        {
+          "label": "Маржа Едок",
+          "value": "24%",
+          "delta": "-23 п.п.",
+          "tone": "warn"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Экономика по каналам",
+      "sortable": true,
+      "filter": false,
+      "columns": [
+        {
+          "key": "channel",
+          "label": "Канал",
+          "type": "text"
+        },
+        {
+          "key": "price",
+          "label": "Цена, ₽",
+          "type": "money",
+          "currency": "₽",
+          "decimals": 2
+        },
+        {
+          "key": "cost",
+          "label": "Себестоимость, ₽",
+          "type": "money",
+          "currency": "₽",
+          "decimals": 2
+        },
+        {
+          "key": "fee",
+          "label": "Комиссия",
+          "type": "percent",
+          "decimals": 0
+        },
+        {
+          "key": "margin",
+          "label": "Маржа, ₽",
+          "type": "money",
+          "currency": "₽",
+          "decimals": 2
+        },
+        {
+          "key": "margin_pct",
+          "label": "Маржа, %",
+          "type": "percent",
+          "decimals": 0
+        },
+        {
+          "key": "status",
+          "label": "Статус",
+          "type": "status"
+        }
+      ],
+      "rows": [
+        {
+          "channel": "Telegram (прямые)",
+          "price": 420.0,
+          "cost": 221.5,
+          "fee": 0,
+          "margin": 198.5,
+          "margin_pct": 47,
+          "status": "active"
+        },
+        {
+          "channel": "B2B-кофейни",
+          "price": 390.0,
+          "cost": 221.5,
+          "fee": 0,
+          "margin": 168.5,
+          "margin_pct": 43,
+          "status": "next"
+        },
+        {
+          "channel": "Развоз",
+          "price": 420.0,
+          "cost": 221.5,
+          "fee": 18,
+          "margin": 122.9,
+          "margin_pct": 29,
+          "status": "next"
+        },
+        {
+          "channel": "Едок",
+          "price": 420.0,
+          "cost": 221.5,
+          "fee": 23,
+          "margin": 101.9,
+          "margin_pct": 24,
+          "status": "blocked"
+        }
+      ],
+      "totals": {
+        "margin": "avg"
+      },
+      "footnote": "Комиссии: «Едок» 23%, «Развоз» 18% (тариф «Доставка»). Доставка включена в себестоимость."
+    },
+    {
+      "type": "callout",
+      "tone": "warn",
+      "title": "Что это не значит",
+      "md": "Цифры — расчёт на бумаге. Ни один набор не продан: нет регистрации, нет тестовой партии, D19 не запущен. Отчёт показывает, **куда** смотреть, а не подтверждённый спрос."
+    },
+    {
+      "type": "chart",
+      "kind": "bar",
+      "title": "Маржа набора по каналам, ₽",
+      "unit": "₽",
+      "x": [
+        "Telegram",
+        "B2B",
+        "Развоз",
+        "Едок"
+      ],
+      "series": [
+        {
+          "name": "Маржа",
+          "data": [
+            198.5,
+            168.5,
+            122.9,
+            101.9
+          ],
+          "color": "#4f8cff"
+        }
+      ]
+    },
+    {
+      "type": "chart",
+      "kind": "donut",
+      "title": "Из чего состоит себестоимость",
+      "unit": "₽",
+      "x": [
+        "Моти, 6 шт",
+        "Упаковка",
+        "Наклейка"
+      ],
+      "series": [
+        {
+          "name": "Себестоимость",
+          "data": [
+            128.5,
+            73.0,
+            20.0
+          ]
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Что двигает маржу",
+      "layout": "layered",
+      "direction": "LR",
+      "nodes": [
+        {
+          "id": "price",
+          "label": "Цена набора",
+          "group": "Выручка"
+        },
+        {
+          "id": "cost",
+          "label": "Себестоимость",
+          "group": "Затраты"
+        },
+        {
+          "id": "fee",
+          "label": "Комиссия канала",
+          "group": "Затраты"
+        },
+        {
+          "id": "margin",
+          "label": "Маржа",
+          "group": "Итог",
+          "size": 1.3
+        },
+        {
+          "id": "moq",
+          "label": "MOQ упаковки",
+          "group": "Риск"
+        },
+        {
+          "id": "d19",
+          "label": "Спрос D19",
+          "group": "Риск"
+        }
+      ],
+      "edges": [
+        {
+          "from": "price",
+          "to": "margin",
+          "label": "+",
+          "kind": "solid"
+        },
+        {
+          "from": "cost",
+          "to": "margin",
+          "label": "−",
+          "kind": "solid"
+        },
+        {
+          "from": "fee",
+          "to": "margin",
+          "label": "−",
+          "kind": "solid"
+        },
+        {
+          "from": "moq",
+          "to": "cost",
+          "label": "тираж",
+          "kind": "dashed"
+        },
+        {
+          "from": "d19",
+          "to": "price",
+          "label": "готовность платить",
+          "kind": "dashed"
+        }
+      ]
+    },
+    {
+      "type": "timeline",
+      "items": [
+        {
+          "date": "2026-10-28",
+          "title": "Расчёт собран",
+          "md": "Себестоимость и комиссии сведены в таблицу.",
+          "owner": "biz-cfo",
+          "status": "done"
+        },
+        {
+          "date": "2026-11-05",
+          "title": "Котировки упаковки",
+          "md": "Ожидаем ответы 10 поставщиков в городе.",
+          "owner": "biz-ops",
+          "status": "active"
+        },
+        {
+          "date": "2026-11-15",
+          "title": "Проверка на тестовой партии",
+          "md": "20 наборов, замер факта против расчёта.",
+          "owner": "biz-director",
+          "status": "next"
+        }
+      ]
+    },
+    {
+      "type": "checklist",
+      "items": [
+        {
+          "text": "Подтвердить цену упаковки у 3 поставщиков",
+          "done": false
+        },
+        {
+          "text": "Проверить комиссию Развоз в договоре",
+          "done": false
+        },
+        {
+          "text": "Свести факт тестовой партии с расчётом",
+          "done": false
+        }
+      ]
+    }
+  ]
+}

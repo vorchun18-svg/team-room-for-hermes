@@ -1,0 +1,474 @@
+/* agent-notes.css — «Особые указания для этой комнаты» (WAVE9 §9).
+   Только токены tokens.css: светлая и тёмная темы получаются сами.
+   Поле с микрофоном: справа оставляем 40px, чтобы кнопка не наезжала на текст. */
+
+.agent-notes { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.agent-notes__intro {
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.agent-notes__examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+.agent-notes__examples-label { flex: none; }
+.agent-notes__example {
+  border: 1px solid var(--border-soft);
+  background: var(--ui-bg-tertiary);
+  color: var(--ui-base);
+  border-radius: var(--radius-full);
+  padding: 2px var(--space-2);
+  font: inherit;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-notes__example:hover { background: var(--ui-bg-secondary); border-color: var(--border); }
+.agent-notes__example:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+
+.agent-notes__list { display: flex; flex-direction: column; gap: var(--space-1); }
+.agent-notes__empty { font-size: var(--text-sm); color: var(--muted-foreground); }
+
+/* ── один участник: раскрывающаяся строка ─────────────────────────────── */
+.agent-note {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-editor);
+  padding: 0 var(--space-2);
+}
+.agent-note[open] { border-color: var(--border); background: var(--ui-bg-elevated); }
+.agent-note--has { border-color: color-mix(in srgb, var(--link) 34%, var(--border)); }
+
+.agent-note__summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2) 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+.agent-note__summary::-webkit-details-marker { display: none; }
+.agent-note__summary:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+
+.agent-note__name { font-weight: 600; color: var(--ui-base); }
+.agent-note__role { color: var(--muted-foreground); }
+.agent-note__toggle {
+  margin-left: auto;
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+.agent-note[open] .agent-note__toggle { color: var(--muted-foreground); text-decoration: none; }
+
+.agent-note__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-05);
+  font-size: var(--text-sm);
+  color: var(--link);
+  background: var(--ui-bg-primary);
+  border-radius: var(--radius-full);
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+}
+.agent-note__badge.hidden { display: none; }
+
+.agent-note__box { padding: 0 0 var(--space-2); }
+
+/* поле: микрокнопка диктовки встаёт справа — место под неё оставлено */
+.agent-note__area {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  padding-right: 40px;
+  line-height: 1.5;
+  font: inherit;
+}
+
+.agent-note__foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+}
+.agent-note__count--over { color: var(--danger-ink); font-weight: 600; }
+.agent-note__warn { color: var(--danger-ink); }
+.agent-note__warn.hidden { display: none; }
+
+/* ── строка на вкладке «Команда» ──────────────────────────────────────── */
+.agent-notes-line { align-items: flex-start; }
+.agent-notes-line .tm-fact__value {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.agent-notes-line__list {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-tertiary);
+}
+.agent-notes-line__list.hidden { display: none; }
+.agent-notes-line__item { display: flex; gap: var(--space-2); font-size: var(--text-sm); }
+.agent-notes-line__who { flex: none; font-weight: 600; color: var(--ui-base); }
+.agent-notes-line__text { color: var(--muted-foreground); min-width: 0; }
+
+@media (max-width: 720px) {
+  .agent-note__toggle { margin-left: 0; }
+  .agent-notes-line__item { flex-direction: column; gap: 0; }
+}
+
+/* ── записи (WAVE14 §13): список особенностей + поле «Добавить» ─────────── */
+.notes-entries { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.notes-entries__intro { margin: 0; }
+.notes-entries__list { display: flex; flex-direction: column; gap: var(--space-1); }
+.notes-entries__empty { padding: var(--space-1) 0; }
+
+.notes-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "text del" "meta del";
+  gap: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-tertiary);
+}
+.notes-entry--pinned { border-left-color: var(--link); }
+.notes-entry__text {
+  grid-area: text;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: var(--text-sm);
+  color: var(--ui-base);
+}
+.notes-entry__meta { grid-area: meta; }
+.notes-entries__del {
+  grid-area: del;
+  align-self: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  border-radius: var(--radius-sm);
+  padding: 2px 4px;
+  cursor: pointer;
+}
+.notes-entries__del:hover { color: var(--danger-ink); border-color: var(--border-soft); }
+.notes-entries__del:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+
+.notes-entries__add { display: flex; flex-direction: column; gap: var(--space-1); }
+.notes-entries__addrow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+/* Поле — на всю ширину строки, кнопки («Надиктовать» и «Добавить») — отдельной
+   строкой справа, в потоке: микрофон не накладывается на поле и не обрезается. */
+.notes-entries__addrow > .notes-entries__area { flex: 1 1 100%; min-width: 0; }
+.notes-entries__addrow > .btn, .notes-entries__addrow > .mic-btn { flex: none; }
+.notes-entries__addfoot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
+.notes-entries__count { font-size: var(--text-sm); color: var(--muted-foreground); }
+.notes-entries__status { min-height: 1em; }
+.notes-entries__tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.notes-entries__journal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-primary);
+}
+.notes-entries__journal.hidden { display: none; }
+.notes-journal__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border-soft);
+}
+.notes-journal__row:last-child { border-bottom: 0; padding-bottom: 0; }
+.notes-journal__head { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; }
+.notes-journal__who { font-weight: 600; color: var(--ui-base); }
+.notes-journal__act { color: var(--link); }
+.notes-journal__text { overflow-wrap: anywhere; }
+.notes-entries--compact .notes-entries__list { max-height: 260px; overflow-y: auto; }
+
+/* ── блок на карточке участника («Команда») ─────────────────────────────── */
+.tm-card__notes {
+  border-top: 1px solid var(--border-soft);
+  padding-top: var(--space-2);
+  margin-top: var(--space-2);
+}
+.tm-card__notessum {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tm-card__notessum::-webkit-details-marker { display: none; }
+.tm-card__notessum:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+.tm-card__notescount {
+  color: var(--muted-foreground);
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+.tm-card__notes[open] .tm-card__notessum { text-decoration: none; color: var(--ui-base); }
+.tm-card__notesbody { padding-top: var(--space-1); }
+
+/* ═══ окно-«блокнот» «Особенности для этой комнаты» (WAVE17 P6) ══════════
+   Большое окно: слева записи, справа редактор на всю высоту. Микрофон —
+   отдельной кнопкой в строке «Сохранить» (как в composer): он в потоке и
+   физически не может наплыть на поле или на кнопку. */
+
+.dialog.notes-ed {
+  width: min(1180px, 92vw);
+  height: min(86vh, 900px);
+  max-height: 86vh;
+}
+
+.notes-ed__head { align-items: flex-start; gap: var(--space-3); }
+.notes-ed__titles { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.notes-ed__title { font-size: var(--text-lg); line-height: 1.35; }
+.notes-ed__sub {
+  margin: 0; font-size: var(--text-sm); color: var(--muted-foreground);
+  line-height: 1.45; overflow-wrap: anywhere;
+}
+
+.notes-ed__body {
+  display: grid;
+  grid-template-columns: minmax(260px, 380px) minmax(0, 1fr);
+  gap: var(--space-3);
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── слева: поиск, фильтр, список ─────────────────────────────────────── */
+.notes-ed__left { display: flex; flex-direction: column; gap: var(--space-2); min-height: 0; min-width: 0; }
+.notes-ed__searchrow { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.notes-ed__searchrow > .codicon { flex: none; color: var(--ui-text-tertiary); }
+.notes-ed__search { flex: 1 1 auto; min-width: 0; }
+
+.notes-ed__filters {
+  display: flex; gap: 2px; padding: 2px;
+  background: var(--ui-bg-tertiary); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+}
+.notes-ed__filter {
+  flex: 1 1 auto; min-width: 0; min-height: 28px;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; color: var(--ui-text-secondary);
+  font: inherit; font-size: var(--text-sm); cursor: pointer;
+  padding: 2px var(--space-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.notes-ed__filter:hover { color: var(--ui-base); background: var(--ui-bg-secondary); }
+.notes-ed__filter:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
+.notes-ed__filter--on,
+.notes-ed__filter[aria-pressed="true"] {
+  background: var(--ui-bg-elevated); color: var(--ui-base); border-color: var(--border);
+  font-weight: 600;
+}
+
+.notes-ed__list {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding-right: 2px;
+}
+.notes-ed__state { padding: var(--space-2); line-height: 1.5; }
+.notes-ed__listnote:empty { display: none; }
+
+.notes-ed__item {
+  display: flex; flex-direction: column; gap: 2px;
+  width: 100%; text-align: left; font: inherit;
+  padding: var(--space-2);
+  border: 1px solid var(--border-soft); border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-tertiary); color: var(--ui-base);
+  cursor: pointer; min-width: 0;
+}
+.notes-ed__item:hover { background: var(--ui-bg-secondary); border-color: var(--border); }
+.notes-ed__item:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.notes-ed__item--pinned { border-left-color: var(--link); }
+.notes-ed__item--on {
+  border-color: var(--link); background: var(--ui-bg-elevated);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--link) 35%, transparent);
+}
+.notes-ed__itemhead {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1);
+  font-size: var(--text-sm); color: var(--muted-foreground);
+}
+.notes-ed__itemhead .codicon { color: var(--link); }
+.notes-ed__itemsrc { font-weight: 600; color: var(--ui-base); }
+.notes-ed__itemdate { margin-left: auto; font-variant-numeric: tabular-nums; }
+.notes-ed__itemtext {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--text-sm); line-height: 1.45; color: var(--ui-base);
+  overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.notes-ed__itemused { font-size: var(--text-sm); color: var(--link); }
+
+/* ── справа: редактор записи ──────────────────────────────────────────── */
+.notes-ed__right {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+  background: var(--ui-bg-editor);
+}
+.notes-ed__editor { display: flex; flex-direction: column; gap: var(--space-2); flex: 1 1 auto; min-height: 0; }
+.notes-ed__entryhead { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-height: 20px; }
+.notes-ed__entrymeta { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.notes-ed__pin {
+  display: inline-flex; align-items: center; gap: var(--space-05);
+  flex: none; color: var(--link); font-size: var(--text-sm);
+}
+.notes-ed__pin .codicon { color: var(--link); }
+
+.notes-ed__area {
+  flex: 1 1 auto; min-height: 160px; height: auto;
+  width: 100%; resize: none;
+  font: inherit; font-size: var(--text-base); line-height: 1.6;
+  padding: var(--space-2);
+  overflow-wrap: anywhere;
+}
+.notes-ed__area:focus-visible { outline: 2px solid var(--link); outline-offset: -1px; }
+
+.notes-ed__editrow {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+  flex: none;
+}
+.notes-ed__editrow > .mic-btn, .notes-ed__editrow > .btn { flex: none; }
+.notes-ed__status { flex: 1 1 140px; min-width: 0; }
+.notes-ed__save { min-height: 30px; }
+
+/* ── журнал изменений ─────────────────────────────────────────────────── */
+.notes-ed__journal {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.notes-ed__journal.hidden { display: none; }
+.notes-ed__jhead { display: flex; align-items: center; gap: var(--space-2); }
+.notes-ed__jtitle { flex: 1 1 auto; font-size: var(--text-md); font-weight: 600; color: var(--ui-base); }
+.notes-ed__jlist { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* ── подвал: лимиты и действия ────────────────────────────────────────── */
+.notes-ed__foot { align-items: center; justify-content: space-between; gap: var(--space-2); }
+.notes-ed__limits { display: flex; flex-direction: column; gap: 2px; flex: 1 1 260px; min-width: 0; }
+.notes-ed__limit { font-size: var(--text-sm); color: var(--muted-foreground); }
+.notes-ed__limit--warn { color: var(--ui-base); font-weight: 600; }
+.notes-ed__limit--over { color: var(--danger-ink); font-weight: 600; }
+.notes-ed__limithint { line-height: 1.35; }
+.notes-ed__limithint:empty { display: none; }
+.notes-ed__actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); justify-content: flex-end; }
+.notes-ed__danger { color: var(--danger-ink); }
+
+/* ── «есть несохранённые изменения» ───────────────────────────────────── */
+.notes-ed__leave {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border);
+  background: var(--ui-bg-secondary);
+}
+.notes-ed__leave.hidden { display: none; }
+.notes-ed__leavetext { flex: 1 1 200px; font-size: var(--text-sm); color: var(--ui-base); }
+.notes-ed__leaveacts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+
+/* ── ссылка «Особенности (N)» ─────────────────────────────────────────── */
+.notes-link {
+  border: 0; background: transparent; padding: 0;
+  font: inherit; font-size: var(--text-sm); color: var(--link);
+  text-decoration: underline; text-underline-offset: 2px;
+  cursor: pointer; white-space: nowrap; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.notes-link:hover { color: var(--ui-base); }
+.notes-link:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: var(--radius-xs); }
+.notes-link.btn { text-decoration: none; }
+
+/* ── адаптив ──────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .notes-ed__body { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  /* На узком экране — на весь экран (ТЗ): записи сверху, редактор ниже. */
+  body > .dialog-backdrop.notes-ed__backdrop { padding: 0; place-items: stretch; }
+  .dialog-backdrop > .dialog.notes-ed {
+    width: 100% !important; max-width: 100% !important;
+    height: 100dvh !important; max-height: 100dvh !important;
+    border-radius: 0; border: 0;
+  }
+  .notes-ed__body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 26vh) minmax(0, 1fr);
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3) var(--space-3);
+  }
+  .notes-ed__left { gap: var(--space-1); }
+  .notes-ed__itemtext { -webkit-line-clamp: 2; }
+  /* Подвал в столбик: `flex-basis` здесь — ВЫСОТА, поэтому счётчик не растягиваем. */
+  .notes-ed__foot { flex-direction: column; align-items: stretch; flex: none; }
+  .notes-ed__limits { flex: 0 0 auto; }
+  .notes-ed__limithint { font-size: var(--text-sm); }
+  .notes-ed__actions {
+    justify-content: flex-start;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1);
+  }
+  .notes-ed__actions > .btn { width: 100%; justify-content: center; min-width: 0; }
+  .notes-ed__leave { padding: var(--space-2) var(--space-3); }
+  .notes-ed__editrow > .btn, .notes-ed__editrow > .mic-btn { flex: 1 1 auto; justify-content: center; }
+  .notes-ed__status { flex: 1 1 100%; }
+}
+
+/* ── список участников со ссылкой в блокнот (диалог комнаты, WAVE17 P6) ── */
+.roomdlg__notesrow {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: var(--text-sm);
+}
+.roomdlg__notesrow:last-child { border-bottom: 0; }
+.roomdlg__noteswho { font-weight: 600; color: var(--ui-base); min-width: 0; overflow-wrap: anywhere; }
+.roomdlg__notesrole { color: var(--muted-foreground); }
+.roomdlg__notesrow .notes-link { margin-left: auto; }

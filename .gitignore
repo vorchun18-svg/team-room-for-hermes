@@ -1,0 +1,21 @@
+# данные приложения и журналы
+data/
+*.log
+
+# резервные копии
+*.bak
+*.bak-*
+*.bak.*
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# node
+node_modules/
+
+# система
+.DS_Store
+Thumbs.db

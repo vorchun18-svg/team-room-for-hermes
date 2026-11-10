@@ -1,0 +1,163 @@
+{
+  "id": "t_2a6f5c93",
+  "room": "cafe",
+  "title": "Каналы продаж: Едок или Развоз",
+  "status": "queued",
+  "status_reason": null,
+  "mode": "auto",
+  "critic": {
+    "enabled": true,
+    "round": 0,
+    "max_rounds": 1,
+    "state": "waiting",
+    "verdict": null,
+    "task_id": null,
+    "issues": []
+  },
+  "created_at": 1793171300,
+  "started_at": null,
+  "finished_at": null,
+  "duration_s": null,
+  "progress": {
+    "done": 0,
+    "total": 0,
+    "percent": 0
+  },
+  "assignee": "biz-director",
+  "needs_you": false,
+  "preview": "Сравни «Едок» и «Развоз» для первых 100 наборов. Срок — до пятницы.",
+  "archived": false,
+  "text": "Сравни «Едок» и «Развоз» для первых 100 наборов моти: комиссии, охват, скорость выплат. Нужна рекомендация. Срок — до пятницы.",
+  "dispatcher": {
+    "ok": true,
+    "warning": null
+  },
+  "synthesis": {
+    "state": "pending",
+    "text_md": "",
+    "author": null,
+    "at": null,
+    "source_task": null,
+    "legacy": false,
+    "version": 0,
+    "history": []
+  },
+  "next_steps": [
+    {
+      "id": "ns_1",
+      "text": "Разложить запрос на четыре ветки и назначить исполнителей",
+      "owner": "biz-director",
+      "due": null,
+      "state": "open"
+    }
+  ],
+  "open_questions": [],
+  "decisions": [],
+  "stage": {
+    "current": "legal",
+    "phases": [
+      {
+        "id": "idea",
+        "title": "Идея и стратегия",
+        "status": "done",
+        "note": "VISION, экономика и план 90 дней утверждены 14–16.09"
+      },
+      {
+        "id": "legal",
+        "title": "Легализация",
+        "status": "active",
+        "note": "Заявление на ИП подано 27.10, ждём свидетельство; 4 вопроса в СЭС открыты"
+      },
+      {
+        "id": "brand",
+        "title": "Бренд и товарный знак",
+        "status": "blocked",
+        "note": "Проверка в Роспатенте: свободно по кл. 30/43/35; подача ждёт go/no-go Михаила"
+      },
+      {
+        "id": "packaging",
+        "title": "Упаковка",
+        "status": "active",
+        "note": "Шорт-лист 10 поставщиков в городе, котировки не отправлены"
+      },
+      {
+        "id": "production",
+        "title": "Производство",
+        "status": "next",
+        "note": "Кухня есть, тестовой партии нет"
+      },
+      {
+        "id": "sales",
+        "title": "Продажи",
+        "status": "next",
+        "note": "0 продаж, 0 разговоров D19"
+      }
+    ]
+  },
+  "future_questions": [],
+  "artifacts": [],
+  "report": {
+    "available": false,
+    "kind": null,
+    "path": null,
+    "title": null
+  },
+  "tree": [
+    {
+      "id": "t_2a6f5c93",
+      "parent_ids": [],
+      "title": "Каналы продаж: Едок или Развоз",
+      "assignee": "biz-director",
+      "role": "root",
+      "status": "triage",
+      "started_at": null,
+      "finished_at": null,
+      "summary_md": "",
+      "metadata": {
+        "mode": "auto"
+      },
+      "comments": [],
+      "runs": [],
+      "needs_human": false,
+      "error": null,
+      "outside_room": false
+    }
+  ],
+  "timeline": [
+    {
+      "at": 1793171300,
+      "kind": "created",
+      "task_id": "t_2a6f5c93",
+      "actor": "mikhail",
+      "text": "Запрос создан, ждёт декомпозиции"
+    }
+  ],
+  "warnings": [],
+  "thread": [
+    {
+      "id": "c1",
+      "at": 1793171000,
+      "author_kind": "mikhail",
+      "author": "mikhail",
+      "author_label": "Михаил",
+      "text": "Сравни Telegram, две кофейни во Заозёрье и агрегаторы: где выгоднее первые 100 наборов.",
+      "task_id": "t_2a6f5c93",
+      "kind": "message"
+    },
+    {
+      "id": "e1",
+      "at": 1793171010,
+      "author_kind": "system",
+      "author": "system",
+      "author_label": "Комната команды",
+      "text": "Запрос в очереди: руководитель комнаты возьмёт его после текущей работы",
+      "task_id": "t_2a6f5c93",
+      "kind": "event"
+    }
+  ],
+  "title_short": "Каналы продаж: Едок или Развоз",
+  "heartbeats": {
+    "count": 0,
+    "last_at": null
+  }
+}

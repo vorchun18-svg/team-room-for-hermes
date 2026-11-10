@@ -1,0 +1,530 @@
+# -*- coding: utf-8 -*-
+"""GET-обработчики мок-сервера (чтение фикстур и живых запросов)."""
+from __future__ import annotations
+
+import copy
+import mimetypes
+import os
+import re
+import time
+from urllib.parse import quote, unquote
+
+from mock_core import (ALLOWED_EXT, DENY_NAME_PARTS, FILE_ROOTS, MIME, MOCK, MOCK_PRIVATE, OFFICE_EXT, PHASES,
+                       ApiError, Raw, backlog_counts, child_id, compute_needs_you, export_html,
+                       export_markdown, ics_escape, inside, is_service_question, now, short_title,
+                       split_heartbeats)
+import mock_backlog
+import mock_demo as demo
+import mock_stt
+
+_LABEL_DASH = re.compile("\\s*[\u2014\u2013\u2015\u2012\u2212-]{1,2}\\s*")
+
+
+def split_label(text: str):
+    """«Анна — финансы (CFO)» → («Анна», «финансы (CFO)»).
+
+    То же правило, что в `server/profile_info.parse_description`: демо-мок живёт
+    отдельно от сервера, но подпись в демо должна выглядеть одинаково.
+    """
+    raw = " ".join(str(text or "").split())
+    if not raw:
+        return "", ""
+    match = _LABEL_DASH.search(raw)
+    if match:
+        left = raw[:match.start()].strip(" .,:;")
+        right = raw[match.end():].strip(" .,:;")
+        if left and len(left) <= 60 and len(left.split()) <= 4:
+            return left, right
+    return "", raw
+
+
+class MockRead:
+    def get(self, path: str, query: dict) -> tuple:
+        if path == "/api/health":
+            return 200, self.health()
+        if path == "/api/stt/status":
+            return 200, mock_stt.status()
+        if path == "/api/stt/dictionary":
+            return 200, mock_stt.get_dictionary()
+        if path == "/api/stt/recordings":
+            raw = (query.get("limit") or ["20"])[0]
+            try:
+                limit = max(1, min(50, int(raw)))
+            except (TypeError, ValueError):
+                raise ApiError(400, "bad_request", "limit: целое число 1…50", {"field": "limit"})
+            return 200, mock_stt.recordings(limit)
+        m = re.fullmatch(r"/api/stt/recordings/([a-z0-9][a-z0-9_-]{5,40})", path)
+        if m:
+            return 200, mock_stt.recording(m.group(1))
+        m = re.fullmatch(r"/api/stt/recordings/([a-z0-9][a-z0-9_-]{5,40})/parts/(\d{1,3})", path)
+        if m:
+            data, ctype = mock_stt.part(m.group(1), m.group(2))
+            return 200, Raw(data, ctype, {"Cache-Control": "no-store"})
+        if path == "/api/config":
+            return 200, self.fixture("config.json")
+        if path == "/api/models":
+            return 200, self.catalog()               # каталог моделей (WAVE10 §19)
+        if path == "/api/profiles":
+            return 200, self.fixture("profiles.json")
+        if path == "/api/rooms":
+            include = query.get("include_archived", ["0"])[0] in ("1", "true", "yes")
+            rooms = [self.room_summary(rid) for rid in self.room_details if include or not self.room(rid)["archived"]]
+            return 200, {"rooms": rooms, "engine": {"ok": True, "board": "team", "warning": None},
+                         "updated_at": now()}
+        if path == "/api/rooms/summary":
+            return 200, self.rooms_summary(query)          # W17-B §1: одно чтение на меню
+        if path == "/api/dispatcher/preview":
+            return 200, self.dispatcher_preview()          # W17-B §1: чтение без POST
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/notes", path)
+        if m:
+            return 200, self.room_notes(m.group(1))          # WAVE14 §13
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/notes/journal", path)
+        if m:
+            raw = (query.get("limit") or ["50"])[0]
+            try:
+                limit = int(raw)
+            except (TypeError, ValueError):
+                limit = 50
+            return 200, self.notes_journal(m.group(1), limit)
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes", path)
+        if m:
+            return 200, self.get_notes_entries(m.group(1), m.group(2))
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/plan", path)
+        if m:
+            return 200, self.get_plan(m.group(1))
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})", path)
+        if m:
+            summary = self.room_summary(m.group(1))
+            return 200, {**self.with_models(self.room(m.group(1))), "counters": summary["counters"],
+                         "phase": summary["phase"],
+                         "dispatcher": {"ok": True, "state": "running", "warning": None}}
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/requests", path)
+        if m:
+            return 200, self.list_requests(m.group(1), query)
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/candidates", path)
+        if m:
+            return 200, self.candidates_for(m.group(1))
+        m = re.fullmatch(r"/api/requests/(t_[0-9a-f]{8})", path)
+        if m:
+            return 200, self.request_detail(m.group(1), query)
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/team", path)
+        if m:
+            return 200, self.team(m.group(1))
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/roadmap", path)
+        if m:
+            return 200, self.roadmap(m.group(1))
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/backlog", path)
+        if m:
+            return 200, self.backlog_for(m.group(1), query)
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/journal", path)
+        if m:
+            return 200, self.journal(m.group(1), query)
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/reports", path)
+        if m:
+            room = self.room(m.group(1))
+            items = copy.deepcopy(self.fixture("reports_cafe.json")["items"]) if room["id"] == "cafe" else []
+            for rid, req in self.live.items():
+                if req.get("room") != room["id"]:
+                    continue
+                detail = self.live_detail(rid)
+                if (detail.get("synthesis") or {}).get("state") != "ready":
+                    continue
+                ref = detail.get("report") or {}
+                items.insert(0, {"key": ref.get("key") or demo.report_key(rid),
+                                 "title": ref.get("title") or "Разбор запроса",
+                                 "subtitle": "Разбор живого запроса · демо",
+                                 "kind": "spec", "path": None, "request_id": rid,
+                                 "blocks": 9, "created_at": detail["created_at"],
+                                 "updated_at": detail["created_at"] + 35, "exists": True})
+            return 200, {"room": room["id"], "items": items}
+        m = re.fullmatch(r"/api/reports/([a-z0-9-]{2,32})/([a-z0-9-]{2,64})", path)
+        if m:
+            room, key = m.group(1), m.group(2)
+            self.room(room)
+            if key == "unit-economics":
+                return 200, self.fixture("report_unit_economics.json")
+            if key.startswith("demo-"):
+                rid = "t_" + key[len("demo-"):]
+                if re.fullmatch(r"t_[0-9a-f]{8}", rid) and rid in self.live:
+                    detail = self.detail(rid)
+                    if (detail.get("synthesis") or {}).get("state") != "ready":
+                        raise ApiError(409, "conflict", "Ответ ещё не готов — отчёт появится после свода",
+                                       {"reason": "synthesis_pending", "rid": rid})
+                    return 200, demo.report_spec(detail, detail.get("text") or "")
+            raise ApiError(404, "not_found", "Отчёт не найден", {"room": room, "key": key})
+        if path == "/api/search":
+            return 200, self.search(query)
+        if path == "/api/ics":
+            return self.ics(query)
+        m = re.fullmatch(r"/api/export/request/(t_[0-9a-f]{8})\.(md|html)", path)
+        if m:
+            return self.export(m.group(1), m.group(2))
+        if path == "/api/file":
+            return self.file_response(query)
+        raise ApiError(404, "not_found", "Неизвестный эндпоинт", {"path": path})
+
+    def health(self) -> dict:
+        data = self.fixture("health.json")
+        data["app"]["port"] = self.port
+        data["app"]["started_at"] = self.started_at
+        data["app"]["uptime_s"] = now() - self.started_at
+        data.setdefault("engine", {})["mock"] = MOCK
+        data["data"]["rooms"] = len(self.rooms)
+        data["data"]["requests"] = len(self.requests) + len(self.live)
+        return data
+
+    # --- W17-B §1/§5: меню одним запросом, деталь без heartbeat и дубля вопросов ---
+    DETAIL_FIELDS = {"text": "text", "body_full": "body_full", "dispatcher": "dispatcher",
+                     "synthesis": "synthesis", "steps": "next_steps", "questions": "open_questions",
+                     "answers": "answers", "decisions": "decisions", "stage": "stage",
+                     "future_questions": "future_questions", "artifacts": "artifacts", "report": "report",
+                     "tree": "tree", "timeline": "timeline", "thread": "thread", "warnings": "warnings",
+                     "critic": "critic", "heartbeats": "heartbeats"}
+    DETAIL_CORE = ("id", "room", "title", "title_short", "title_source", "title_locked",
+                   "status", "status_reason", "mode", "critic",
+                   "created_at", "started_at", "finished_at", "duration_s", "progress", "assignee",
+                   "needs_you", "preview", "archived", "brief", "plan_link", "streams_summary")
+
+    def request_detail(self, rid: str, query: dict) -> dict:
+        """Деталь запроса с `?include=heartbeat` и `?fields=…` (как бэкенд)."""
+        include = [part.strip() for part in (query.get("include") or [""])[0].split(",") if part.strip()]
+        bad = [value for value in include if value != "heartbeat"]
+        if bad:
+            raise ApiError(400, "bad_request", "Неизвестный include", {"include": bad[0],
+                                                                       "allowed": ["heartbeat"]})
+        fields = [part.strip() for part in (query.get("fields") or [""])[0].split(",") if part.strip()]
+        bad = [value for value in fields if value not in self.DETAIL_FIELDS]
+        if bad:
+            raise ApiError(400, "bad_request", "Неизвестное поле",
+                           {"fields": bad[0], "allowed": sorted(self.DETAIL_FIELDS)})
+        detail = self.detail(rid)
+        # W17-R §1 (B-8): этапы запроса — те, что объявила КОМНАТА (как на сервере).
+        detail["stage"] = self._stage_for_room(detail.get("room"), detail.get("stage"))
+        timeline, heartbeats = split_heartbeats(detail.get("timeline") or [], "heartbeat" in include)
+        detail["timeline"] = timeline
+        detail["heartbeats"] = heartbeats
+        if not detail.get("title_short"):
+            detail["title_short"] = short_title(detail.get("title") or detail.get("text") or "")
+        detail.setdefault("title_source", "derived")
+        detail.setdefault("title_locked", False)
+        detail.pop("questions", None)
+        # W17-B §7 (B7-3): служебный вопрос «сколько раундов критика» задан настройками
+        # комнаты — не показываем его и не держим на нём «ждёт тебя» (как сервер).
+        questions = detail.get("open_questions")
+        if isinstance(questions, list):
+            kept = [q for q in questions
+                    if not (isinstance(q, dict) and is_service_question(q.get("text")))]
+            if len(kept) != len(questions):
+                detail["open_questions"] = kept
+                detail["needs_you"] = compute_needs_you(detail)
+        if fields:
+            wanted = set(self.DETAIL_CORE)
+            for name in fields:
+                if name == "questions":
+                    wanted.add("open_questions")
+                else:
+                    wanted.add(self.DETAIL_FIELDS[name])
+            for key in [key for key in detail if key not in wanted]:
+                detail.pop(key, None)
+        return detail
+
+    def _stage_for_room(self, room_id, stage) -> dict:
+        """Stage по этапам комнаты: чужие этапы из фикстуры не показываем.
+
+        Демо должно вести себя как сервер: у комнаты без этапов полосы нет,
+        у комнаты со своими этапами — её заголовки и её порядок (по id).
+        """
+        try:
+            room = self.room(str(room_id or ""))
+        except Exception:  # noqa: BLE001 — карта не должна ронять демо
+            room = {}
+        declared = room.get("phases") if isinstance(room.get("phases"), list) else []
+        meta = {p.get("id"): p for p in ((stage or {}).get("phases") or []) if isinstance(p, dict)}
+        phases = []
+        for item in declared:
+            got = meta.get(item.get("id")) or {}
+            phases.append({"id": item.get("id"), "title": item.get("title"),
+                           "status": got.get("status") or "next", "note": got.get("note") or ""})
+        ids = {p["id"] for p in phases}
+        current = (stage or {}).get("current")
+        if current not in ids:
+            active = next((p["id"] for p in phases if p["status"] in ("active", "blocked")), None)
+            current = active or (phases[0]["id"] if phases else None)
+        return {"current": current, "phases": phases}
+
+    def rooms_summary(self, query: dict) -> dict:
+        """Счётчики и последние запросы всех комнат одним ответом (W17-B §1)."""
+        raw = (query.get("requests") or ["3"])[0].strip()
+        try:
+            per_room = int(raw)
+        except (TypeError, ValueError):
+            raise ApiError(400, "bad_request", "requests: число от 0 до 10", {"field": "requests"})
+        if not 0 <= per_room <= 10:
+            raise ApiError(400, "bad_request", "requests: от 0 до 10", {"field": "requests"})
+        include = (query.get("include_archived") or ["0"])[0] in ("1", "true", "yes")
+        only = (query.get("room") or [""])[0].strip()
+        rooms = []
+        for rid in self.room_details:
+            room = self.room(rid)
+            if only and rid != only:
+                continue
+            if not include and room.get("archived"):
+                continue
+            summaries = self.summaries(rid)
+            last = [{"id": item["id"], "room": rid, "title": item.get("title") or "",
+                     "title_short": item.get("title_short") or short_title(item.get("title") or ""),
+                     "title_source": item.get("title_source") or "derived",
+                     "title_locked": bool(item.get("title_locked")),
+                     "status": item.get("status"), "needs_you": bool(item.get("needs_you")),
+                     "created_at": item.get("created_at"), "finished_at": item.get("finished_at"),
+                     "preview": item.get("preview") or ""} for item in summaries[:per_room]]
+            entry = dict(self.room_summary(rid))
+            entry.update({"requests_count": len(summaries),
+                          "last_at": max([item.get("created_at") or 0 for item in summaries], default=0) or None,
+                          "last": last})
+            rooms.append(entry)
+        if only and not rooms:
+            raise ApiError(404, "not_found", "Комната не найдена", {"room": only})
+        return {"ok": True, "at": now(), "count": len(rooms),
+                "engine": {"ok": True, "board": "team", "warning": None}, "rooms": rooms}
+
+    def dispatcher_preview(self) -> dict:
+        """Состояние доски чтением, без POST и без CLI (W17-B §1)."""
+        return {"ok": True, "preview": True, "report": self.kick_report(True), "at": now()}
+
+    def list_requests(self, room_id: str, query: dict) -> dict:
+        self.room(room_id)
+        items = self.summaries(room_id)
+        statuses = [s for s in query.get("status", [""])[0].split(",") if s]
+        known = {"queued", "working", "reviewing", "synthesizing", "done", "needs_you", "failed"}
+        bad = [s for s in statuses if s not in known]
+        if bad:
+            raise ApiError(400, "bad_request", "Неизвестный статус запроса",
+                           {"status": bad[0], "allowed": sorted(known)})
+        if statuses:
+            items = [s for s in items if s["status"] in statuses]
+        q = query.get("q", [""])[0].strip().casefold()
+        if q:
+            items = [s for s in items if q in s["title"].casefold() or q in s["preview"].casefold()]
+        try:
+            limit = int(query.get("limit", ["20"])[0])
+        except ValueError:
+            raise ApiError(400, "bad_request", "limit должен быть числом", {"field": "limit"})
+        if not 1 <= limit <= 100:
+            raise ApiError(400, "bad_request", "limit вне диапазона 1..100", {"limit": limit})
+        return {"items": items[:limit], "next_cursor": None, "has_more": len(items) > limit}
+
+    def candidates_for(self, room_id: str) -> dict:
+        """Кандидаты на привязку: карточки с decomposed вне реестра запросов комнаты."""
+        self.room(room_id)
+        data = self.candidates.get(room_id)
+        if not data:
+            return {"room": room_id, "generated_at": now(), "count": 0, "items": []}
+        items = copy.deepcopy(data["items"])
+        return {"room": room_id, "generated_at": data.get("generated_at") or now(),
+                "count": len(items), "items": items}
+
+    def label_fields(self, profile: str, custom: str = "") -> dict:
+        """Поля подписи участника в демо (WAVE13 §11) — как отдаёт живой сервер."""
+        known = {p.get("profile"): p for p in self.fx.get("profiles.json", {}).get("items", [])}
+        item = known.get(profile) or {}
+        if custom:
+            name, job = split_label(custom)
+            text = " — ".join(x for x in (name, job) if x)
+            return {"name": name, "job": job, "label": text or custom, "label_source": "member",
+                    "custom_label": custom, "label_pending": False}
+        return {"name": str(item.get("name") or ""), "job": str(item.get("job") or ""),
+                "label": str(item.get("label") or ""),
+                "label_source": str(item.get("label_source") or "role"),
+                "custom_label": "", "label_pending": False}
+
+    def member_label(self, room: dict, profile: str) -> str:
+        """Ручная подпись участника из реестра комнаты демо.
+
+        WAVE17 B-17: у руководителя и критика подпись хранится не в `members`,
+        а в карте `role_labels` (`{профиль: подпись}`) — демо ведёт себя как
+        живой сервер, иначе кнопка «Подпись» у них «не сохранялась» бы.
+        """
+        for member in room.get("members") or []:
+            if str(member.get("profile") or "") == str(profile):
+                return str(member.get("label") or "")
+        return str((room.get("role_labels") or {}).get(str(profile)) or "")
+
+    def team(self, room_id: str) -> dict:
+        room = self.room(room_id)
+        if room["id"] not in ("cafe", "fn"):
+            members = []
+            for m in room["members"]:
+                item = {"profile": m["profile"], "title": m["profile"], "role": m["role"], "note": m["note"],
+                        "pinned": m["pinned"], "state": "idle", "current": None, "last": None,
+                        "counts": {"done": 0, "blocked": 0, "active": 0}}
+                item.update(self.label_fields(m["profile"], self.member_label(room, m["profile"])))
+                members.append(item)
+            return {"room": room["id"], "generated_at": now(),
+                    "dispatcher": {"ok": True, "state": "running", "pid": 9608, "warning": None},
+                    "members": members}
+        data = self.fixture("team_%s.json" % room["id"])
+        data["generated_at"] = now()
+        # Подпись, заданная в демо кнопкой «Подпись», должна быть видна в «Команде».
+        for member in data.get("members") or []:
+            custom = self.member_label(room, member.get("profile"))
+            if custom:
+                member.update(self.label_fields(member.get("profile"), custom))
+            # W19 B-28: «Закрепить в составе / Открепить» меняет флаг в реестре комнаты —
+            # карточка в демо должна показать это сразу.
+            row = next((m for m in room.get("members") or []
+                        if m.get("profile") == member.get("profile")), None)
+            if row is not None and "pinned" in row:
+                member["pinned"] = bool(row.get("pinned"))
+        return data
+
+    def roadmap(self, room_id: str) -> dict:
+        """Карта проекта: этапы — свойство комнаты (W17-R B-8), не список в коде.
+
+        В демо этапы есть только у комнаты, которая их задала (fixture
+        `roadmap_cafe.json`). У остальных полоса этапов пустая — как в жизни.
+        """
+        room = self.room(room_id)
+        if room["id"] == "cafe":
+            return self.fixture("roadmap_cafe.json")
+        return {"room": room["id"], "updated_at": now(), "current": None,
+                "phases": [], "decisions": []}
+
+    def backlog_for(self, room_id: str, query: dict) -> dict:
+        self.room(room_id)
+        data = self.backlog_data(room_id)          # + недостающие шаги из всех запросов комнаты
+        items = copy.deepcopy(data["items"])
+        # W17-B §7: статус вопроса — из ответа, близнецы схлопнуты, служебные скрыты
+        view = mock_backlog.apply_answers({"room": room_id, "updated_at": data["updated_at"],
+                                           "items": items}, self._room_details(room_id))
+        items = view.get("items") or items
+        statuses = [s for s in query.get("status", [""])[0].split(",") if s]
+        kinds = [s for s in query.get("kind", [""])[0].split(",") if s]
+        if statuses:
+            items = [i for i in items if i["status"] in statuses]
+        if kinds:
+            items = [i for i in items if i["kind"] in kinds]
+        counts = dict(view.get("counts") or {})
+        if statuses or kinds:
+            counts = backlog_counts(items)
+        out = {"room": room_id, "updated_at": data["updated_at"], "counts": counts, "items": items}
+        if view.get("sections"):
+            out["sections"] = view["sections"]
+        if view.get("hidden_service"):
+            out["hidden_service"] = view["hidden_service"]
+        return out
+
+    def journal(self, room_id: str, query: dict) -> dict:
+        self.room(room_id)
+        data = self.fixture("journal_cafe.json") if room_id == "cafe" else {
+            "room": room_id, "next_cursor": None, "has_more": False, "items": []}
+        q = query.get("q", [""])[0].strip().casefold()
+        events = self.models_journal.get(room_id, []) + data["items"]   # «модель изменена» — сверху
+        items = [e for e in events if not q or q in e["text"].casefold()]
+        try:
+            limit = int(query.get("limit", ["50"])[0])
+        except ValueError:
+            raise ApiError(400, "bad_request", "limit должен быть числом", {"field": "limit"})
+        if not 1 <= limit <= 200:
+            raise ApiError(400, "bad_request", "limit вне диапазона 1..200", {"limit": limit})
+        return {"room": room_id, "items": items[:limit], "next_cursor": None, "has_more": len(items) > limit}
+
+    def search(self, query: dict) -> dict:
+        q = query.get("q", [""])[0].strip()
+        if len(q) < 2:
+            raise ApiError(400, "bad_request", "Поисковый запрос короче 2 символов", {"field": "q"})
+        room = query.get("room", [""])[0] or None
+        if room and room not in {r["id"] for r in self.rooms}:
+            raise ApiError(404, "not_found", "Комната не найдена", {"room": room})
+        data = self.fixture("search.json")
+        items = [h for h in data["items"] if (not room or h["room"] == room)
+                 and (q.casefold() in h["title"].casefold() or q.casefold() in h["snippet"].casefold())]
+        return {"q": q, "room": room, "total": len(items), "items": items}
+
+    def ics(self, query: dict) -> tuple:
+        room_id = query.get("room", [""])[0]
+        if not room_id:
+            raise ApiError(400, "bad_request", "Нужен параметр room", {"field": "room"})
+        self.room(room_id)
+        raw = query.get("items", [""])[0]
+        ids = [unquote(x) for x in raw.split(",") if x]
+        all_flag = query.get("all", ["0"])[0] in ("1", "true", "yes")
+        if not ids and not all_flag:
+            raise ApiError(400, "bad_request", "Укажите items=<id,...> или all=1", {"field": "items"})
+        items = self.backlog.get(room_id, {"items": []})["items"]
+        chosen = [i for i in items if (i["id"] in ids or (all_flag and i["status"] == "open" and i["due"]))]
+        if ids and not chosen:
+            raise ApiError(404, "not_found", "Элементы бэклога не найдены", {"items": ids})
+        lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Team Room//Mock 0.1//RU",
+                 "CALSCALE:GREGORIAN", "METHOD:PUBLISH"]
+        for it in chosen:
+            day = it["due"].replace("-", "")
+            lines += ["BEGIN:VEVENT", "UID:%s-%s@team-room.local" % (room_id, re.sub(r"[^\w:-]", "_", it["id"])),
+                      "DTSTAMP:%sZ" % time.strftime("%Y%m%dT%H%M%S", time.gmtime()),
+                      "DTSTART;VALUE=DATE:%s" % day, "SUMMARY:%s" % ics_escape(it["text"][:200]),
+                      "DESCRIPTION:%s" % ics_escape("Владелец: %s. Источник: %s" % (it.get("owner") or "—", it["source_title"])),
+                      "END:VEVENT"]
+        lines.append("END:VCALENDAR")
+        return 200, Raw("\r\n".join(lines) + "\r\n", "text/calendar; charset=utf-8",
+                        {"Content-Disposition": 'attachment; filename="%s.ics"' % room_id})
+
+    def export(self, rid: str, fmt: str) -> tuple:
+        detail = self.detail(rid)
+        if detail.get("synthesis", {}).get("state") != "ready":
+            raise ApiError(409, "conflict", "Ответ ещё не готов — экспортировать нечего",
+                           {"reason": "synthesis_pending", "rid": rid})
+        md = export_markdown(detail)
+        filename = "%s.%s" % (rid, fmt)
+        if fmt == "md":
+            return 200, Raw(md, "text/markdown; charset=utf-8",
+                            {"Content-Disposition": 'attachment; filename="%s"' % filename})
+        page = export_html(detail, md)
+        return 200, Raw(page, "text/html; charset=utf-8",
+                        {"Content-Disposition": 'attachment; filename="%s"' % filename})
+
+    def resolve_shared_path(self, raw: str) -> str:
+        """Путь из белого списка API §2: 5 корней + расширение + чёрный список имён."""
+        path = os.path.realpath(raw)
+        roots = list(FILE_ROOTS) + list(getattr(self, "extra_roots", []) or [])
+        if any(inside(private, path) for private in MOCK_PRIVATE):
+            raise ApiError(403, "forbidden", "Исходники и фикстуры мока не отдаются",
+                           {"reason": "outside_roots", "path": raw})
+        if not any(inside(root, path) for root in roots if root):
+            raise ApiError(403, "forbidden", "Файл вне разрешённых корней",
+                           {"reason": "outside_roots", "path": raw})
+        low = os.path.basename(path).lower()
+        parts = [p.lower() for p in path.split(os.sep)[-4:]]
+        if any(bad in part for part in parts for bad in DENY_NAME_PARTS) or \
+                any(bad in low for bad in DENY_NAME_PARTS):
+            raise ApiError(403, "forbidden", "Файл в чёрном списке", {"reason": "blacklisted", "path": raw})
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in ALLOWED_EXT:
+            raise ApiError(403, "forbidden", "Расширение файла не разрешено", {"reason": "outside_roots",
+                                                                              "path": raw, "ext": ext})
+        if not os.path.isfile(path):
+            raise ApiError(404, "not_found", "Файл удалён или перемещён", {"path": raw})
+        return path
+
+    def file_response(self, query: dict) -> tuple:
+        raw = query.get("path", [""])[0]
+        if not raw:
+            raise ApiError(400, "bad_request", "Нужен параметр path", {"field": "path"})
+        path = self.resolve_shared_path(raw)
+        ext = os.path.splitext(path)[1].lower()
+        ctype = MIME.get(ext, mimetypes.guess_type(path)[0] or "application/octet-stream")
+        name = os.path.basename(path)
+        if ext in OFFICE_EXT:
+            # RFC 5987: кириллица в имени не влезает в latin-1 заголовок
+            disp = ('attachment; filename="%s"' % name if name.isascii() else
+                    "attachment; filename=\"file%s\"; filename*=UTF-8''%s" % (ext, quote(name)))
+        else:
+            disp = "inline"
+        headers = {"Content-Disposition": disp}
+        if ext == ".svg":
+            headers["Content-Security-Policy"] = "sandbox"   # API §6.6 / §2
+        with open(path, "rb") as fh:
+            body = fh.read()
+        return 200, Raw(body, ctype, headers)
+
+    # --- POST -------------------------------------------------------------
+

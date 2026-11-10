@@ -1,0 +1,156 @@
+/* dictation.css — микрофон в полях ввода и панель диктовки.
+   Только токены tokens.css; имена — с префиксом .mic-. Глиф mic = EC12,
+   mic-filled = EC1C (codicon.ttf), поэтому два глифа заводим здесь.
+
+   ЕДИНЫЙ КОМПОНЕНТ «поле + микрофон + действие» (docs/DESIGN-NOTES.md).
+   Кнопка одна и та же везде: вид — как у .cmp-mic в композере (btn--secondary,
+   иконка акцентом, подпись «Надиктовать» там, где есть место).
+   Размещение — только по общему правилу из dictation-auto.js:
+     • рядом кнопка-действие → .mic-btn--action отдельной кнопкой ПЕРЕД ней;
+     • иначе → .mic-btn внутри .mic-field (relative у ОБЁРТКИ поля).
+   Никакого absolute у родителя-строки: налезть на «Ответить» нечем. */
+
+.codicon-mic::before { content: "\ec12"; }
+.codicon-mic-filled::before { content: "\ec1c"; }
+
+/* ── Кнопка: один вид на всё приложение ──────────────────────────────────── */
+
+.mic-btn {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px; min-width: 32px; min-height: 32px;
+  padding: 0 var(--space-2); white-space: nowrap;
+}
+.mic-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* Иконка — акцентный цвет темы (--link: #0053fd на светлой, #7ba4ff на тёмной):
+   чистый --primary в тёмной теме давал 2.7:1 к фону кнопки, а правило 9
+   требует ≥ 3:1 для иконок. На светлой теме цвет не меняется. */
+.mic-btn .codicon { color: var(--link); font-size: 15px; }
+.mic-btn:hover .codicon { color: var(--link); }
+.mic-btn__text { min-width: 0; }
+
+/* Компактная — в поле без соседней кнопки: только иконка, цель 32×32. */
+.mic-btn--compact { width: 32px; min-width: 32px; padding: 0; }
+
+/* Отдельная кнопка перед действием: в узкой строке подпись скрыта. */
+.mic-btn--action:not(.mic-btn--wide) { width: 32px; min-width: 32px; padding: 0; }
+.mic-btn--action:not(.mic-btn--wide) .mic-btn__text { display: none; }
+
+/* ── Поле + микрофон без соседней кнопки: обёртка вокруг ПОЛЯ ────────────── */
+/* relative — у обёртки самого поля (внутри неё только поле и кнопка),
+   поэтому кнопка не может оказаться поверх чужой кнопки в строке. */
+.mic-field {
+  position: relative; display: flex; align-items: center;
+  flex: 1 1 auto; min-width: 0;
+}
+.mic-field > input, .mic-field > textarea {
+  flex: 1 1 auto; width: 100%; min-width: 0;
+  min-height: 34px; padding-right: 44px;
+}
+.mic-field > textarea { align-self: stretch; }
+.mic-field > .mic-btn { position: absolute; z-index: 2; }
+.mic-field > .mic-btn--input { right: 4px; top: 50%; transform: translateY(-50%); }
+.mic-field > .mic-btn--area { right: 4px; bottom: 4px; }
+
+/* ── Состояния: одинаковые во всех местах ───────────────────────────────── */
+
+/* Запись: красная точка + таймер. */
+.mic-btn__dot {
+  width: 8px; height: 8px; flex: none; border-radius: var(--radius-full);
+  background: var(--danger); animation: pulse-dot 1.4s ease-in-out infinite;
+}
+.mic-btn__time { font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.btn.mic-btn[data-state="recording"] {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 34%, transparent);
+  color: var(--danger-ink);
+}
+.btn.mic-btn[data-state="recording"]:hover {
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+  color: var(--danger-ink);
+}
+.btn.mic-btn[data-state="recording"] .codicon { color: var(--danger); }
+/* В узкой кнопке запись расширяется под таймер — состояние видно всегда. */
+.mic-btn[data-state="recording"]:not(.mic-btn--wide) { width: auto; padding: 0 7px; gap: 5px; }
+
+/* Ожидание/распознавание — крутилка вместо иконки, размер не прыгает. */
+.btn.mic-btn--busy { color: var(--ui-text-secondary); }
+.btn.mic-btn--busy .codicon { color: var(--link); }
+
+/* Ошибка — значок «внимание» и красная рамка, подпись «Повторить». */
+.btn.mic-btn[data-state="error"] { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.btn.mic-btn[data-state="error"] .codicon { color: var(--danger); }
+
+/* «Уже идёт запись» — короткая вспышка, чтобы найти поле. */
+.mic-btn--flash { animation: mic-flash 0.9s var(--ease) 2; }
+@keyframes mic-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 34%, transparent); }
+}
+
+/* ── Панель диктовки ─────────────────────────────────────────────────────── */
+
+.mic-panel {
+  position: fixed; z-index: var(--z-popover); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3); max-width: calc(100vw - 16px);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--popover); color: var(--popover-foreground);
+  box-shadow: var(--shadow-md);
+  animation: mic-panel-in var(--dur-fast) var(--ease);
+}
+@keyframes mic-panel-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+.mic-panel__head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.mic-panel__title { font-size: var(--text-base); font-weight: 600; white-space: nowrap; }
+.mic-panel__time {
+  margin-left: auto; font-size: var(--text-sm); color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.mic-panel__hint { font-size: var(--text-sm); color: var(--muted-foreground); line-height: var(--leading-normal); }
+/* Прогресс длинной записи: «Распознано 3 из 7 минут» — рядом с полем. */
+.mic-panel__progress { font-size: var(--text-sm); color: var(--foreground); font-weight: 600; }
+.mic-panel__progress.hidden, .mic-panel__recover.hidden { display: none; }
+.mic-panel__recover {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-2); border-radius: var(--radius-sm);
+  background: var(--ui-bg-quinary); border: 1px solid var(--border-soft);
+}
+.mic-panel__recover-text { font-size: var(--text-sm); font-weight: 600; overflow-wrap: anywhere; }
+.mic-panel__recover-hint { font-size: var(--text-sm); color: var(--muted-foreground); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+/* Кнопок может быть две («Распознать запись» и «Убрать все») — в узкой панели
+   они переносятся, а не вылезают за край. */
+.mic-panel__recover-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.mic-panel__msg {
+  font-size: var(--text-sm); color: var(--ui-text-secondary); line-height: var(--leading-normal);
+  padding: var(--space-2); border-radius: var(--radius-sm);
+  background: var(--ui-bg-quinary); border: 1px solid var(--border-soft);
+}
+.mic-panel__msg.hidden, .mic-level.hidden, .mic-dot.hidden, .mic-spin.hidden { display: none; }
+.mic-spin { display: inline-flex; color: var(--primary); }
+.mic-spin .codicon { font-size: 13px; }
+.mic-panel__actions { display: flex; align-items: center; gap: var(--space-2); }
+.mic-panel__actions:empty { display: none; }
+
+.mic-dot {
+  width: 9px; height: 9px; flex: none; border-radius: var(--radius-full);
+  background: var(--danger); animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+/* Полоска уровня звука: простая, 4 px. */
+.mic-level {
+  position: relative; height: 4px; overflow: hidden;
+  border-radius: var(--radius-full); background: var(--ui-bg-quaternary);
+}
+.mic-level__bar {
+  display: block; height: 100%; width: 0%;
+  border-radius: var(--radius-full); background: var(--primary);
+  transition: width 90ms linear;
+}
+
+/* Поле с нашей кнопкой не должно разъезжаться в узкой строке. */
+[data-mic="auto"] { min-width: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mic-dot, .mic-btn__dot, .mic-btn--flash { animation: none; }
+  .mic-panel { animation: none; }
+}

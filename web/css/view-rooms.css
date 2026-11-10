@@ -1,0 +1,316 @@
+/* view-rooms.css — домашний экран (#/) и диалог комнаты (views/room-dialog.js).
+   Только токены tokens.css и классы components.css. Свои имена — .rooms-* / .roomdlg-*. */
+
+/* ── Страница ─────────────────────────────────────────────────────────────── */
+.rooms { display: flex; flex-direction: column; gap: var(--space-6); min-width: 0; }
+
+.rooms__head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }
+.rooms__head-text { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.rooms__title { font-size: var(--text-2xl); font-weight: 600; letter-spacing: var(--tracking-tight); }
+.rooms__sub { max-width: 64ch; font-size: var(--text-sm); color: var(--muted-foreground); }
+.rooms__head-actions { flex: none; display: flex; align-items: center; gap: var(--space-2); }
+.rooms__section { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+
+/* ── «Что тут происходит» — три шага ─────────────────────────────────────── */
+.rooms-howto {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-5);
+  padding: var(--space-4) 0; border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft);
+}
+.rooms-howto__step { display: flex; align-items: flex-start; gap: var(--space-3); min-width: 0; }
+.rooms-howto__num {
+  display: grid; place-items: center; width: 22px; height: 22px; flex: none;
+  border: 1px solid var(--border); border-radius: var(--radius-full);
+  color: var(--ui-text-tertiary); font-size: var(--text-sm); font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.rooms-howto__title { font-size: var(--text-base); font-weight: 500; color: var(--foreground); }
+.rooms-howto__text { font-size: var(--text-sm); color: var(--muted-foreground); margin-top: 2px; }
+
+/* ── Сетка комнат ────────────────────────────────────────────────────────── */
+.rooms__grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  justify-content: start; gap: var(--space-3); min-width: 0;
+}
+
+.rooms-card {
+  display: flex; flex-direction: column; gap: var(--space-3); min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card);
+  color: inherit; text-decoration: none;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.rooms-card:hover { border-color: var(--ui-stroke-primary); background: var(--ui-bg-quinary); text-decoration: none; }
+.rooms-card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.rooms-card--skeleton { pointer-events: none; }
+.rooms-card--skeleton .skeleton-stack { width: 100%; }
+
+.rooms-card__top { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.rooms-card__icon {
+  display: grid; place-items: center; width: 28px; height: 28px; flex: none;
+  border-radius: var(--radius-md); background: var(--ui-bg-tertiary); color: var(--ui-text-secondary);
+}
+.rooms-card__title {
+  flex: 1 1 auto; min-width: 0;
+  font-size: var(--text-md); font-weight: 600; color: var(--foreground);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  line-height: var(--leading-tight);
+}
+.rooms-card__phase { flex: 0 1 auto; margin-left: auto; min-width: 0; max-width: 100%; }
+.rooms-card__phase .truncate { max-width: 100%; }
+.rooms-card__phase .codicon { color: var(--ui-text-tertiary); }
+
+.rooms-card__dir { display: flex; align-items: center; gap: var(--space-2); min-width: 0; flex-wrap: wrap; }
+.rooms-card__director {
+  display: inline-flex; align-items: center; gap: 5px; min-width: 0;
+  font-size: var(--text-sm); color: var(--ui-text-secondary);
+}
+.rooms-card__director .avatar { width: 18px; height: 18px; font-size: 9px; }
+
+.rooms-card__team { display: flex; align-items: center; min-height: 20px; min-width: 0; }
+.rooms-card__team .avatar + .avatar { margin-left: -6px; }
+.rooms-card__more { background: var(--ui-bg-quaternary); color: var(--ui-text-tertiary); border-color: var(--border-soft); }
+.rooms-card__team-count { margin-left: var(--space-2); }
+
+.rooms-card__counts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
+.rooms-card__counts .codicon { font-size: 11px; }
+
+.rooms-card__foot {
+  display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap;
+  margin-top: auto; padding-top: var(--space-2); border-top: 1px solid var(--border-soft);
+  font-size: var(--text-sm); color: var(--muted-foreground);
+}
+.rooms-card__flag { white-space: nowrap; }
+
+/* ── Архив ───────────────────────────────────────────────────────────────── */
+.rooms-arch { border-top: 1px solid var(--border-soft); padding-top: var(--space-3); }
+.rooms-arch__summary {
+  display: flex; align-items: center; gap: var(--space-2); width: fit-content;
+  padding: var(--space-1) 0; color: var(--ui-text-secondary); font-size: var(--text-sm); cursor: pointer;
+}
+.rooms-arch__summary::marker { color: var(--ui-text-quaternary); }
+.rooms-arch__summary .codicon { color: var(--ui-text-tertiary); }
+.rooms-arch__list { display: flex; flex-direction: column; gap: 1px; padding-top: var(--space-2); }
+.rooms-arch__item {
+  display: flex; align-items: center; gap: var(--space-2); min-width: 0;
+  padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm);
+  color: var(--ui-text-secondary); font-size: var(--text-sm); text-decoration: none;
+}
+.rooms-arch__item:hover { background: var(--ui-row-hover-background); color: var(--foreground); text-decoration: none; }
+.rooms-arch__item .codicon { color: var(--ui-text-tertiary); }
+.rooms-arch__item > .small { margin-left: auto; }
+
+/* ── Диалог комнаты ──────────────────────────────────────────────────────── */
+.roomdlg { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.dialog.roomdlg-shell { max-height: min(88vh, 880px); }
+.roomdlg__row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-3); }
+.roomdlg__section { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.roomdlg__label { font-size: var(--text-sm); font-weight: 500; color: var(--ui-text-secondary); }
+
+.roomdlg__icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 34px)); gap: var(--space-1); }
+.roomdlg__icon {
+  display: grid; place-items: center; width: 34px; height: 34px;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--ui-bg-input); color: var(--ui-text-secondary);
+}
+.roomdlg__icon:hover { border-color: var(--ui-stroke-primary); color: var(--foreground); }
+.roomdlg__icon[aria-pressed='true'] {
+  border-color: var(--primary); background: var(--accent); color: var(--primary);
+}
+.roomdlg .row .select { width: auto; flex: 0 1 auto; min-width: 132px; }
+.roomdlg .row .input { flex: 1 1 auto; min-width: 140px; width: auto; }
+.roomdlg__error:empty { display: none; }
+
+.roomdlg__members {
+  display: flex; flex-direction: column; max-height: 168px; overflow-y: auto;
+  border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--ui-bg-input);
+}
+.roomdlg__members:empty { display: none; }
+.roomdlg__member { display: flex; align-items: center; gap: var(--space-2); padding: 5px var(--space-2); min-width: 0; }
+.roomdlg__member + .roomdlg__member { border-top: 1px solid var(--ui-stroke-quaternary); }
+.roomdlg__member .checkbox { flex: none; }
+.roomdlg__member-note {
+  margin-left: auto; padding-left: var(--space-2); min-width: 0; max-width: 52%;
+  font-size: var(--text-sm); color: var(--muted-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.roomdlg__files { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.roomdlg__files:empty { display: none; }
+.roomdlg__file { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; }
+.roomdlg__files-empty { font-size: var(--text-sm); color: var(--muted-foreground); }
+.roomdlg__file-row { gap: var(--space-2); }
+.roomdlg__file-row .input { flex: 1 1 auto; min-width: 0; }
+
+.roomdlg__hint { font-size: var(--text-sm); color: var(--muted-foreground); }
+.roomdlg__hint code { font-size: 0.95em; }
+
+/* Критик: раунды, подсказка «?» и страховочный потолок (W13-E §7, §9) */
+.roomdlg__field-mini { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.roomdlg__critic-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; flex-wrap: nowrap; }
+.roomdlg__critic-row .select { flex: 1 1 auto; min-width: 0; }
+.roomdlg__label--inline { flex: 0 0 auto; }
+.roomdlg__help { flex: none; color: var(--muted-foreground); }
+.roomdlg__help[aria-expanded='true'] { color: var(--foreground); background: var(--accent); }
+.roomdlg__hint--help {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  border: 1px solid var(--border-soft); background: var(--ui-bg-input);
+}
+.roomdlg__hint--help p { margin: 0; }
+.roomdlg__hint--help { color: var(--ui-text-secondary); }
+.roomdlg__hint--help.hidden { display: none; }
+.roomdlg__cap-box {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  flex-wrap: nowrap; white-space: nowrap;
+  font-size: var(--text-sm); color: var(--muted-foreground);
+}
+.roomdlg__cap-box > .small { white-space: nowrap; }
+.roomdlg__cap-box.hidden { display: none; }
+.roomdlg__cap { width: 64px; min-width: 64px; flex: 0 0 auto; color: var(--foreground); }
+.tm-settings__note { margin: 0; max-width: 70ch; }
+.rp-critic__progress { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0 0 var(--space-2); }
+.rp-critic__progress .codicon { color: var(--ui-text-tertiary); }
+.rp-critic__banner { margin-bottom: var(--space-2); }
+
+.roomdlg__foot-note { margin-right: auto; font-size: var(--text-sm); color: var(--muted-foreground); }
+.roomdlg__foot-note--dirty { color: var(--warning, var(--ui-text-secondary)); }
+
+/* ── Разделы-вкладки окна (B-32) ─────────────────────────────────────────── */
+.roomdlg__tabs {
+  flex: none; display: flex; gap: 2px; align-items: stretch;
+  padding: 0 var(--space-4); border-bottom: 1px solid var(--border-soft);
+  overflow-x: auto; scrollbar-width: none;
+}
+.roomdlg__tabs::-webkit-scrollbar { display: none; }
+.roomdlg__tab {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  padding: 8px 10px; border: 0; border-bottom: 2px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent; color: var(--ui-text-secondary);
+  font-size: var(--text-sm); font-weight: 500; white-space: nowrap; cursor: pointer;
+}
+.roomdlg__tab:hover { background: var(--ui-row-hover-background); color: var(--foreground); }
+.roomdlg__tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.roomdlg__tab .codicon { color: var(--ui-text-tertiary); }
+.roomdlg__tab--active { color: var(--foreground); border-bottom-color: var(--primary); }
+.roomdlg__tab--active .codicon { color: var(--primary); }
+
+.roomdlg__panel { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.roomdlg__panel[hidden] { display: none; }
+
+/* «Есть несохранённое» — вместо молчаливого закрытия (B-31) */
+.roomdlg__unsaved {
+  display: flex; align-items: center; gap: var(--space-2); flex: none; flex-wrap: wrap;
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border-soft); background: var(--ui-bg-input);
+  color: var(--foreground); font-size: var(--text-sm);
+}
+.roomdlg__unsaved.hidden { display: none; }
+.roomdlg__unsaved > .codicon { flex: none; color: var(--warning, var(--primary)); }
+.roomdlg__unsaved-text { flex: 1 1 14ch; min-width: 0; }
+.roomdlg__unsaved-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+
+/* «Введённое восстановлено» после перезагрузки (B-31) */
+.roomdlg__restored {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+  background: var(--ui-bg-input); color: var(--ui-text-secondary); font-size: var(--text-sm);
+}
+.roomdlg__restored.hidden { display: none; }
+.roomdlg__restored > .codicon { flex: none; color: var(--ui-text-tertiary); }
+.roomdlg__restored-text { flex: 1 1 20ch; min-width: 0; }
+
+/* Люди в «Составе»: кто, какая модель, куда нажать (без второго редактора) */
+.roomdlg__people {
+  display: flex; flex-direction: column; min-width: 0;
+  border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--ui-bg-input);
+}
+.roomdlg__people:empty { display: none; }
+.roomdlg__person {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+  column-gap: var(--space-3); row-gap: 2px; padding: var(--space-2);
+}
+.roomdlg__person + .roomdlg__person { border-top: 1px solid var(--ui-stroke-quaternary); }
+.roomdlg__person-main { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
+.roomdlg__person-who {
+  font-size: var(--text-base); color: var(--foreground); font-weight: 500;
+  min-width: 0; max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.roomdlg__person-role { font-size: var(--text-sm); color: var(--muted-foreground); white-space: nowrap; }
+.roomdlg__person-model {
+  grid-column: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.roomdlg__person-actions {
+  grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center;
+  gap: var(--space-1); flex-wrap: wrap; justify-content: flex-end;
+}
+.roomdlg__person-cfg { font-size: var(--text-sm); color: var(--primary); white-space: nowrap; }
+.roomdlg__person-cfg:hover { text-decoration: underline; }
+
+
+/* ── Проектный режим и этапы (W17-R §3/§1: понятно и без техники) ───────── */
+.roomdlg__state {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft); border-left: 3px solid var(--ui-stroke-primary);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-input);
+  color: var(--ui-text-secondary);
+  font-size: var(--text-base);
+}
+.roomdlg__state > .codicon { flex: none; margin-top: 2px; color: var(--ui-text-tertiary); }
+.roomdlg__state[data-state='on'] { border-left-color: var(--ok); background: var(--ok-soft); }
+.roomdlg__state[data-state='on'] > .codicon { color: var(--ok); }
+.roomdlg__state-word { color: var(--foreground); font-weight: 600; }
+.roomdlg__choice { display: flex; flex-direction: column; gap: 2px; }
+.roomdlg__choice + .roomdlg__choice { margin-top: var(--space-2); }
+.roomdlg__choice-hint {
+  padding-left: 22px;
+  font-size: var(--text-sm);
+  color: var(--ui-text-tertiary, var(--muted-foreground));
+}
+.roomdlg__launch--off .roomdlg__choice-hint { opacity: 0.7; }
+
+.roomdlg__phases { display: flex; flex-direction: column; gap: var(--space-1); }
+.roomdlg__phases-empty { font-size: var(--text-sm); }
+.roomdlg__phase {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-width: 0;
+}
+.roomdlg__phase .input { flex: 1 1 auto; min-width: 0; }
+.roomdlg__phase-no {
+  flex: none; width: 1.6em; text-align: right;
+  font-size: var(--text-sm); color: var(--ui-text-tertiary, var(--muted-foreground));
+}
+.roomdlg__phase-actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.roomdlg__phase-actions button[disabled] { opacity: 0.4; }
+
+/* ── Сноска ──────────────────────────────────────────────────────────────── */
+.rooms__note {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding-top: var(--space-3); border-top: 1px solid var(--border-soft);
+}
+.rooms__note .codicon { color: var(--ui-text-tertiary); }
+
+/* ── Адаптив ─────────────────────────────────────────────────────────────── */
+@media (max-width: 899px) {
+  .rooms-howto { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
+  .rooms__head { flex-direction: column; align-items: flex-start; }
+  .rooms__grid { grid-template-columns: minmax(0, 1fr); }
+  .roomdlg__row { grid-template-columns: minmax(0, 1fr); }
+  .roomdlg__member-note { max-width: 40%; }
+}
+
+@media (max-width: 640px) {
+  /* Вкладки едут горизонтально и не ломают строку; подписи — короче по кеглю. */
+  .roomdlg__tabs { padding: 0 var(--space-3); }
+  .roomdlg__tab { padding: 8px; gap: 4px; }
+  .roomdlg__tab .codicon { display: none; }
+  .roomdlg__unsaved { padding: var(--space-2) var(--space-3); }
+  .roomdlg__unsaved-actions { width: 100%; }
+  .roomdlg__unsaved-actions .btn { flex: 1 1 auto; }
+  .roomdlg__person { grid-template-columns: minmax(0, 1fr); }
+  .roomdlg__person-actions { grid-column: 1; grid-row: auto; justify-content: flex-start; }
+  .roomdlg__person-who { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+}

@@ -1,0 +1,128 @@
+/* ============================================================================
+   view-palette.css — командная палитра (Ctrl+K).
+   Окно по центру сверху, как в Hermes: поле, список, строка подсказок.
+   ========================================================================== */
+
+.pal-backdrop {
+  position: fixed; inset: 0; z-index: var(--z-palette);
+  display: flex; justify-content: center; align-items: flex-start;
+  padding: 11vh var(--space-4) var(--space-6);
+  background: color-mix(in srgb, #0b0b0c 32%, transparent);
+  backdrop-filter: blur(2px);
+  animation: pal-fade var(--dur-base) var(--ease);
+}
+
+.pal-dialog {
+  width: min(620px, 100%);
+  max-height: min(66vh, 620px);
+  display: flex; flex-direction: column;
+  background: var(--popover); color: var(--popover-foreground);
+  border: 1px solid var(--stroke-nous);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-nous);
+  overflow: hidden;
+  animation: pal-in var(--dur-base) var(--ease);
+}
+
+@keyframes pal-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pal-in { from { opacity: 0; transform: translateY(-6px) scale(0.995); } to { opacity: 1; transform: none; } }
+
+/* ── Поле ────────────────────────────────────────────────────────────────── */
+
+.pal-search {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-soft);
+  flex: 0 0 auto;
+}
+.pal-search__icon { color: var(--ui-text-tertiary); font-size: 15px; flex: 0 0 auto; }
+
+.pal-input {
+  flex: 1 1 auto; min-width: 0;
+  height: var(--control-md);
+  background: transparent; border: 0; outline: none;
+  font-size: var(--text-md); color: var(--foreground);
+}
+.pal-input::placeholder { color: var(--ui-text-tertiary); }
+
+/* ── Список ──────────────────────────────────────────────────────────────── */
+
+.pal-list {
+  flex: 1 1 auto; min-height: 96px;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--space-2);
+}
+
+.pal-group {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: var(--text-sm); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--ui-text-quaternary);
+}
+
+.pal-item {
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%; padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--ui-text-secondary);
+  text-align: left;
+}
+.pal-item:hover { background: var(--ui-control-hover-background); }
+.pal-item.is-active {
+  background: var(--ui-control-active-background);
+  color: var(--foreground);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+.pal-item:focus-visible { outline: none; }
+
+.pal-item__icon { display: flex; align-items: center; color: var(--ui-text-tertiary); flex: 0 0 auto; }
+.pal-item.is-active .pal-item__icon { color: var(--primary); }
+
+.pal-item__main { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; min-width: 0; }
+.pal-item__title {
+  font-size: var(--text-sm);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pal-item__hint {
+  font-size: var(--text-sm); color: var(--ui-text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pal-item.is-active .pal-item__hint { color: var(--ui-text-tertiary); }
+
+.pal-item__tag { flex: 0 0 auto; font-size: var(--text-sm); }
+
+/* ── Пусто ───────────────────────────────────────────────────────────────── */
+
+.pal-empty { padding: var(--space-6) var(--space-4); text-align: center; }
+.pal-empty__title { font-size: var(--text-base); color: var(--foreground); margin-bottom: var(--space-1); }
+
+/* ── Подвал ──────────────────────────────────────────────────────────────── */
+
+.pal-foot {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--ui-base) 2%, transparent);
+  flex: 0 0 auto;
+}
+.pal-keys { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+.pal-keys .kbd { font-size: var(--text-sm); }
+
+.pal-status { padding: 0 var(--space-3) var(--space-2); min-height: 0; }
+.pal-status:empty { display: none; }
+
+/* ── Узкий экран ─────────────────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .pal-backdrop { padding: 6vh var(--space-3) var(--space-3); }
+  .pal-dialog { max-height: 78vh; width: 100%; }
+}
+
+@media (max-width: 640px) {
+  .pal-backdrop { padding: 0; align-items: stretch; }
+  .pal-dialog {
+    width: 100%; max-height: none; height: 100dvh;
+    border-radius: 0; border: 0;
+  }
+  .pal-foot { flex-wrap: wrap; }
+}

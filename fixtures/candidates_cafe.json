@@ -1,0 +1,31 @@
+{
+  "room": "cafe",
+  "generated_at": 1793171900,
+  "count": 2,
+  "items": [
+    {
+      "task_id": "t_71af0c5d",
+      "id": "t_71af0c5d",
+      "title": "Сверить состав набора «Лето 6» с этикеткой Роспотребнадзор",
+      "status": "done",
+      "assignee": "biz-ops",
+      "created_at": 1793150000,
+      "decomposed_at": 1793150120,
+      "children": 3,
+      "tenant": null,
+      "preview": "Проверь, что состав и предупреждения об аллергенах на этикетке совпадают с рецептурой и с тем, что заявлено на сайте."
+    },
+    {
+      "task_id": "t_63d0be21",
+      "id": "t_63d0be21",
+      "title": "Собрать отзывы первых дегустаций",
+      "status": "running",
+      "assignee": "biz-marketing",
+      "created_at": 1793155000,
+      "decomposed_at": 1793155110,
+      "children": 2,
+      "tenant": "room:fn",
+      "preview": "Собери и сгруппируй отзывы с трёх дегустаций: вкус, упаковка, цена, готовность купить."
+    }
+  ]
+}

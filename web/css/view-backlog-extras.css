@@ -1,0 +1,129 @@
+/**
+ * view-backlog-extras.css — общие мелочи вкладки «Дальше» и колонки «Дальше»
+ * на странице запроса (WAVE8, Блок B/Д3): чип срока, фильтр «Только этот
+ * запрос», подпись «По этому запросу», подсказка у галочки.
+ *
+ * Файл отдельный, чтобы не трогать view-request.css (владелец — THREAD-FE)
+ * и держать правки бэклога в одном месте.
+ */
+
+/* ── срок как чип: поле даты лежит под чипом ─────────────────────────────── */
+.due-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-full);
+  color: var(--ui-text-secondary);
+  font-size: var(--text-2xs);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.due-chip:hover,
+.due-chip:focus-within {
+  border-color: var(--ui-stroke-tertiary, var(--border-soft));
+  color: var(--foreground);
+}
+.due-chip--empty {
+  border-style: dashed;
+  color: var(--ui-text-tertiary);
+}
+.due-chip__text { pointer-events: none; }
+.due-chip__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.due-chip__input::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* ── фильтр «Только этот запрос» на вкладке «Дальше» ─────────────────────── */
+.backlog__filter-host { min-width: 0; }
+.backlog__filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.backlog__filter-link { min-width: 0; text-decoration: none; }
+.backlog__filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 42ch;
+  height: 24px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-full);
+  background: var(--ui-fill-secondary, rgba(127, 127, 127, 0.08));
+  color: var(--ui-text-secondary);
+  font-size: var(--text-2xs);
+  line-height: 1;
+}
+.backlog__filter-name { color: var(--foreground); max-width: 28ch; }
+.backlog__filter-link:hover .backlog__filter-chip { color: var(--link); }
+.backlog__filter-clear { flex: none; }
+
+/* ── подсказки и подписи ─────────────────────────────────────────────────── */
+.backlog__hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: var(--space-3) var(--space-4) 0;
+  color: var(--ui-text-secondary);
+}
+.req-side__hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: calc(var(--space-2) * -1);
+  padding-bottom: var(--space-2);
+  color: var(--ui-text-secondary);
+}
+.backlog__ics { flex: none; gap: 5px; }
+
+/* ── колонка «Дальше» на странице запроса: «По этому запросу» ───────────── */
+.req-aside__scope {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+.req-aside__scope-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ui-text-secondary);
+}
+.req-aside__scope-link {
+  font-size: var(--text-xs);
+  color: var(--link);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.req-aside__scope-link:hover { text-decoration: underline; }
+.req-step__ics { flex: none; gap: 4px; }
+
+/* На узком экране подписи у иконок убираем, подсказки остаются в title. */
+@media (max-width: 1100px) {
+  .backlog__ics-text,
+  .req-step__ics-text { display: none; }
+  .backlog__hint { padding-bottom: var(--space-1); }
+}

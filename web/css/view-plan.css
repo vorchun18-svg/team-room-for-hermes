@@ -1,0 +1,167 @@
+/* view-plan.css — блок «Направления» (карта проекта) на вкладке «Карта проекта».
+   Только токены tokens.css. Плоскость: одна рамка на весь блок, карточки —
+   без второй рамки, разделены воздухом. От 900 px — без горизонтальной прокрутки,
+   на 420 px карточки в одну колонку. */
+
+.roadmap__plan-block { display: block; min-width: 0; }
+
+.ps { min-width: 0; }
+
+/* ------------------------------------------------------------------- шапка */
+
+.ps-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  flex-wrap: wrap; gap: var(--space-2) var(--space-3);
+}
+.ps-head__titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ps-head__sub { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+.ps-head__count { color: var(--ui-text-tertiary); }
+.ps-head__count::before { content: "·"; margin-right: var(--space-1); }
+.ps-head__actions {
+  display: flex; align-items: center; gap: var(--space-2);
+  flex-wrap: wrap; margin-left: auto;
+}
+.ps-launch-all .codicon { color: inherit; }
+
+/* ------------------------------------------------------------------- сетка */
+
+.ps-body { gap: var(--space-3); }
+.ps-grid {
+  display: grid; gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- карточка */
+
+.ps-card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  min-width: 0; padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--ui-bg-tertiary);
+}
+.ps-card--running,
+.ps-card--review { border-color: color-mix(in srgb, var(--primary) 26%, var(--border)); }
+.ps-card--waiting_quota { border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); }
+.ps-card--dropped { background: transparent; }
+.ps-card--dropped .ps-card__title { color: var(--ui-text-secondary); }
+
+.ps-card__top {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: var(--space-2);
+}
+.ps-card__title {
+  margin: 0; font-size: var(--text-md); font-weight: 600;
+  line-height: var(--leading-tight); letter-spacing: var(--tracking-tight);
+  color: var(--foreground); overflow-wrap: anywhere;
+}
+.ps-card--dropped .ps-card__title { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+.ps-card__goal {
+  margin: 0; font-size: var(--text-sm); line-height: var(--leading-normal);
+  color: var(--ui-text-secondary); overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ps-card__meta {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3); min-width: 0;
+}
+.ps-card__members { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 12em; }
+.ps-card__members-text { font-size: var(--text-sm); }
+.ps-card__members .codicon { font-size: 11px; color: var(--ui-text-tertiary); }
+.ps-card__dep {
+  display: inline-flex; align-items: center; gap: 4px;
+  min-width: 0; max-width: 100%;
+  color: var(--ui-text-secondary);
+}
+.ps-card__dep .codicon { font-size: 11px; color: var(--ui-text-tertiary); flex: none; }
+.ps-card__request {
+  display: inline-flex; align-items: center; gap: 3px;
+  color: var(--link); text-decoration: none; font-size: var(--text-sm);
+  border-radius: var(--radius-xs);
+}
+.ps-card__request:hover { text-decoration: underline; }
+.ps-card__request:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.ps-card__request .codicon { font-size: 11px; }
+
+.ps-card__actions {
+  display: flex; align-items: center; gap: var(--space-1);
+  flex-wrap: wrap; margin-top: auto; padding-top: var(--space-1);
+}
+.ps-card__btn .codicon { font-size: 12px; }
+
+/* ------------------------------------------------------- статус и источник */
+
+.ps-chip { flex: none; }
+.ps-chip__text { font-size: var(--text-xs); }
+.ps-chip--live .ps-chip__text { font-weight: 500; }
+
+.ps-card__origin { white-space: nowrap; }
+.ps-origin { min-width: 0; max-width: 16em; }
+.ps-origin__summary {
+  cursor: pointer; list-style: none; text-align: right;
+  color: var(--ui-text-tertiary); border-radius: var(--radius-xs);
+  overflow-wrap: anywhere;
+}
+.ps-origin__summary::-webkit-details-marker { display: none; }
+.ps-origin__summary:hover { color: var(--ui-text-secondary); }
+.ps-origin__summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.ps-origin[open] .ps-origin__summary { color: var(--ui-text-secondary); }
+.ps-origin__why {
+  margin: var(--space-1) 0 0; padding-left: var(--space-2);
+  border-left: 2px solid var(--border);
+  line-height: var(--leading-normal); text-align: left; white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------- пусто и заметки */
+
+.ps-empty { padding: var(--space-5) var(--space-4); }
+.ps-note { margin: 0; line-height: var(--leading-relaxed); overflow-wrap: anywhere; }
+.ps-off { padding: 0 0 var(--space-1); }
+
+/* ------------------------------------------------------------------ диалог */
+
+.ps-dialog__body { gap: var(--space-3); }
+.ps-dialog .textarea { min-height: 58px; resize: vertical; }
+/* обёртка вокруг поля: микрофон встаёт в правый нижний угол самого поля,
+   а не всего блока с подсказкой */
+.ps-dialog__area { position: relative; display: block; }
+.ps-dialog__area .textarea { display: block; width: 100%; }
+.ps-dialog__area .input { display: block; width: 100%; }
+/* место под микрофон справа в поле: 12px + 30px от microphone-overlay ≈ 42px */
+.ps-dialog .input,
+.ps-dialog .textarea { padding-right: 12px; }
+
+.ps-members {
+  display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3);
+  min-width: 0;
+}
+.ps-members__item {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--text-sm); color: var(--ui-text-secondary);
+  padding: 2px 0; cursor: pointer;
+}
+.ps-members__item input { accent-color: var(--primary); }
+
+/* ------------------------------------------------------------------ узкие */
+
+@media (max-width: 900px) {
+  .ps-head__actions { width: 100%; margin-left: 0; }
+  .ps-head__actions .btn { flex: 0 1 auto; }
+  .ps-card__top { grid-template-columns: auto minmax(0, 1fr); }
+  .ps-card__top .ps-origin,
+  .ps-card__top > :last-child { grid-column: 1 / -1; }
+  .ps-origin { max-width: 100%; }
+  .ps-origin__summary { text-align: left; }
+}
+
+@media (max-width: 560px) {
+  .ps-grid { grid-template-columns: minmax(0, 1fr); }
+  .ps-card { padding: var(--space-3); }
+  .ps-head__actions { flex-direction: column; align-items: stretch; }
+  .ps-head__actions .btn { justify-content: center; width: 100%; }
+}

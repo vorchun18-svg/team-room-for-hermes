@@ -1,0 +1,108 @@
+{
+  "ok": true,
+  "at": 1793912795,
+  "count": 2,
+  "engine": {
+    "ok": true,
+    "board": "team",
+    "warning": null
+  },
+  "rooms": [
+    {
+      "id": "cafe",
+      "title": "Лето",
+      "icon": "cake",
+      "archived": false,
+      "orchestrator": "biz-director",
+      "critic": "biz-critic",
+      "members_count": 7,
+      "mode_default": "auto",
+      "critic_pass": true,
+      "counters": {
+        "working": 3,
+        "needs_you": 3,
+        "done_today": 2
+      },
+      "phase": {
+        "id": "legal",
+        "title": "Легализация",
+        "status": "active"
+      },
+      "updated_at": 1793171850,
+      "max_rounds": 1,
+      "critic_mode": "rounds",
+      "critic_round_cap": 12,
+      "launch_mode": "plan_first",
+      "max_parallel_streams": 2,
+      "project_mode": false,
+      "requests_count": 8,
+      "last_at": 1793171300,
+      "last": [
+        {
+          "id": "t_2a6f5c93",
+          "room": "cafe",
+          "title": "Каналы продаж: Едок или Развоз",
+          "title_short": "Каналы продаж: Едок или Развоз",
+          "status": "queued",
+          "needs_you": false,
+          "created_at": 1793171300,
+          "finished_at": null,
+          "preview": "Сравни «Едок» и «Развоз» для первых 100 наборов. Срок — до пятницы."
+        },
+        {
+          "id": "t_c4d2e118",
+          "room": "cafe",
+          "title": "Поставщики упаковки: шорт-лист и MOQ",
+          "title_short": "Поставщики упаковки: шорт-лист и MOQ",
+          "status": "done",
+          "needs_you": false,
+          "created_at": 1793170100,
+          "finished_at": 1793170510,
+          "preview": "Собери шорт-лист поставщиков упаковки в Заозёрье под тираж 100 наборов, проверь MOQ и сроки."
+        },
+        {
+          "id": "t_9f3c2a10",
+          "room": "cafe",
+          "title": "Упаковка: котировки у поставщиков в городе",
+          "title_short": "Упаковка: котировки у поставщиков в городе",
+          "status": "working",
+          "needs_you": false,
+          "created_at": 1793168900,
+          "finished_at": null,
+          "preview": "Собери котировки упаковки по 10 поставщикам городе и проверь MOQ под тираж 100."
+        }
+      ]
+    },
+    {
+      "id": "fn",
+      "title": "Рабочее пространство",
+      "icon": "law",
+      "archived": false,
+      "orchestrator": "default",
+      "critic": null,
+      "members_count": 3,
+      "mode_default": "auto",
+      "critic_pass": false,
+      "counters": {
+        "working": 1,
+        "needs_you": 0,
+        "done_today": 1
+      },
+      "phase": {
+        "id": "legal",
+        "title": "Легализация",
+        "status": "active"
+      },
+      "updated_at": 1793171850,
+      "max_rounds": 1,
+      "critic_mode": "rounds",
+      "critic_round_cap": 12,
+      "launch_mode": "plan_first",
+      "max_parallel_streams": 2,
+      "project_mode": false,
+      "requests_count": 0,
+      "last_at": null,
+      "last": []
+    }
+  ]
+}

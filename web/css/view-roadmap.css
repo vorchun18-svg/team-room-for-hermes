@@ -1,0 +1,217 @@
+/* view-roadmap.css — вкладка «Карта проекта». Только токены tokens.css. */
+
+.roadmap { gap: var(--space-4); }
+.roadmap__error:empty { display: none; }
+.roadmap__offline { margin-left: auto; }
+
+/* ── «Где мы сейчас» ─────────────────────────────────────────────────────── */
+
+.rm-hero {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-4) var(--space-6); align-items: start;
+  padding: var(--space-4) var(--space-5);
+}
+.rm-hero__main { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.rm-hero__kicker {
+  font-size: var(--text-sm); font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--ui-text-tertiary);
+}
+.rm-hero__title {
+  margin: 0; font-size: var(--text-2xl); line-height: var(--leading-tight);
+  font-weight: 600; letter-spacing: var(--tracking-tight); color: var(--foreground);
+}
+.rm-hero__line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
+.rm-hero__progress-label { font-size: var(--text-sm); color: var(--ui-text-secondary); }
+.rm-hero__progress {
+  max-width: 460px; height: 6px; margin: var(--space-1) 0 var(--space-2);
+  background: var(--ui-bg-quaternary); box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+
+.rm-hero__facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-3); min-width: 0;
+}
+.rm-fact { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rm-fact__label {
+  font-size: var(--text-sm); letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--ui-text-tertiary);
+}
+.rm-fact__value { font-size: var(--text-sm); color: var(--foreground); overflow-wrap: anywhere; }
+.rm-fact__note { line-height: var(--leading-normal); overflow-wrap: anywhere; }
+
+.rm-hero__actions {
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-2);
+  min-width: 0;
+}
+.rm-hero__mirror { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; max-width: 100%; }
+
+.rm-steps__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.rm-steps__head-actions { display: flex; align-items: center; gap: var(--space-2); min-width: 0; flex-wrap: wrap; }
+.rm-steps__head-actions .btn { flex: none; }
+
+/* ── «Карта без этапов»: «Что дальше» и один блок про режим (W17-R §4) ──── */
+
+.rm-next__list { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.rm-next__item {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start; gap: var(--space-2); min-width: 0;
+}
+.rm-next__text { min-width: 0; overflow-wrap: anywhere; color: var(--foreground); }
+.rm-next__due { white-space: nowrap; }
+
+.rm-project-hint__text { margin: 0 0 var(--space-3); max-width: 78ch; color: var(--ui-text-secondary); }
+.rm-project-hint__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.rm-project-hint__note { margin: var(--space-2) 0 0; }
+
+@media (max-width: 899px) {
+  .rm-next__item { grid-template-columns: auto minmax(0, 1fr); }
+  .rm-next__due { grid-column: 2; }
+  .rm-steps__head { flex-direction: column; gap: var(--space-1); }
+}
+
+/* ── степпер этапов ─────────────────────────────────────────────────────── */
+
+.rm-steps {
+  display: flex; align-items: stretch; gap: 0; margin: 0; padding: 0;
+  list-style: none; min-width: 0;
+}
+.rm-step { position: relative; flex: 1 1 0; min-width: 0; display: flex; }
+.rm-step + .rm-step::before {
+  content: ""; position: absolute; left: 0; top: 15px; width: var(--space-3); height: 1px;
+  background: var(--border); transform: translateX(calc(-1 * var(--space-3)));
+}
+.rm-step + .rm-step { padding-left: var(--space-3); }
+
+.rm-step__btn {
+  flex: 1 1 auto; min-width: 0; display: grid;
+  grid-template-columns: auto minmax(0, 1fr); align-items: center;
+  gap: var(--space-2); padding: var(--space-2);
+  border: 1px solid transparent; border-radius: var(--radius-md);
+  background: none; text-align: left; color: var(--ui-text-secondary);
+  cursor: pointer; transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.rm-step__btn:hover { background: var(--ui-row-hover-background); }
+.rm-step__btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+.rm-step__marker {
+  display: grid; place-items: center; width: 22px; height: 22px; flex: none;
+  border: 1px solid var(--border); border-radius: var(--radius-full);
+  font-size: var(--text-sm); font-weight: 600; color: var(--ui-text-tertiary);
+  background: var(--card);
+}
+.rm-step__marker .codicon { font-size: 11px; }
+.rm-step__body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.rm-step__title { font-size: var(--text-sm); font-weight: 500; line-height: 1.25; color: var(--foreground); }
+.rm-step__state { font-size: var(--text-sm); color: var(--ui-text-tertiary); }
+
+.rm-step--done .rm-step__marker { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); color: var(--ok-ink); }
+.rm-step--done .rm-step__state { color: var(--ok-ink); }
+.rm-step--active .rm-step__marker { border-color: var(--primary); color: var(--primary); }
+.rm-step--active .rm-step__state { color: var(--link); }
+.rm-step--blocked .rm-step__marker { border-color: color-mix(in srgb, var(--warn) 55%, var(--border)); color: var(--warn-ink); }
+.rm-step--blocked .rm-step__state { color: var(--warn-ink); }
+
+.rm-step--current .rm-step__btn {
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+  background: var(--ui-row-active-background);
+}
+.rm-step--selected .rm-step__btn { border-color: var(--stroke-nous); background: var(--ui-bg-quaternary); }
+.rm-step--selected.rm-step--current .rm-step__btn {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+
+/* ── панель деталей ─────────────────────────────────────────────────────── */
+
+.rm-detail__body { gap: var(--space-2); }
+.rm-detail__note { margin: 0; font-size: var(--text-sm); line-height: var(--leading-relaxed); overflow-wrap: anywhere; }
+.rm-detail__meta { gap: var(--space-2); color: var(--ui-text-tertiary); }
+.rm-detail__related { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-1); }
+.rm-detail__subtitle { font-size: var(--text-sm); text-transform: uppercase; letter-spacing: 0.04em; }
+.rm-related-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-1); }
+.rm-related {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline;
+  gap: var(--space-2); font-size: var(--text-sm);
+}
+.rm-related__text { overflow-wrap: anywhere; }
+.rm-source {
+  display: inline-flex; align-items: center; gap: 3px;
+  color: var(--link); text-decoration: none; font-size: var(--text-sm);
+}
+.rm-source:hover { text-decoration: underline; }
+.rm-source .codicon { font-size: 10px; }
+
+/* ── решения ─────────────────────────────────────────────────────────────── */
+
+.rm-decisions__head { flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+.rm-decisions__titles { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.rm-decisions__counts { font-size: var(--text-sm); }
+.rm-decisions__controls { gap: var(--space-2); flex-wrap: wrap; margin-left: auto; }
+.rm-decisions__search { width: 220px; max-width: 100%; }
+.rm-decisions__search .input { height: var(--control-sm); font-size: var(--text-sm); }
+.rm-decisions__body { gap: var(--space-3); }
+.rm-decisions__empty { padding: var(--space-4) 0; }
+
+.rm-groups-host { display: flex; flex-direction: column; gap: var(--space-3); }
+.rm-group { display: flex; flex-direction: column; gap: var(--space-1); }
+.rm-group__title {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-sm); font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--ui-text-tertiary);
+}
+.rm-group__title .tnum { color: var(--ui-text-tertiary); }
+.rm-group__items { display: flex; flex-direction: column; }
+
+.rm-decision { padding: var(--space-2) 0; min-width: 0; }
+.rm-decision + .rm-decision { border-top: 1px solid var(--border-soft); }
+.rm-decision__top {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline; gap: var(--space-2); min-width: 0;
+}
+.rm-decision__text { font-size: var(--text-base); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.rm-decision__why {
+  margin-top: 3px; padding-left: calc(20px + var(--space-2));
+  font-size: var(--text-sm); color: var(--ui-text-secondary); overflow-wrap: anywhere;
+}
+.rm-decision__k { color: var(--ui-text-tertiary); }
+.rm-decision__meta {
+  margin-top: 3px; padding-left: calc(20px + var(--space-2));
+  gap: var(--space-1) var(--space-2); font-size: var(--text-sm);
+  color: var(--ui-text-tertiary);
+}
+
+/* ── пусто ───────────────────────────────────────────────────────────────── */
+
+.rm-empty-card { padding: var(--space-4); }
+.rm-empty-card .empty { padding: var(--space-8) var(--space-4); }
+
+/* ── адаптив ─────────────────────────────────────────────────────────────── */
+
+@media (max-width: 1100px) {
+  .rm-hero { grid-template-columns: minmax(0, 1fr); }
+  .rm-hero__actions { flex-direction: row; align-items: center; flex-wrap: wrap; }
+  .rm-hero__mirror { align-items: flex-start; }
+
+  /* степпер вертикально: маркеры в колонку, соединитель — вертикальная линия */
+  .rm-steps { flex-direction: column; gap: 0; }
+  .rm-step { flex: 1 1 auto; }
+  .rm-step + .rm-step { padding-left: 0; padding-top: var(--space-2); }
+  .rm-step + .rm-step::before {
+    left: 21px; top: 0; width: 1px; height: var(--space-2); transform: none;
+  }
+  .rm-step__btn { padding: var(--space-1) var(--space-2); }
+}
+
+@media (max-width: 899px) {
+  .rm-hero { padding: var(--space-4); }
+  .rm-hero__title { font-size: var(--text-xl); }
+
+  .rm-decisions__controls { width: 100%; margin-left: 0; }
+  .rm-decisions__search { width: 100%; }
+  .rm-decisions__search .input { width: 100%; }
+}
+
+@media (max-width: 560px) {
+  .rm-decisions__titles { flex-wrap: wrap; }
+  .rm-decision__why,
+  .rm-decision__meta { padding-left: 0; }
+}
