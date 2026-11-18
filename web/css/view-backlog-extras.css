@@ -1,5 +1,5 @@
 /**
- * view-backlog-extras.css — общие мелочи вкладки «Дальше» и колонки «Дальше»
+ * view-backlog-extras.css — общие мелочи вкладки «От вас нужно» и колонки «От вас нужно»
  * на странице запроса (WAVE8, Блок B/Д3): чип срока, фильтр «Только этот
  * запрос», подпись «По этому запросу», подсказка у галочки.
  *
@@ -53,7 +53,7 @@
   cursor: pointer;
 }
 
-/* ── фильтр «Только этот запрос» на вкладке «Дальше» ─────────────────────── */
+/* ── фильтр «Только этот запрос» на вкладке «От вас нужно» ─────────────────────── */
 .backlog__filter-host { min-width: 0; }
 .backlog__filter {
   display: flex;
@@ -99,7 +99,7 @@
 }
 .backlog__ics { flex: none; gap: 5px; }
 
-/* ── колонка «Дальше» на странице запроса: «По этому запросу» ───────────── */
+/* ── колонка «От вас нужно» на странице запроса: «По этому запросу» ───────────── */
 .req-aside__scope {
   display: flex;
   align-items: baseline;
@@ -120,6 +120,21 @@
 }
 .req-aside__scope-link:hover { text-decoration: underline; }
 .req-step__ics { flex: none; gap: 4px; }
+
+/* ── W21-Q1 (B-45): ответы уходят руководителю сами (автообновление свода) ──────
+   Вместо кнопки досылки и слов «без реакции» — одна спокойная строка о том,
+   когда свод обновится. Переносится по словам: узкая колонка. */
+.req-side__delivered {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding-top: var(--space-2);
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--ui-border-subtle, var(--border));
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+.req-side__delivered .codicon { margin-top: 2px; flex: none; opacity: .8; }
 
 /* На узком экране подписи у иконок убираем, подсказки остаются в title. */
 @media (max-width: 1100px) {

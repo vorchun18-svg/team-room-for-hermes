@@ -1,0 +1,76 @@
+/**
+ * reaction-notice.css — уведомление о реакции руководителя (W20-U4, P9).
+ *
+ * 1. `.reaction-badge` — бейдж на вкладке «От вас нужно»: сколько новых реакций.
+ * 2. `.recent__mark` — точка у запроса в «Недавнем» бокового меню.
+ * 3. `.req-q__notice` — строка «Ответ учтён: …» прямо у вопроса.
+ *
+ * Цвета — только токены темы (светлая и тёмная), контраст ≥ 4,5:1:
+ * текст на мягком фоне берём «ink»-вариантом, а не самим цветом статуса.
+ */
+
+/* ── Бейдж вкладки ──────────────────────────────────────────────────────── */
+.reaction-badge {
+  background: var(--accent);
+  color: var(--accent-foreground, var(--foreground));
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.tab:hover .reaction-badge { border-color: color-mix(in srgb, var(--primary) 46%, transparent); }
+
+/* W25.5: метка «руководитель отреагировал» — точка, а не второе число рядом с
+   «7 дел ждут вас» (два числа подряд читались как «7 / 23»). */
+.reaction-badge--dot {
+  width: 8px; height: 8px; min-width: 0; padding: 0; flex: none;
+  border: 0; border-radius: var(--radius-full);
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.tab:hover .reaction-badge--dot { border: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 32%, transparent); }
+
+/* ── Отметка в «Недавнем» ───────────────────────────────────────────────── */
+.recent__mark {
+  flex: none;
+  width: 8px; height: 8px; margin-left: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--warn);
+  /* Точка без текста: подпись — в aria-label и подсказке, а не в глифе. */
+  box-shadow: 0 0 0 2px var(--background);
+}
+.recent__mark[data-reaction-mark] { animation: reaction-pulse 2.4s ease-in-out infinite; }
+@keyframes reaction-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recent__mark[data-reaction-mark] { animation: none; }
+}
+
+/* ── Строка у вопроса «Ответ учтён: …» ──────────────────────────────────── */
+.req-q__notice {
+  display: flex; align-items: flex-start; gap: 6px;
+  margin: var(--space-1) 0 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+.req-q__notice .codicon { flex: none; margin-top: 1px; color: var(--ok-ink); }
+.req-q__notice-text { min-width: 0; }
+.req-q__notice--read {
+  border-left-color: var(--info);
+  background: var(--info-soft);
+  color: var(--info-ink);
+}
+.req-q__notice--read .codicon { color: var(--info-ink); }
+
+/* Тёмная тема: мягкие подложки становятся прозрачнее — текст держим светлым. */
+[data-theme='dark'] .req-q__notice { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+[data-theme='dark'] .req-q__notice--read { background: color-mix(in srgb, var(--info) 18%, transparent); }

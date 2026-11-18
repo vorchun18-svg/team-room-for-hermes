@@ -8,10 +8,10 @@
       "id": "s1",
       "title": "Рецептура моти: состав, граммовки, сроки",
       "goal": "Утвердить рецептуру набора из 6 моти и сроки хранения, чтобы цена и упаковка считались от готового состава.",
-      "owner": "biz-ops",
+      "owner": "team-ops",
       "owner_label": "Операции",
       "members": [
-        "biz-ops"
+        "team-ops"
       ],
       "depends_on": [],
       "due": "2026-11-05",
@@ -24,11 +24,11 @@
       "id": "s2",
       "title": "Упаковка и бренд",
       "goal": "Выбрать форму и поставщика упаковки, собрать шорт-лист по MOQ и срокам, подготовить логотип под печать.",
-      "owner": "biz-ops",
+      "owner": "team-ops",
       "owner_label": "Операции",
       "members": [
-        "biz-ops",
-        "biz-marketing"
+        "team-ops",
+        "team-marketing"
       ],
       "depends_on": [
         "s1"
@@ -43,10 +43,10 @@
       "id": "s3",
       "title": "Цена и юнит-экономика",
       "goal": "Посчитать себестоимость набора из 6 моти и минимальную цену с маржой не ниже 35%.",
-      "owner": "biz-cfo",
+      "owner": "team-cfo",
       "owner_label": "Экономика",
       "members": [
-        "biz-cfo"
+        "team-cfo"
       ],
       "depends_on": [
         "s1",
@@ -62,11 +62,11 @@
       "id": "s4",
       "title": "Продажи и доставка",
       "goal": "Выбрать каналы (Едок, Развоз, WhatsApp) и схему доставки по Заозёрью, посчитать стоимость доставки на заказ.",
-      "owner": "biz-marketing",
+      "owner": "team-marketing",
       "owner_label": "Каналы",
       "members": [
-        "biz-marketing",
-        "biz-runner"
+        "team-marketing",
+        "team-runner"
       ],
       "depends_on": [
         "s2"
@@ -81,10 +81,10 @@
       "id": "s5",
       "title": "Налоги и ИП",
       "goal": "Открыть ИП с кодом ОКВЭД 10.71 и разобраться с налогами на доставку и маркетплейсы.",
-      "owner": "biz-lawyer",
+      "owner": "team-lawyer",
       "owner_label": "Юрист",
       "members": [
-        "biz-lawyer"
+        "team-lawyer"
       ],
       "depends_on": [],
       "due": "2026-11-15",

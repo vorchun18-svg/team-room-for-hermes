@@ -48,7 +48,7 @@ def make_detail(root_id: str = "t_a1", title: str = "Дорожная карта
         "text": "Исходный текст запроса\nвторая строка — дословно",
         "created_at": AT - 4000,
         "status": "done",
-        "synthesis": {"state": "ready", "text_md": "Готовый ответ.", "author": "biz-director",
+        "synthesis": {"state": "ready", "text_md": "Готовый ответ.", "author": "team-director",
                       "at": AT, "version": 1},
         "next_steps": [{"id": "ns_1", "text": "Подать заявление на ИП", "owner": "mikhail",
                         "due": "2026-11-01", "state": "open"}],
@@ -58,7 +58,7 @@ def make_detail(root_id: str = "t_a1", title: str = "Дорожная карта
                       "status": "accepted"}],
         "future_questions": [],
         "artifacts": [],
-        "tree": [{"id": "t_a1", "title": "Корень", "assignee": "biz-director", "status": "done",
+        "tree": [{"id": "t_a1", "title": "Корень", "assignee": "team-director", "status": "done",
                   "started_at": AT - 100, "finished_at": AT}],
         "report": None,
     }
@@ -114,8 +114,8 @@ class RequestNoteTests(VaultMirrorBase):
         self.assertTrue(text.startswith("---\n"))
         for key in ("tags:", "room:", "request_id:", "status:", "created:", "versions:"):
             self.assertIn(key, text)
-        for heading in ("## Запрос", "## Диалог", "## Ответ", "## Дальше",
-                        "## Вопросы к Михаилу", "## Решения", "## Артефакты",
+        for heading in ("## Запрос", "## Диалог", "## Ответ", "## От вас нужно",
+                        "## Вопросы к Михаилу", "## Решения", "## Файлы",
                         "## Кто что делал", "## См. также"):
             self.assertIn(heading, text)
         self.assertIn("Исходный текст запроса", text)
@@ -148,7 +148,7 @@ class RequestNoteTests(VaultMirrorBase):
 
     def test_new_version_and_old_under_version_heading(self):
         detail = make_detail(synthesis={
-            "state": "ready", "text_md": "Ответ версии 3.", "author": "biz-director",
+            "state": "ready", "text_md": "Ответ версии 3.", "author": "team-director",
             "at": AT, "version": 3,
             "history": [
                 {"version": 1, "text_md": "Первый ответ.", "kind": "initial", "at": AT - 20,
@@ -218,7 +218,7 @@ class DialogAndSummaryTests(VaultMirrorBase):
             {"id": "c1", "at": AT - 20, "author_kind": "mikhail", "author": "mikhail",
              "author_label": "Михаил", "text": "Уточнение: не забудь про Роспатент",
              "task_id": "t_a1", "kind": "message"},
-            {"id": "c2", "at": AT - 10, "author_kind": "agent", "author": "biz-director",
+            {"id": "c2", "at": AT - 10, "author_kind": "agent", "author": "team-director",
              "author_label": "Глеб · руководитель комнаты", "text": "Принял, передал",
              "task_id": "t_a1", "kind": "comment"},
         ]

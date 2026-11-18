@@ -252,6 +252,7 @@ export function createPanel(handlers = {}) {
     if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
     panel = null;
     els = null;
+    actionsKey = null;          // новая панель соберёт кнопки заново
     anchorEl = null;
     anchorKey = '';
     placed = false;
@@ -269,6 +270,54 @@ export function createPanel(handlers = {}) {
   }
 
   /**
+   * Кнопки действий: создаются ОДИН раз на смену набора (W20-C1, B-42).
+   *
+   * Раньше `paintPanel` чистил контейнер и создавал «Стоп»/«Отмену» заново на
+   * каждое обновление — а таймер записи зовёт его каждые 250 мс. Клик, который
+   * попал между нажатием и отпусканием (обычно 80–200 мс), терялся: нажали на
+   * старую кнопку, отпустили на новой. Теперь кнопки живут до смены фазы, а
+   * таймер меняет только текст (время, подсказку, прогресс).
+   */
+  let actionsKey = null;
+
+  function actionsKeyOf(phase, st) {
+    return [phase, st.canRetry ? 1 : 0, String(st.retryLabel || '')].join('|');
+  }
+
+  /** Заменить детей контейнера действий (replaceChildren есть не везде). */
+  function setActions(nodes) {
+    const host = els && els.actions;
+    if (!host) return;
+    if (typeof host.replaceChildren === 'function') { host.replaceChildren(...nodes); return; }
+    for (const child of Array.from(host.childNodes || [])) {
+      try { host.removeChild(child); } catch { /* мини-DOM */ }
+    }
+    host.childNodes = [];
+    for (const node of nodes) host.appendChild(node);
+  }
+
+  /** Пересобрать кнопки, только если набор для этой фазы другой. */
+  function paintActions(phase, st) {
+    const key = actionsKeyOf(phase, st);
+    if (key === actionsKey) return;
+    actionsKey = key;
+    const nodes = [];
+    if (phase === 'recording') {
+      nodes.push(actionBtn('Стоп', 'btn--primary', () => on.onStop && on.onStop()));
+      nodes.push(actionBtn('Отмена', 'btn--ghost', () => on.onCancel && on.onCancel()));
+    } else if (phase === 'arming') {
+      nodes.push(actionBtn('Отмена', 'btn--ghost', () => on.onCancel && on.onCancel()));
+    } else if (phase === 'error') {
+      if (st.canRetry) {
+        nodes.push(actionBtn(String(st.retryLabel || 'Распознать ещё раз'), 'btn--primary',
+          () => on.onRetry && on.onRetry()));
+      }
+      nodes.push(actionBtn('Закрыть', 'btn--ghost', () => on.onClose && on.onClose()));
+    }
+    setActions(nodes);
+  }
+
+  /**
    * @param {{phase: string, elapsed?: number, maxMs?: number, slow?: boolean,
    *          error?: string, canRetry?: boolean, timeText?: string,
    *          progress?: string, retryLabel?: string}} state
@@ -277,7 +326,6 @@ export function createPanel(handlers = {}) {
     if (!els) return;
     const st = state || {};
     const phase = String(st.phase || 'idle');
-    els.actions.replaceChildren();
     els.spin.classList.add('hidden');
     els.dot.classList.add('hidden');
     els.level.classList.toggle('hidden', phase !== 'recording');
@@ -294,8 +342,7 @@ export function createPanel(handlers = {}) {
       els.time.classList.remove('hidden');
       els.hint.textContent = st.hint || 'Говорите — текст встанет туда, где курсор.';
       els.msg.textContent = '';
-      els.actions.appendChild(actionBtn('Стоп', 'btn--primary', () => on.onStop && on.onStop()));
-      els.actions.appendChild(actionBtn('Отмена', 'btn--ghost', () => on.onCancel && on.onCancel()));
+      paintActions(phase, st);
       return;
     }
 
@@ -304,7 +351,7 @@ export function createPanel(handlers = {}) {
       els.time.classList.add('hidden');
       els.hint.textContent = 'Браузер спросит разрешение — нажмите «Разрешить».';
       els.msg.textContent = '';
-      els.actions.appendChild(actionBtn('Отмена', 'btn--ghost', () => on.onCancel && on.onCancel()));
+      paintActions(phase, st);
       return;
     }
 
@@ -314,6 +361,9 @@ export function createPanel(handlers = {}) {
       els.time.classList.add('hidden');
       els.hint.textContent = st.hint || 'Поле не заблокировано — можно печатать.';
       els.msg.textContent = '';
+      // Кнопок в «Расшифровываю…» нет: набор для этой фазы пустой — и он же
+      // остаётся, пока идёт распознавание (таймер обновляет только прогресс).
+      paintActions(phase, st);
       return;
     }
 
@@ -322,11 +372,7 @@ export function createPanel(handlers = {}) {
       els.time.classList.add('hidden');
       els.hint.textContent = st.hint || 'Запись сохранена — поле свободно, можно печатать.';
       els.msg.textContent = String(st.error || '');
-      if (st.canRetry) {
-        els.actions.appendChild(actionBtn(String(st.retryLabel || 'Распознать ещё раз'),
-          'btn--primary', () => on.onRetry && on.onRetry()));
-      }
-      els.actions.appendChild(actionBtn('Закрыть', 'btn--ghost', () => on.onClose && on.onClose()));
+      paintActions(phase, st);
       return;
     }
 

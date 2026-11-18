@@ -289,10 +289,10 @@ export function agentModelLine(room, profile, member, opts = {}) {
   const compact = o.compact === true;
   const known = Boolean(settings.model);
   const onEdit = typeof o.onEdit === 'function' ? o.onEdit : null;
-  const title = 'Модель' + (isRoom ? ' в этой комнате' : ' из профиля Hermes') + ': '
+  const title = 'Модель' + (isRoom ? ' в этой комнате' : ' по умолчанию (из настроек агента)') + ': '
     + (known ? settingsLabel(catalog, settings) : 'не задана ни в комнате, ни в профиле')
     + (ids ? ' · ' + ids : '')
-    + (compact ? '' : (isRoom ? ' · изменено для этой комнаты' : ' · по умолчанию'))
+    + (!compact && isRoom ? ' · изменено для этой комнаты' : '')
     + ' (профиль: ' + String(profile || '') + ')';
   const shortText = known ? shortModelText(catalog, settings) : 'не выбрана';
   const chipCls = 'chip chip--outline agent-model__line-chip'
@@ -330,12 +330,15 @@ export function agentModelLine(room, profile, member, opts = {}) {
   }, icon('edit', { size: 11 }), h('span', null, 'Изменить'));
 
   const sent = modelSent(member);
+  // W23-MG2: подпись «расходится с выбором комнаты» убрана — расхождение
+  // исправляет сторож моделей, а человеку показывается понятная строка в
+  // карточке участника («Модель: … · последний запуск: … ⚠»). Здесь остаётся
+  // только спокойный факт: что реально ушло.
   const sentChip = sent
     ? h('span', {
-      class: 'chip chip--outline agent-model__line-chip' + (sent.mismatch ? ' chip--warn' : ''),
-      title: (sent.confirmed ? 'Фактическая модель последнего запуска' : 'Записано в карточке')
-        + (sent.mismatch ? ' · расходится с выбором комнаты' : ''),
-    }, sent.text + (sent.mismatch ? ' · расходится с выбором комнаты' : ''))
+      class: 'chip chip--outline agent-model__line-chip',
+      title: (sent.confirmed ? 'Фактическая модель последнего запуска' : 'Записано в карточке'),
+    }, sent.text)
     : null;
 
   return h('div', { class: 'agent-model__line', dataset: { profile: String(profile || '') } },

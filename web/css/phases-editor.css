@@ -1,0 +1,166 @@
+/* phases-editor.css — этапы проекта: плашка предложения, редактор, ожидание.
+   Только токены tokens.css; читаемый текст не мельче 12 px. */
+
+/* ── плашка «Руководитель предлагает этапы» ─────────────────────────────── */
+
+.pe-offer {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--ui-accent);
+  min-width: 0;
+}
+.pe-offer__head {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  min-width: 0;
+}
+.pe-offer__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; flex: none;
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-secondary); color: var(--ui-accent);
+}
+.pe-offer__title {
+  margin: 0; font-size: var(--text-md); line-height: var(--leading-tight);
+  font-weight: 600; color: var(--foreground); min-width: 0;
+}
+.pe-offer__badge { flex: none; }
+.pe-offer__intro {
+  margin: 0; font-size: var(--text-sm); line-height: var(--leading-normal);
+  color: var(--ui-text-secondary); max-width: 78ch;
+}
+.pe-offer__list { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.pe-offer__item {
+  align-items: flex-start; gap: var(--space-2); min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+.pe-offer__item:hover { background: var(--ui-bg-quinary); }
+.pe-offer__item input { margin-top: 2px; flex: none; }
+.pe-offer__item-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pe-offer__item-title {
+  font-size: var(--text-sm); color: var(--foreground); overflow-wrap: anywhere;
+}
+.pe-offer__item-desc {
+  line-height: var(--leading-normal); overflow-wrap: anywhere;
+}
+.pe-offer__actions {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  min-width: 0;
+}
+.pe-offer__actions .btn { flex: none; }
+.pe-offer__reject { margin-left: auto; color: var(--ui-text-secondary); }
+.pe-offer__note { margin: 0; line-height: var(--leading-normal); }
+
+/* ── редактор этапов (встроенный и в окне) ──────────────────────────────── */
+
+.pe-editor { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.pe-editor__intro {
+  margin: 0; line-height: var(--leading-normal); max-width: 78ch;
+}
+.pe-editor__list { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.pe-editor__empty { margin: var(--space-1) 0 0; }
+.pe-editor__foot {
+  display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+  margin-top: var(--space-1);
+}
+.pe-editor__count { margin-left: auto; white-space: nowrap; }
+.pe-editor__add { flex: none; }
+.pe-editor__error:empty { display: none; }
+.pe-editor__error-text {
+  display: block; padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-secondary); color: var(--ui-red);
+  font-size: var(--text-sm); line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+.pe-editor--compact .pe-editor__intro { display: none; }
+
+.pe-row {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center; gap: var(--space-2); min-width: 0;
+}
+.pe-row__no {
+  font-size: var(--text-xs); color: var(--ui-text-tertiary);
+  text-align: right; white-space: nowrap;
+}
+.pe-row__input { min-width: 0; width: 100%; }
+.pe-row__actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.pe-row__actions button { flex: none; }
+
+/* ── предложение внутри редактора ───────────────────────────────────────── */
+
+.pe-offer-inline {
+  display: flex; flex-direction: column; gap: var(--space-2); min-width: 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-quinary);
+}
+.pe-offer-inline.hidden { display: none; }
+.pe-offer-inline__head {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  min-width: 0; color: var(--ui-accent);
+}
+.pe-offer-inline__title-main {
+  font-size: var(--text-sm); font-weight: 600; color: var(--foreground);
+}
+.pe-offer-inline__hint { flex-basis: 100%; line-height: var(--leading-normal); }
+.pe-offer-inline__list { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.pe-offer-inline__item { align-items: flex-start; gap: var(--space-2); min-width: 0; }
+.pe-offer-inline__item input { margin-top: 2px; flex: none; }
+.pe-offer-inline__text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pe-offer-inline__title {
+  font-size: var(--text-sm); color: var(--foreground); overflow-wrap: anywhere;
+}
+.pe-offer-inline__desc { line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.pe-offer-inline__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.pe-offer-inline__actions .btn { flex: none; }
+
+/* ── окно редактора ─────────────────────────────────────────────────────── */
+
+.pe-modal { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.pe-modal__lead { margin: 0; line-height: var(--leading-normal); }
+
+/* ── «ждём ответа руководителя» ─────────────────────────────────────────── */
+
+.pe-wait {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--border-soft);
+  min-width: 0;
+}
+.pe-wait__head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.pe-wait__title {
+  margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--foreground);
+}
+.pe-wait__text { margin: 0; line-height: var(--leading-normal); max-width: 78ch; }
+.pe-wait .btn { align-self: flex-start; }
+
+/* ── кнопка «Предложить этапы» ──────────────────────────────────────────── */
+
+.pe-propose.is-busy { opacity: 0.7; }
+
+/* ── строка предложения на вкладке «От вас нужно» ─────────────────────────────── */
+
+.inbox-row--phases .inbox-row__icon {
+  background: var(--ui-bg-secondary); color: var(--ui-accent);
+}
+.inbox-row__link {
+  color: var(--ui-accent); text-decoration: none; white-space: nowrap;
+}
+.inbox-row__link:hover { text-decoration: underline; }
+.inbox-row__link:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+
+/* ── узкие экраны ───────────────────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  .pe-offer { padding: var(--space-3) var(--space-4); }
+  .pe-offer__actions .btn { flex: 1 1 auto; justify-content: center; }
+  .pe-offer__reject { margin-left: 0; }
+  .pe-row { grid-template-columns: 18px minmax(0, 1fr); grid-template-areas: "no input" ". actions"; }
+  .pe-row__no { grid-area: no; }
+  .pe-row__input { grid-area: input; }
+  .pe-row__actions { grid-area: actions; justify-content: flex-start; }
+  .pe-editor__count { margin-left: 0; }
+  .pe-editor__foot .btn { flex: 1 1 auto; justify-content: center; }
+}

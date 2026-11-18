@@ -16,6 +16,9 @@ import { dispatcherRunning } from './shell-status.js';
 import { waitingFor } from './shell-inbox.js';
 import { countText, COUNT_FORMS } from './shell-labels.js';
 import { titleShortOf, titleHint } from './request-title.js';
+import { ingestSummary, recentReactionMark } from './views/reaction-notice.js';
+import { viewModeButton, watchViewMode, isSimple } from './view-mode.js';
+import { FOLD_TITLE, railBadges, roomNavTitle } from './shell-rail.js';
 
 export const APP_TITLE = 'Комната команды';
 const RECENT_LIMIT = 5;
@@ -113,6 +116,9 @@ function createNavItem(room) {
     class: 'nav-item',
     href: buildHash({ roomId: room.id, tab: 'composer' }),
     dataset: { room: room.id },
+    // W21-R1: в полосе значков подписи скрыты — имя комнаты живёт в подсказке
+    // и в aria-label (иначе значок комнаты не читается ни мышью, ни скринридером).
+    title: room.title, 'aria-label': room.title,
   }, icon(room.icon, { size: 15 }),
   // Подсказка и на самой подписи: длинное название обрезается многоточием, и
   // проверка вёрстки (ui_audit) требует title у обрезанного элемента, а не только у строки.
@@ -123,37 +129,47 @@ function createNavItem(room) {
 function updateNavItem(item, room) {
   item.room = room;
   item.node.href = buildHash({ roomId: room.id, tab: 'composer' });
-  item.node.title = room.title;
+  const c = room.counts || {};
+  // W26-D7: число у комнаты — это ждущие ДЕЛА из общего склада (вопросы,
+  // решения, блокировки, разрешения), а не `counts.needs_you` сервера: там
+  // реакции руководителя и запросы, у которых нет ни одного действия.
+  const waits = waitingFor(room);
+  const badges = railBadges(waits, c);
+  // Подсказка несёт и название, и числа: в полосе значков подписи нет.
+  const navTitle = roomNavTitle(room.title, badges);
+  if (item.node.title !== navTitle) item.node.title = navTitle;
+  if (item.node.getAttribute('aria-label') !== navTitle) item.node.setAttribute('aria-label', navTitle);
+  item.node.dataset.waiting = waits.n === null ? '' : String(badges.you ? badges.you.n : 0);
   const text = item.node.querySelector('.nav-item__text');
   if (text && text.textContent !== room.title) text.textContent = room.title;
   if (text && text.title !== room.title) text.title = room.title;
   const ic = item.node.querySelector('.codicon');
   if (ic && room.icon) ic.className = 'codicon codicon-' + (hasIcon(room.icon) ? room.icon : 'home');
 
-  const c = room.counts || {};
   item.badges.replaceChildren();
-  // То же число, что у вкладки «Дальше»: дела, а не запросы (D4).
-  const waits = waitingFor(room);
   if (waits.n === null) {
+    // Не знаем — так и говорим (D19): «0» и число запросов вместо дел врут.
+    const hint = rooms.get('error')
+      ? 'Нет данных: приложение не отвечает'
+      : 'Считаю, сколько дел ждёт вас: число появится через пару секунд';
     item.badges.appendChild(h('span', {
-      class: 'count-pill count-pill--you',
-      title: 'Нет данных: приложение не отвечает',
-      'aria-label': 'Нет данных: приложение не отвечает',
+      class: 'count-pill count-pill--you count-pill--pending',
+      title: hint, 'aria-label': hint,
     }, '—'));
-  } else if (waits.n > 0) {
+  } else if (badges.you && badges.you.n > 0) {
     item.badges.appendChild(h('span', {
       class: 'count-pill count-pill--you',
       title: 'Ждут вас: ' + waits.text,
       'aria-label': 'Ждут вас: ' + waits.text,
-    }, String(waits.n)));
+    }, String(badges.you.n)));
   }
-  if (c.working > 0) {
-    const works = countText(c.working, COUNT_FORMS.work);
+  if (badges.live) {
+    const works = countText(badges.live.n, COUNT_FORMS.work);
     item.badges.appendChild(h('span', {
       class: 'count-pill count-pill--live',
       title: 'Идёт: ' + works,
       'aria-label': 'Идёт: ' + works,
-    }, h('span', { class: 'count-pill__dot' }), String(c.working)));
+    }, h('span', { class: 'count-pill__dot' }), String(badges.live.n)));
   }
 }
 
@@ -189,12 +205,87 @@ export function renderRoomList() {
 
 export function markActiveRoom() {
   const id = parseHash().roomId;
+  const route = parseHash();
   for (const [roomId, item] of navItems) {
     item.node.classList.toggle('nav-item--active', roomId === id);
     if (roomId === id) item.node.setAttribute('aria-current', 'page');
     else item.node.removeAttribute('aria-current');
   }
+  const todayLink = typeof document !== 'undefined' && document.getElementById
+    ? document.getElementById('today-link') : null;
+  if (todayLink) {
+    const on = route && route.name === 'today';
+    todayLink.classList.toggle('nav-item--active', !!on);
+    if (on) todayLink.setAttribute('aria-current', 'page');
+    else todayLink.removeAttribute('aria-current');
+  }
+  // W26-D6: «Дела» подсвечиваются и на списке (#/delos), и на карточке (#/delo/<id>),
+  // и на вкладке комнаты (tab === 'delos').
+  const delosLink = typeof document !== 'undefined' && document.getElementById
+    ? document.getElementById('delos-link') : null;
+  if (delosLink) {
+    const on = !!route && (route.name === 'delos' || route.name === 'delo' || route.tab === 'delos');
+    delosLink.classList.toggle('nav-item--active', on);
+    if (on) delosLink.setAttribute('aria-current', 'page');
+    else delosLink.removeAttribute('aria-current');
+  }
   applyDemoTitle();
+}
+
+/**
+ * Число «ждёт вас» у пункта «Сегодня» (W24-N3).
+ *
+ * Считается на экране «Сегодня» и при загрузке приложения — из `/api/today`.
+ * `null` — данных ещё нет: значок не рисуем, но и «0» не врём.
+ * @param {number|null} count
+ */
+export function setTodayCount(count) {
+  if (typeof document === 'undefined' || !document.getElementById) return;
+  const host = document.getElementById('today-badge');
+  if (!host) return;
+  const n = Number(count);
+  const value = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  const label = value > 0 ? 'Ждут вас: ' + countText(value, COUNT_FORMS.case) : '';
+  if (!value) {
+    host.replaceChildren();
+    host.setAttribute('data-empty', '1');
+    const link = document.getElementById('today-link');
+    if (link) link.setAttribute('aria-label', 'Сегодня');
+    return;
+  }
+  host.setAttribute('data-empty', null);
+  const pill = h('span', {
+    class: 'count-pill count-pill--you',
+    title: 'Ждут вас: ' + value,
+    'aria-label': 'Ждут вас: ' + value,
+  }, String(value));
+  host.replaceChildren(pill);
+  const link = document.getElementById('today-link');
+  if (link) link.setAttribute('aria-label', 'Сегодня — ' + label);
+}
+
+/**
+ * W26-D6: число «дел, где ждёт ваше решение» у пункта «Дела».
+ * `null` — данных ещё нет (значок не рисуем, но и «0» не врём).
+ * @param {number|null} count
+ */
+export function setDelosCount(count) {
+  if (typeof document === 'undefined' || !document.getElementById) return;
+  const host = document.getElementById('delos-badge');
+  if (!host) return;
+  const n = Number(count);
+  const value = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  const link = document.getElementById('delos-link');
+  if (!value) {
+    host.replaceChildren();
+    if (link) link.setAttribute('aria-label', 'Дела');
+    return;
+  }
+  const label = 'Дела: ждут вашего решения — ' + value;
+  host.replaceChildren(h('span', {
+    class: 'count-pill count-pill--you', title: label, 'aria-label': label,
+  }, String(value)));
+  if (link) link.setAttribute('aria-label', 'Дела — ждут вашего решения: ' + value);
 }
 
 /* ─────────────────────────────────────── «Недавнее»: последние запросы */
@@ -225,6 +316,9 @@ async function recentFromSummary(list) {
     // 304 — данные не менялись: список уже на экране, ничего не перерисовываем.
     if (data && data.notModified) return 'unchanged';
     if (!data) return null;
+    // W20-U4 (P9): та же сводка несёт реакции руководителя — запоминаем их здесь,
+    // чтобы бейдж вкладки и отметки в «Недавнем» не делали второй запрос.
+    ingestSummary(data);
     const raw = Array.isArray(data.rooms) ? data.rooms
       : (data.rooms && typeof data.rooms === 'object' ? Object.values(data.rooms) : null);
     if (!Array.isArray(raw) || !raw.length) return null;
@@ -245,10 +339,14 @@ async function recentFromSummary(list) {
           at: rec.created_at || rec.finished_at,
           roomId,
           roomTitle,
+          // W20-U3 (P13): закреплённый запрос держится сверху «Недавнего».
+          pinned: rec.pinned === true,
+          pinned_at: Number(rec.pinned_at) || 0,
         });
       }
     }
-    items.sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0));
+    items.sort((a, b) => (Number(b.pinned) - Number(a.pinned))
+      || ((Number(b.at) || 0) - (Number(a.at) || 0)));
     return items.slice(0, RECENT_LIMIT);
   } catch {
     return null;
@@ -273,13 +371,15 @@ export async function loadRecent() {
         return items
           .filter((i) => i && i.id && !i.archived)
           .map((i) => ({ id: i.id, title: i.title || '', title_short: i.title_short || '',
-            preview: i.preview || '', status: i.status, at: i.created_at, roomId: room.id, roomTitle: room.title }));
+            preview: i.preview || '', status: i.status, at: i.created_at, roomId: room.id,
+            roomTitle: room.title, pinned: i.pinned === true }));
       } catch {
         return [];
       }
     }));
     const merged = batches.flat()
-      .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))
+      .sort((a, b) => (Number(b.pinned) - Number(a.pinned))
+        || ((Number(b.at) || 0) - (Number(a.at) || 0)))
       .slice(0, RECENT_LIMIT);
     renderRecent(merged);
   } finally {
@@ -292,7 +392,9 @@ function renderRecent(items) {
   const list = $('#recent-list');
   if (!host || !list) return;
 
-  const sig = items.map((i) => [i.id, i.title_short, titleShortOf(i), i.status, i.roomId].join('|')).join('#');
+  const sig = items.map((i) => [i.id, i.title_short, titleShortOf(i), i.status, i.roomId,
+    i.pinned ? 'pin' : '',
+    recentReactionMark(i) ? '!' : ''].join('|')).join('#');
   if (sig === recentSig) return;
   recentSig = sig;
 
@@ -308,16 +410,24 @@ function renderRecent(items) {
     const short = titleShortOf(item) || 'Без названия';
     const hint = titleHint(item, item.roomTitle ? 'Комната: ' + item.roomTitle : '');
     const fullHint = hint || short;
+    // W20-U4 (P9): руководитель ответил на ваш ответ в этом запросе — отметка
+    // справа от названия, пока запрос не открыли.
+    const mark = recentReactionMark(item);
     list.appendChild(h('a', {
-      class: 'recent__item',
+      class: 'recent__item' + (mark ? ' recent__item--reacted' : '') + (item.pinned ? ' recent__item--pinned' : ''),
       href: '#/room/' + enc(item.roomId) + '/request/' + enc(item.id),
-      title: fullHint,
-      'aria-label': short + ' — ' + String(item.roomTitle || 'комната'),
+      title: (item.pinned ? 'Закреплён · ' : '') + fullHint,
+      'aria-label': short + ' — ' + String(item.roomTitle || 'комната')
+        + (item.pinned ? ', закреплён' : '')
+        + (mark ? ', есть новая реакция руководителя' : ''),
     },
     h('span', { class: 'status-dot status-dot--' + tone, 'aria-hidden': 'true' }),
     h('span', { class: 'recent__body' },
-      h('span', { class: 'recent__title', title: fullHint }, short),
+      h('span', { class: 'recent__title', title: fullHint },
+        item.pinned ? icon('pin', { size: 11, className: 'recent__pin' }) : null,
+        short),
       h('span', { class: 'recent__room', title: String(item.roomTitle) }, String(item.roomTitle))),
+    mark,
     ));
   }
 }
@@ -399,6 +509,14 @@ export function localTitle() {
 export function buildSidebar(host, { onNewRoom, onToggleNotifications, onCycleTheme, onCloseNav }) {
   host.replaceChildren();
   watchDemoTitle();
+  // W26-D7: шеврон на правом краю панели — 24 px, у верха, виден всегда
+  // (и в развёрнутом меню, и в полосе значков). Id сохранён (`#rail-toggle`),
+  // потому что каркас ищет кнопку по нему; подсказка — с клавишей.
+  host.appendChild(h('button', {
+    class: 'rail-fold', type: 'button', id: 'rail-toggle', 'data-rail-toggle': '',
+    title: FOLD_TITLE, 'aria-label': 'Свернуть меню',
+    'aria-pressed': 'false', 'aria-controls': 'room-list',
+  }, icon('chevron-left', { size: 14 })));
   host.appendChild(h('div', { class: 'brand' },
     h('div', { class: 'brand__mark', 'aria-hidden': 'true' }, 'К'),
     h('div', { class: 'brand__text' },
@@ -417,6 +535,26 @@ export function buildSidebar(host, { onNewRoom, onToggleNotifications, onCycleTh
 
   // Прокручиваемая середина: комнаты и «Недавнее». Подвал закреплён снизу.
   const scroll = h('div', { class: 'sidebar__scroll' },
+    // W24-N3: «Сегодня» — первым пунктом меню. Число «ждёт вас» приходит из
+    // /api/today (ставит экран «Сегодня» и загрузка приложения), не из комнат:
+    // там считаются запросы, а здесь — дела.
+    h('nav', { class: 'nav nav--top', id: 'today-nav', 'aria-label': 'Главное' },
+      h('a', {
+        class: 'nav-item nav-item--today', href: '#/today', id: 'today-link',
+        title: 'Сегодня: что ждёт вас, что горит и что идёт', 'aria-label': 'Сегодня',
+      }, icon('calendar', { size: 15 }),
+      h('span', { class: 'nav-item__text' }, 'Сегодня'),
+      h('span', { class: 'nav-item__badges', id: 'today-badge' }))),
+    // W26-D6: «Дела» — вторым пунктом главного меню. Число — дела, у которых есть
+    // «ждёт вашего решения» (ставит экран «Дела»); 0 — значок не рисуем.
+    h('nav', { class: 'nav nav--top', id: 'delos-nav', 'aria-label': 'Дела' },
+      h('a', {
+        class: 'nav-item nav-item--delos', href: '#/delos', id: 'delos-link',
+        title: 'Дела: что идёт, что ждёт вашего решения и чем всё кончилось',
+        'aria-label': 'Дела',
+      }, icon('checklist', { size: 15 }),
+      h('span', { class: 'nav-item__text' }, 'Дела'),
+      h('span', { class: 'nav-item__badges', id: 'delos-badge' }))),
     h('div', { class: 'sidebar__label' },
       'Комнаты',
       h('button', {
@@ -436,6 +574,8 @@ export function buildSidebar(host, { onNewRoom, onToggleNotifications, onCycleTh
   );
 
   // Подвал: одна строка состояния движка, ряд иконок, подпись «локально».
+  // W20-U3 (пункт 18): рядом с темой — переключатель «простой / подробный вид».
+  const modeBtn = viewModeButton();
   const tools = h('div', { class: 'sidebar__tools' },
     h('button', {
       class: 'btn btn--ghost btn--icon btn--sm', type: 'button', id: 'notify-toggle',
@@ -443,6 +583,9 @@ export function buildSidebar(host, { onNewRoom, onToggleNotifications, onCycleTh
       'aria-label': 'Уведомления',
       onclick: () => onToggleNotifications(),
     }, icon('bell', { size: 15 })),
+    modeBtn,
+    // W26-D7: маленькая кнопка «свернуть» из нижнего ряда убрана — её место
+    // занял шеврон на правом краю панели (`#rail-toggle`), его видно всегда.
     h('button', {
       class: 'btn btn--ghost btn--icon btn--sm', type: 'button', id: 'theme-toggle',
       title: 'Тема: как в системе', 'aria-label': 'Тема',
@@ -454,6 +597,9 @@ export function buildSidebar(host, { onNewRoom, onToggleNotifications, onCycleTh
       title: 'Настройки', 'aria-label': 'Настройки',
     }, icon('settings-gear', { size: 15 })),
   );
+  // Подпись кнопки следует за режимом, даже если его сменили клавишей `V`
+  // или в другой вкладке: событие `teamroom:viewmode` приходит из view-mode.js.
+  watchViewMode(modeBtn);
 
   host.appendChild(scroll);
   host.appendChild(h('div', { class: 'sidebar__foot' },

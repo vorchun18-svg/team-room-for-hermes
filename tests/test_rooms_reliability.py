@@ -43,7 +43,7 @@ class TestRoomsSurvive(RoomsBase):
     def test_bom_file_with_rooms_is_not_overwritten(self):
         """D4: BOM читается как utf-8-sig — комнаты пользователя остаются."""
         payload = {"version": 1, "rooms": [{"id": "mine", "title": "Моя", "board": "team",
-                                            "tenant": "room:mine", "orchestrator": "biz-director",
+                                            "tenant": "room:mine", "orchestrator": "team-director",
                                             "members": [], "context_files": [], "created_at": 5}]}
         self.path.write_bytes(codecs.BOM_UTF8 + json.dumps(payload, ensure_ascii=False).encode("utf-8"))
         self.assertFalse(rooms.seed_defaults(self.cfg))
@@ -92,8 +92,8 @@ class TestRoomsSurvive(RoomsBase):
 
 class TestRoomIds(RoomsBase):
     def _create(self, room_id):
-        return rooms.create_room(self.cfg, {"id": room_id, "title": "Т", "orchestrator": "biz-director",
-                                            "members": [{"profile": "biz-lawyer"}]})
+        return rooms.create_room(self.cfg, {"id": room_id, "title": "Т", "orchestrator": "team-director",
+                                            "members": [{"profile": "team-lawyer"}]})
 
     def test_reserved_windows_names_rejected(self):
         """D16: nul/con/com1 ломали watcher — такой id теперь 400."""
@@ -129,8 +129,8 @@ class TestRoomIds(RoomsBase):
 
 class TestRoomFields(RoomsBase):
     def _create(self, **extra):
-        body = {"title": "Комната", "orchestrator": "biz-director",
-                "members": [{"profile": "biz-lawyer"}]}
+        body = {"title": "Комната", "orchestrator": "team-director",
+                "members": [{"profile": "team-lawyer"}]}
         body.update(extra)
         return rooms.create_room(self.cfg, body)
 
@@ -154,13 +154,13 @@ class TestRoomFields(RoomsBase):
 
     def test_critic_cannot_equal_orchestrator(self):
         with self.assertRaises(rooms.RoomsError) as ctx:
-            self._create(critic="biz-director")
+            self._create(critic="team-director")
         self.assertEqual(ctx.exception.detail["field"], "critic")
 
     def test_update_validates_fields(self):
         rooms.seed_defaults(self.cfg)
         for patch in ({"max_rounds": "abc"}, {"max_rounds": 9}, {"critic_pass": "no"},
-                      {"icon": [1, 2]}, {"context_files": "abc"}, {"critic": "biz-director"}):
+                      {"icon": [1, 2]}, {"context_files": "abc"}, {"critic": "team-director"}):
             with self.assertRaises(rooms.RoomsError, msg=str(patch)) as ctx:
                 rooms.update_room(self.cfg, "cafe", patch)
             self.assertEqual(ctx.exception.code, "bad_request", patch)

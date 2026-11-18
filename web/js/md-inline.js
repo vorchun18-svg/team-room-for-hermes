@@ -11,6 +11,10 @@
  */
 
 import { esc } from './util.js';
+import { fileChipHtml, urlChipHtml, isAbsolutePath } from './found.js';
+
+/** Метка чипа-ссылки в `title` (ставит `svod-format.js`). */
+const CHIP_TITLE = 'tr-chip';
 
 const MAX_INLINE_DEPTH = 8;
 const SCHEME_RE = /^([a-z][a-z0-9+.-]*):/i;
@@ -119,14 +123,21 @@ function parseDest(src, start) {
 }
 
 /** Build the <a> for a link, or return the label alone when the URL is unsafe. */
-function linkHtml(url, labelHtml, title) {
+function linkHtml(url, labelHtml, title, labelText) {
   const safe = safeUrl(url);
   if (!safe) return labelHtml;
   const t = title ? ` title="${esc(title)}"` : '';
   if (safe.kind === 'external') {
+    // W26-D4: адрес, помеченный в своде как чип, получает «Перейти · Копировать».
+    if (title === CHIP_TITLE) return urlChipHtml({ url: safe.href, label: labelText || safe.href });
     return `<a href="${esc(safe.href)}"${t} target="_blank" rel="noopener noreferrer">${labelHtml}</a>`;
   }
   if (safe.kind === 'anchor') return `<a href="${esc(safe.href)}"${t}>${labelHtml}</a>`;
+  // W26-D4: абсолютный путь — чип «имя · Открыть · Показать в папке · Копировать путь»;
+  // относительная ссылка остаётся прежней ссылкой на файл.
+  if (isAbsolutePath(safe.path)) {
+    return fileChipHtml({ path: safe.path, label: (labelText || '').trim() || undefined });
+  }
   return `<a href="#" class="md-file" data-path="${esc(safe.path)}"${t}>${labelHtml}</a>`;
 }
 
@@ -282,9 +293,10 @@ export function inlineScan(src, ctx, depth) {
       if (close !== -1 && src[close + 1] === '(') {
         const dest = parseDest(src, close + 2);
         if (dest) {
-          const label = inlineScan(src.slice(i + 1, close), ctx, depth + 1);
+          const raw = src.slice(i + 1, close);
+          const label = inlineScan(raw, ctx, depth + 1);
           flush();
-          out += linkHtml(dest.url, label, dest.title);
+          out += linkHtml(dest.url, label, dest.title, raw.replace(/\*\*|__|~~|`/g, '').trim());
           i = dest.end;
           continue;
         }

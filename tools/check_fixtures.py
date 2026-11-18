@@ -26,7 +26,10 @@ ROLES = {"worker", "critic", "synthesizer", "root", "revision"}
 TASK_STATUSES = {"triage", "todo", "ready", "running", "review", "blocked", "scheduled", "done", "archived"}
 PHASE_IDS = ["idea", "legal", "brand", "packaging", "production", "sales"]
 PHASE_STATUSES = {"done", "active", "next", "blocked"}
-ARTIFACT_KINDS = {"md", "json", "html", "csv", "image", "pdf", "docx", "xlsx", "pptx", "other"}
+ARTIFACT_KINDS = {"md", "json", "html", "csv", "image", "pdf", "docx", "xlsx", "pptx", "other",
+                  # W20-A1 (B-43, §1.4): подпапка материалов — элемент списка,
+                  # в интерфейсе это свёрнутая группа {title, count, items}
+                  "folder"}
 WARNING_CODES = {"legacy_metadata", "missing_artifact", "no_synthesis", "report_invalid", "schema_drift",
                  "partial_ingest", "dispatcher_down", "card_failed", "outside_room", "critic_failed",
                  "critic_rounds_exhausted",
@@ -222,7 +225,7 @@ def check_thread(c: Check, thread, where: str, ids: list) -> None:
             label = str(item.get("author_label") or "")
             c.ok(label and label != item.get("author"), tp,
                  "подпись агента должна быть человеческой ролью, а не именем профиля")
-            if str(item.get("author") or "").startswith("biz-"):
+            if str(item.get("author") or "").startswith("team-"):
                 c.ok("·" in label, tp, "подпись агента Лето — «Имя · роль» (Глеб · руководитель комнаты)")
         if isinstance(item.get("id"), str):
             c.ok(item["id"] not in seen, tp, f"id {item['id']} повторяется в ленте")

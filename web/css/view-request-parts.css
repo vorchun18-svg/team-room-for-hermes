@@ -78,6 +78,26 @@
 .rp-warning__attempt { overflow-wrap: anywhere; }
 .rp-warning__close { flex: none; align-self: flex-start; margin-left: auto; white-space: nowrap; }
 .rp-warning__close .codicon { margin-right: 4px; }
+
+/* ── W25.5: «вне папки проекта» — одна тихая строка ─────────────────────────
+   Значок + подпись + «подробнее». Пока свёрнуто, пути нет: длинный путь рвал
+   строку и занимал первый экран (жалоба по виду 1026). */
+.rp-outside {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  min-width: 0; padding: 2px 0;
+  color: var(--ui-text-secondary); font-size: var(--text-sm);
+}
+.rp-outside__icon { flex: none; color: var(--warn); }
+.rp-outside__text { flex: none; }
+.rp-outside__more { flex: none; }
+.rp-outside__box {
+  flex: 1 1 100%; min-width: 0;
+  display: flex; flex-direction: column; gap: 2px;
+  padding-left: calc(14px + var(--space-2));
+}
+.rp-outside__box[hidden] { display: none; }
+.rp-outside__path { overflow-wrap: anywhere; color: var(--foreground); }
+.rp-outside__hint { overflow-wrap: anywhere; }
 /* B-25: кнопка повтора запроса целиком (блок «Ответ не получился»). */
 .req-answer__retry { margin-top: var(--space-2); }
 
@@ -193,7 +213,19 @@
 .rp-run--failed .rp-run__status { color: var(--danger-ink); }
 .rp-run__error { grid-column: 1 / -1; color: var(--danger-ink); overflow-wrap: anywhere; }
 
-/* ── Артефакты ───────────────────────────────────────────────────────────── */
+/* ── Файлы: «Просмотр» во встроенной панели (W26-D3) ─────────────────────── */
+.rp-preview { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.rp-preview__path { color: var(--ui-text-quaternary); overflow-wrap: anywhere; }
+.rp-preview__text {
+  margin: 0; max-height: min(60vh, 520px); overflow: auto; padding: var(--space-3);
+  background: var(--ui-bg-quaternary); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm); font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-sm); line-height: 1.5; white-space: pre-wrap;
+  overflow-wrap: anywhere; tab-size: 2;
+}
+.rp-preview__fail { color: var(--danger-ink); }
+
+/* ── Файлы (до W26-D3 — «Артефакты») ─────────────────────────────────────── */
 .rp-artifacts .section-header { margin-bottom: var(--space-3); }
 .rp-artifacts__list { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
 .rp-art {
@@ -212,11 +244,51 @@
 .rp-art__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .rp-art__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .rp-art__title-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
+/* Узкая колонка (правая панель + кнопки) — бейджи не вылезают за строку. */
+.rp-art__title-row .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .rp-art__title { font-size: var(--text-base); font-weight: 500; overflow-wrap: anywhere; }
 .rp-art__kind { flex: none; }
 .rp-art__path { display: flex; min-width: 0; }
 .rp-art__info { color: var(--ui-text-quaternary); white-space: nowrap; }
 .rp-art__actions { justify-content: flex-end; }
+
+/* W20-A1 (B-43): группы «Итоговые / Материалы / Служебные», свёрнутые папки,
+   бейдж «новее свода» и время изменения файла. */
+.rp-artifacts__group + .rp-artifacts__group { margin-top: var(--space-3); }
+.rp-artifacts__group-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2);
+  padding: 0 var(--space-2); margin-bottom: var(--space-1);
+}
+.rp-artifacts__group-title {
+  margin: 0; font-size: var(--text-sm); font-weight: 600; letter-spacing: 0.01em;
+  color: var(--ui-text-secondary);
+}
+.rp-artifacts__folder-item { list-style: none; }
+.rp-artifacts__folder { border-radius: var(--radius-sm); }
+.rp-artifacts__folder > summary {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+  min-height: 32px; padding: var(--space-2); cursor: pointer; border-radius: var(--radius-sm);
+  list-style: none;
+}
+.rp-artifacts__folder > summary::-webkit-details-marker { display: none; }
+.rp-artifacts__folder > summary:hover { background: var(--ui-row-hover-background); }
+.rp-artifacts__folder > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.rp-artifacts__folder-caret {
+  display: grid; place-items: center; color: var(--ui-text-quaternary);
+  transition: transform var(--dur-fast) var(--ease);
+}
+.rp-artifacts__folder[open] .rp-artifacts__folder-caret { transform: rotate(90deg); }
+.rp-artifacts__folder-icon { display: grid; place-items: center; color: var(--ui-text-tertiary); }
+.rp-artifacts__folder-title { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.rp-artifacts__sublist {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  margin: 0 0 var(--space-1); padding: 0 0 0 var(--space-4);
+  list-style: none; border-left: 1px solid var(--ui-stroke-quaternary);
+}
+.rp-art--nested { padding-left: var(--space-2); }
+.rp-art__newer { flex: none; }
+.rp-art__dot { color: var(--ui-text-quaternary); }
+.rp-art__time, .rp-art__size { white-space: nowrap; }
 
 /* ── Хронология ───────────────────────────────────────────────────────────── */
 .rp-timeline .section-header { margin-bottom: var(--space-3); }
@@ -307,6 +379,8 @@
   .rp-actions__select { min-width: 0; flex-basis: 100%; }
   .rp-art { grid-template-columns: 24px minmax(0, 1fr); }
   .rp-art__info, .rp-art__actions { grid-column: 2; }
+  .rp-artifacts__sublist { padding-left: var(--space-2); }
+  .rp-artifacts__group-head { padding: 0 var(--space-1); }
   .rp-event__time { margin-left: 0; }
 }
 

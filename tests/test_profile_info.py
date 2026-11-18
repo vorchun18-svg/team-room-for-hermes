@@ -155,10 +155,10 @@ class CliCallTests(unittest.TestCase):
         fake = _Proc("Анна — финансы и экономика (CFO)\n")
         profile_info.proc.run = fake
         cfg = _cfg(sandbox=False, cli="hermes")
-        text = profile_info.read_description(cfg, "biz-cfo")
+        text = profile_info.read_description(cfg, "team-cfo")
         self.assertEqual(text, "Анна — финансы и экономика (CFO)")
         argv, kwargs = fake.calls[0]
-        self.assertEqual(argv, ["hermes", "profile", "describe", "biz-cfo"])
+        self.assertEqual(argv, ["hermes", "profile", "describe", "team-cfo"])
         self.assertTrue(kwargs.get("capture_output"))
         self.assertNotIn("shell", kwargs)                  # оболочки нет — argv списком
         self.assertEqual(kwargs.get("timeout"), profile_info.TIMEOUT)
@@ -181,9 +181,9 @@ class CliCallTests(unittest.TestCase):
     def test_sandbox_never_calls_cli(self):
         fake = _Proc("Анна — финансы")
         profile_info.proc.run = fake
-        got = profile_info.labels(_cfg(sandbox=True), ["biz-cfo"])
-        self.assertEqual(got["biz-cfo"]["label"], "")
-        self.assertFalse(got["biz-cfo"]["pending"])
+        got = profile_info.labels(_cfg(sandbox=True), ["team-cfo"])
+        self.assertEqual(got["team-cfo"]["label"], "")
+        self.assertFalse(got["team-cfo"]["pending"])
         self.assertEqual(fake.calls, [])
 
 
@@ -200,51 +200,51 @@ class CacheTests(unittest.TestCase):
 
     def _reader(self, cfg, profile):
         self.calls.append(profile)
-        return {"biz-cfo": "Анна — финансы и экономика (CFO)",
-                "biz-ops": "Марина — исследования, поставщики, доставка",
+        return {"team-cfo": "Анна — финансы и экономика (CFO)",
+                "team-ops": "Марина — исследования, поставщики, доставка",
                 "default": "(no description set for 'default')"}.get(profile, "")
 
     def test_background_fill_and_cache(self):
         profile_info.set_reader(self._reader)
         cfg = _cfg(sandbox=False)
-        first = profile_info.labels(cfg, ["biz-cfo", "default"])
+        first = profile_info.labels(cfg, ["team-cfo", "default"])
         # ответ мгновенный: подписи ещё нет, но запрос уже в фоне
-        self.assertEqual(first["biz-cfo"]["label"], "")
-        self.assertTrue(first["biz-cfo"]["pending"])
+        self.assertEqual(first["team-cfo"]["label"], "")
+        self.assertTrue(first["team-cfo"]["pending"])
         self.assertTrue(profile_info.wait(5))
-        second = profile_info.labels(cfg, ["biz-cfo", "default"])
-        self.assertEqual(second["biz-cfo"]["name"], "Анна")
-        self.assertEqual(second["biz-cfo"]["job"], "финансы и экономика (CFO)")
-        self.assertEqual(second["biz-cfo"]["label"], "Анна — финансы и экономика (CFO)")
-        self.assertEqual(second["biz-cfo"]["source"], "describe")
-        self.assertFalse(second["biz-cfo"]["pending"])
+        second = profile_info.labels(cfg, ["team-cfo", "default"])
+        self.assertEqual(second["team-cfo"]["name"], "Анна")
+        self.assertEqual(second["team-cfo"]["job"], "финансы и экономика (CFO)")
+        self.assertEqual(second["team-cfo"]["label"], "Анна — финансы и экономика (CFO)")
+        self.assertEqual(second["team-cfo"]["source"], "describe")
+        self.assertFalse(second["team-cfo"]["pending"])
         # профиль без описания — не ошибка и не «pending»
         self.assertEqual(second["default"]["label"], "")
-        self.assertEqual(sorted(self.calls), ["biz-cfo", "default"])
+        self.assertEqual(sorted(self.calls), ["team-cfo", "default"])
 
         # свежий кэш: повторные вызовы CLI не запускают
-        third = profile_info.labels(cfg, ["biz-cfo"])
-        self.assertEqual(third["biz-cfo"]["label"], "Анна — финансы и экономика (CFO)")
-        self.assertEqual(sorted(self.calls), ["biz-cfo", "default"])
+        third = profile_info.labels(cfg, ["team-cfo"])
+        self.assertEqual(third["team-cfo"]["label"], "Анна — финансы и экономика (CFO)")
+        self.assertEqual(sorted(self.calls), ["team-cfo", "default"])
 
     def test_stale_value_is_given_at_once(self):
         profile_info.set_reader(self._reader)
         cfg = _cfg(sandbox=False)
-        profile_info.labels(cfg, ["biz-cfo"])
+        profile_info.labels(cfg, ["team-cfo"])
         profile_info.wait(5)
         later = time.time() + profile_info.TTL + 1
-        got = profile_info.labels(cfg, ["biz-cfo"], now=later)
-        self.assertEqual(got["biz-cfo"]["label"], "Анна — финансы и экономика (CFO)")
-        self.assertTrue(got["biz-cfo"]["stale"])           # обновление пошло в фон
+        got = profile_info.labels(cfg, ["team-cfo"], now=later)
+        self.assertEqual(got["team-cfo"]["label"], "Анна — финансы и экономика (CFO)")
+        self.assertTrue(got["team-cfo"]["stale"])           # обновление пошло в фон
         self.assertTrue(profile_info.wait(5))
 
     def test_two_requests_do_not_duplicate_work(self):
         profile_info.set_reader(self._reader)
         cfg = _cfg(sandbox=False)
-        profile_info.labels(cfg, ["biz-cfo"])
-        profile_info.labels(cfg, ["biz-cfo"])
+        profile_info.labels(cfg, ["team-cfo"])
+        profile_info.labels(cfg, ["team-cfo"])
         profile_info.wait(5)
-        self.assertEqual(self.calls.count("biz-cfo"), 1)
+        self.assertEqual(self.calls.count("team-cfo"), 1)
 
     def test_reader_exception_does_not_break_labels(self):
         def boom(cfg, profile):
@@ -252,9 +252,9 @@ class CacheTests(unittest.TestCase):
 
         profile_info.set_reader(boom)
         cfg = _cfg(sandbox=False)
-        profile_info.labels(cfg, ["biz-cfo"])
+        profile_info.labels(cfg, ["team-cfo"])
         self.assertTrue(profile_info.wait(5))
-        self.assertEqual(profile_info.labels(cfg, ["biz-cfo"])["biz-cfo"]["label"], "")
+        self.assertEqual(profile_info.labels(cfg, ["team-cfo"])["team-cfo"]["label"], "")
 
 
 try:                                        # песочница пишется другим исполнителем
@@ -271,7 +271,7 @@ class ServerTeamLabelTests(unittest.TestCase):
     ROOM = {
         "id": "lab", "title": "Лаборатория подписей", "icon": "folder", "board": "team",
         "tenant": "room:lab", "orchestrator": "default", "critic": None,
-        "members": [{"profile": "biz-cfo", "role": "worker", "note": "Финансы", "pinned": False,
+        "members": [{"profile": "team-cfo", "role": "worker", "note": "Финансы", "pinned": False,
                      "added_at": 1793000000, "label": ""}],
         "context_files": [], "project_dir": "", "mode_default": "auto", "critic_pass": False,
         "max_rounds": 1, "created_at": 1793000000, "archived": False,
@@ -282,7 +282,7 @@ class ServerTeamLabelTests(unittest.TestCase):
         self.sb = Sandbox().__enter__()
         # свои профили Hermes: песочница не должна читать настоящие
         self.home = Path(tempfile.mkdtemp(prefix="teamroom-profiles-"))
-        for name, description in (("biz-cfo", "Анна — финансы и экономика (CFO)"),
+        for name, description in (("team-cfo", "Анна — финансы и экономика (CFO)"),
                                   ("no-desc", "")):
             folder = self.home / "profiles" / name
             folder.mkdir(parents=True, exist_ok=True)
@@ -328,7 +328,7 @@ class ServerTeamLabelTests(unittest.TestCase):
     def test_team_member_has_label_from_profile(self):
         status, team = self._call("GET", "/api/rooms/lab/team")
         self.assertEqual(status, 200, team)
-        member = self._member("biz-cfo")
+        member = self._member("team-cfo")
         self.assertEqual(member["name"], "Анна")
         self.assertEqual(member["job"], "финансы и экономика (CFO)")
         self.assertEqual(member["label"], "Анна — финансы и экономика (CFO)")
@@ -341,22 +341,22 @@ class ServerTeamLabelTests(unittest.TestCase):
         self.assertEqual(director["label_source"], "role")
 
     def test_manual_label_wins_and_clears(self):
-        status, payload = self._call("PUT", "/api/rooms/lab/agents/biz-cfo/label",
+        status, payload = self._call("PUT", "/api/rooms/lab/agents/team-cfo/label",
                                      {"label": "Ира — бухгалтер проекта"})
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["label"], "Ира — бухгалтер проекта")
-        member = self._member("biz-cfo")
+        member = self._member("team-cfo")
         self.assertEqual(member["label"], "Ира — бухгалтер проекта")
         self.assertEqual(member["label_source"], "member")
         self.assertEqual(member["custom_label"], "Ира — бухгалтер проекта")
         # подпись живёт в реестре комнаты
         rooms = json.loads((Path(self.sb.cfg.data_dir) / "rooms.json").read_text(encoding="utf-8"))
-        stored = [m for m in rooms["rooms"][0]["members"] if m["profile"] == "biz-cfo"][0]
+        stored = [m for m in rooms["rooms"][0]["members"] if m["profile"] == "team-cfo"][0]
         self.assertEqual(stored["label"], "Ира — бухгалтер проекта")
         # пустая подпись — снова описание профиля
-        status, _ = self._call("PUT", "/api/rooms/lab/agents/biz-cfo/label", {"label": ""})
+        status, _ = self._call("PUT", "/api/rooms/lab/agents/team-cfo/label", {"label": ""})
         self.assertEqual(status, 200)
-        member = self._member("biz-cfo")
+        member = self._member("team-cfo")
         self.assertEqual(member["label"], "Анна — финансы и экономика (CFO)")
         self.assertEqual(member["label_source"], "profile")
 
@@ -383,7 +383,7 @@ class ServerTeamLabelTests(unittest.TestCase):
         self.assertEqual(status, 404, payload)
 
     def test_label_must_be_text(self):
-        status, payload = self._call("PUT", "/api/rooms/lab/agents/biz-cfo/label", {"label": 42})
+        status, payload = self._call("PUT", "/api/rooms/lab/agents/team-cfo/label", {"label": 42})
         self.assertEqual(status, 400, payload)
         self.assertEqual(payload["error"]["detail"].get("field"), "label")
 
@@ -391,9 +391,9 @@ class ServerTeamLabelTests(unittest.TestCase):
         status, payload = self._call("GET", "/api/profiles")
         self.assertEqual(status, 200, payload)
         items = {item["profile"]: item for item in payload["items"]}
-        self.assertIn("biz-cfo", items)
-        self.assertEqual(items["biz-cfo"]["label"], "Анна — финансы и экономика (CFO)")
-        self.assertEqual(items["biz-cfo"]["label_source"], "profile")
+        self.assertIn("team-cfo", items)
+        self.assertEqual(items["team-cfo"]["label"], "Анна — финансы и экономика (CFO)")
+        self.assertEqual(items["team-cfo"]["label_source"], "profile")
 
 
 if __name__ == "__main__":

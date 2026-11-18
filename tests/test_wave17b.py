@@ -85,7 +85,7 @@ class ReactionTimeTests(_B12Base):
         qid = self.question_of(rid)["id"]
         answer_at = int(time.time()) - 10
         self.answer_at(rid, qid, "Нет, финансиста не добавляем", answer_at)
-        self.comment_at(rid, "biz-critic", "%s %s] Принято: всё учтено"
+        self.comment_at(rid, "team-critic", "%s %s] Принято: всё учтено"
                         % (answers_mod.REACTION_MARK, qid), answer_at + 5)
         question = self.question_of(rid)
         self.assertIsNone(question["reaction"], question)

@@ -5,12 +5,14 @@
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 
 try:  # пакетный и «плоский» импорт
     from . import config
     from . import answers as answers_mod
+    from . import decision_registry as dec_reg
     from . import idempotency as idem_mod
     from .app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM, BACKLOG_STATUSES,
                              MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS, REPORT_KEY_RE, TASK_ID_RE,
@@ -23,6 +25,7 @@ try:  # пакетный и «плоский» импорт
 except ImportError:  # pragma: no cover
     import config  # type: ignore
     import answers as answers_mod  # type: ignore
+    import decision_registry as dec_reg  # type: ignore
     import idempotency as idem_mod  # type: ignore
     from app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM,  # type: ignore
                             BACKLOG_STATUSES, MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS,
@@ -34,6 +37,45 @@ except ImportError:  # pragma: no cover
 
 #: Поля комнаты сверх общего списка — только критик (W13-E §9).
 CRITIC_PATCH_FIELDS = frozenset({"critic_mode", "critic_round_cap"})
+
+
+def remember_decision(cfg, room: dict, root_id: str, decision_id: str, status: str,
+                      text=None, why=None) -> dict:
+    """Записать решение в реестр комнаты сразу после действия владельца (W25 M1).
+
+    Паспорт комнаты и контекст-пакет читают решения из реестра, поэтому снятие
+    («неактуально») и отклонение должны становиться новой строкой журнала, а не
+    ждать следующего приёма ответа. Сбой реестра не отменяет действие: оно уже
+    сохранено в реестре ответов комнаты.
+    """
+    room_id = str((room or {}).get("id") or "")
+    if not room_id:
+        return {}
+    try:
+        written = dec_reg.set_status(cfg, room_id, "%s:%s" % (root_id, decision_id), status,
+                                     by="user", why=why, source_request=root_id, text=text)
+        if written:
+            dec_reg.project_decisions(cfg, room_id)
+            dec_reg.write_snapshot(cfg, room_id)
+            dec_reg.write_mirror(cfg, room_id)
+        return {"rows": len(written), "status": status}
+    except Exception as exc:  # noqa: BLE001 - реестр не важнее действия
+        return {"error": str(exc)[:200]}
+
+
+def message_fingerprint(text: str, attach, urgent: bool) -> str:
+    """Отпечаток сообщения для дедупликации (W20-C1 §1.3, B-39).
+
+    Один автор (Михаил), текст без лишних пробелов, вложения и «срочность».
+    Тот же отпечаток в окне 120 с ⇒ это повтор, а не второе сообщение.
+    """
+    body = "\u0001".join([
+        str(AUTHOR_MAXIM),
+        " ".join(str(text or "").split()),
+        "\u0000".join(str(path) for path in (attach or [])),
+        "1" if urgent else "0",
+    ])
+    return hashlib.sha1(body.encode("utf-8")).hexdigest()[:20]
 
 
 class WriteRoutes:
@@ -201,6 +243,115 @@ class WriteRoutes:
             fresh = self._room(room_id)
         return 200, {"ok": True, "changed": bool(changed), "room": self._room_summary(fresh)}, {}
 
+    # --- этапы проекта: предложение руководителя (W20 §1.7, F-2) --------------
+    def h_phases_proposal(self, query, body, room_id):
+        """``POST /api/rooms/{id}/phases/proposal`` — принять или отклонить этапы.
+
+        Тело: ``{action:"accept"|"accept_selected"|"reject", ids?:[...]}``.
+
+        Принятые этапы ДОПИСЫВАЮТСЯ в конец списка комнаты: порядок, названия и
+        удаления, сделанные человеком, не меняются (совпавший этап пропускается).
+        Решение меняет два поля комнаты (``phases`` и ``phases_proposal``) одним
+        движением под замком реестра — ``rooms.set_phases_state``.
+        """
+        room = self._room(room_id)
+        if room.get("archived"):
+            raise err(409, "Комната в архиве — этапы не меняются", room=room_id)
+        body = body if isinstance(body, dict) else {}
+        phase_mod = self.mod("phase_book")
+        action = str(body.get("action") or "").strip()
+        if action not in phase_mod.PROPOSAL_ACTIONS:
+            raise err(400, "Действие: accept, accept_selected или reject", field="action",
+                      value=action, allowed=list(phase_mod.PROPOSAL_ACTIONS))
+        raw_ids = body.get("ids")
+        chosen: list = []
+        if raw_ids is not None:
+            if not isinstance(raw_ids, list) or not all(isinstance(x, str) for x in raw_ids):
+                raise err(400, "ids: список идентификаторов этапов", field="ids")
+            chosen = [x.strip() for x in raw_ids if x.strip()]
+        if action == "accept_selected" and not chosen:
+            raise err(400, "Выберите хотя бы один этап", field="ids")
+        proposal = phase_mod.proposal_of(room)
+        if proposal is None:
+            raise err(409, "Руководитель ещё не предлагал этапы — принимать нечего",
+                      reason="no_proposal", room=room_id)
+        if proposal.get("state") != "proposed":
+            wanted = "rejected" if action == "reject" else "accepted"
+            if proposal.get("state") == wanted:      # повторный клик — не ошибка
+                return 200, {"ok": True, "action": action, "changed": False,
+                             "state": proposal["state"],
+                             "phases": phase_mod.norm(room.get("phases")) or [],
+                             "proposal": proposal, "added": [], "skipped": [],
+                             "text": phase_mod.state_text(proposal),
+                             "room": self._room_detail(room)}, {}
+            word = "принято" if proposal.get("state") == "accepted" else "отклонено"
+            raise err(409, "Предложение этапов уже %s — решение принято" % word,
+                      reason="already_decided", state=proposal.get("state"))
+        try:
+            decided = phase_mod.decide(room.get("phases") or [], proposal, action, chosen)
+        except phase_mod.PhaseError as exc:
+            raise err(400, exc.message, **dict(exc.detail or {})) from exc
+        with self.engine():
+            res = self.call("rooms", "set_phases_state",
+                            ((self.cfg, room_id),
+                             {"phases": decided["phases"], "proposal": decided["proposal"]}))
+        fresh = res.get("room") if isinstance(res, dict) else None
+        if not isinstance(fresh, dict) or not fresh.get("id"):
+            fresh = self._room(room_id)
+        try:                       # журнал комнаты: что именно решили (вторично)
+            self.call("ingest", "log_phases_decision",
+                      ((self.cfg, room_id, fresh, decided, action), {}))
+        except Exception as exc:  # noqa: BLE001 - решение уже сохранено
+            self.log.warning("журнал этапов %s: %s" % (room_id, exc))
+        current = fresh.get("phases_proposal") or decided["proposal"]
+        payload = {"ok": True, "action": action,
+                   "changed": bool(res.get("changed")) if isinstance(res, dict) else True,
+                   "state": current.get("state"),
+                   "phases": fresh.get("phases") or [],
+                   "proposal": current,
+                   "added": list(decided.get("added") or []),
+                   "skipped": list(decided.get("skipped") or []),
+                   "text": phase_mod.state_text(current),
+                   "room": self._room_detail(fresh)}
+        return 200, payload, {}
+
+    def h_phases_propose(self, query, body, room_id):
+        """``POST /api/rooms/{id}/phases/propose`` — карточка «предложи этапы».
+
+        Тело: ``{note?}``. Пока предложение ждёт решения, вторую карточку не
+        ставим (409): сначала «принять» или «отклонить», иначе руководитель будет
+        присылать одно и то же. Модели запускает штатный диспетчер, как у любого
+        запроса — приложение само ничего не запускает.
+        """
+        room = self._room(room_id)
+        if room.get("archived"):
+            raise err(409, "Комната в архиве — этапы не предлагаются", room=room_id)
+        body = body if isinstance(body, dict) else {}
+        note = body.get("note")
+        if note is not None and not isinstance(note, str):
+            raise err(400, "note: нужен текст строкой", field="note")
+        if has_nul(note or ""):
+            raise err(400, "В пояснении есть непечатаемый символ", field="note")
+        if len(note or "") > 2000:
+            raise err(400, "Пояснение: %d знаков, а можно не больше 2000"
+                      % len(note or ""), field="note", length=len(note or ""), limit=2000)
+        phase_mod = self.mod("phase_book")
+        pending = phase_mod.proposal_of(room)
+        if pending and pending.get("state") == "proposed":
+            raise err(409, "Руководитель уже предложил этапы — сначала примите или отклоните",
+                      reason="proposal_pending", at=pending.get("at"),
+                      text=phase_mod.state_text(pending))
+        try:
+            res = phase_mod.propose(self.cfg, room, note or "")
+        except phase_mod.PhaseError as exc:
+            raise err(409, exc.message, **dict(exc.detail or {})) from exc
+        root_id = str(res.get("root_id") or "")
+        payload = {"ok": True, "action": "phases_propose", "root_id": root_id,
+                   "title": res.get("title"), "warning": res.get("warning"),
+                   "request": self._summary_or_local(room, root_id, res.get("body") or "",
+                                                     res.get("title") or "", False, "auto")}
+        return 201, payload, {"Location": "/api/requests/" + root_id}
+
     def h_member_add(self, query, body, room_id):
         room = self._room(room_id)
         profile = str(body.get("profile") or "").strip()
@@ -367,6 +518,15 @@ class WriteRoutes:
         if action not in ACTION_ALLOWED:
             raise err(400, "Неизвестное действие", action=action, allowed=list(ACTION_ALLOWED))
         room, rec = self._find_record(rid)
+        if action == "approval":
+            # W22-AP1 §2.2: «разрешить один раз / разрешать всегда / запретить» —
+            # блокировка «опасной» команды в карточке. Свой обработчик: тело другое
+            # (approval_id, decision, note), текст в карточку пишет он же.
+            return self._approval_action(room, rec, rid, body)
+        if action in ("card_stop", "card_resume", "card_model"):
+            # W23-MG1 §2.8: действия над ОДНОЙ карточкой — остановить работу, продолжить,
+            # сменить модель. Свой обработчик: тело другое (task_id, model, provider, note).
+            return self._card_action(room, rec, rid, body, action)
         kw: dict = {}
         for field in ("task_id", "question_id", "profile", "step_id", "decision_id"):
             if field in body and body.get(field) is not None:
@@ -382,8 +542,18 @@ class WriteRoutes:
             raise err(400, "Нужны поля: " + ", ".join(missing), missing=missing)
         if action in ACTION_TEXT:
             text = body.get("text")
+            if text is not None and not isinstance(text, str):
+                # W21-REV2: мусор вместо строки (число, список, объект) — отказ, а не
+                # «пустой текст». Иначе `text: 123` + need_explanation молча уходил бы
+                # стандартной просьбой, и человек не понял бы, куда делись его слова.
+                raise err(400, "Поле text должно быть строкой", field="text",
+                          value=str(text)[:80])
             if not isinstance(text, str) or not text.strip():
-                raise err(400, "Нужен текст", field="text")
+                # W21-Q1 (B-44): «Пояснить» работает и без текста — вопрос бывает
+                # просто непонятен, писать нечего. Ответ без текста — по-прежнему отказ.
+                if not (action == "answer" and body.get("need_explanation") is True):
+                    raise err(400, "Нужен текст", field="text")
+                text = ""
             if len(text) > MAX_NOTE:
                 raise err(400, text_too_long("Текст", len(text), MAX_NOTE),
                           field="text", length=len(text), limit=MAX_NOTE)
@@ -435,13 +605,20 @@ class WriteRoutes:
             return self._remind_lead(room, rec, rid, kw)
         if action == "answers_resend":         # W17-B §3: накопленные ответы — только по клику
             return self._answers_resend(room, rec, rid)
+        if action == "svod_refresh":           # W20-S1 §1.1 (B-36): «Обновить сейчас»
+            return self._svod_refresh(room, rec, rid, body)
         if action in ("step_agree", "step_comment", "step_move", "step_drop"):
             # §12: действия пользователя по шагу — «Согласен», «Прокомментировать»,
             # «Переместить», «Не согласен — убрать» (общий механизм ответа, §5/§6).
             return self._step_action(room, rec, rid, kw, action[len("step_"):], body)
         if action == "decision":
             # W19-D2 §1 (B-20): действие над решением «предложено».
+            # W20-D1 §1.2 (B-37): сюда же приходят «Снять — неактуально» и «Вернуть».
             return self._decision_action(room, rec, rid, kw, body)
+        if action == "question_dismiss":
+            # W20-D1 §1.2 (B-38): «Это не вопрос» — для вопросов из карточек и
+            # из комментариев руководителя (кандидаты под «Что решить…»).
+            return self._question_dismiss(room, rec, rid, kw)
         question = None
         need_explanation = body.get("need_explanation")
         if need_explanation is not None and not isinstance(need_explanation, bool):
@@ -452,24 +629,43 @@ class WriteRoutes:
         if action == "answer":
             before = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"),
                                   rec.get("answers"))
-            question = next((q for q in before.get("open_questions") or []
-                             if str(q.get("id")) == str(kw.get("question_id"))), None)
+            question = self._find_question(room, rid, before, str(kw.get("question_id")),
+                                           rec.get("answers"))
             if question is None:
                 raise err(404, "Вопрос не найден", question_id=kw.get("question_id"))
             if question.get("answered"):
                 raise err(409, "Вопрос уже отвечен", question_id=kw.get("question_id"))
+            if question.get("dismissed"):
+                raise err(409, "Этот вопрос вы сняли как «не вопрос»", question_id=kw.get("question_id"))
             # §3 / W17-B §2: встречный вопрос — ТОЛЬКО явная кнопка. Эвристика по
             # тексту больше не решает: она ошибалась на старых записях (B5). Текст,
             # похожий на просьбу пояснить, лишь подсказка для журнала.
             need_explanation = bool(need_explanation)
             if not need_explanation and answers_mod.explanation_hint({"text": user_text}):
                 self._answer_hint_journal(room.get("id"), kw.get("question_id"))
+            # W21-Q1 (B-44): пустое поле + «Пояснить» → стандартная просьба.
+            # Дальше всё как у пояснения с текстом: метка в ветке, карточка
+            # руководителю, статус `waiting_explanation`, вопрос остаётся открытым.
+            if need_explanation and not answers_mod.norm(user_text):
+                user_text = answers_mod.DEFAULT_EXPLAIN_TEXT
+                kw["text"] = user_text
             # §1: ответ уходит в ветку с меткой, по которой видно, НА КАКОЙ вопрос отвечено
             kw["text"] = (answers_mod.explanation_comment(kw.get("question_id"), question.get("text"), user_text)
                           if need_explanation else
                           answers_mod.answer_comment(kw.get("question_id"), question.get("text"), user_text))
             steps_before = [s for s in (before.get("next_steps") or [])
                             if isinstance(s, dict) and s.get("id")]
+        # W21-Q1 (B-44): двойное нажатие «Пояснить» в окне 120 с — ОДНА просьба.
+        # Ключ — запрос, вопрос и текст просьбы (набрал другой текст — новая просьба).
+        explain_slot = ""
+        if action == "answer" and need_explanation:
+            explain_slot = "%s:%s:%s" % (
+                rid, kw.get("question_id") or "",
+                hashlib.sha1(answers_mod.norm(user_text).encode("utf-8")).hexdigest()[:16])
+            replayed = idem_mod.GUARD.replay(explain_slot, scope="answer_explain")
+            if replayed is not None:
+                replayed["duplicate"] = True
+                return 200, replayed, {"Cache-Control": "no-store"}
         with self.engine():
             res = self.call("engine_write", "act",
                             ((self.cfg, room.get("board") or self.board, rid, action), dict(kw)))
@@ -537,6 +733,9 @@ class WriteRoutes:
         if retry_slot:
             # Запомнили ответ: повторное нажатие получит его же и ничего не запустит.
             idem_mod.GUARD.remember(retry_slot, payload, scope="retry")
+        if explain_slot:
+            # W21-Q1 (B-44): та же просьба о пояснении в окне 120 с — не вторая.
+            idem_mod.GUARD.remember(explain_slot, payload, scope="answer_explain")
         return 200, payload, {}
 
     # --- диалог по запросу (Блок A + Д1) ---
@@ -574,6 +773,27 @@ class WriteRoutes:
         urgent = body.get("urgent")
         if urgent is not None and not isinstance(urgent, bool):
             raise err(400, "urgent: true или false", field="urgent")
+        # W20-C1 §1.3 (B-39): повтор нажатия не создаёт второе сообщение.
+        # Ключ — `client_id` нажатия, и дополнительно «тот же текст от того же
+        # автора» в окне 120 с: диктовка уходила дважды из двух окон вкладки.
+        client_id = ""
+        raw_cid = body.get("client_id")
+        if raw_cid is not None:
+            if not isinstance(raw_cid, str) or has_nul(raw_cid) or not raw_cid.strip() \
+                    or len(raw_cid) > 120:
+                raise err(400, "client_id: строка до 120 знаков", field="client_id")
+            client_id = raw_cid.strip()
+        slots = []
+        if client_id:
+            slots.append("%s:cid:%s" % (rid, client_id))
+        slots.append("%s:txt:%s" % (rid, message_fingerprint(text, attach, bool(urgent))))
+        for slot in slots:
+            replay = idem_mod.GUARD.replay(slot, scope="messages")
+            if replay is not None:
+                # Прежний ответ как есть (та же запись ленты) + понятный признак.
+                replay["duplicate"] = True
+                replay["client_id"] = client_id
+                return 200, replay, {"Cache-Control": "no-store"}
         with self.engine():
             res = self.call("thread", "post_message",
                             ((self.cfg, room, rid, text), {"attach": attach, "urgent": bool(urgent)}),
@@ -586,8 +806,36 @@ class WriteRoutes:
         for key in ("task_id", "status", "revision", "retry"):
             if res.get(key) is not None:
                 payload[key] = res[key]
+        payload["duplicate"] = False
+        if client_id:
+            payload["client_id"] = client_id
+        # W23-MG1 §2.8: любое сообщение по запросу возобновляет карточки, остановленные
+        # человеком («Продолжай» в чат = кнопка «Продолжить»): текст уже в ветке, агент
+        # увидит его, когда стартует заново с контекстом карточки.
+        resumed = self._resume_stopped_cards(room, rid, text)
+        if resumed:
+            payload["resumed"] = resumed
+        # Помним ответ по всем ключам нажатия: повтор в окне 120 с получит его же.
+        for slot in slots:
+            idem_mod.GUARD.remember(slot, payload, scope="messages")
         return 201, payload, {"Location": "/api/requests/" + str(rid),
                               "Cache-Control": "no-cache"}
+
+    def _resume_stopped_cards(self, room: dict, rid: str, text: str = "") -> list:
+        """Возобновить карточки запроса, остановленные человеком (W23-MG1 §2.8).
+
+        Ошибка возобновления не должна ломать отправку сообщения: текст уже в ветке,
+        карточку можно поднять кнопкой «Продолжить».
+        """
+        if not self._has_mod("model_guard"):
+            return []
+        try:
+            module = self.mod("model_guard")
+            return list(module.resume_stopped(self.cfg, room, self.board, rid,
+                                              note="сообщение пользователя") or [])
+        except Exception as exc:  # noqa: BLE001 - сообщение важнее возобновления
+            self.log.warning("возобновление карточек %s: %s" % (rid, exc))
+            return []
 
     # --- название запроса: переименование и приоритет источников (W17-B §4) ---
 
@@ -609,15 +857,47 @@ class WriteRoutes:
                     "title_locked": False}
 
     def h_request_patch(self, query, body, rid):
-        """`PATCH /api/requests/{id}` — переименование названия пользователем.
+        """`PATCH /api/requests/{id}` — название пользователя и закрепление (W20-U3).
 
-        Тело: ``{title}``. Непустое значение → ``title_source="user"``,
-        ``title_locked=true`` (автоматика и модель его больше не трогают).
-        Пустое значение снимает блокировку и возвращает автоматическое название.
-        Полный текст запроса не меняется — переименовывается только название.
+        Тело: ``{title}`` и/или ``{pinned}``.
+
+        * Непустое ``title`` → ``title_source="user"``, ``title_locked=true``
+          (автоматика и модель его больше не трогают); пустое значение снимает
+          блокировку и возвращает автоматическое название.
+        * ``pinned: true|false`` — закрепление запроса в реестре комнаты:
+          закреплённые показываются сверху в «Недавнем» и в списках.
+
+        Полный текст запроса не меняется. Исторический контракт (только `title`)
+        работает как раньше: без `title` и без `pinned` — 400.
         """
         room, rec = self._find_record(rid)
-        if "title" not in body:
+        has_title = "title" in body
+        has_pinned = "pinned" in body
+        if not has_title and not has_pinned:
+            raise err(400, "Нужно поле title или pinned", field="title")
+        if has_pinned:
+            value = body.get("pinned")
+            if value is None or isinstance(value, (dict, list)):
+                raise err(400, "pinned: ожидается true или false", field="pinned", value=value)
+            pinned = (value.strip().lower() in ("1", "true", "yes", "on")
+                      if isinstance(value, str) else bool(value))
+            try:
+                self.call("registry", "set_pinned", ((self.cfg, room.get("id"), rid, pinned), {}))
+            except ApiError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - реестр недоступен
+                raise ApiError(503, "Не удалось сохранить закрепление — попробуйте ещё раз",
+                               detail={"rid": rid, "error": str(exc)[:200]}) from exc
+            rec = self.call("registry", "get", ((self.cfg, room.get("id"), rid), {})) or rec
+            if not has_title:
+                summary = self._summary_or_local(
+                    room, rid, rec.get("text") or "", rec.get("title") or "",
+                    bool(rec.get("critic")), rec.get("mode") or "auto", rec.get("answers"))
+                self._title_view(summary, rec)
+                return 200, {"ok": True, "action": "pin" if pinned else "unpin",
+                             "pinned": bool(pinned), "pinned_at": int(rec.get("pinned_at") or 0),
+                             "request": summary}, {"Cache-Control": "no-store"}
+        if not has_title:
             raise err(400, "Нужно поле title (пустая строка снимает блокировку)", field="title")
         title = body.get("title")
         if title is None:
@@ -643,6 +923,7 @@ class WriteRoutes:
             bool(rec.get("critic")), rec.get("mode") or "auto", updated.get("answers"))
         self._title_view(summary, updated)
         payload = {"ok": True, "action": "rename", "request": summary,
+                   "pinned": bool(updated.get("pinned")),
                    "title_short": summary.get("title_short"),
                    "title_source": summary.get("title_source"),
                    "title_locked": summary.get("title_locked")}
@@ -664,6 +945,31 @@ class WriteRoutes:
         return text if ":" in text else "%s:%s" % (rid, text)
 
     # --- накопленные ответы (W17-B §3, аудит B6) ------------------------------
+
+    def _svod_refresh(self, room: dict, rec: dict, rid: str, body: dict):
+        """«Обновить сейчас» (W20-S1 §1.1, B-36): версия свода по кнопке.
+
+        Идёт ТЕМ ЖЕ путём, что автообновление и кнопка «Доработать с учётом ответов»:
+        карточка доработки руководителю с дайджестом «что появилось после версии».
+        Пока обновление идёт — `409` (второй раз не запускаем).
+        """
+        note = body.get("note", body.get("text")) or ""
+        if not isinstance(note, str):
+            raise err(400, "note: строка", field="note")
+        note = note.strip()
+        if len(note) > MAX_NOTE:
+            raise err(400, text_too_long("Заметка", len(note), MAX_NOTE),
+                      field="note", length=len(note), limit=MAX_NOTE)
+        if has_nul(note):
+            raise err(400, "В тексте есть NUL-байт", field="note")
+        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"),
+                              rec.get("answers"))
+        with self.engine():                    # доменные ошибки → 400/409 (app_common.err)
+            res = self.mod("svod_live").refresh_now(self.cfg, room, rec, detail, note=note)
+        payload = {"ok": True, "action": "svod_refresh",
+                   "card_id": (res or {}).get("card_id"),
+                   "behind": (res or {}).get("behind") or {}}
+        return 200, payload, {}
 
     def _answers_resend(self, room: dict, rec: dict, rid: str):
         """«Отправить руководителю накопленные ответы» — одно действие по клику.
@@ -710,6 +1016,17 @@ class WriteRoutes:
                            code="conflict",
                            detail={"reason": "nothing_to_resend", "pending": 0,
                                    "answers": len(stored)})
+        # W20-C1 §1.3 (B-39): то же нажатие «Отправить накопленные ответы» в окне
+        # 120 с не создаёт вторую карточку — отдаём прежний ответ. Ключ — состав
+        # отправляемого: вопросы и тексты ответов (изменился ответ — новый ключ).
+        digest = hashlib.sha1("\u0001".join(
+            "%s\u0000%s" % (item["question_id"], item["answer"]) for item in pending
+        ).encode("utf-8")).hexdigest()[:20]
+        slot = "%s:%s" % (rid, digest)
+        replayed = idem_mod.GUARD.replay(slot, scope="answers_resend")
+        if replayed is not None:
+            replayed["duplicate"] = True
+            return 200, replayed, {"Cache-Control": "no-store"}
         with self.engine():
             res = self.call("thread", "post_answers_digest",
                             ((self.cfg, room, rid, [dict(item) for item in pending]), {}))
@@ -731,6 +1048,8 @@ class WriteRoutes:
         payload["request"] = self._summary_or_local(
             room, rid, rec.get("text") or "", rec.get("title") or "",
             bool(rec.get("critic")), rec.get("mode") or "auto", updated)
+        payload["duplicate"] = False
+        idem_mod.GUARD.remember(slot, payload, scope="answers_resend")
         return 200, payload, {}
 
     def _answer_hint_journal(self, room_id, question_id) -> None:
@@ -790,9 +1109,11 @@ class WriteRoutes:
             raise err(404, "Ответ на этот вопрос не найден", question_id=qid)
         detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), answers)
         questions = [q for q in (detail.get("open_questions") or []) if isinstance(q, dict)]
-        question = next((q for q in questions if str(q.get("id")) == qid), None)
+        question = self._find_question(room, rid, detail, qid, answers)
         if question is None:
             raise err(404, "Вопрос не найден", question_id=qid)
+        if question not in questions:
+            questions = questions + [question]     # вопрос из комментария (B-38)
         # Один поиск реакции: та же функция, тот же набор вопросов, что в окне.
         try:
             thread_items = self.call("thread", "get_thread", ((self.cfg, rid), {"room": room})) or []
@@ -970,7 +1291,7 @@ class WriteRoutes:
 
         * в ветке — метка ``[Михаил · решение d_x «текст решения»] Принять: …``;
         * в реестре — запись ``answers[d_x]`` с ``kind="decision"``; её читают деталь
-          запроса, вкладка «Дальше» и счётчики, поэтому принятое/отклонённое сразу
+          запроса, вкладка «От вас нужно» и счётчики, поэтому принятое/отклонённое сразу
           уходит из «Нужен ваш ответ» (данные API, без перезагрузки);
         * руководителю — карточка «Уточнение» с контрактом реакции
           (``metadata.reaction.outcome``), чтобы исход был явным, а не по словам.
@@ -982,9 +1303,15 @@ class WriteRoutes:
         if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", decision_id):
             raise err(400, "Некорректный id решения", field="decision_id", value=decision_id[:80])
         outcome = str(body.get("decision") or body.get("outcome") or "").strip().lower()
-        if outcome not in answers_mod.DECISION_ACTIONS:
-            raise err(400, "decision: принять/отклонить/обсудить",
-                      field="decision", allowed=list(answers_mod.DECISION_ACTIONS), value=outcome[:40])
+        if outcome in ("dismiss", "restore"):
+            # W20-D1 §1.2 (B-37): «Снять — неактуально» и «Вернуть» — не ответ
+            # руководителю, а фильтр списка; отдельная ветка, без карточки-запуска.
+            return self._decision_status_action(room, rec, rid, decision_id, outcome, body)
+        if outcome not in ("accept", "reject", "discuss"):
+            raise err(400, "decision: принять/отклонить/обсудить/снять/вернуть",
+                      field="decision",
+                      allowed=["accept", "reject", "discuss", "dismiss", "restore"],
+                      value=outcome[:40])
         text = body.get("text")
         text = text.strip() if isinstance(text, str) else ""
         if len(text) > MAX_NOTE:
@@ -1014,6 +1341,11 @@ class WriteRoutes:
         answers = dict(rec.get("answers") or {})
         answers[decision_id] = record
         self._save_answers(room, rid, answers)
+        # W25 M1: в реестр комнаты — сразу (паспорт читает только его).
+        if outcome in ("accept", "reject"):
+            remember_decision(self.cfg, room, rid, decision_id,
+                              {"accept": "accepted", "reject": "rejected"}[outcome],
+                              text=decision.get("text"), why=text or None)
         # Ветка: решение уходит руководителю тем же путём, что и ответ на вопрос.
         try:
             with self.engine():
@@ -1044,7 +1376,138 @@ class WriteRoutes:
             bool(rec.get("critic")), rec.get("mode") or "auto", answers)
         return 200, payload, {}
 
-    # --- проверки значений действия (D1) ---
+    # --- снятие и возврат решения, «это не вопрос» (W20-D1, B-37, B-38) ---
+
+    def _thread_items(self, room: dict, rid: str) -> list:
+        """Лента запроса для разбора вопросов руководителя (сбой — пустая лента)."""
+        try:
+            items = self.call("thread", "get_thread", ((self.cfg, rid), {"room": room})) or []
+        except Exception as exc:  # noqa: BLE001 - лента вторична
+            self.log.warning("лента %s: %s" % (rid, exc))
+            return []
+        return [item for item in items if isinstance(item, dict)]
+
+    def _find_question(self, room: dict, rid: str, detail: dict, qid: str, answers=None) -> dict | None:
+        """Вопрос по id: сначала из карточек запроса, затем из ленты (B-38).
+
+        Вопросы руководителя из комментариев живут не в metadata, а в ленте — без
+        этого поиска на них нельзя было бы ответить из «Нужен ваш ответ».
+        """
+        qid = str(qid or "")
+        for question in (detail or {}).get("open_questions") or []:
+            if isinstance(question, dict) and str(question.get("id")) == qid:
+                return question
+        if not qid:
+            return None
+        from_comment = answers_mod.questions_from_thread(
+            self._thread_items(room, rid), lead=room.get("orchestrator"),
+            dismissed=answers if isinstance(answers, dict) else None)
+        for question in from_comment:
+            if str(question.get("id")) == qid:
+                return question
+        return None
+
+    def _decision_status_action(self, room: dict, rec: dict, rid: str, decision_id: str,
+                                action: str, body: dict):
+        """«Снять — неактуально» / «Вернуть» (W20-D1 §1.2, B-37).
+
+        Снятое решение уходит из «Нужен ваш ответ» и из счётчиков, но остаётся в списке
+        «Решения» серым — с возможностью вернуть. Руководителю это не карточка-запуск
+        (он не должен просыпаться из-за уборки списка): только запись в реестре и
+        короткая метка в ветке, чтобы было видно, что решение снято и почему.
+        """
+        body = body if isinstance(body, dict) else {}
+        text = body.get("text")
+        text = text.strip() if isinstance(text, str) else ""
+        if len(text) > MAX_NOTE:
+            raise err(400, text_too_long("Текст", len(text), MAX_NOTE), field="text",
+                      length=len(text), limit=MAX_NOTE)
+        if has_nul(text):
+            raise err(400, "В тексте есть NUL-байт", field="text")
+        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"),
+                              rec.get("answers"))
+        decision = next((d for d in detail.get("decisions") or []
+                         if isinstance(d, dict) and str(d.get("id")) == decision_id), None)
+        if decision is None:
+            raise err(404, "Решение не найдено", decision_id=decision_id)
+        answers = dict(rec.get("answers") or {})
+        entry = answers.get(decision_id) if isinstance(answers.get(decision_id), dict) else {}
+        history = [item for item in (entry.get("history") or []) if isinstance(item, dict)]
+        if not history and entry.get("action"):
+            history = [{"action": str(entry.get("action")), "at": int(entry.get("at") or 0) or None,
+                        "text": entry.get("user_text")}]
+        at = int(time.time())
+        history.append({"action": action, "at": at, "text": text or None})
+        record = dict(entry)
+        record.update({"kind": "decision", "decision_id": decision_id,
+                       "decision_text": str(decision.get("text") or ""),
+                       "action": action, "history": history,
+                       "outcome": "dismissed" if action == "dismiss" else "proposed",
+                       "text": text or answers_mod.DECISION_ACTION_RU[action],
+                       "user_text": text or None, "at": at, "answered": True,
+                       "status": "dismissed" if action == "dismiss" else "sent",
+                       "decision_status_at_answer": str(decision.get("status") or "proposed")})
+        answers[decision_id] = record
+        self._save_answers(room, rid, answers)
+        # W25 M1: снятие/возврат — новая строка реестра комнаты со ссылкой на прежнюю.
+        remember_decision(self.cfg, room, rid, decision_id,
+                          "dismissed" if action == "dismiss" else "proposed",
+                          text=decision.get("text"), why=text or None)
+        mark = answers_mod.decision_comment(action, decision_id, decision.get("text") or "", text)
+        try:
+            with self.engine():
+                self.call("engine_write", "act",
+                          ((self.cfg, room.get("board") or self.board, rid, "comment"),
+                           {"text": mark, "author": AUTHOR_MAXIM}))
+        except Exception as exc:  # noqa: BLE001 - запись в реестре уже есть
+            self.log.warning("метка %s по решению %s не записана: %s" % (action, decision_id, exc))
+        view = answers_mod.apply_decision(dict(decision), record, None)
+        payload = {"ok": True, "action": "decision", "decision_id": decision_id,
+                   "decision": view, "message": mark,
+                   "action_label": answers_mod.DECISION_ACTION_RU[action],
+                   "status": view.get("status"), "status_label": view.get("status_label"),
+                   "status_hint": view.get("status_hint"),
+                   "open": bool(view.get("open")), "muted": bool(view.get("status_muted"))}
+        payload["decisions_summary"] = answers_mod.decision_summary(
+            [view] + [d for d in detail.get("decisions") or []
+                      if isinstance(d, dict) and str(d.get("id")) != decision_id])
+        payload["request"] = self._summary_or_local(
+            room, rid, rec.get("text") or "", rec.get("title") or "",
+            bool(rec.get("critic")), rec.get("mode") or "auto", answers)
+        return 200, payload, {}
+
+    def _question_dismiss(self, room: dict, rec: dict, rid: str, kw: dict):
+        """«Это не вопрос» (W20-D1 §1.2, B-38): вопрос уходит из «Нужен ваш ответ».
+
+        Работает и для вопросов из metadata, и для вопросов руководителя из
+        комментариев (``source="comment"|"candidate"``). Данные запроса не меняются:
+        отметка живёт в реестре ответов комнаты, чтение накладывает её каждый раз.
+        """
+        qid = str(kw.get("question_id") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", qid):
+            raise err(400, "Некорректный id вопроса", field="question_id", value=qid[:80])
+        answers = dict(rec.get("answers") or {})
+        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), answers)
+        question = self._find_question(room, rid, detail, qid, answers)
+        if question is None:
+            raise err(404, "Вопрос не найден", question_id=qid)
+        at = int(time.time())
+        record = {"kind": "question", "question_id": qid,
+                  "question_text": str(question.get("text") or ""),
+                  "dismissed": True, "status": "dismissed", "answered": False,
+                  "text": "", "at": at,
+                  "source": question.get("source") or "card"}
+        answers[qid] = record
+        self._save_answers(room, rid, answers)
+        view = answers_mod.apply_question(dict(question), record)
+        payload = {"ok": True, "action": "question_dismiss", "question_id": qid,
+                   "question": view, "answer_state": view.get("answer_state"),
+                   "answer_label": view.get("answer_label"),
+                   "dismissed": True, "needs_answer": bool(view.get("needs_answer")),
+                   "request": self._summary_or_local(
+                       room, rid, rec.get("text") or "", rec.get("title") or "",
+                       bool(rec.get("critic")), rec.get("mode") or "auto", answers)}
+        return 200, payload, {}
 
     def _check_action_values(self, room: dict, rec: dict, rid: str, action: str, kw: dict) -> None:
         """task_id — из дерева запроса; profile — из комнаты; author — белый список.
@@ -1515,5 +1978,65 @@ class WriteRoutes:
                                                     rec.get("mode") or "auto",
                                                     rec.get("answers"))
         return 200, payload, {}
+
+    # --- карточка: остановить / продолжить / сменить модель (W23-MG1 §2.8) ---
+
+    def _card_action(self, room: dict, rec: dict, rid: str, body: dict, action: str):
+        """Действия над одной карточкой запроса: остановить, продолжить, сменить модель.
+
+        Разрешены только карточкам этой комнаты и только в статусах `running|ready|
+        blocked` (пока работа идёт или вот-вот пойдёт). Вся логика — в
+        `server/model_guard.py`: здесь только проверка входа, перевод русских ошибок в
+        HTTP-коды и ответ контракта (docs/API.md, «W23.8 Управление карточкой»).
+        """
+        module = self.mod("model_guard")
+        task_id = body.get("task_id")
+        if not isinstance(task_id, str) or not TASK_ID_RE.fullmatch(task_id.strip()):
+            raise err(400, "Нужен task_id карточки (t_ и 8 hex-символов)", field="task_id")
+        task_id = task_id.strip()
+        note = body.get("note")
+        if note is not None and not isinstance(note, str):
+            raise err(400, "note: строка", field="note")
+        note = (note or "").strip()[:MAX_NOTE]
+        if has_nul(note):
+            raise err(400, "В note есть NUL-байт", field="note")
+        # своя карточка: только дерево ЭТОГО запроса (иначе это работа другого запроса)
+        try:
+            self.mod("engine_write").assert_owned(self.cfg, self.board, rid, task_id)
+        except Exception as exc:  # noqa: BLE001 - чужое дерево/нет карточки → 404
+            raise err(404, "Карточка не из этого запроса", task_id=task_id) from exc
+        model = body.get("model")
+        provider = body.get("provider")
+        if action == "card_model":
+            if model is not None and not isinstance(model, str):
+                raise err(400, "model: имя модели строкой или «none»", field="model")
+            if provider is not None and not isinstance(provider, str):
+                raise err(400, "provider: строка", field="provider")
+        try:
+            if action == "card_stop":
+                payload = module.card_stop(self.cfg, room, self.board, task_id, note=note)
+            elif action == "card_resume":
+                payload = module.card_resume(self.cfg, room, self.board, task_id, note=note)
+            else:
+                payload = module.card_set_model(self.cfg, room, self.board, task_id,
+                                                model=model, provider=provider, note=note)
+        except module.GuardError as exc:
+            detail = dict(getattr(exc, "detail", {}) or {})
+            detail.setdefault("task_id", task_id)
+            status = {"not_found": 404, "conflict": 409, "unavailable": 503}.get(exc.code)
+            if status is None:
+                status = 422 if str(detail.get("field") or "") in ("model", "provider") else 400
+            raise ApiError(status, exc.message,
+                           code=str(exc.code) if exc.code != "bad_request" else None,
+                           detail=detail) from exc
+        except ApiError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - CLI/доска: понятная ошибка, не 500
+            raise ApiError(409, str(exc)[:300] or "Не удалось выполнить действие с карточкой",
+                           detail={"task_id": task_id, "action": action}) from exc
+        payload.setdefault("ok", True)
+        payload["action"] = action
+        payload["task_id"] = task_id
+        return 200, payload, {"Cache-Control": "no-cache"}
 
     # --- команда, карта, бэклог ---

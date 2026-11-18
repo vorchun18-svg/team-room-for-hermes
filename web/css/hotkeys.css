@@ -1,0 +1,66 @@
+/**
+ * hotkeys.css — окно «Горячие клавиши» (W20-U3, пункт 17 / P13).
+ *
+ * Список из двух колонок: слева клавиши (моно-шрифт, как в подсказках Hermes),
+ * справа — что они делают. На узком экране строки становятся друг под другом.
+ * Только оформление окна: клавиши работают и без этого файла.
+ */
+
+.hotkeys {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hotkeys__row {
+  display: grid;
+  grid-template-columns: minmax(132px, 34%) 1fr;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.hotkeys__row:last-child { border-bottom: 0; }
+
+.hotkeys__keys {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.hotkeys__kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--ui-bg-elevated, rgba(127, 127, 127, 0.08));
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.hotkeys__what {
+  min-width: 0;
+  color: var(--ui-text-secondary, var(--foreground));
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.hotkeys__note {
+  margin: var(--space-3) 0 0;
+  color: var(--ui-text-quaternary);
+  font-size: var(--text-sm);
+}
+
+/* Узкое окно: клавиши строкой сверху, объяснение под ними. */
+@media (max-width: 640px) {
+  .hotkeys__row {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+}

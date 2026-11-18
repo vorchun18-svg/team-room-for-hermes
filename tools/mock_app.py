@@ -21,9 +21,9 @@ from mock_plan import MockPlan
 from mock_notes import MockNotes
 from mock_read import MockRead
 from mock_thread import MockThread
-from mock_versions import normalize_v2, phase_at, phase_start, total_seconds
+from mock_versions import apply_svod_live, normalize_v2, phase_at, phase_start, total_seconds
 from mock_write import (MockWrite, answers_mod_apply, apply_decision_overrides,
-                        apply_step_overrides, enrich_answers, enrich_decisions)
+                        apply_step_overrides, enrich_answers, enrich_decisions, svod_defaults)
 import mock_backlog
 import mock_demo as demo
 
@@ -62,6 +62,10 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
         self.rooms = copy.deepcopy(self.fx["rooms.json"]["rooms"])
         self.room_details = {r["id"]: copy.deepcopy(self.fx["room_%s.json" % r["id"]])
                              for r in self.rooms if "room_%s.json" % r["id"] in self.fx}
+        # W20-S1 §1.1 (B-36): у комнат демо есть поля живого свода и готовые
+        # подписи — вкладка «Работа» показывает то же, что отдаёт боевой сервер.
+        for room in self.room_details.values():
+            svod_defaults(room)
         self.requests = {rid: copy.deepcopy(self.fx[name]) for rid, name in FIXTURE_BY_RID.items()}
         self.backlog = {"cafe": copy.deepcopy(self.fx["backlog_cafe.json"])} if "backlog_cafe.json" in self.fx else {}
         for room in self.rooms:
@@ -115,7 +119,16 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
                 hit = overrides.get(str(item.get("id")))
                 if isinstance(hit, dict):
                     item.update(hit)
-        out.sort(key=lambda s: s["created_at"], reverse=True)
+        # W20-U3 (P13): закрепление запроса (PATCH {pinned}) видно в списках и
+        # сводке; закреплённые — сверху, как в реестре бэкенда.
+        pins = getattr(self, "pin_overrides", None)
+        if isinstance(pins, dict):
+            for item in out:
+                hit = pins.get(str(item.get("id")))
+                if isinstance(hit, dict):
+                    item["pinned"] = bool(hit.get("pinned"))
+                    item["pinned_at"] = int(hit.get("pinned_at") or 0) or None
+        out.sort(key=lambda s: (bool(s.get("pinned")), s["created_at"]), reverse=True)
         return out
 
     def detail(self, rid: str) -> dict:
@@ -146,6 +159,14 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
             patch = retry_patch.get(str(node.get("id")))
             if isinstance(patch, dict):
                 node.update(patch)
+        # W23-MG2: остановка/продолжение карточки и смена её модели — в памяти мока
+        # (как реестр бэкенда), накладываем на каждый GET.
+        card_states = getattr(self, "card_states", None) or {}
+        if card_states:
+            for node in detail.get("tree") or []:
+                patch = card_states.get(str(node.get("id")))
+                if isinstance(patch, dict):
+                    node.update(patch)
         # W19-D2 (B-20, B-21): решения — в форму API и с ответами Михаила (как реестр).
         enrich_decisions(detail)
         apply_decision_overrides(detail, rid, self.decision_overrides_for(rid))
@@ -154,6 +175,12 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
         overrides = getattr(self, "title_overrides", None)
         if isinstance(overrides, dict) and rid in overrides:
             detail.update(overrides[rid])
+        # W20-S1 (B-36): живой свод — состояние версии и подписи доставки сообщений
+        # (ПОСЛЕ ленты: без неё «отстаёт» не увидит сообщений Михаила).
+        # W20-FA (B-38): здесь же — вопросы руководителя из ленты, метка `asks` и
+        # снятые вопросы («Это не вопрос» живёт в памяти демо-сервера).
+        dismissed = (getattr(self, "dismissed_questions", None) or {}).get(str(rid)) or {}
+        apply_svod_live(detail, dismissed)
         return detail
 
     # --- бэклог комнаты ----------------------------------------------------

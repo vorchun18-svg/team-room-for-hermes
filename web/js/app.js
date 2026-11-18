@@ -6,37 +6,55 @@
  * Если файла вьюхи нет, router.js показывает «Раздел в разработке».
  */
 
-import { h, hashColor } from './util.js';
+import { h } from './util.js';
 import { icon } from './icons.js';
 import { api, poll } from './api.js';
 import { createRouter, TABS, TAB_IDS, buildHash, parseHash, tabTitle } from './router.js';
+// W26-D9: полоса «Надиктовать» и бейдж вкладки «Входящие» (один счётчик на все места).
+import { installQuickCapture, captureBadge } from './quick-capture.js';
 import {
   createRouteMemory, chooseHash, parseRouteHash, isBareHash,
 } from './route-memory.js';
 import { rooms, currentRoom, toasts, theme, health } from './store.js';
 import {
   initShellFeatures, installHotkeys, openRoomDialog, toggleNotifications,
-  applyNotifyLabel, notifyChanges,
+  applyNotifyLabel, notifyChanges, openPalette,
 } from './shell-features.js';
 import { initStatusBanners, renderBanners, dispatcherRunning } from './shell-status.js';
 import {
   APP_TITLE, pick, buildSidebar, renderRoomList, markActiveRoom, loadRecent,
-  renderEngineStatus, localTitle,
+  renderEngineStatus, localTitle, setTodayCount, setDelosCount,
 } from './shell-sidebar.js';
+// W26-D6: число у пункта «Дела» — дела, где ждёт ваше решение (одно чтение при старте).
+import { fetchNeedsBadge } from './views/delo-model.js';
 import { displayName } from './shell-labels.js';
-import { participantLabel } from './participant-label.js';
-import { crumbItems, requestTitleInfo as fetchRequestTitleInfo, scopeHash } from './scope.js';
+// W21-R1: режим меню (полоса значков) и пороги раскладки вида.
+import { installShellRail, columnsForView } from './shell-rail.js';
+// W25-L1: режимы раскладки по ширине вида (`data-layout` на #app) и нижний лист.
+import { installLayoutMode } from './layout-mode.js';
+import { installAsideSheet } from './shell-aside-sheet.js';
+import { crumbItems, requestTitleInfo as fetchRequestTitleInfo, scopeHash, requestFilterOf } from './scope.js';
 import { folderActionButton, roomSettingsButton, projectDirHint } from './project-dir-button.js';
 import {
   waitingFor, refreshInbox, subscribeInbox, startInboxPolling,
 } from './shell-inbox.js';
+import { installHotkeys as installFieldHotkeys, openHotkeyHelp } from './hotkeys.js';
+import { applyViewMode, toggleViewMode } from './view-mode.js';
+import {
+  FILTER_TABS as SCOPE_FILTER_TABS, phaseLabel, scopeModel, scopeSwitcher, toolsGroup,
+} from './topbar-scope.js';
+import { termHelp } from './term-help.js';
+// W20-U4 (P9): «руководитель отреагировал на ваш ответ» — бейдж вкладки и отметки.
+import { reactionTabBadge, subscribeReactions } from './views/reaction-notice.js';
 
 export { dispatcherRunning };
 
 const THEME_KEY = 'teamroom.theme';
 const LAST_ROOM_KEY = 'teamroom.lastRoom';
+// W24-N3: «Стартовая страница» — «Сегодня» (по умолчанию) или последняя комната.
+const START_KEY = 'teamroom.start';
 /** Вкладки, которые принимают фильтр ?request=<id> (Д3, имя согласовано с BACKLOG-FIX). */
-const FILTER_TABS = ['backlog', 'reports', 'journal'];
+const FILTER_TABS = SCOPE_FILTER_TABS;
 
 const $ = (sel) => document.querySelector(sel);
 const el = {
@@ -104,33 +122,43 @@ function roomPhase(room) {
 /** Одно число «дел ждёт вас» для вкладки, сайдбара и заголовка окна (D4). */
 const waitingOf = waitingFor;
 
-/** Роль участника комнаты по её настройкам. */
-function memberRole(room, member) {
-  const role = String((member && member.role) || '');
-  if (role) return role;
-  const profile = String((member && (member.profile || member.name)) || '');
-  if (room && profile === String(room.orchestrator || '')) return 'orchestrator';
-  if (room && profile === String(room.critic || '')) return 'critic';
-  return 'worker';
-}
-
-/** Цвет аватара: --h из хеша имени. */
-function avatarHue(name) {
-  const m = /hsl\(\s*([\d.]+)/i.exec(hashColor(name || '?'));
-  return m ? Math.round(Number(m[1])) : 220;
-}
-
-function avatarEl(name, cls = '', hint = '') {
-  // Одна буква от имени: «Юрист проекта» → «Ю». Системные id в тексте не нужны.
-  const short = String(name || '').replace(/^(?:biz|room)-/, '');
-  const a = h('span', { class: 'avatar ' + cls, title: String(hint || name || '') }, (Array.from(short)[0] || '?').toUpperCase());
-  a.style.setProperty('--h', String(avatarHue(short || name)));
-  return a;
-}
+/* W20-U1 (P8): аватары команды и роли рисовала шапка; теперь состав комнаты
+   живёт на вкладке «Команда», и эти помощники из app.js убраны — одна команда,
+   одно место. */
 
 /* ────────────────────────────────────────────────────────────────── тема */
 
 const media = window.matchMedia('(prefers-color-scheme: dark)');
+
+/** Стартовая страница из настроек: 'today' (по умолчанию) или 'last'. */
+export function readStartPref() {
+  try {
+    const saved = localStorage.getItem(START_KEY);
+    return saved === 'last' ? 'last' : 'today';
+  } catch { return 'today'; }
+}
+
+/** Сохранить выбор стартовой страницы (экран «Настройки»). */
+export function saveStartPref(value) {
+  const next = value === 'last' ? 'last' : 'today';
+  try { localStorage.setItem(START_KEY, next); } catch { /* приватный режим */ }
+  return next;
+}
+
+/**
+ * Число «ждёт вас» у пункта «Сегодня» (W24-N3).
+ *
+ * Один лёгкий GET при загрузке и после возврата окна: значок в меню должен быть
+ * верным и тогда, когда человек работает в комнате, а не на «Сегодня».
+ * Ошибку молчим — это украшение, а не данные экрана.
+ */
+async function loadTodayBadge() {
+  try {
+    const data = await api.get('/api/today');
+    const count = Number((data && data.counters && data.counters.needs_you) || 0);
+    setTodayCount(count);
+  } catch { /* сервер занят или старый — значок просто не показываем */ }
+}
 
 function readThemePref() {
   const url = new URLSearchParams(location.search).get('theme');
@@ -164,6 +192,21 @@ function cycleTheme() {
   applyTheme(next, true);
   const names = { auto: 'как в системе', light: 'светлая', dark: 'тёмная' };
   toast('Тема: ' + names[next], 'info');
+}
+
+/* ───────────────────────────────────── вид «простой / подробный» (P14) ── */
+
+/** Переключить вид и сказать одной строкой, что изменилось (клавиша `V`, кнопка). */
+function toggleView() {
+  const mode = toggleViewMode();
+  toast(mode === 'simple'
+    ? 'Простой вид: скрыты модель, внутренние номера и служебные строки'
+    : 'Подробный вид: снова видны все подробности', 'info');
+}
+
+/** Справка по горячим клавишам (`?`) — окно поверх страницы, закрывается Esc. */
+function openHelp() {
+  openHotkeyHelp();
 }
 
 media.addEventListener('change', () => {
@@ -332,6 +375,7 @@ function renderTopbar(route) {
   // пятисекундный опрос дёргал бы вкладки под курсором.
   const key = [
     route.name, route.roomId, route.tab, route.id, requestCrumbTitle, requestCrumbHint,
+    requestFilterOf(route),
     room && room.title, roomPhase(room), room && room.project_dir,
     waitingOf(room).text,
     room && room.counts && room.counts.working,
@@ -342,7 +386,13 @@ function renderTopbar(route) {
   if (key === topbarKey) return;
   topbarKey = key;
 
-  // Три зоны: lead (крошки) · meta (этап, «вся комната», команда) · actions.
+  // W20-U1 (P8, пункт 12): шапка из трёх зон и минимума органов управления.
+  //   lead   — крошки (где вы находитесь);
+  //   meta   — этап словами («Этап: …») и переключатель охвата «Вся комната / Этот запрос»;
+  //   right  — две группы значков: комната (папка, настройки комнаты) и
+  //            инструменты (поиск, палитра, настройки приложения).
+  // Аватары команды из шапки убраны: команда живёт на вкладке «Команда», а в
+  // шапке она спорила с названием страницы и читалась как «вся команда».
   const lead = [];
   const meta = [];
   const right = [];
@@ -352,6 +402,20 @@ function renderTopbar(route) {
     lead.push(h('div', { class: 'topbar__title' }, h('span', { class: 'topbar__name' }, 'Поиск')));
   } else if (route.name === 'settings') {
     lead.push(h('div', { class: 'topbar__title' }, h('span', { class: 'topbar__name' }, 'Настройки')));
+  } else if (route.name === 'delo' || route.name === 'delos') {
+    // W26-D6: «Дела» — отдельный экран вне комнаты: карточка (#/delo/<id>) или
+    // список (#/delos). Крошек комнаты нет; название дела живёт в самой карточке.
+    lead.push(h('div', { class: 'topbar__title' },
+      h('span', { class: 'topbar__name' }, route.name === 'delo' ? 'Дело' : 'Дела'),
+      h('span', { class: 'topbar__sub' },
+        route.name === 'delo' ? 'этапы, результат и что ждёт вас' : 'что идёт и что ждёт вашего решения'),
+    ));
+  } else if (route.name === 'today') {
+    // W24-N3: «Сегодня» — свод по всем комнатам; крошек «Комната …» здесь нет.
+    lead.push(h('div', { class: 'topbar__title' },
+      h('span', { class: 'topbar__name' }, 'Сегодня'),
+      h('span', { class: 'topbar__sub' }, 'что ждёт вас и что идёт'),
+    ));
   } else if (room) {
     const phase = roomPhase(room);
     // «локально» осталось одно место — строка под сайдбаром (D13): здесь только фаза.
@@ -359,39 +423,25 @@ function renderTopbar(route) {
     // видно, к чему относится экран: к запросу или ко всей комнате.
     const crumbs = crumbsNav(route, room);
     lead.push(h('div', { class: 'topbar__title' }, crumbs ? crumbs.nav : h('span', { class: 'topbar__name' }, room.title)));
-    if (phase) {
+    // P8: голое название этапа читалось как часть названия комнаты — пишем
+    // «Этап: …» и объясняем слово по «?» (этап — свойство комнаты).
+    const phaseText = phaseLabel(phase);
+    if (phaseText) {
       meta.push(h('span', {
         class: 'chip chip--outline topbar__phase',
-        title: 'Этап проекта: общий путь комнаты, не одного запроса',
-      }, phase));
+        title: 'Этап проекта: общий путь комнаты, а не одного запроса. Меняется в настройках комнаты.',
+      }, phaseText, termHelp('phase', { className: 'term-help--chip' })));
     }
-    if (crumbs && crumbs.badge) {
-      meta.push(h('span', {
-        class: 'chip chip--muted crumbs__badge',
-        title: 'Раздел относится ко всей комнате, а не к одному запросу',
-      }, crumbs.badge));
-    }
+    // P8: один переключатель вместо значка «вся команда» и бейджа у крошек.
+    const scope = scopeModel({
+      roomId: room.id,
+      tab: route.tab,
+      name: route.name,
+      requestId: route.name === 'request' ? route.id : requestFilterOf(route),
+    });
+    const switcher = scopeSwitcher(scope);
+    if (switcher) meta.push(switcher);
 
-    const members = Array.isArray(room.members) ? room.members : [];
-    const shown = members.slice(0, 4);
-    if (shown.length) {
-      // WAVE13 §11: та же подпись, что в «Команде» — имя и должность, иначе роль.
-      const names = members.map((m) => {
-        const profile = String((m && (m.profile || m.name)) || '');
-        return participantLabel(profile, { member: m, role: memberRole(room, m) }).title;
-      });
-      const team = h('div', { class: 'topbar__team', title: 'Команда: ' + names.filter(Boolean).join(', ') });
-      for (const m of shown) {
-        const profile = String((m && (m.profile || m.name)) || '');
-        const label = participantLabel(profile, { member: m, role: memberRole(room, m) });
-        const name = label.title;
-        team.appendChild(avatarEl(name, 'avatar--sm avatar--stacked', name + (profile ? ' · ' + profile : '')));
-      }
-      if (members.length > shown.length) {
-        team.appendChild(h('span', { class: 'avatar avatar--sm avatar--stacked', style: { '--h': 220 } }, '+' + (members.length - shown.length)));
-      }
-      meta.push(team);
-    }
     // Д2 + W10: на всех вкладках комнаты (и на странице запроса) место в шапке
     // занято всегда — «Настройки комнаты» и папка проекта. Путь задан → «Открыть
     // папку», пути нет → «Задать папку» (те же настройки, курсор в поле «Папка
@@ -402,9 +452,12 @@ function renderTopbar(route) {
       store: { rooms, currentRoom, toasts, theme, health },
       refresh: () => loadRooms({ silent: true }),
     };
-    right.push(roomSettingsButton(roomCtx, room));
     right.push(folderActionButton(roomCtx, room));
-    if (!String(room.project_dir || '').trim()) {
+    right.push(roomSettingsButton(roomCtx, room));
+    // W25-L1 (R5 §7.1): на странице запроса подсказка «Задайте папку проекта»
+    // ушла в настройки комнаты (кнопка «Задать папку» в шапке осталась). Полоса
+    // под вкладками стоила 34 px до содержания на каждом экране запроса.
+    if (!String(room.project_dir || '').trim() && route.name !== 'request') {
       hintNode = projectDirHint(roomCtx, { roomId: room.id });
     }
   } else {
@@ -414,15 +467,11 @@ function renderTopbar(route) {
     ));
   }
 
-  right.push(h('button', {
-    class: 'btn btn--ghost btn--sm topbar__search',
-    type: 'button',
-    title: 'Поиск по комнатам и запросам',
-    'aria-label': 'Поиск',
-    onclick: () => navigate('#/search'),
-  }, icon('search', { size: 13 }),
-  h('span', { class: 'topbar__search-label' }, 'Поиск'),
-  h('span', { class: 'kbd' }, 'Ctrl K')));
+  // W20-U1: поиск, палитра и настройки приложения — одна группа значков с
+  // подсказками. Раньше поиск стоял отдельной кнопкой и показывал «Ctrl K», хотя
+  // это сочетание открывает палитру: два разных дела выглядели одним.
+  if (right.length) right.push(h('span', { class: 'topbar__divider', 'aria-hidden': 'true' }));
+  right.push(toolsGroup({ navigate, openPalette }));
 
   bar.replaceChildren(h('div', { class: 'topbar__row' },
     navToggle,
@@ -435,15 +484,15 @@ function renderTopbar(route) {
   // Вкладки комнаты
   if (room && route.name !== 'search' && route.name !== 'settings') {
     const active = route.tab === 'request' ? 'composer' : route.tab;
-    // Д3: со страницы запроса ссылки на «Дальше / Отчёты / Журнал» ведут уже
-    // с фильтром ?request=<корень> — на вкладке сразу виден чип «Только этот запрос».
+    // Д3: со страницы запроса ссылки на «От вас нужно / Отчёты / Журнал» ведут уже
+    // с фильтром ?request=<корень> — на вкладке сразу виден чип «Этот запрос».
     const filterTab = route.name === 'request' && route.id ? String(route.id) : '';
     const waits = waitingOf(room);
     const tabs = h('nav', { class: 'tabs', 'aria-label': 'Разделы комнаты' });
     for (const t of TABS) {
       const isActive = t.id === active;
       // Это навигация, а не tablist: aria-current="page" + подпись у счётчика
-      // дают скринридеру «Дальше, 9 дел, текущая страница» (F-9, D18).
+      // дают скринридеру «От вас нужно, 9 дел, текущая страница» (F-9, D18).
       let count = null;
       if (t.id === 'backlog') {
         if (waits.n === null) {
@@ -463,17 +512,31 @@ function renderTopbar(route) {
           }, String(waits.n));
         }
       }
+      // W20-U4 (P9): руководитель отреагировал на ваш ответ — второй, отдельный
+      // бейдж на вкладке «От вас нужно» (дела и реакции — разные вещи: одно про
+      // вопросы, другое про «ваш ответ учли»).
+      const reactionCount = t.id === 'backlog' ? reactionTabBadge(room.id) : null;
+      // W26-D9: сколько записей ждёт разбора во «Входящих». Узел возвращается
+      // всегда (0 — скрыт), чтобы счётчик обновлялся без перерисовки шапки.
+      const inboxCount = t.id === 'inbox' ? captureBadge(room.id) : null;
+      const reactionTitle = reactionCount ? reactionCount.getAttribute('title') : '';
+      const tabLabel = [
+        count ? `${t.title}, ${waits.text} ждут вашего решения` : '',
+        reactionTitle,
+      ].filter(Boolean).join('. ');
       tabs.appendChild(h('a', {
         class: 'tab' + (isActive ? ' tab--active' : ''),
         href: FILTER_TABS.includes(t.id)
           ? scopeHash(room.id, t.id, filterTab)
           : buildHash({ roomId: room.id, tab: t.id }),
         'aria-current': isActive ? 'page' : null,
-        'aria-label': count ? `${t.title}, ${waits.text} ждут вашего решения` : null,
+        'aria-label': tabLabel || null,
       },
       icon(t.icon, { size: 13 }),
       t.title,
       count,
+      reactionCount,
+      inboxCount,
       ));
     }
     bar.appendChild(tabs);
@@ -567,6 +630,16 @@ function refreshSidebarExtras({ force = false } = {}) {
   if (force || now - lastInboxAt >= INBOX_POLL_MS) { lastInboxAt = now; refreshInbox(); }
 }
 
+/**
+ * W26-D6: значок «Дела» в меню. Ошибку молчим — значок это украшение, экран
+ * «Дела» всё равно скажет правду. Один заход при старте и после возврата в окно.
+ */
+async function loadDeloBadge() {
+  const ids = rooms.get('list').map((r) => r.id);
+  const n = await fetchNeedsBadge(api, ids);
+  if (n !== null) setDelosCount(n);
+}
+
 async function loadRooms({ silent = false } = {}) {
   if (!silent) rooms.set({ loading: true });
   // Тихий опрос: сначала сводка (один запрос вместо пачки), иначе — прежний путь.
@@ -627,6 +700,10 @@ function onRoute(route) {
   markActiveRoom();
   updateTitle();
   setNavOpen(false);
+  // W25-L1: смена экрана закрывает нижний лист — он принадлежит прежней странице.
+  if (asideSheet) asideSheet.close();
+  // W26-D9: полоса записи видна только в комнате (и на странице запроса).
+  if (quickCapture) quickCapture.sync(route);
 }
 
 /* ──────────────────────────────────────────────────────────── монтирование */
@@ -635,6 +712,44 @@ function onRoute(route) {
 const routeMemory = createRouteMemory();
 /** Сколько ждём проверки «запрос ещё существует», мс (сервер может тормозить). */
 const ROUTE_CHECK_MS = 2500;
+
+/* ── W21-R1: ширина вида и режим меню ────────────────────────────────────── */
+
+/** Ручка режима меню (полоса значков) — для повторного применения без перезагрузки. */
+let shellRail = null;
+let quickCapture = null;
+let viewObserver = null;
+let layoutMode = null;
+let asideSheet = null;
+
+/**
+ * W25-L1: ширина вида и режим раскладки. Режим (xl/l/m/s/xs) считает
+ * `web/js/layout-mode.js` по ширине `#view` и пишет его в `data-layout` на
+ * `#app`; CSS и JS читают ОДИН атрибут, а не два разных порога. Здесь же
+ * пересчитывается режим меню: рейка считается от ширины оболочки, а не окна
+ * (в `<webview>` окно хозяина недоступно, `innerWidth` — это и есть оболочка).
+ */
+function watchViewWidth() {
+  const view = el.view;
+  if (!view || !el.app) return;
+  if (layoutMode) layoutMode.destroy();
+  layoutMode = installLayoutMode({
+    app: el.app,
+    view,
+    onMode: ({ mode }) => {
+      // `data-view-cols` оставлен для проверок вёрстки (tools/probe_layout_split.py):
+      // это ПРОИЗВОДНОЕ от режима, источник истины — `data-layout` и layout-mode.js.
+      if (el.app) el.app.dataset.viewCols = String(columnsForView(layoutMode.width));
+      if (shellRail) shellRail.apply();
+      if (asideSheet) asideSheet.sync();
+      if (mode === 'm' || mode === 's' || mode === 'xs') {
+        // Лист свёрнут: развёрнутый лист на узком виде перекрыл бы свод после смены ширины.
+        if (asideSheet) asideSheet.close();
+      }
+    },
+  });
+  if (el.app) el.app.dataset.viewCols = String(columnsForView(layoutMode.width));
+}
 
 function mountShell() {
   if (!el.sidebar || !el.topbar || !el.view) {
@@ -649,12 +764,37 @@ function mountShell() {
     onCloseNav: () => setNavOpen(false),
   });
 
+  // W21-R1: меню — полоса значков на окне < 1280 px, кнопка рядом с темой,
+  // выбор помнится локально. W25-L1: порог считаем от ширины ОБОЛОЧКИ, а не окна,
+  // и берём её у `#app` (в webview `innerWidth` совпадает, в макете — нет).
+  shellRail = installShellRail({
+    app: el.app,
+    button: el.sidebar.querySelector('#rail-toggle') || $('#rail-toggle'),
+    getWidth: () => Math.round(el.app.clientWidth || 0),
+  });
+  // W25-L1: режимы раскладки (data-layout/data-aside на #app) и нижний лист
+  // «От вас нужно». Лист живёт на уровне каркаса: он перекрывает страницу,
+  // а не сидит внутри неё, и переживает точечную перерисовку вида.
+  asideSheet = installAsideSheet({ app: el.app, view: el.view });
+  watchViewWidth();
+
   // Затемнение под выдвижным сайдбаром — сосед .app__main, чтобы fixed
   // не привязывался к трансформированному <aside>.
   const scrim = h('div', { class: 'sidebar__scrim', 'aria-hidden': 'true', onclick: () => setNavOpen(false) });
   const mainCol = el.app.querySelector('.app__main');
   if (mainCol) el.app.insertBefore(scrim, mainCol);
   else el.app.appendChild(scrim);
+
+  // W26-D9: полоса «Надиктовать» живёт на уровне каркаса (как и лист «От вас
+  // нужно»): она перекрывает низ вида и переживает перерисовку страницы.
+  quickCapture = installQuickCapture({
+    app: el.app,
+    host: (el.app && el.app.querySelector ? el.app.querySelector('.app__main') : null) || el.app,
+    api,
+    toast,
+    getRoute: () => (router ? router.route : parseHash()),
+    navigate: (hash) => { window.location.hash = hash; },
+  });
 
   router = createRouter({
     el: el.view,
@@ -667,6 +807,7 @@ function mountShell() {
 
   renderEngineStatus();
   router.start();
+  quickCapture.sync(router.route);
 }
 
 /* ─────────────────────────────────────────────────────── старт приложения */
@@ -710,6 +851,12 @@ async function initialHash() {
   const requestOk = route && route.kind === 'request' ? await requestExists(route.id) : null;
   let last = '';
   try { last = localStorage.getItem(LAST_ROOM_KEY) || ''; } catch { /* ignore */ }
+  // W24-N3: «Стартовая страница» = «Сегодня» и в приложении есть хотя бы одна
+  // комната → открываем «Сегодня». Явный адрес в строке (`#/room/...`) сильнее
+  // настройки: человек пришёл по ссылке, а не «просто открыл приложение».
+  if (readStartPref() === 'today' && isBareHash(urlHash) && rooms.get('list').length) {
+    return '#/today';
+  }
   return chooseHash({
     urlHash,
     stored,
@@ -735,6 +882,14 @@ async function boot() {
     render: () => { if (router) router.render(); },
   });
   installHotkeys({ closeNav: () => setNavOpen(false) });
+  // W20-U3: горячие клавиши страниц (J/K по вопросам, Ctrl+Enter из поля, `?` —
+  // справка, `V` — простой/подробный вид). Ставим один раз на всё приложение:
+  // обработчик не переустанавливается при переходах между экранами.
+  installFieldHotkeys({
+    onHelp: () => openHelp(),
+    onToggleView: () => toggleView(),
+  });
+  applyViewMode();
   initStatusBanners({
     pick,
     toast,
@@ -744,7 +899,8 @@ async function boot() {
   mountShell();
   applyNotifyLabel();
 
-  await Promise.all([loadHealth(), loadRooms()]);
+  await Promise.all([loadHealth(), loadRooms(), loadTodayBadge()]);
+  loadDeloBadge().catch(() => {});
   // B-16: открываем ПОЛНЫЙ прежний маршрут (явный хэш → память → комната),
   // а не «Запрос» последней комнаты. Устаревший запрос не восстанавливаем.
   const target = await initialHash();
@@ -791,12 +947,24 @@ async function boot() {
     renderRoomList();
   });
 
+  // W20-U4 (P9): пришли новые реакции руководителя (или запрос открыли и отметка
+  // «прочитано» сняла новизну) → пересобрать бейдж вкладки и «Недавнее».
+  subscribeReactions(() => {
+    const route = router ? router.route : parseHash();
+    if (route) renderTopbar(route);
+    loadRecent();
+  });
+
   startInboxPolling();
 
   poll(() => loadRooms({ silent: true }), ROOMS_POLL_MS, { pauseHidden: true, immediate: false, onError: () => {} });
   poll(() => loadHealth(), 15000, { pauseHidden: true, immediate: false, onError: () => {} });
 
-  window.addEventListener('online', () => { loadHealth(); loadRooms({ silent: true }); });
+  window.addEventListener('online', () => { loadHealth(); loadRooms({ silent: true }); loadTodayBadge(); loadDeloBadge().catch(() => {}); });
+  // Вернулись в окно — число в меню могло устареть (опрос «Сегодня» шёл без нас).
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) loadTodayBadge();
+  });
 
   document.addEventListener('click', (e) => {
     const a = e.target instanceof Element ? e.target.closest('a[href^="#"]') : null;

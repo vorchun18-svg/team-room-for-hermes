@@ -40,6 +40,7 @@ import server.registry as registry           # noqa: E402
 import server.reports as reports             # noqa: E402
 from server.http_util import ApiError        # noqa: E402
 from tests.helpers import Sandbox            # noqa: E402
+from tests import ci_marks                       # noqa: E402
 
 ROOM = "cafe"
 
@@ -175,7 +176,7 @@ class TaskIdGuardTests(_Base):
         rid = self.request_id("done_modern")
         for bad in ("../x", "t_ZZZZZZZZ", "t_1234", "t_" + "a" * 9, " ", "t_0000cafe\x00"):
             for action in ("comment", "reassign", "unblock", "retry"):
-                body = {"action": action, "task_id": bad, "text": "x", "profile": "biz-ops"}
+                body = {"action": action, "task_id": bad, "text": "x", "profile": "team-ops"}
                 status, payload, _ = self.act(rid, body)
                 self.assertEqual(status, 400, (action, bad, payload))
             self.assert_no_cli(bad)
@@ -184,7 +185,7 @@ class TaskIdGuardTests(_Base):
         rid = self.request_id("done_modern")
         foreign = self.sb.state("queued")["root_id"]        # валиден по форме, но чужой
         for action, extra in (("comment", {"text": "привет"}),
-                              ("reassign", {"profile": "biz-ops"}),
+                              ("reassign", {"profile": "team-ops"}),
                               ("unblock", {}), ("retry", {}), ("rework", {"text": "x"})):
             status, payload, _ = self.act(rid, dict({"action": action, "task_id": foreign}, **extra))
             self.assertEqual(status, 404, (action, payload))
@@ -222,10 +223,12 @@ class TaskIdGuardTests(_Base):
 class ProfileAuthorGuardTests(_Base):
     """D1: profile — из состава комнаты (или none), author — белый список."""
 
+    # автор комментария должен быть профилем из ростера Hermes: без установленного
+    # Hermes ростера нет — на чистом раннере проверять нечего (W20-I1 п.22)
     def test_unknown_profile_is_400_and_no_cli(self):
         rid = self.request_id("working")
         child = self.sb.state("working")["child_ids"][0]
-        for bad in ("zzz-nonexistent", "--help", "--board=team", "biz-critic --reclaim"):
+        for bad in ("zzz-nonexistent", "--help", "--board=team", "team-critic --reclaim"):
             status, payload, _ = self.act(rid, {"action": "reassign", "task_id": child, "profile": bad})
             self.assertEqual(status, 400, (bad, payload))
             self.assertTrue(payload["error"]["detail"].get("available"), payload)
@@ -242,11 +245,11 @@ class ProfileAuthorGuardTests(_Base):
     def test_member_profile_ok_with_dashdash(self):
         rid = self.request_id("working")
         child = self.sb.state("working")["child_ids"][0]
-        status, payload, _ = self.act(rid, {"action": "reassign", "task_id": child, "profile": "biz-ops"})
+        status, payload, _ = self.act(rid, {"action": "reassign", "task_id": child, "profile": "team-ops"})
         self.assertEqual(status, 200, payload)
         argv = self.shim.calls[-1]
         self.assertEqual(argv[argv.index("assign") + 1:argv.index("assign") + 4],
-                         ["--", child, "biz-ops"], argv)
+                         ["--", child, "team-ops"], argv)
 
     def test_unassign_none_allowed(self):
         rid = self.request_id("working")
@@ -255,6 +258,7 @@ class ProfileAuthorGuardTests(_Base):
         self.assertEqual(status, 200, payload)
         self.assertEqual(self.shim.calls[-1][-3:], ["--", child, "none"])
 
+    @unittest.skipUnless(ci_marks.has_real_profiles(), ci_marks.WHY_NO_PROFILES)
     def test_author_whitelist(self):
         rid = self.request_id("done_modern")
         status, payload, _ = self.act(rid, {"action": "comment", "text": "x", "author": "evil"})
@@ -263,9 +267,9 @@ class ProfileAuthorGuardTests(_Base):
         status, payload, _ = self.act(rid, {"action": "comment", "text": "x", "author": "--help"})
         self.assertEqual(status, 400, payload)
         self.assert_no_cli()
-        status, payload, _ = self.act(rid, {"action": "comment", "text": "x", "author": "biz-lawyer"})
+        status, payload, _ = self.act(rid, {"action": "comment", "text": "x", "author": "team-lawyer"})
         self.assertEqual(status, 200, payload)
-        self.assertIn("--author=biz-lawyer", self.shim.calls[-1])
+        self.assertIn("--author=team-lawyer", self.shim.calls[-1])
 
     def test_nul_in_text_is_400_and_no_cli(self):
         rid = self.request_id("done_modern")
@@ -328,7 +332,7 @@ class DispatchGuardTests(_Base):
         self.assert_no_cli()
 
     def test_dry_run_then_confirm_with_max(self):
-        self.shim.dispatch_json = {"spawned": [{"id": "t_0000beef", "assignee": "biz-ops"}],
+        self.shim.dispatch_json = {"spawned": [{"id": "t_0000beef", "assignee": "team-ops"}],
                                    "promoted": 1, "reclaimed": 0}
         app = self._app_outside_sandbox()
         status, payload, _ = self.kick(app)

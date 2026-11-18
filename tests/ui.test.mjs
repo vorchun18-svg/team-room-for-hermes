@@ -164,10 +164,10 @@ test('avatar: инициалы, размер и детерминированны
 }));
 
 test('profileLabel показывает имя и аватар', () => withDom(() => {
-  const el = profileLabel({ profile: 'biz-director', name: 'Директор' });
+  const el = profileLabel({ profile: 'team-director', name: 'Директор' });
   assert.ok(el.className.includes('profile-label'));
   assert.ok(el.find('span'));
-  assert.equal(el.getAttribute('title'), 'biz-director');
+  assert.equal(el.getAttribute('title'), 'team-director');
   assert.ok(el.textContent.includes('Директор'));
 
   const bare = profileLabel('lawyer');

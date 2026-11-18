@@ -72,6 +72,10 @@ class MockModels:
         self.catalog_warnings = [str(w) for w in data.get("warnings") or []]
         self.agent_defaults = {str(p): {k: str(v.get(k) or "") for k in ("provider", "model", "reasoning")}
                                for p, v in (data.get("agent_defaults") or {}).items() if isinstance(v, dict)}
+        # W20 §1.5: откуда взято «по умолчанию» — профиль, общие настройки Hermes или ничего.
+        self.agent_default_sources = {
+            str(p): {"source": str(v.get("source") or ""), "note": str(v.get("note") or "")}
+            for p, v in (data.get("agent_defaults") or {}).items() if isinstance(v, dict)}
         self.models_journal = {}       # room_id -> [события «модель изменена»], новые первыми
         self.models_seq = 0
         for room in self.room_details.values():
@@ -80,13 +84,35 @@ class MockModels:
     # --- каталог ----------------------------------------------------------
 
     def catalog(self) -> dict:
-        """`GET /api/models` — форма как в docs/API.md §6.11 (`source`, `cached`, `warnings`)."""
+        """`GET /api/models` — форма как в docs/API.md §6.11 (`source`, `cached`, `warnings`).
+
+        W20-MODELS §1.5: вместе с каталогом — `agent_defaults[профиль]` с полем `source`
+        (`profile` | `global` | `none`): что стоит в настройках агента и откуда взято.
+        """
         return {"providers": copy.deepcopy(self.catalog_providers),
                 "efforts": copy.deepcopy(self.catalog_efforts),
                 "source": self.catalog_source,
                 "cached": self.catalog_cached,
                 "updated_at": self.catalog_updated_at,
-                "warnings": list(self.catalog_warnings)}
+                "warnings": list(self.catalog_warnings),
+                "agent_defaults": self.agent_defaults_map()}
+
+    def default_info(self, profile: str) -> dict:
+        """Настройки агента + источник (как `server/agent_models.default_info`)."""
+        base = self.agent_default(profile)
+        extra = self.agent_default_sources.get(str(profile)) or {}
+        source = str(extra.get("source") or "")
+        if source not in ("profile", "global", "none"):
+            source = "profile" if base.get("model") else "none"
+        note = str(extra.get("note") or "")
+        if not note and source == "global":
+            note = "В профиле модель не задана — показана общая настройка Hermes."
+        return {**base, "source": source, "note": note}
+
+    def agent_defaults_map(self) -> dict:
+        """`agent_defaults` для `GET /api/models`: по каждому профилю демо-ростера."""
+        names = list(self.agent_defaults)
+        return {name: self.default_info(name) for name in names}
 
     def provider(self, provider_id) -> dict | None:
         return next((p for p in self.catalog_providers if p.get("id") == provider_id), None)
@@ -138,6 +164,7 @@ class MockModels:
         out["model_settings"] = {k: effective[k] for k in ("provider", "model", "reasoning", "source")}
         out["model_settings"]["updated_at"] = updated
         out["agent_default"] = self.agent_default(profile)
+        out["agent_default_info"] = self.default_info(profile)   # W20 §1.5: с источником
         return out
 
     def with_models(self, room: dict) -> dict:

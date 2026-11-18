@@ -227,8 +227,8 @@ class RoomsApi(unittest.TestCase):
         return info
 
     # ростор берётся из реальных профилей Hermes (только чтение) — берём существующие
-    BODY = {"title": "Комната настроек", "orchestrator": "biz-director",
-            "members": [{"profile": "biz-ops", "role": "worker"}]}
+    BODY = {"title": "Комната настроек", "orchestrator": "team-director",
+            "members": [{"profile": "team-ops", "role": "worker"}]}
 
     def test_post_defaults_and_get(self):
         res = self.call("POST", "/api/rooms", dict(self.BODY, id="plan-defaults"))

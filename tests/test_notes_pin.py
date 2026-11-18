@@ -32,7 +32,7 @@ from server.http_util import ApiError           # noqa: E402
 from tests.helpers import Sandbox               # noqa: E402
 
 ROOM = "cafe"
-PROFILE = "biz-lawyer"
+PROFILE = "team-lawyer"
 
 
 def soul_hashes() -> dict:

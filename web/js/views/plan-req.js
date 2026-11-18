@@ -121,7 +121,7 @@ export function proposedCount(plan) {
   }).length;
 }
 
-/** «biz-ops» → «ops», «manager» → «руководитель комнаты»: без системных id. */
+/** «team-ops» → «ops», «manager» → «руководитель комнаты»: без системных id. */
 export function whoName(id) {
   const raw = String(id === null || id === undefined ? '' : id).trim();
   if (!raw) return '';

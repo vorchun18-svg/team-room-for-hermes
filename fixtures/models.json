@@ -131,62 +131,74 @@
     "default": {
       "provider": "oblako-a",
       "model": "dilizhans-pro",
-      "reasoning": "high"
+      "reasoning": "high",
+      "source": "profile"
     },
-    "biz-director": {
+    "team-director": {
       "provider": "oblako-a",
       "model": "dilizhans-pro",
-      "reasoning": "high"
+      "reasoning": "high",
+      "source": "profile"
     },
-    "biz-lawyer": {
+    "team-lawyer": {
       "provider": "oblako-a",
       "model": "dilizhans-midi",
-      "reasoning": "medium"
+      "reasoning": "medium",
+      "source": "profile"
     },
-    "biz-ops": {
+    "team-ops": {
       "provider": "lokal",
       "model": "dilizhans-home",
-      "reasoning": "medium"
+      "reasoning": "medium",
+      "source": "profile"
     },
-    "biz-strategy": {
+    "team-strategy": {
       "provider": "oblako-b",
       "model": "vektor-3",
-      "reasoning": "high"
+      "reasoning": "high",
+      "source": "profile"
     },
-    "biz-marketing": {
+    "team-marketing": {
       "provider": "oblako-a",
       "model": "dilizhans-midi",
-      "reasoning": "low"
+      "reasoning": "low",
+      "source": "global"
     },
-    "biz-cfo": {
+    "team-cfo": {
       "provider": "oblako-a",
       "model": "dilizhans-ultra",
-      "reasoning": "xhigh"
+      "reasoning": "xhigh",
+      "source": "profile"
     },
-    "biz-runner": {
+    "team-runner": {
       "provider": "lokal",
       "model": "dilizhans-kompakt",
-      "reasoning": "minimal"
+      "reasoning": "minimal",
+      "source": "profile"
     },
-    "biz-critic": {
+    "team-critic": {
       "provider": "oblako-b",
       "model": "vektor-4",
-      "reasoning": "high"
+      "reasoning": "high",
+      "source": "profile"
     },
     "coder": {
       "provider": "oblako-b",
       "model": "vektor-5",
-      "reasoning": "medium"
+      "reasoning": "medium",
+      "source": "profile"
     },
     "lawyer": {
       "provider": "oblako-a",
       "model": "dilizhans-pro",
-      "reasoning": "high"
+      "reasoning": "high",
+      "source": "profile"
     },
     "surveyor": {
       "provider": "lokal",
       "model": "dilizhans-home-2",
-      "reasoning": "low"
+      "reasoning": "low",
+      "source": "profile"
     }
   }
 }

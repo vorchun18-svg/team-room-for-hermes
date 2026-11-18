@@ -47,16 +47,46 @@ SECRET_LINE = re.compile(r"(?i)^(\s*[\w.\-]*(?:key|token|secret|password|auth)[\
 # ------------------------------------------------------------------ утилиты
 
 def free_port(start: int = 8851, end: int = 8899) -> int:
-    """Свободный порт из диапазона наших тестовых серверов (8777/8778 не трогаем)."""
+    """Свободный порт из диапазона наших тестовых серверов (8777/8778 не трогаем).
+
+    W21-REV2: на Windows `SO_REUSEADDR` РАЗРЕШАЕТ bind на уже занятый порт — проверка
+    «порт занят» была ложной, и песочница цеплялась к чужому серверу (параллельные
+    агенты держат 8851–8856). Поэтому сначала честно спрашиваем «кто-то слушает?»,
+    а bind делаем эксклюзивным.
+    """
     for port in range(start, end + 1):
+        if _port_busy(port):
+            continue
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            else:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind(("127.0.0.1", port))
                 return port
             except OSError:
                 continue
-    raise RuntimeError("нет свободного порта в 8851–8899")
+    raise RuntimeError("нет свободного порта в %d–%d" % (start, end))
+
+
+def _port_busy(port: int) -> bool:
+    """Кто-то уже слушает порт (Windows SO_REUSEADDR этого не показывает)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.25)
+        try:
+            return sock.connect_ex(("127.0.0.1", port)) == 0
+        except OSError:
+            return True
+
+
+def _same_path(left, right) -> bool:
+    """Один ли это каталог (на Windows регистр и разделители не важны)."""
+    try:
+        return Path(str(left)).resolve() == Path(str(right)).resolve()
+    except OSError:                              # noqa: BLE001 - сравнение не должно падать
+        norm = lambda value: str(value).replace("\\", "/").rstrip("/").lower()  # noqa: E731
+        return norm(left) == norm(right)
 
 
 def http(method: str, url: str, body=None, timeout: float = 45.0,
@@ -144,13 +174,30 @@ class Sandbox:
             cwd=str(ROOT), env=self.env(), stdout=handle, stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL, creationflags=_no_window_flag())
         deadline = time.time() + START_TIMEOUT
+        expected_dir = str(self.teamroom_home / "data")
         while time.time() < deadline:
             if self.proc.poll() is not None:
                 raise RuntimeError("сервер завершился при запуске:\n%s" % self.tail())
             try:
-                code, _ = http("GET", self.url("/api/health"), timeout=3, attempts=1)
+                code, text = http("GET", self.url("/api/health"), timeout=3, attempts=1)
                 if code == 200:
-                    return
+                    # W21-REV2: на порту мог оказаться ЧУЖОЙ сервер (параллельные
+                    # агенты держат 8851–8856). Сверяем каталог данных: health отдаёт
+                    # `dir`. Не наш — честная ошибка, а не 27 ложных «провалов».
+                    try:
+                        payload = json.loads(text)
+                    except ValueError:
+                        payload = {}
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    # `dir` живёт в блоке `data` (см. h_health), но понимаем и плоский вид
+                    block = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+                    got = block.get("dir") or payload.get("dir")
+                    port = (payload.get("app") or {}).get("port") if isinstance(payload.get("app"), dict) else None
+                    if got and _same_path(got, expected_dir) and (port in (None, self.port)):
+                        return
+                    raise RuntimeError("на порту %d отвечает чужой сервер (каталог данных %r, "
+                                       "ждали %r)" % (self.port, got, expected_dir))
             except (urllib.error.URLError, OSError, NetError):
                 pass
             time.sleep(0.4)

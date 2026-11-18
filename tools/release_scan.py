@@ -58,6 +58,20 @@ BUILTIN_SECRET_RULES = (
     ("секрет: приватный ключ", r"-----BEGIN (?:RSA |OPENSSH |EC |PGP )?PRIVATE KEY-----"),
 )
 
+#: КЛАССЫ личных данных, а не отдельные значения: правила работают и без таблицы
+#: (публичный репозиторий её не содержит). Каждый класс взят из прошлых утечек:
+#: личные пути, почты, контрагенты и фамилии в названиях документов, id профилей,
+#: суммы в чужой валюте — всё это текстом в данных, а не в коде.
+BUILTIN_CLASS_RULES = (
+    ("личное: почта любого вида", r"[\w.+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}"),
+    ("личное: профиль Windows с именем",
+     r"[A-Za-z]:[\\/]{1,4}Users[\\/]{1,4}(?!User\b|Public\b|Default\b|All Users\b)[A-Za-zА-Яа-яЁё]"),
+    ("личное: диск D: в путях", r"\bD:[\\/]"),
+    ("личное: контрагент без кавычек", r"(?:ИП|ООО|АО|ЗАО|ПАО)\s+[А-ЯЁ][а-яё]+"),
+    ("личное: документ с фамилией", r"(?:Письмо|Договор|Сч[её]т)\s+[А-ЯЁ][а-яё]+"),
+    ("личное: id профиля участника (устаревший префикс)", r"(?<![A-Za-z0-9_-])biz-[a-z]"),
+)
+
 #: заведомо учебные токены в тестах — не находка (работает и без таблицы)
 BUILTIN_ALLOW = (
     ("tests/*", r"sk-[A-Za-z]{3,}[0-9]{4}"),
@@ -146,9 +160,15 @@ def main(argv=None) -> int:
     if not table.get("scan_secret_patterns"):
         for name, pattern in BUILTIN_SECRET_RULES:
             rules.append((name, re.compile(pattern), ()))
+    if not table.get("scan_patterns"):
+        for name, pattern in BUILTIN_CLASS_RULES:
+            rules.append((name, re.compile(pattern), ()))
 
     allow_rules = [(item["path"], re.compile(item["pattern"])) for item in table.get("scan_allow", [])]
     allow_rules += [(glob, re.compile(pattern)) for glob, pattern in BUILTIN_ALLOW]
+    #: вымышленные адреса примеров — не личные данные (работает и без таблицы)
+    allow_rules += [("*", re.compile(r"@example\.(?:org|net|com)\b")),
+                    ("*", re.compile(r"@[\w.-]*\.local\b"))]
     #: разрешённые бинарники — ТОЛЬКО точные пути (например демо-аудио для e2e),
     #: не маски *.wav: любой другой wav остаётся находкой
     allow_binaries = set(BUILTIN_ALLOW_BINARIES)

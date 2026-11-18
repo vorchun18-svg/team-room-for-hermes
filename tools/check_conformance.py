@@ -57,7 +57,9 @@ MEMBER_ROLES = {"worker", "critic", "observer"}
 TEAM_ROLES = {"orchestrator", "worker", "critic", "observer"}
 MEMBER_STATES = {"idle", "working", "waiting"}
 PHASE_STATUSES = {"done", "active", "next", "blocked"}
-ARTIFACT_KINDS = {"md", "json", "html", "csv", "image", "pdf", "docx", "xlsx", "pptx", "other"}
+ARTIFACT_KINDS = {"md", "json", "html", "csv", "image", "pdf", "docx", "xlsx", "pptx", "other",
+                  # W20-A1 (B-43, §1.4): подпапка материалов — элемент списка артефактов
+                  "folder"}
 WARNING_CODES = {"legacy_metadata", "missing_artifact", "no_synthesis", "report_invalid", "schema_drift",
                  "partial_ingest", "dispatcher_down", "card_failed", "outside_room", "critic_failed",
                  "critic_rounds_exhausted",
@@ -121,7 +123,10 @@ NULLABLE = {"status_reason", "started_at", "finished_at", "duration_s", "assigne
             "author", "at", "source_task", "task_id", "owner", "due", "answer", "answered_at",
             "why", "current", "last", "phase", "warning", "last_run_at", "last_error",
             "schema_version", "request_id", "tenant", "decomposed_at", "size", "outcome",
-            "error", "note", "asked_request", "status_reason"}
+            "error", "note", "asked_request", "status_reason",
+            # W23-ST: стоимость последнего запуска — её нечем показать, пока нет подтверждённой
+            # сессии с ценой (`docs/API.md` §6.4, §6.11: `cost_usd: number|null`).
+            "cost_usd"}
 
 
 def jtype(value) -> str:
@@ -290,7 +295,7 @@ def _write_profiles(hermes_home: Path) -> None:
     """Минимальный ростер в ФАЛЬШИВОМ каталоге Hermes внутри песочницы.
 
     ВАЖНО: `cfg.hermes_home` — РЕАЛЬНЫЙ каталог Hermes (только чтение). Писать туда нельзя:
-    28.10.2026 версия без этой защиты затёрла config.yaml и профили biz-director/biz-critic/coder.
+    28.10.2026 версия без этой защиты затёрла config.yaml и профили team-director/team-critic/coder.
     Все записи идут через `server.safety` (двойная защита: проверка пути + рантайм-запрет).
     """
     from server import safety
@@ -308,15 +313,15 @@ def _write_profiles(hermes_home: Path) -> None:
     safety.guarded_write_text(hermes_home / "config.yaml",
                               "model:\n  default: test-model\n  provider: test\n")
     roster = {
-        "biz-director": ("Директор Лето", "director", "Разбирает запрос и сводит ответ.", ["декомпозиция"]),
-        "biz-critic": ("Критик", "critic", "Проверяет свод перед ответом.", ["проверка"]),
+        "team-director": ("Директор Лето", "director", "Разбирает запрос и сводит ответ.", ["декомпозиция"]),
+        "team-critic": ("Критик", "critic", "Проверяет свод перед ответом.", ["проверка"]),
         "coder": ("Программист", "worker", "Пишет и проверяет код.", ["python"]),
-        "biz-lawyer": ("Юрист проекта", "worker", "Проверяет договоры и риски.", ["право"]),
-        "biz-cfo": ("Финансист Лето", "worker", "Считает юнит-экономику.", ["финансы"]),
-        "biz-ops": ("Операции", "worker", "Ведёт поставщиков и упаковку.", ["операции"]),
-        "biz-marketing": ("Маркетолог", "worker", "Готовит витрину и тексты.", ["маркетинг"]),
-        "biz-strategy": ("Стратег", "worker", "Сравнивает рынок и цены.", ["стратегия"]),
-        "biz-runner": ("Гонец Лето", "worker", "Забирает и проверяет файлы.", ["сбор"]),
+        "team-lawyer": ("Юрист проекта", "worker", "Проверяет договоры и риски.", ["право"]),
+        "team-cfo": ("Финансист Лето", "worker", "Считает юнит-экономику.", ["финансы"]),
+        "team-ops": ("Операции", "worker", "Ведёт поставщиков и упаковку.", ["операции"]),
+        "team-marketing": ("Маркетолог", "worker", "Готовит витрину и тексты.", ["маркетинг"]),
+        "team-strategy": ("Стратег", "worker", "Сравнивает рынок и цены.", ["стратегия"]),
+        "team-runner": ("Гонец Лето", "worker", "Забирает и проверяет файлы.", ["сбор"]),
     }
     for name, (title, kind, description, tags) in roster.items():
         folder = hermes_home / "profiles" / name
@@ -337,7 +342,7 @@ def _make_card(agents, title: str, assignee: str, tenant: str, parent: str | Non
     return card
 
 
-def _meta(sb, owner: str = "biz-ops") -> dict:
+def _meta(sb, owner: str = "team-ops") -> dict:
     """Metadata v1 для деревьев, которых нет в посеве (как у реального ответа директора)."""
     state_md = Path(sb.vault_dir) / "Лето" / "STATE.md"
     return {
@@ -379,14 +384,14 @@ def _extra_trees(sb) -> dict:
     made["outside_room"] = {"root_id": root, "slug": "ext-fn-outside", "room": "fn", "critic": False,
                             "extra_cards": []}
 
-    root = agents.card("Лето: состав набора и себестоимость — сверка с критиком", "biz-director",
+    root = agents.card("Лето: состав набора и себестоимость — сверка с критиком", "team-director",
                        tenant="room:cafe")
-    kids = [_make_card(agents, "Срез 01-Legal: этикетка набора", "biz-lawyer", "room:cafe", root),
-            _make_card(agents, "Срез 02-Ops: смета упаковки", "biz-ops", "room:cafe", root),
-            _make_card(agents, "Срез 03-CFO: юнит-экономика набора", "biz-cfo", "room:cafe", root)]
+    kids = [_make_card(agents, "Срез 01-Legal: этикетка набора", "team-lawyer", "room:cafe", root),
+            _make_card(agents, "Срез 02-Ops: смета упаковки", "team-ops", "room:cafe", root),
+            _make_card(agents, "Срез 03-CFO: юнит-экономика набора", "team-cfo", "room:cafe", root)]
     agents.start(root)
-    agents.finish(root, "## Свод\n\nСебестоимость набора сходится, маржа 38%.", _meta(sb, "biz-ops"))
-    critic = agents.card("Критика ответа (раунд 1)", "biz-critic", tenant="room:cafe", parent=root)
+    agents.finish(root, "## Свод\n\nСебестоимость набора сходится, маржа 38%.", _meta(sb, "team-ops"))
+    critic = agents.card("Критика ответа (раунд 1)", "team-critic", tenant="room:cafe", parent=root)
     agents.start(critic)
     agents.finish(critic, "Принято: цифры сходятся.", {"verdict": "approve", "issues": []})
     made["critic_approved"] = {"root_id": root, "slug": "ext-cafe-approved", "room": "cafe", "critic": True,
@@ -824,7 +829,7 @@ def post_checks(live: Live) -> list[Violations]:
     else:
         status, payload, _ = live.post("/api/requests/%s/actions" % work_rid,
                                        {"action": "reassign", "task_id": kids[0]["id"],
-                                        "profile": "biz-strategy"})
+                                        "profile": "team-strategy"})
         if status != 200:
             out.type.append("HTTP %s вместо 200: %s" % (status, str(payload)[:200]))
         else:
@@ -874,7 +879,7 @@ def post_checks(live: Live) -> list[Violations]:
             out.type.append("DELETE: HTTP %s вместо 200" % status)
         else:
             _shape(payload, {"ok": bool, "members": list}, "delete", out)
-    status, payload, _ = live.delete("/api/rooms/cafe/members/biz-director")
+    status, payload, _ = live.delete("/api/rooms/cafe/members/team-director")
     if status != 409:
         out.type.append("DELETE директора: HTTP %s вместо 409" % status)
 

@@ -435,7 +435,7 @@ const WARNING_META = {
   partial_ingest: {
     tone: 'warn',
     title: 'В проект перенесена часть данных',
-    hint: 'Шаги и решения могли попасть не все — проверьте «Дальше» и «Карту проекта».',
+    hint: 'Шаги и решения могли попасть не все — проверьте «От вас нужно» и «Карту проекта».',
   },
   dispatcher_down: {
     tone: 'warn',
@@ -496,6 +496,9 @@ export function warningItems(detail) {
     const code = String(raw.code || 'unknown');
     const meta = WARNING_META[code] || {};
     const detailTask = raw.detail && typeof raw.detail === 'object' ? raw.detail.task_id : null;
+    // W25.5: путь нужен свёрнутой пометке «вне папки проекта» — показываем его
+    // только по «подробнее», а не в тексте баннера.
+    const detailPath = raw.detail && typeof raw.detail === 'object' ? String(raw.detail.path || '') : '';
     const tone = WARNING_TONE_RU[meta.tone || 'warn'] || 'warn';
     let text = String(raw.message || meta.hint || 'Подробности не переданы.');
     // «Карточка расчёта упала дважды» — технический пересказ; понятная причина
@@ -516,12 +519,16 @@ export function warningItems(detail) {
       const fact = text.split(/\s*Переназначьте[\s\S]*$/i)[0].trim();
       if (fact) text = fact;
     }
+    // W25.5: у «вне папки проекта» путь в тексте не нужен — он уходит в
+    // раскрытие «подробнее», а строка остаётся одной.
+    if (code === 'artifact_outside' && detailPath) text = '';
     push({
       code,
       tone,
       title: meta.title || 'Замечание',
       text,
       hint: meta.hint || '',
+      path: code === 'artifact_outside' ? detailPath : '',
       taskId: detailTask ? String(detailTask) : null,
       bannerClass: bannerClassFor(tone),
       // B-24: список попыток и штамп «id карточки + номер попытки» — по нему плашка
@@ -679,7 +686,7 @@ export function criticProgressLabel(info) {
   return `замечаний было ${before}, закрыто ${closed}, осталось ${open}`;
 }
 
-/* ──────────────────────────────────────────────────────────────────── артефакты */
+/* ───────────────────────────────────────────────────────────────────── файлы */
 
 const ARTIFACT_KIND = {
   md: { icon: 'markdown', label: 'Markdown' },
@@ -694,7 +701,7 @@ const ARTIFACT_KIND = {
   other: { icon: 'file', label: 'Файл' },
 };
 
-/** Иконка и подпись типа артефакта. */
+/** Иконка и подпись типа файла (W26-D3: «артефакт» → «файл»). */
 export function artifactKindMeta(kind) {
   return ARTIFACT_KIND[String(kind || 'other')] || ARTIFACT_KIND.other;
 }

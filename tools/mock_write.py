@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 import re
 from urllib.parse import unquote
@@ -11,6 +12,7 @@ from mock_core import (MAX_NOTE, MAX_TEXT, ROOT, ApiError, backlog_counts, compu
                        detail_to_summary, now, short_title, slugify)
 from mock_versions import normalize_v2
 import mock_backlog
+import mock_delos
 import mock_notes
 import mock_paths
 import mock_plan
@@ -24,6 +26,201 @@ _SERVER_DIR = _Path(__file__).resolve().parent.parent / "server"
 if str(_SERVER_DIR) not in _sys.path:
     _sys.path.insert(0, str(_SERVER_DIR))
 import answers as mock_answers            # noqa: E402  (server/answers.py, чистые функции)
+#: W20 §1.7: этапы проекта — те же правила, что у сервера (без второго мнения о решениях)
+import phase_book as mock_phases          # noqa: E402
+
+#: W20-W1 §1.6: подписи настроек «Хода работы» — как в server/rooms.py
+WORKLOG_MODE_LABELS = {"full": "Подробно (с рассуждениями)",
+                       "brief": "Кратко (только действия)", "off": "Выключено"}
+
+# --- W22-AP2: демо «Разрешения агентам» -------------------------------------
+# Живая проверка интерфейса на моке: у одного демо-запроса есть запросы
+# разрешения (AP1 добавит серверную часть; здесь — только демо-данные, всё
+# вымышленное). Сколько запросов показать, задаётся в строке запуска:
+#   MOCK_APPROVALS=12 python tools/mock_server.py --port 8854
+APPROVAL_DEMO_RIDS = {"t_5c8e4a02"}
+_AP_MEMBERS = [("team-ops", "Анна"), ("team-lawyer", "Лев"), ("team-critic", "Марина")]
+
+
+def _ap_long_command(n: int) -> str:
+    """Длинная вымышленная команда с путями без пробелов (проверка вёрстки).
+
+    Путь вымышленный и переносимый: никакого домашнего каталога автора (tests.test_portable
+    сканирует исходники на такие пути).
+    """
+    head = ("cd C:/Projects/cafe-leto/2026/packaging/orders "
+            "&& python tools/build_report.py "
+            "--input 2026-11-17/orders_full_export_v12.csv "
+            "--output C:/Projects/cafe-leto/2026/packaging/reports/final/"
+            "packaging_orders_2026_11_17.html")
+    tail = "".join(" --extra-param-%d=C:/Projects/cafe-leto/2026/packaging/"
+                   "attachments/supplier_romashka_receipt_%02d.csv" % (i + 1, i + 1)
+                   for i in range(10))
+    text = head + tail
+    while len(text) < n:
+        text += "\n# проверка шага %d: сверка строк отчёта с выгрузкой" % len(text)
+    return text[:n]
+
+
+def demo_approvals(rid: str) -> list:
+    """Демо-запросы разрешения: три по умолчанию, больше — по env.
+
+    W22-ST: первые два — один и тот же участник и одно правило (`heredoc`), поэтому в
+    демо видно ровно то, ради чего сделано схлопывание: ОДНА строка «Анна хочет
+    выполнить команду · ×3 · команд: 2» с последней командой и раскрываемым списком.
+    `execute_code` и жёсткий запрет (`floor`) идут следующими — на них видно плашки.
+    """
+    try:
+        count = max(1, min(24, int(os.environ.get("MOCK_APPROVALS", "3"))))
+    except (TypeError, ValueError):
+        count = 3
+    base = [
+        ("terminal", "запуск скрипта через heredoc", "script execution via heredoc", 0, False,
+         _ap_long_command(3000), 2),
+        # та же причина и тот же участник: разные команды → одна строка со счётчиком
+        ("terminal", "запуск скрипта через heredoc", "script execution via heredoc", 0, False,
+         "python - <<'EOF'\nimport csv\nprint(len(list(csv.DictReader(open('orders.csv')))))\nEOF", 1),
+        ("execute_code", "execute_code — произвольный код на Python", "execute_code", 1, False,
+         "import csv, pathlib\nrows = list(csv.DictReader(open('orders_full_export_v12.csv')))\n"
+         "print(len(rows))", 1),
+        ("terminal", "удаление каталога целиком", "recursive delete", 2, True,
+         "rm -rf C:/Projects/cafe-leto/2026/packaging/archive", 1),
+    ]
+    extra_desc = [
+        ("terminal", "чтение служебного файла настроек", "script execution via -e/-c flag"),
+        ("terminal", "запись файла отчёта в папку проекта", "script execution via heredoc"),
+        ("execute_code", "execute_code — произвольный код на Python", "execute_code"),
+        ("terminal", "запуск сборки страницы отчёта", "script execution via -e/-c flag"),
+    ]
+    items = []
+    stamp = now() - 900
+    for i in range(count):
+        if i < len(base):
+            kind, desc, pattern, who, floor, command, repeats = base[i]
+        else:
+            kind, desc, pattern = extra_desc[i % len(extra_desc)]
+            who, floor, repeats = i % 3, False, 1
+            command = (_ap_long_command(180 + i * 40) if i % 2 else
+                       "python -c \"import json;print(json.load(open('summary.json')))\"")
+        profile, member = _AP_MEMBERS[who % len(_AP_MEMBERS)]
+        grantable = (not floor) and kind != "execute_code"
+        items.append({
+            "id": "ap_%08x" % (0x5A17C0DE + i * 7919),
+            "task_id": rid,
+            "profile": profile,
+            "member_title": member,
+            "kind": kind,
+            "command": command,
+            "description": desc,
+            "pattern_key": pattern,
+            "floor": floor,
+            # W22-AP1: execute_code в работе без человека Hermes не разрешает списком —
+            # демо говорит правду, а не показывает недоступную кнопку как рабочую.
+            "grantable": grantable,
+            # W26-D2: вид блокировки — три разных вида строки в интерфейсе.
+            "dead_end": "floor" if floor else ("workaround" if not grantable else "grantable"),
+            # W26-D1: действия, которые есть у этого вида (счётчик «нужно от вас»
+            # считает только те, у кого действие есть).
+            "actions": (["ack", "hint_agent"] if floor
+                        else ["hint_agent", "trust_profile", "dismiss"] if not grantable
+                        else ["once", "always", "deny"]),
+            "state": "pending",
+            "at": stamp + i * 60,
+            "decided_at": None,
+            "card_state": "blocked",
+            "count": repeats,
+            "note": ("жёсткий запрет политики Hermes — разрешить нельзя" if floor
+                     else "" if grantable else "такую блокировку снять нельзя — нужен другой способ"),
+            "card_title": "Собрать отчёт по упаковке за неделю",
+            "expires_at": None,
+        })
+    return items
+def collapse_approvals(items: list) -> list:
+    """Схлопнуть одинаковые по причине блокировки (W22-ST) — как сервер.
+
+    Демо-двойник `server/approvals._same_reason`: ждущие запросы одного участника с одним
+    правилом в одной карточке становятся одной строкой со счётчиком, последней командой
+    и списком `commands[]`. Решённые и записи без правила остаются по одной.
+    """
+    groups: dict = {}
+    out: list = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        pattern = str(item.get("pattern_key") or "")
+        if item.get("state") != "pending" or not pattern:
+            out.append(item)
+            continue
+        key = (str(item.get("task_id") or ""), str(item.get("profile") or ""), pattern)
+        groups.setdefault(key, []).append(item)
+    for _key, members in groups.items():
+        if len(members) == 1:
+            out.append(members[0])
+            continue
+        members = sorted(members, key=lambda row: (int(row.get("at") or 0), str(row.get("id"))),
+                         reverse=True)
+        base = dict(members[0])
+        commands = [{"id": str(row.get("id") or ""), "command": str(row.get("command") or ""),
+                     "at": int(row.get("at") or 0), "count": max(1, int(row.get("count") or 1))}
+                    for row in members]
+        base["group"] = "gr_" + hashlib.sha1("\u0001".join(_key).encode("utf-8")).hexdigest()[:8]
+        base["approval_ids"] = [str(c.get("id") or "") for c in commands]
+        base["commands"] = commands
+        base["command"] = commands[0]["command"]
+        base["count"] = sum(row["count"] for row in commands)
+        base["at"] = min(int(row.get("at") or 0) for row in members)
+        out.append(base)
+    return out
+
+
+DIGEST_LABELS = {0: "Выключено", 1: "Каждую минуту", 2: "Каждые 2 минуты", 5: "Каждые 5 минут"}
+
+
+def _svod_block(room: dict) -> dict:
+    """Готовые подписи живого свода для демо-карточки комнаты (W20-S1 §1.1)."""
+    auto = bool(room.get("auto_svod"))
+    quiet = int(room.get("auto_svod_quiet_s") or 180)
+    gap = int(room.get("auto_svod_min_gap_s") or 600)
+
+    def _minutes(seconds: int) -> str:
+        return "%d мин" % (seconds // 60) if seconds % 60 == 0 else "%d с" % seconds
+
+    return {"auto_svod": auto, "auto_svod_quiet_s": quiet, "auto_svod_min_gap_s": gap,
+            "auto_svod_label": ("Включено: свод обновляется сам" if auto
+                                else "Выключено: свод обновляется кнопкой «Обновить сейчас»"),
+            "quiet_label": "не раньше чем через %s тишины" % _minutes(quiet),
+            "gap_label": "не чаще раза в %s" % _minutes(gap)}
+
+
+def svod_defaults(room: dict) -> dict:
+    """Поля живого свода у комнаты демо (W20-S1 §1.1).
+
+    У комнат, созданных раньше, полей нет — читаются как «включено, 3 минуты,
+    10 минут»; интерфейс показывает то же, что отдал бы боевой сервер.
+    """
+    if not isinstance(room, dict):
+        return room
+    room.setdefault("auto_svod", True)
+    room.setdefault("auto_svod_quiet_s", 180)
+    room.setdefault("auto_svod_min_gap_s", 600)
+    room["svod"] = _svod_block(room)
+    return room
+
+
+def _worklog_block(mode, minutes) -> dict:
+    """Строка режима «Хода работы» для комнаты в демо (как отдаёт сервер)."""
+    name = str(mode or "full").strip().lower()
+    if name not in WORKLOG_MODE_LABELS:
+        name = "full"
+    try:
+        every = int(minutes)
+    except (TypeError, ValueError):
+        every = 2
+    if every not in DIGEST_LABELS:
+        every = 2
+    return {"mode": name, "mode_label": WORKLOG_MODE_LABELS[name],
+            "digest_every_min": every, "digest_label": DIGEST_LABELS[every],
+            "on": name != "off"}
 
 
 def apply_decision_overrides(detail: dict, rid: str, overrides: dict) -> dict:
@@ -101,7 +298,19 @@ def apply_step_overrides(detail: dict, rid: str, overrides: dict) -> dict:
                          "can_agree": False, "can_drop": False, "reaction_pending": False,
                          "reaction_label": "шаг убран"})
         elif isinstance(saved.get("action"), dict):
-            mock_answers.apply_step(step, saved["action"], None)
+            action = saved["action"]
+            mock_answers.apply_step(step, action, None)
+            # W21-L1: в демо руководитель «отвечает» на согласие сразу — иначе строку
+            # «Шаг учтён» (недоделка U4) на демо-сервере увидеть нечем. На настоящем
+            # сервере это его реакция в ветке (`reaction.status = applied`).
+            if str(action.get("kind") or "") == "agree" and not step.get("reaction"):
+                stamp = int(action.get("at") or 0) + 60
+                step["reaction"] = {"status": "applied", "at": stamp, "cards": [],
+                                    "text": "Учёл: шаг остаётся в плане на эту неделю",
+                                    "label": "учтено: работа изменена"}
+                step["reaction_status"] = "applied"
+                step["reaction_label"] = "учтено: работа изменена"
+                step["reaction_pending"] = False
     return detail
 
 
@@ -273,22 +482,71 @@ class MockWrite:
 
     # W13-F (§8): итог «Проверить доску сейчас» для демо — вымышленные карточки
     def kick_report(self, preview: bool = False) -> dict:
-        ready_card = {"id": "t_demo0001", "title": "Срез 02-Ops: смета упаковки", "assignee": "biz-ops",
+        ready_card = {"id": "t_demo0001", "title": "Срез 02-Ops: смета упаковки", "assignee": "team-ops",
                       "status": "ready", "reason_code": "ready", "reason": "готова к запуску",
                       "tenant": "room:cafe"}
         running_card = {"id": "t_demo0002", "title": "Срез 03-CFO: юнит-экономика набора",
-                        "assignee": "biz-cfo", "status": "running", "reason_code": "running",
+                        "assignee": "team-cfo", "status": "running", "reason_code": "running",
                         "reason": "уже идёт", "tenant": "room:cafe"}
         counts = {"ready": 1, "stuck": 0, "running": 1, "review": 0, "input": 0, "blocked": 1,
                   "deps": 1, "triage": 0, "scheduled": 0, "queued": 0, "done": 5, "total": 9}
         return {"ok": True, "kind": "preview" if preview else "started", "preview": preview,
                 "spawned": 0 if preview else 1, "reclaimed": 0, "promoted": 0, "max": 3,
-                "started": [] if preview else [{"id": ready_card["id"], "assignee": "biz-ops",
+                "started": [] if preview else [{"id": ready_card["id"], "assignee": "team-ops",
                                                 "title": ready_card["title"]}],
                 "counts": counts, "cards": [ready_card, running_card], "useful": True,
                 "error": None, "at": now()}
 
+    # --- W22-AP2: демо-разрешения агентам (память процесса) -----------------
+    def _approvals_for(self, rid: str) -> list:
+        store = getattr(self, "approvals_demo", None)
+        if not isinstance(store, dict):
+            store = {}
+            self.approvals_demo = store
+        if rid not in store:
+            store[rid] = demo_approvals(rid) if rid in APPROVAL_DEMO_RIDS else []
+        return store[rid]
+
+    def approval_grants(self) -> list:
+        """Выданные разрешения: одно вечное в демо + выданные из приложения."""
+        store = getattr(self, "approval_grants_demo", None)
+        if not isinstance(store, list):
+            store = [{
+                "profile": "team-ops",
+                "member_title": "Анна",
+                "pattern_key": "script execution via -e/-c flag",
+                "description": "выполнение кода python -c",
+                "scope": "always",
+                "granted_at": now() - 86400,
+                "expires_at": None,
+                "source": "room",
+            }]
+            self.approval_grants_demo = store
+        return [dict(g) for g in store]
+
+    def revoke_approval(self, body: dict) -> dict:
+        profile = (check_str(body, "profile", required=True, maxlen=64) or "").strip()
+        pattern = (check_str(body, "pattern_key", required=True, maxlen=160) or "").strip()
+        store = getattr(self, "approval_grants_demo", None)
+        if not isinstance(store, list):
+            store = self.approval_grants()
+        before = len(store)
+        store[:] = [g for g in store if not (g.get("profile") == profile
+                                             and g.get("pattern_key") == pattern)]
+        self.approval_grants_demo = store
+        return {"ok": True, "removed": before - len(store), "profile": profile,
+                "pattern_key": pattern}
+
     def post(self, path: str, query: dict, body: dict) -> tuple:
+        # W26-D5: дела — создание и действия (демо в памяти, форма как у сервера)
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/delos", path)
+        if m:
+            return 201, mock_delos.create(m.group(1), body or {})
+        m = re.fullmatch(r"/api/delos/(dl_[A-Za-z0-9]{2,24})/actions", path)
+        if m:
+            return 200, mock_delos.act(m.group(1), body or {})
+        if path == "/api/approvals/revoke":
+            return 200, self.revoke_approval(body or {})     # W22-AP2
         if path == "/api/stt/learn":
             raw = check_str(body, "raw", required=True, maxlen=MAX_NOTE)
             final = check_str(body, "final", default="", maxlen=20000, allow_empty=True)
@@ -303,18 +561,33 @@ class MockWrite:
             return 200, {"ok": True, "spawned": report["spawned"], "reclaimed": 0, "promoted": 0,
                          "planned": [], "max": report["max"], "report": report,
                          "dispatcher": {"ok": True, "state": "running", "warning": None}, "at": now()}
-        if path == "/api/artifacts/open":
-            # B-22 WAVE19: демо/мок ничего не запускает — только подтверждает приём
+        if path in ("/api/files/launch", "/api/artifacts/open"):
+            # B-22 WAVE19 + W26-D3: демо/мок ничего не запускает — только подтверждает приём.
+            # /api/files/launch {mode:"open"|"reveal"} — «Открыть» и «Показать в папке».
             target = body.get("path") if isinstance(body, dict) else ""
             room = str((body or {}).get("room") or "").strip() if isinstance(body, dict) else ""
+            mode = str((body or {}).get("mode") or ("open" if path == "/api/files/launch" else "reveal")).strip().lower() if isinstance(body, dict) else "open"
+            if mode not in ("open", "reveal"):
+                raise ApiError(400, "bad_request", "mode: open или reveal", {"field": "mode"})
             if not isinstance(target, str) or not target.strip():
                 raise ApiError(400, "bad_request", "Нужен path", {"field": "path"})
             if not room:
                 raise ApiError(400, "bad_request", "Нужен room", {"field": "room"})
             self.room(room)
-            return 200, {"ok": True, "path": target.strip(), "revealed": True, "mock": True}
+            return 200, {"ok": True, "path": target.strip(), "mode": mode,
+                         "opened": True, "revealed": mode == "reveal", "mock": True}
+        m = re.fullmatch(r"/api/requests/(t_[A-Za-z0-9_]+)/export", path)
+        if m:
+            return self.export_request(m.group(1), body or {})
         if path == "/api/rooms/check-dir":
             return 200, self.check_dir(body)
+        # W20 §1.7: этапы проекта — решение по предложению и «предложи этапы» (демо).
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/phases/proposal", path)
+        if m:
+            return 200, self.decide_phases(m.group(1), body or {})
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/phases/propose", path)
+        if m:
+            return 201, self.propose_phases(m.group(1), body or {})
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/entries", path)
         if m:
             return 201, self.post_note_entry(m.group(1), m.group(2), body or {})
@@ -419,14 +692,75 @@ class MockWrite:
             return 200, self.patch_request(m.group(1), body or {})
         raise ApiError(404, "not_found", "Неизвестный эндпоинт", {"path": path})
 
+    # W20-U3 (P13): закрепление запроса в памяти демо, как поле реестра бэкенда.
+    def _pin_store(self) -> dict:
+        store = getattr(self, "pin_overrides", None)
+        if not isinstance(store, dict):
+            store = {}
+            self.pin_overrides = store
+        return store
+
+    def pin_state(self, rid: str) -> dict:
+        """`{pinned, pinned_at}` запроса: демо хранит закрепление в памяти."""
+        saved = self._pin_store().get(str(rid)) or {}
+        detail = self.detail(rid)
+        return {"pinned": bool(saved.get("pinned", detail.get("pinned"))),
+                "pinned_at": int(saved.get("pinned_at") or detail.get("pinned_at") or 0) or None}
+
+    def toggle_pin(self, rid: str, body: dict) -> dict:
+        """`PATCH {pinned}` — закрепить/снять; текст, название и ответ не меняются."""
+        value = body.get("pinned")
+        if value is None or isinstance(value, (dict, list)):
+            raise ApiError(400, "bad_request", "pinned: ожидается true или false",
+                           {"field": "pinned", "value": str(value)})
+        pinned = (value.strip().lower() in ("1", "true", "yes", "on")
+                  if isinstance(value, str) else bool(value))
+        at = int(now()) if pinned else 0
+        self._pin_store()[str(rid)] = {"pinned": pinned, "pinned_at": at}
+        summary = detail_to_summary(dict(self.detail(rid), pinned=pinned, pinned_at=at or None))
+        return {"ok": True, "action": "pin" if pinned else "unpin", "pinned": pinned,
+                "pinned_at": at, "request": summary}
+
+    def export_request(self, rid: str, body: dict) -> tuple:
+        """`POST /api/requests/{id}/export {format}` в демо (W20-U3, P13).
+
+        Демо ничего не пишет на диск: `obsidian` честно отвечает «заметки не
+        создаются», `html` отдаёт тот же автономный файл, что и GET, `print` —
+        подтверждение формата (печать собирает браузер).
+        """
+        fmt = str((body or {}).get("format") or "").strip().lower()
+        allowed = ["obsidian", "html", "print"]
+        if not fmt:
+            raise ApiError(400, "bad_request", "Укажите формат: obsidian, html или print",
+                           {"field": "format", "allowed": allowed})
+        if fmt not in allowed:
+            raise ApiError(400, "bad_request", "Формат: obsidian, html или print",
+                           {"field": "format", "allowed": allowed, "value": fmt})
+        detail = self.detail(rid)
+        if fmt == "print":
+            return 200, {"ok": True, "format": "print", "hint": "print_css"}
+        if fmt == "obsidian":
+            ready = (detail.get("synthesis") or {}).get("state") == "ready"
+            if not ready:
+                raise ApiError(409, "conflict", "Ответ ещё не готов — экспортировать нечего",
+                               {"reason": "synthesis_pending", "rid": rid})
+            return 200, {"ok": False, "format": "obsidian", "skipped": "mock",
+                         "reason": "В демонстрационном режиме заметки не создаются — "
+                                   "откройте рабочую комнату.", "path": ""}
+        return self.export(rid, "html")
+
     # W17-B §4: переименование названия запроса — в памяти демо, как реестр бэкенда
     def patch_request(self, rid: str, body: dict) -> dict:
         """`PATCH /api/requests/{id} {title}` → `title_source=user`, `title_locked`.
-        Пустая строка снимает блокировку (название снова автоматическое).
+
+        W20-U3: тем же маршрутом приходит `{pinned}` — закрепление запроса.
+        Пустая строка в `title` снимает блокировку (название снова автоматическое).
         """
         detail = self.detail(rid)
+        if "pinned" in body and "title" not in body:
+            return self.toggle_pin(rid, body)
         if "title" not in body:
-            raise ApiError(400, "bad_request", "Нужно поле title (пустая строка снимает блокировку)",
+            raise ApiError(400, "bad_request", "Нужно поле title или pinned",
                            {"field": "title"})
         title = body.get("title")
         if title is None:
@@ -450,6 +784,7 @@ class MockWrite:
             store[str(rid)] = dict(saved)
         summary = detail_to_summary(dict(self.detail(rid), **saved))
         return {"ok": True, "action": "rename", "request": summary,
+                "pinned": summary.get("pinned"),
                 "title_short": saved["title_short"], "title_source": saved["title_source"],
                 "title_locked": saved["title_locked"]}
 
@@ -597,6 +932,9 @@ class MockWrite:
                 "launch_mode": settings.get("launch_mode", "plan_first"),
                 "max_parallel_streams": settings.get("max_parallel_streams", 2),
                 "project_mode": settings.get("project_mode", True),
+                "worklog_mode": "full", "digest_every_min": 2,
+                # W23.7: у новой комнаты — жёсткий контроль моделей (как на сервере)
+                "model_guard": "enforce",
                 "created_at": now(), "archived": False, "seeded": False,
                 "counters": {"working": 0, "needs_you": 0, "done_today": 0},
                 "phase": {"id": "idea", "title": "Идея и стратегия", "status": "active"},
@@ -618,6 +956,7 @@ class MockWrite:
         room["agent_models"] = {}
         if models_raw is not None:
             self.apply_agent_models(room, models_raw)     # WAVE10 §18
+        svod_defaults(room)                              # W20-S1 §1.1: живой свод новой комнаты
         self.room_details[rid] = room
         self.rooms.append(room)
         return self.with_models(room)
@@ -627,7 +966,15 @@ class MockWrite:
         allowed = {"title", "icon", "orchestrator", "critic", "context_files", "project_dir",
                    "mode_default", "critic_pass", "max_rounds", "launch_mode", "max_parallel_streams",
                    "project_mode", "agent_notes", "agent_models",
-                   "critic_mode", "critic_round_cap"}
+                   "critic_mode", "critic_round_cap",
+                   # W20-FC §1.7: этапы комнаты — свойство комнаты (правит человек).
+                   "phases",
+                   # W20-S1 §1.1: живой свод — переключатель, «тишина», потолок частоты
+                   "auto_svod", "auto_svod_quiet_s", "auto_svod_min_gap_s",
+                   # W20-W1 §1.6: «Ход работы» — подробность ленты и частота итога
+                   "worklog_mode", "digest_every_min",
+                   # W23-MG2 §W23.7: контроль моделей — «строго» или «только предупреждать»
+                   "model_guard"}
         bad = sorted(set(body) - allowed)
         if bad:
             raise ApiError(400, "bad_request", "Поля нельзя менять", {"fields": bad, "allowed": sorted(allowed)})
@@ -650,6 +997,13 @@ class MockWrite:
                 room[key] = check_int(body, key, lo=2, hi=30)
             elif key == "critic_pass":
                 room[key] = check_bool(body, key, default=False)
+            elif key == "auto_svod":
+                # W20-S1 §1.1: автообновление свода — да/нет
+                room[key] = check_bool(body, key, default=True)
+            elif key == "auto_svod_quiet_s":
+                room[key] = check_int(body, key, lo=30, hi=3600, default=180)
+            elif key == "auto_svod_min_gap_s":
+                room[key] = check_int(body, key, lo=60, hi=86400, default=600)
             elif key == "context_files":
                 room[key] = list(check_list(body, key, default=[], of_str=True))
             elif key == "critic":
@@ -665,6 +1019,17 @@ class MockWrite:
                     raise ApiError(400, "bad_request", "Профиля-руководителя комнаты нет в ростере",
                                    {"field": key, "profile": value, "available": sorted(roster)})
                 room[key] = value
+            elif key == "phases":
+                # W20-FC §1.7: редактор этапов сохраняет их свойством комнаты
+                # (те же правила, что у сервера — второго мнения в демо нет).
+                try:
+                    room[key] = mock_phases.check(body.get(key))
+                except mock_phases.PhaseError as exc:
+                    raise ApiError(400, "bad_request", exc.message,
+                                   dict(exc.detail or {})) from exc
+                # Пользователь собрал ровно предложенные этапы — предложение принято.
+                room["phases_proposal"] = mock_phases.reconcile(room[key],
+                                                                room.get("phases_proposal"))
             elif key == "project_dir":
                 room[key] = self.clean_project_dir(body)
             elif key in ("launch_mode", "max_parallel_streams", "project_mode"):
@@ -673,17 +1038,126 @@ class MockWrite:
                 room["notes_warnings"] = mock_notes.apply_map(room, notes_raw)
             elif key == "agent_models":
                 self.apply_agent_models(room, models_raw)
+            elif key == "worklog_mode":
+                # W20-W1 §1.6: Подробно / Кратко / Выключено
+                value = (check_str(body, key, default="full", maxlen=16) or "full").strip().lower()
+                if value not in ("full", "brief", "off"):
+                    raise ApiError(400, "bad_request",
+                                   "Ход работы: «Подробно», «Кратко» или «Выключено»",
+                                   {"field": key, "value": value,
+                                    "allowed": ["full", "brief", "off"]})
+                room[key] = value
+            elif key == "model_guard":
+                # W23-MG2 §W23.7: строго (по умолчанию) | только предупреждать.
+                value = (check_str(body, key, default="enforce", maxlen=16) or "enforce").strip().lower()
+                if value not in ("enforce", "warn"):
+                    raise ApiError(400, "bad_request",
+                                   "Контроль моделей: «строго» или «только предупреждать»",
+                                   {"field": key, "value": value, "allowed": ["enforce", "warn"]})
+                room[key] = value
+            elif key == "digest_every_min":
+                minutes = check_int(body, key, lo=0, hi=5, default=2)
+                if minutes not in (0, 1, 2, 5):
+                    raise ApiError(400, "bad_request", "Промежуточный итог: 0, 1, 2 или 5 минут",
+                                   {"field": key, "value": minutes, "allowed": [0, 1, 2, 5]})
+                room[key] = minutes
             else:  # title, icon
                 room[key] = check_str(body, key, required=True, maxlen=200).strip()
+        room.setdefault("worklog_mode", "full")          # W20-W1 §1.6: старое = «подробно»
+        room.setdefault("digest_every_min", 2)
+        # W23.7: настройка новая, у комнат из старых фикстур её нет — берём значение
+        # сервера по умолчанию, иначе копирование полей ниже падало (KeyError → 500).
+        room.setdefault("model_guard", "enforce")
+        room["worklog"] = _worklog_block(room.get("worklog_mode"), room.get("digest_every_min"))
+        svod_defaults(room)                              # W20-S1 §1.1: живой свод и его подписи
         for r in self.rooms:
             if r["id"] == room_id:
                 for key in ("title", "icon", "orchestrator", "critic", "mode_default", "critic_pass",
                             "max_rounds", "archived", "launch_mode", "max_parallel_streams", "project_mode",
-                            "critic_mode", "critic_round_cap"):
+                            "worklog_mode", "digest_every_min", "worklog",
+                            "auto_svod", "auto_svod_quiet_s", "auto_svod_min_gap_s", "svod",
+                            "critic_mode", "critic_round_cap", "model_guard"):
                     r[key] = room[key]
         summary = self.room_summary(room_id)
         return {**self.with_models(room), "counters": summary["counters"], "phase": summary["phase"],
                 "dispatcher": {"ok": True, "state": "running", "warning": None}}
+
+    # --- этапы проекта (W20 §1.7, демо) --------------------------------------
+    def decide_phases(self, room_id: str, body: dict) -> dict:
+        """Решение по предложению этапов: те же правила, что у сервера.
+
+        Меняется только демо-копия комнаты в памяти процесса: следующий GET уже
+        показывает принятые этапы на карте и убирает строку из «От вас нужно».
+        """
+        room = self.room(room_id)
+        if room.get("archived"):
+            raise ApiError(409, "archived", "Комната в архиве — этапы не меняются",
+                           {"room": room_id})
+        action = check_str(body, "action", required=True, maxlen=20)
+        if action not in mock_phases.PROPOSAL_ACTIONS:
+            raise ApiError(400, "bad_request", "Действие: accept, accept_selected или reject",
+                           {"field": "action", "allowed": list(mock_phases.PROPOSAL_ACTIONS)})
+        ids = body.get("ids")
+        chosen: list = []
+        if ids is not None:
+            if not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
+                raise ApiError(400, "bad_request", "ids: список идентификаторов этапов",
+                               {"field": "ids"})
+            chosen = [x.strip() for x in ids if x.strip()]
+        if action == "accept_selected" and not chosen:
+            raise ApiError(400, "bad_request", "Выберите хотя бы один этап", {"field": "ids"})
+        proposal = mock_phases.norm_proposal(room.get("phases_proposal"))
+        if proposal is None:
+            raise ApiError(409, "no_proposal", "Руководитель ещё не предлагал этапы", {})
+        if proposal.get("state") != "proposed":
+            wanted = "rejected" if action == "reject" else "accepted"
+            if proposal.get("state") == wanted:
+                return {"ok": True, "action": action, "changed": False,
+                        "state": proposal["state"], "phases": room.get("phases") or [],
+                        "proposal": proposal, "added": [], "skipped": [],
+                        "text": mock_phases.state_text(proposal)}
+            raise ApiError(409, "already_decided", "Предложение этапов уже решено",
+                           {"state": proposal.get("state")})
+        try:
+            decided = mock_phases.decide(room.get("phases") or [], proposal, action, chosen)
+        except mock_phases.PhaseError as exc:
+            raise ApiError(400, "bad_request", exc.message, dict(exc.detail or {})) from exc
+        room["phases"] = decided["phases"]
+        room["phases_proposal"] = decided["proposal"]
+        return {"ok": True, "action": action, "changed": True, "state": decided["state"],
+                "phases": decided["phases"], "proposal": decided["proposal"],
+                "added": decided["added"], "skipped": decided["skipped"],
+                "text": mock_phases.state_text(decided["proposal"])}
+
+    def propose_phases(self, room_id: str, body: dict) -> dict:
+        """«Предложите этапы»: в демо ответ руководителя подставлен сразу.
+
+        Настоящий сервер поставил бы карточку и ждал ответа модели. В демо это
+        невозможно (моделей нет), поэтому предложение появляется сразу — с честной
+        пометкой `simulated`, чтобы интерфейс показал «демо-подстановку».
+        """
+        room = self.room(room_id)
+        note = check_str(body, "note", default="", maxlen=2000, allow_empty=True)
+        pending = mock_phases.norm_proposal(room.get("phases_proposal"))
+        if pending and pending.get("state") == "proposed":
+            raise ApiError(409, "proposal_pending",
+                           "Руководитель уже предложил этапы — сначала примите или отклоните",
+                           {"at": pending.get("at")})
+        body_text = mock_phases.propose_body(room, room.get("phases") or [], note)
+        items = mock_phases.norm_items([
+            {"title": "Идея и проверка спроса", "description": "что предлагаем и кому это нужно"},
+            {"title": "Документы и договор", "description": "что готовим и с кем подписываем"},
+            {"title": "Первые продажи", "description": "канал, цена, первая партия"},
+        ])
+        room["phases_proposal"] = {"at": int(now()), "by": room.get("orchestrator") or "",
+                                   "state": "proposed", "items": items,
+                                   "signature": mock_phases.signature(items),
+                                   "source": "demo"}
+        return {"ok": True, "action": "phases_propose", "mock": True, "simulated": True,
+                "root_id": None, "title": mock_phases.PROPOSE_TITLE, "warning": None,
+                "request": None, "body": body_text,
+                "phases_proposal": room["phases_proposal"],
+                "text": mock_phases.state_text(room["phases_proposal"])}
 
     def add_member(self, room_id: str, body: dict) -> dict:
         room = self.room(room_id)
@@ -849,7 +1323,14 @@ class MockWrite:
                    "answer_remind", "step_drop", "step_agree", "step_comment", "step_move",
                    # W17-B §3: «Отправить руководителю накопленные ответы»
                    # W19-D2 §1 (B-20): действия над решением «предложено»
-                   "answers_resend", "decision"]
+                   # W20-S1 §1.1 (B-36): «Обновить сейчас» — версия свода по кнопке
+                   # W20-D1 §1.2 (B-37, B-38): «Снять/Вернуть» решение и «Это не вопрос»
+                   # W22-AP2: решение по запросу разрешения агенту
+                   # W23-MG2: управление работой карточки, как в самом Hermes
+                   "answers_resend", "decision", "svod_refresh", "question_dismiss", "approval",
+                   "card_stop", "card_resume", "card_model",
+                   # W26-D2: рычаги для блокировок, которые нельзя снять разрешением
+                   "hint_agent", "trust_profile", "dismiss"]
         if action not in allowed:
             raise ApiError(400, "bad_request", "Неизвестное действие", {"action": action, "allowed": allowed})
         extra = {"ok": True, "action": action}
@@ -877,16 +1358,242 @@ class MockWrite:
             detail.setdefault("timeline", []).append({"at": now(), "kind": "commented", "task_id": rid,
                                                       "actor": cm["author"], "text": text[:160]})
             extra["comment"] = cm
+        elif action in ("card_stop", "card_resume", "card_model"):
+            # W23-MG2 «Контроль моделей»: управление работой карточки — как в самом
+            # Hermes. Состояние демо живёт в памяти (`card_states` по номеру задачи):
+            # его накладывают и деталь запроса, и состав комнаты.
+            task_id = (check_str(body, "task_id", required=True, maxlen=40) or "").strip()
+            node = next((n for n in tree if isinstance(n, dict) and str(n.get("id")) == task_id), None)
+            if node is None:
+                raise ApiError(404, "not_found", "Карточка не найдена", {"task_id": task_id})
+            states = getattr(self, "card_states", None)
+            if not isinstance(states, dict):
+                states = {}
+                self.card_states = states
+            stamp = now()
+            if action == "card_stop":
+                if str(node.get("status") or "") not in ("running", "review", "revision"):
+                    raise ApiError(409, "conflict", "Карточка уже не идёт", {"task_id": task_id})
+                sent = node.get("model_sent") if isinstance(node.get("model_sent"), dict) else {}
+                # W23-ST: та же форма, что отдаёт сервер (`server/model_guard.stopped_nodes`):
+                # `model`/`provider` — строками, `cost_usd` — числом или null.
+                patch = {"status": "blocked",
+                         "stopped": {"by": "user", "at": stamp,
+                                     "model": str(sent.get("model") or ""),
+                                     "provider": str(sent.get("provider") or ""),
+                                     "cost_usd": (float(sent["cost_usd"])
+                                                  if isinstance(sent.get("cost_usd"), (int, float))
+                                                  else None)},
+                         "finished_at": None}
+                states[task_id] = patch
+                node.update(patch)
+                detail.setdefault("timeline", []).append(
+                    {"at": stamp, "kind": "stopped", "task_id": task_id, "actor": "mikhail",
+                     "text": "Остановлено вами"})
+                extra["text"] = "Работа остановлена"
+            elif action == "card_resume":
+                patch = {"status": "running", "stopped": None, "finished_at": None,
+                         "started_at": node.get("started_at") or stamp}
+                states[task_id] = patch
+                node.update(patch)
+                detail.setdefault("timeline", []).append(
+                    {"at": stamp, "kind": "claimed", "task_id": task_id, "actor": "mikhail",
+                     "text": "Продолжено вами"})
+                extra["text"] = "Работа продолжена"
+            else:
+                provider = (check_str(body, "provider", default="", maxlen=64) or "").strip()
+                model = (check_str(body, "model", default="", maxlen=120) or "").strip()
+                # Пустой выбор — «по умолчанию модель профиля»: переопределения нет.
+                settings = {"provider": provider, "model": model, "source": "card"} if model else {}
+                patch = {"model_settings": settings or None}
+                if str(node.get("status") or "") == "paused":
+                    patch["status"] = "running"
+                    patch["stopped"] = None
+                states[task_id] = dict(states.get(task_id) or {}, **patch)
+                node.update(patch)
+                # Демо-правда: модель карточки живёт в `card_states` (как выбор человека
+                # для ЭТОЙ карточки в `server/model_guard.py:user_model`). Настройки
+                # комнаты (`agent_models`) демо НЕ меняет: там выбор всех её карточек.
+                detail.setdefault("timeline", []).append(
+                    {"at": stamp, "kind": "model", "task_id": task_id, "actor": "mikhail",
+                     "text": "Модель карточки изменена"})
+                extra["model"] = {"provider": provider, "model": model}
+                extra["text"] = "Модель изменена"
+            extra["task"] = node
+            # Контракт ответа (docs/API.md, «W23.8 Управление карточкой») — один для демо и
+            # боевого сервера: ok/action/task_id/status/model/message/detail.
+            expected = ((self.room(str(detail.get("room") or "")).get("agent_models") or {})
+                        .get(str(node.get("assignee") or "")) or {})
+            fallback = ((self.fx.get("models.json") or {}).get("agent_defaults") or {}) \
+                .get(str(node.get("assignee") or "")) or {}
+            picked = (node.get("model_settings") if isinstance(node.get("model_settings"), dict)
+                      else {})
+            extra.update({
+                "ok": True, "action": action, "task_id": task_id,
+                "status": str(node.get("status") or ""),
+                "model": {"provider": str(picked.get("provider") or expected.get("provider")
+                                          or fallback.get("provider") or ""),
+                          "model": str(picked.get("model") or expected.get("model")
+                                       or fallback.get("model") or ""),
+                          "source": ("user" if picked.get("model") else
+                                     "room" if expected.get("model") else "profile")},
+                "message": str(extra.get("text") or ""),
+                "detail": {"paused": str(node.get("status") or "") == "paused"},
+            })
+        elif action == "approval":
+            # W22-AP2: «Разрешить один раз / Разрешать всегда / Запретить».
+            aid = (check_str(body, "approval_id", required=True, maxlen=40) or "").strip()
+            decision = (check_str(body, "decision", required=True, maxlen=10) or "").strip()
+            if decision not in ("once", "always", "deny"):
+                raise ApiError(400, "bad_request", "decision: once|always|deny",
+                               {"field": "decision", "allowed": ["once", "always", "deny"]})
+            items = self._approvals_for(rid)
+            ap = next((x for x in items if x.get("id") == aid), None)
+            if ap is None:
+                raise ApiError(404, "not_found", "Запрос разрешения не найден",
+                               {"approval_id": aid})
+            if ap.get("state") != "pending":
+                raise ApiError(409, "conflict", "Разрешение уже решено",
+                               {"approval_id": aid, "state": ap.get("state")})
+            if ap.get("floor"):
+                raise ApiError(422, "unprocessable",
+                               "Запрещено политикой безопасности Hermes — разрешить нельзя",
+                               {"approval_id": aid, "floor": True})
+            if ap.get("grantable") is False:
+                # W22-AP1: execute_code в режиме без человека Hermes не разрешает списком
+                raise ApiError(422, "unprocessable",
+                               "Эту блокировку нельзя снять разрешением: Hermes не применяет "
+                               "список разрешений к execute_code в работе без человека. "
+                               "Попросите участника сделать то же через терминал.",
+                               {"approval_id": aid, "grantable": False})
+            state_after = {"once": "granted_once", "always": "granted_always",
+                           "deny": "denied"}[decision]
+            # W22-ST: решение по строке-группе закрывает ВСЕ её запросы (та же причина —
+            # тот же участник, правило и карточка), как на сервере.
+            same_reason = [x for x in items
+                           if x.get("state") == "pending"
+                           and str(x.get("task_id") or "") == str(ap.get("task_id") or "")
+                           and str(x.get("profile") or "") == str(ap.get("profile") or "")
+                           and str(x.get("pattern_key") or "") == str(ap.get("pattern_key") or "")]
+            for row in same_reason or [ap]:
+                row["state"] = state_after
+                row["decided_at"] = now()
+            grant = None
+            if decision in ("once", "always"):
+                if decision == "once":
+                    for row in (same_reason or [ap]):
+                        row["expires_at"] = now() + 1800
+                grant = {"profile": ap.get("profile"), "pattern_key": ap.get("pattern_key"),
+                         "description": ap.get("description"),
+                         "scope": "always" if decision == "always" else "once"}
+                if decision == "always":
+                    store = getattr(self, "approval_grants_demo", None)
+                    if not isinstance(store, list):
+                        store = self.approval_grants()
+                    if not any(g.get("profile") == grant["profile"]
+                               and g.get("pattern_key") == grant["pattern_key"] for g in store):
+                        store.append({"profile": grant["profile"],
+                                      "member_title": ap.get("member_title"),
+                                      "pattern_key": grant["pattern_key"],
+                                      "description": grant["description"],
+                                      "scope": "always", "granted_at": now(),
+                                      "expires_at": None, "source": "room"})
+                    self.approval_grants_demo = store
+            extra.update({
+                "approval": dict(ap),
+                "applied": [str(row.get("id") or "") for row in (same_reason or [ap])],
+                "grant": grant,
+                "restarted": decision != "deny" and str(detail.get("status") or "") in
+                ("blocked", "failed", "done"),
+                "message": ("Разрешено один раз" if decision == "once"
+                            else "Разрешено всегда" if decision == "always" else "Запрещено"),
+            })
+        elif action in ("hint_agent", "trust_profile", "dismiss"):
+            # W26-D2/D1: у «нельзя штатно» и жёсткого запрета тоже есть действия.
+            # Демо ничего не пишет в профили и не зовёт Hermes: только состояние в
+            # памяти процесса — честная подмена для проверки интерфейса.
+            aid = (check_str(body, "approval_id", required=True, maxlen=40) or "").strip()
+            items = self._approvals_for(rid)
+            ap = next((x for x in items if x.get("id") == aid), None)
+            if ap is None:
+                raise ApiError(404, "not_found", "Запрос разрешения не найден", {"approval_id": aid})
+            if ap.get("state") != "pending":
+                raise ApiError(409, "conflict", "Разрешение уже решено",
+                               {"approval_id": aid, "state": ap.get("state")})
+            dead = str(ap.get("dead_end") or ("floor" if ap.get("floor") else
+                                              "grantable" if ap.get("grantable") else "workaround"))
+            if action == "trust_profile" and dead != "workaround":
+                raise ApiError(422, "unprocessable",
+                               "Доверие профилю предлагается только для того, что нельзя снять разрешением",
+                               {"approval_id": aid, "dead_end": dead})
+            ttl = None
+            if action == "trust_profile":
+                ttl = (check_str(body, "ttl", required=True, maxlen=10) or "").strip()
+                if ttl not in ("min30", "card", "forever"):
+                    raise ApiError(400, "bad_request", "Срок доверия: min30, card или forever",
+                                   {"field": "ttl", "allowed": ["min30", "card", "forever"]})
+            stamp = now()
+            state_after = {"hint_agent": "hinted", "dismiss": "dismissed",
+                           "trust_profile": "granted_always"}[action]
+            ap["state"] = state_after
+            ap["decided_at"] = stamp
+            ap["action"] = action
+            if ttl:
+                ap["trust_ttl"] = ttl
+            grant = None
+            if action == "trust_profile":
+                expires = {"min30": stamp + 1800, "card": None, "forever": None}[ttl]
+                grant = {"profile": ap.get("profile"), "member_title": ap.get("member_title"),
+                         "pattern_key": str(ap.get("pattern_key") or "execute_code"),
+                         "description": str(ap.get("description") or "execute_code"),
+                         "scope": "always", "ttl": ttl, "granted_at": stamp,
+                         "expires_at": expires, "source": "room"}
+                store = getattr(self, "approval_grants_demo", None)
+                if not isinstance(store, list):
+                    store = self.approval_grants()
+                store.append(dict(grant))
+                self.approval_grants_demo = store
+            text_ru = {"hint_agent": ("Участнику отправлена подсказка: execute_code в фоне недоступен — "
+                                      "сделай то же через файл и терминал"),
+                       "dismiss": "Пункт закрыт как неактуальный",
+                       "trust_profile": "Доверие профилю выдано (%s)" % (ttl or "")}[action]
+            detail.setdefault("timeline", []).append(
+                {"at": stamp, "kind": "approval", "task_id": ap.get("task_id") or rid,
+                 "actor": "mikhail", "text": text_ru})
+            extra.update({"approval": dict(ap), "grant": grant, "text": text_ru,
+                          "message": text_ru, "dead_end": dead})
         elif action == "answer":
             qid = (check_str(body, "question_id", required=True, maxlen=40) or "").strip()
-            text = (check_str(body, "text", required=True, maxlen=MAX_NOTE) or "").strip()
+            # W21-Q1 (B-44): «Пояснить» работает и БЕЗ текста, «Отправить» — нет.
+            need_explanation = body.get("need_explanation") is True
+            raw_text = body.get("text")
+            text = raw_text.strip() if isinstance(raw_text, str) else ""
+            if not need_explanation and mock_answers.is_counter_question(text):
+                need_explanation = True           # запасная эвристика — как раньше
+            if not text:
+                if not need_explanation:
+                    raise ApiError(400, "bad_request", "Нужен текст", {"field": "text"})
+                text = mock_answers.DEFAULT_EXPLAIN_TEXT   # стандартная просьба
+            if len(text) > MAX_NOTE:
+                raise ApiError(400, "bad_request",
+                               "Текст длиннее %d знаков" % MAX_NOTE,
+                               {"field": "text", "limit": MAX_NOTE})
             question = next((q for q in detail.get("open_questions", []) if q["id"] == qid), None)
             if question is None:
                 raise ApiError(404, "not_found", "Вопрос не найден", {"question_id": qid})
             if question.get("answered"):
                 raise ApiError(409, "conflict", "Вопрос уже отвечен", {"question_id": qid})
+            # W21-Q1 (B-44): двойное нажатие «Пояснить» в окне 120 с — одна просьба
+            guard = getattr(self, "_explain_guard", None)
+            if not isinstance(guard, dict):
+                guard = self._explain_guard = {}
+            explain_key = (rid, qid, text)
+            previous = guard.get(explain_key)
+            if need_explanation and previous and now() - previous[0] < 120:
+                replay = dict(previous[1])
+                replay["duplicate"] = True
+                return 200, replay
             # W14-D §3: встречный вопрос вопрос НЕ закрывает (кнопка надёжнее эвристики)
-            need_explanation = bool(body.get("need_explanation")) or mock_answers.is_counter_question(text)
             state = "waiting_explanation" if need_explanation else "sent"
             question.update(answers_mod_apply(question, {
                 "text": text, "at": now(), "answered": not need_explanation, "status": state}))
@@ -939,6 +1646,9 @@ class MockWrite:
             if isinstance(store, dict):
                 store.setdefault(rid, []).append(item)
                 extra["message"] = item
+            if need_explanation:
+                # W21-Q1 (B-44): запомнили просьбу — повтор в окне 120 с её же и получит.
+                self._explain_guard[explain_key] = (now(), dict(extra))
         elif action == "answer_remind":
             qid = (check_str(body, "question_id", required=True, maxlen=40) or "").strip()
             question = next((q for q in detail.get("open_questions", []) if q["id"] == qid), None)
@@ -957,6 +1667,29 @@ class MockWrite:
                     {"id": self.comment_seq, "author": "mikhail", "text": text, "at": now()})
             extra.update({"question_id": qid, "reminded_at": question["reminded_at"],
                           "reminders": 1, "text": text, "question": question})
+        elif action == "svod_refresh":
+            # W20-S1 §1.1 (B-36): «Обновить сейчас» — версия свода по кнопке.
+            # Пока обновление идёт, второй раз не запускаем (как сервер — 409).
+            synthesis = detail.setdefault("synthesis", {})
+            live = synthesis.get("live") if isinstance(synthesis.get("live"), dict) else {}
+            if live.get("state") == "updating":
+                raise ApiError(409, "conflict", "Обновление свода уже идёт — дождитесь новой версии.",
+                               {"reason": "updating"})
+            version = int(synthesis.get("version") or 0) + 1
+            card_id = self._task_id()
+            ts = now()
+            detail.setdefault("tree", []).append(
+                {"id": card_id, "parent_ids": [rid], "title": "Обновление свода",
+                 "assignee": detail.get("assignee") or "", "role": "revision",
+                 "status": "running", "started_at": ts, "finished_at": None,
+                 "summary_md": "", "metadata": {}, "comments": [], "runs": [],
+                 "needs_human": False, "outside_room": False, "error": None})
+            synthesis["live"] = dict(live, state="updating", behind=dict(live.get("behind") or {}),
+                                     text="Обновляется… версия %d" % version)
+            detail.setdefault("timeline", []).append(
+                {"at": ts, "kind": "claimed", "task_id": card_id, "actor": detail.get("assignee"),
+                 "text": "Свод обновляется — версия %d" % version})
+            extra.update({"card_id": card_id, "behind": dict(live.get("behind") or {})})
         elif action == "answers_resend":
             # W17-B §3: одна карточка со всеми ответами без реакции — только по клику
             pending = [q for q in detail.get("open_questions") or []
@@ -1002,12 +1735,23 @@ class MockWrite:
                              if str(d.get("id")) == decision_id), None)
             if decision is None:
                 raise ApiError(404, "not_found", "Решение не найдено", {"decision_id": decision_id})
-            record = {"kind": "decision", "decision_id": decision_id,
-                      "decision_text": str(decision.get("text") or ""), "action": outcome,
-                      "outcome": {"accept": "accepted", "reject": "rejected",
-                                  "discuss": "discuss"}[outcome],
-                      "text": text or mock_answers.DECISION_ACTION_RU[outcome],
-                      "user_text": text or None, "at": now(), "answered": True, "status": "sent"}
+            if outcome in ("dismiss", "restore"):
+                # W20-D1 §1.2 (B-37): «Снять — неактуально» / «Вернуть» — фильтр списка:
+                # решение уходит из «Нужен ваш ответ», но остаётся серым в «Решениях».
+                record = {"kind": "decision", "decision_id": decision_id,
+                          "decision_text": str(decision.get("text") or ""), "action": outcome,
+                          "history": [{"action": outcome, "at": now(), "text": text or None}],
+                          "outcome": "dismissed" if outcome == "dismiss" else "proposed",
+                          "text": text or mock_answers.DECISION_ACTION_RU[outcome],
+                          "user_text": text or None, "at": now(), "answered": True,
+                          "status": "dismissed" if outcome == "dismiss" else "sent"}
+            else:
+                record = {"kind": "decision", "decision_id": decision_id,
+                          "decision_text": str(decision.get("text") or ""), "action": outcome,
+                          "outcome": {"accept": "accepted", "reject": "rejected",
+                                      "discuss": "discuss"}[outcome],
+                          "text": text or mock_answers.DECISION_ACTION_RU[outcome],
+                          "user_text": text or None, "at": now(), "answered": True, "status": "sent"}
             self._remember_decision(rid, decision_id, record)
             view = mock_answers.apply_decision(decision, record, None)
             decision.update(view)
@@ -1025,9 +1769,40 @@ class MockWrite:
             detail["needs_you"] = compute_needs_you(detail)
             extra.update({"decision_id": decision_id, "decision": view, "message": mark,
                           "action_label": mock_answers.DECISION_ACTION_RU[outcome],
+                          "status": view.get("status"),
+                          "status_label": view.get("status_label"),
+                          "status_hint": view.get("status_hint"),
+                          "open": bool(view.get("open")),
+                          "muted": bool(view.get("status_muted")),
                           "answer_label": view.get("answer_label"),
                           "pending_label": mock_answers.PENDING_RU,
                           "chain_hint": mock_answers.CHAIN_HINT})
+        elif action == "question_dismiss":
+            # W20-D1 §1.2 (B-38): «Это не вопрос» — вопрос уходит из «Нужен ваш ответ»
+            # и из счётчиков; данные не меняются, отметка живёт в памяти демо-сервера.
+            qid = (check_str(body, "question_id", required=True, maxlen=64) or "").strip()
+            question = next((q for q in detail.get("open_questions") or []
+                             if str(q.get("id")) == qid), None)
+            if question is None:
+                raise ApiError(404, "not_found", "Вопрос не найден", {"question_id": qid})
+            record = {"kind": "question", "question_id": qid, "dismissed": True,
+                      "status": "dismissed", "answered": False, "text": "", "at": now(),
+                      "question_text": str(question.get("text") or ""),
+                      "source": question.get("source") or "card"}
+            mock_answers.apply_question(question, record)
+            # W20-FA: отметка переживает пересборку демо-детали (живой запрос
+            # собирается на каждый GET — без памяти «Это не вопрос» пропадал бы).
+            dismissed_store = getattr(self, "dismissed_questions", None)
+            if not isinstance(dismissed_store, dict):
+                dismissed_store = {}
+                self.dismissed_questions = dismissed_store
+            dismissed_store.setdefault(str(rid), {})[qid] = dict(record)
+            detail["needs_you"] = compute_needs_you(detail)
+            extra.update({"question_id": qid, "question": question,
+                          "answer_state": question.get("answer_state"),
+                          "answer_label": question.get("answer_label"),
+                          "dismissed": True,
+                          "needs_answer": bool(question.get("needs_answer"))})
         elif action == "step_drop":
             step_id = (check_str(body, "step_id", required=True, maxlen=64) or "").strip()
             step = next((s for s in detail.get("next_steps") or [] if s.get("id") == step_id), None)

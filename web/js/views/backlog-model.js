@@ -1,5 +1,5 @@
 /**
- * backlog-model.js — чистая логика вкладок «Дальше» и «Журнал».
+ * backlog-model.js — чистая логика вкладок «От вас нужно» и «Журнал».
  *
  * Здесь нет DOM и fetch: только сортировки, группировки и фильтры,
  * поэтому модуль целиком покрывается node --test (tests/backlog-model.test.mjs).
@@ -274,32 +274,39 @@ export function partitionBacklog(items) {
   };
 }
 
-/** Сколько строк в «Ждут вашего решения» с учётом blocked-карточек. */
-export function inboxCount({ questions = [], decisions = [], blocked = [] } = {}) {
-  return questions.length + decisions.length + blocked.length;
+/**
+ * Сколько строк в «Ждут вашего решения» с учётом blocked-карточек и запросов
+ * разрешения (W22-AP2: «Разрешение» — отдельный вид элемента).
+ */
+export function inboxCount({ questions = [], decisions = [], blocked = [], approvals = [] } = {}) {
+  return questions.length + decisions.length + blocked.length + approvals.length;
 }
 
 /**
- * Расшифровка числа дел: «7 вопросов · 1 блокировка · 1 решение».
+ * Расшифровка числа дел: «7 вопросов · 1 блокировка · 1 решение · 2 разрешения».
  * Одно число и одна расшифровка для блока, бейджа вкладки и сайдбара (D4).
- * @param {{questions?:Array, decisions?:Array, blocked?:Array}} parts
- * @returns {{total:number, questions:number, blocked:number, decisions:number, text:string, full:string}}
+ * @param {{questions?:Array, decisions?:Array, blocked?:Array, approvals?:Array}} parts
+ * @returns {{total:number, questions:number, blocked:number, decisions:number, approvals:number, text:string, full:string}}
  */
-export function inboxSummary({ questions = [], decisions = [], blocked = [] } = {}) {
+export function inboxSummary({ questions = [], decisions = [], blocked = [], approvals = [] } = {}) {
   const q = Array.isArray(questions) ? questions.length : 0;
   const b = Array.isArray(blocked) ? blocked.length : 0;
   const d = Array.isArray(decisions) ? decisions.length : 0;
-  const total = q + b + d;
+  // W22-AP2: запрос разрешения агенту — такое же дело, ждущее человека.
+  const a = Array.isArray(approvals) ? approvals.length : 0;
+  const total = q + b + d + a;
   const nouns = (n, forms) => n + ' ' + pluralWord(n, forms);
   const parts = [];
   if (q) parts.push(nouns(q, ['вопрос', 'вопроса', 'вопросов']));
   if (b) parts.push(nouns(b, ['блокировка', 'блокировки', 'блокировок']));
   if (d) parts.push(nouns(d, ['решение', 'решения', 'решений']));
+  if (a) parts.push(nouns(a, ['разрешение', 'разрешения', 'разрешений']));
   return {
     total,
     questions: q,
     blocked: b,
     decisions: d,
+    approvals: a,
     text: parts.join(' · '),
     full: parts.length ? nouns(total, ['дело', 'дела', 'дел']) + ': ' + parts.join(' · ') : '',
   };
@@ -363,7 +370,7 @@ export function itemRequestId(item) {
   return String((item && item.source_request) || '').trim();
 }
 
-/** Только дела одного запроса — фильтр `?request=<root_id>` вкладки «Дальше». */
+/** Только дела одного запроса — фильтр `?request=<root_id>` вкладки «От вас нужно». */
 export function filterByRequest(items, requestId) {
   const list = Array.isArray(items) ? items : [];
   const rid = String(requestId || '').trim();
@@ -514,7 +521,8 @@ const JOURNAL_KINDS = {
   decision_proposed: { icon: 'lightbulb', tone: 'info', label: 'Предложено решение', group: 'decisions' },
   decision_accepted: { icon: 'verified', tone: 'ok', label: 'Решение принято', group: 'decisions' },
   report_added: { icon: 'report', tone: 'info', label: 'Отчёт', group: 'steps' },
-  artifact_added: { icon: 'file', tone: 'muted', label: 'Артефакт', group: 'steps' },
+  // W26-D3: «артефакт» → «файл» во всём, что видит человек.
+  artifact_added: { icon: 'file', tone: 'muted', label: 'Файл', group: 'steps' },
   member_added: { icon: 'person-add', tone: 'muted', label: 'Участник добавлен', group: 'members' },
   member_removed: { icon: 'person', tone: 'muted', label: 'Участник убран', group: 'members' },
   room_created: { icon: 'home', tone: 'info', label: 'Комната создана', group: 'members' },

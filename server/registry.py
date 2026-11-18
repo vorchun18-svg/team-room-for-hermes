@@ -25,6 +25,9 @@ DEFAULT_FIELDS = {
     "extra_cards": [],
     "ingested": {},
     "retargeted": False,
+    # W20-U3 (P13): закрепление запроса пользователем — «держится сверху».
+    "pinned": False,
+    "pinned_at": 0,
 }
 
 
@@ -82,6 +85,11 @@ def _norm_rec(rec: dict) -> dict:
         out["extra_cards"] = []
     if not isinstance(out.get("ingested"), dict):
         out["ingested"] = {}
+    out["pinned"] = bool(out.get("pinned"))
+    try:
+        out["pinned_at"] = int(out.get("pinned_at") or 0)
+    except (TypeError, ValueError):
+        out["pinned_at"] = 0
     return out
 
 
@@ -162,6 +170,18 @@ def update(cfg, room_id: str, root_id: str, patch: dict) -> dict | None:
             sf.write_json_atomic(path, data)
             return merged
     return None
+
+
+def set_pinned(cfg, room_id: str, root_id: str, pinned: bool) -> dict | None:
+    """Закрепить запрос (``pinned=True``) или снять закрепление (W20-U3, P13).
+
+    Меняется только реестр комнаты: карточка на доске, её текст и ответ не
+    трогаются. ``pinned_at`` хранит время закрепления — по нему сортируются
+    закреплённые между собой (свежее закреплённое выше). ``None`` — нет записи.
+    """
+    value = bool(pinned)
+    return update(cfg, room_id, root_id,
+                  {"pinned": value, "pinned_at": _now() if value else 0})
 
 
 def add_extra_card(cfg, room_id: str, root_id: str, card: dict) -> dict | None:

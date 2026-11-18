@@ -8,12 +8,14 @@
  *
  * Supported: #–#### headings, paragraphs, **bold**, *italic*, ~~strike~~,
  * `inline code`, ``` fenced code ``` (language-xx class, no highlighting),
- * > quotes, nested ul/ol (3+ levels), task lists, GFM tables with alignment,
- * ---, links/images (local paths → data-path / fileUrl), autolinks.
+ * > quotes, плашки `> [!ИТОГ]` (W24-N1: blockquote.md-callout), nested ul/ol
+ * (3+ levels), task lists, GFM tables with alignment, ---, links/images
+ * (local paths → data-path / fileUrl), autolinks.
  */
 
 import { esc } from './util.js';
 import { inlineScan, defaultFileUrl } from './md-inline.js';
+import { renderFoundBlock, renderFoundFromText, foundSection } from './found.js';
 
 export { mdInline } from './md-inline.js';
 
@@ -25,6 +27,26 @@ const HR_RE = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 const QUOTE_RE = /^ {0,3}>[ \t]?(.*)$/;
 const LIST_RE = /^( *)([-*+]|\d{1,9}[.)])[ \t]+(.*)$/;
 const TABLE_DELIM_RE = /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+/** Плашка: первая строка цитаты вида `[!ИТОГ]` (W24-N1). */
+const CALLOUT_MARK_RE = /^[ \t]*\[!([^\]]{1,40})\][ \t]*$/;
+
+/** Вид плашки по названию метки — только оформление, не смысл. */
+const CALLOUT_KINDS = [
+  ['итог', 'ok'], ['итого', 'ok'], ['вывод', 'ok'],
+  ['не найден', 'muted'], ['не проверено', 'muted'],
+  ['важно', 'warn'], ['внимание', 'warn'],
+];
+
+/**
+ * Вид плашки для CSS: `ok` | `warn` | `muted` | `note`.
+ * @param {string} label
+ * @returns {string}
+ */
+export function calloutKind(label) {
+  const low = String(label || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  for (const [prefix, kind] of CALLOUT_KINDS) if (low.startsWith(prefix)) return kind;
+  return 'note';
+}
 
 /**
  * Normalize line endings and whitespace before parsing.
@@ -228,6 +250,11 @@ function renderBlocks(lines, ctx) {
       const closeRe = new RegExp('^ {0,3}' + (marker[0] === '`' ? '`' : '~') + '{' + marker.length + ',}[ \\t]*$');
       while (i < n && !closeRe.test(lines[i])) { body.push(lines[i]); i++; }
       if (i < n) i++;
+      // W26-D4: машинный блок «Найдено» рисуется карточками, а не кодом.
+      if (/^(найдено|found)$/i.test(String(info.split(/[ \t]+/)[0] || '').trim().toLowerCase())) {
+        out.push(renderFoundBlock(body.join('\n')));
+        continue;
+      }
       out.push('<pre class="md-code"><code' + (lang ? ` class="language-${lang}"` : '') + '>'
         + esc(body.join('\n')) + '</code></pre>');
       continue;
@@ -251,6 +278,17 @@ function renderBlocks(lines, ctx) {
         if (m) { buf.push(m[1]); i++; continue; }
         if (!lines[i].trim() && i + 1 < n && QUOTE_RE.test(lines[i + 1])) { buf.push(''); i++; continue; }
         break;
+      }
+      // W24-N1: `> [!ИТОГ]` — плашка (заголовок + текст), а не просто цитата.
+      const mark = CALLOUT_MARK_RE.exec(buf[0] || '');
+      if (mark) {
+        const title = String(mark[1]).trim();
+        const body = buf.slice(1);
+        while (body.length && !String(body[0]).trim()) body.shift();
+        out.push('<blockquote class="md-callout md-callout--' + calloutKind(title) + '">'
+          + '<div class="md-callout__title">' + inlineScan(title, ctx, 0) + '</div>'
+          + renderBlocks(body, { ...ctx, depth: ctx.depth + 1 }) + '</blockquote>');
+        continue;
       }
       out.push('<blockquote>' + renderBlocks(buf, { ...ctx, depth: ctx.depth + 1 }) + '</blockquote>');
       continue;
@@ -289,7 +327,17 @@ export function renderMarkdown(src, opts = {}) {
     fileUrl: (opts && typeof opts.fileUrl === 'function') ? opts.fileUrl : defaultFileUrl,
     depth: 0,
   };
-  return renderBlocks(normalize(src).split('\n'), ctx);
+  const html = renderBlocks(normalize(src).split('\n'), ctx);
+  // W26-D4: запасной разбор — агент написал раздел «Найдено» обычным текстом.
+  // Машинный блок ```найдено уже отрисован карточками, второй раз не надо.
+  if (html.indexOf('class="found-block"') === -1) {
+    const section = foundSection(src);
+    if (section) {
+      const extra = renderFoundFromText(section);
+      if (extra) return html + extra;
+    }
+  }
+  return html;
 }
 
 /**

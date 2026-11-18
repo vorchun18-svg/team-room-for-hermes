@@ -216,7 +216,7 @@ export function notifyChanges(list) {
 
 /* ────────────────────────────────────────────────────── горячие клавиши */
 
-/** g → вкладка комнаты: r Запрос, t Команда, m Карта, d Дальше, o Отчёты, j Журнал. */
+/** g → вкладка комнаты: r Запрос, t Команда, m Карта, d От вас нужно, o Отчёты, j Журнал. */
 const TAB_KEYS = { r: 'composer', t: 'team', m: 'roadmap', d: 'backlog', o: 'reports', j: 'journal' };
 let gPressedAt = 0;
 
@@ -302,8 +302,22 @@ export function installHotkeys(opts = {}) {
     if (gPressedAt && Date.now() - gPressedAt < G_WINDOW_MS) {
       const tab = TAB_KEYS[key];
       gPressedAt = 0;
-      if (!tab) return;
       const r = route();
+      // W24-N3: `g t` вне комнаты ведёт на «Сегодня» (раньше здесь был тост
+      // «Сначала откройте комнату»). Внутри комнаты `t` занята вкладкой
+      // «Команда» — там «Сегодня» открывается клавишей `g s`.
+      if (!tab) {
+        if (key === 's' || key === 'ы') {
+          e.preventDefault();
+          D.navigate('#/today');
+        }
+        return;
+      }
+      if (key === 't' && !r.roomId) {
+        e.preventDefault();
+        D.navigate('#/today');
+        return;
+      }
       if (!r.roomId) {
         D.toast('Сначала откройте комнату', 'info');
         return;

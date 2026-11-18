@@ -70,7 +70,7 @@ class IcsTest(unittest.TestCase):
         {"id": "t_a1b2c3d4:ns_1", "room": "cafe", "text": "Согласовать цену 220 ₽",
          "owner": "mikhail", "due": "2026-11-05", "status": "open", "kind": "next_step",
          "source_request": "t_a1b2c3d4", "source_title": "Юнит-экономика"},
-        {"id": "t_a1b2c3d4:ns_2", "room": "cafe", "text": "Без срока", "owner": "biz-cfo",
+        {"id": "t_a1b2c3d4:ns_2", "room": "cafe", "text": "Без срока", "owner": "team-cfo",
          "due": None, "status": "open"},
         {"id": "t_a1b2c3d4:ns_3", "room": "cafe", "text": "Кривая дата", "due": "завтра"},
     ]
@@ -86,7 +86,7 @@ class IcsTest(unittest.TestCase):
     def test_lines_fit_75_octets(self):
         long_text = "Очень длинный шаг по легализации компании в России " * 4
         items = [{"id": "x:1", "room": "cafe", "text": long_text, "due": "2026-12-01",
-                  "owner": "biz-lawyer", "source_title": "Длинный заголовок " * 5}]
+                  "owner": "team-lawyer", "source_title": "Длинный заголовок " * 5}]
         text = ics.make_ics(items, "Рабочее пространство — очень длинное название комнаты, с запятой")
         for line in text[:-2].split("\r\n"):
             self.assertLessEqual(len(line.encode("utf-8")), 75, repr(line))

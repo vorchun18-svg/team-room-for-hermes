@@ -57,7 +57,7 @@ export function stateLabel(step) {
   return stepState(step).label;
 }
 
-/** Шаги по группам: «Дальше», «Сделано», «Снято» (п. 12: выполненные отделены). */
+/** Шаги по группам: «От вас нужно», «Сделано», «Снято» (п. 12: выполненные отделены). */
 export function splitSteps(steps) {
   const list = Array.isArray(steps) ? steps.filter((s) => s && typeof s === 'object') : [];
   const current = [];
@@ -450,7 +450,7 @@ export function openStepDialog(opts) {
     try { first.focus(); } catch { /* не критично */ }
   }
 
-  // Шага в данных может не быть (окно открыто из «Дальше»/карты) — загружаем.
+  // Шага в данных может не быть (окно открыто из «От вас нужно»/карты) — загружаем.
   if (!step && requestId) {
     Promise.resolve(o.api.get(`/api/requests/${encodeURIComponent(requestId)}`))
       .then((detail) => {

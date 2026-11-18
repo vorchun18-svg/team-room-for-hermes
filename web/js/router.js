@@ -15,14 +15,24 @@
 
 import { h, esc } from './util.js';
 import { icon } from './icons.js';
+import { TAB_TITLES } from './text-ru.js';
 
+// W20-U1 (P7): названия вкладок — из общего словаря text-ru.js, чтобы шапка,
+// крошки, палитра и подсказки называли одно и то же одинаково. Вкладка
+// Дальше переименована в «От вас нужно»: там вопросы и решения, которые ждут человека.
 export const TABS = [
-  { id: 'composer', title: 'Запрос', icon: 'comment-discussion' },
-  { id: 'team', title: 'Команда', icon: 'organization' },
-  { id: 'roadmap', title: 'Карта проекта', icon: 'map' },
-  { id: 'backlog', title: 'Дальше', icon: 'arrow-circle-right' },
-  { id: 'reports', title: 'Отчёты', icon: 'report' },
-  { id: 'journal', title: 'Журнал', icon: 'history' },
+  { id: 'composer', title: TAB_TITLES.composer, icon: 'comment-discussion' },
+  // W26-D9: вкладка «Входящие» — записи комнаты (диктовка/вручную) и их разбор.
+  { id: 'inbox', title: TAB_TITLES.inbox, icon: 'inbox' },
+  // W26-D6: «Дела» — вкладка комнаты (тот же экран, что #/delos, но по комнате).
+  { id: 'delos', title: TAB_TITLES.delos, icon: 'checklist' },
+  { id: 'team', title: TAB_TITLES.team, icon: 'organization' },
+  { id: 'roadmap', title: TAB_TITLES.roadmap, icon: 'map' },
+  { id: 'backlog', title: TAB_TITLES.backlog, icon: 'arrow-circle-right' },
+  { id: 'reports', title: TAB_TITLES.reports, icon: 'report' },
+  { id: 'journal', title: TAB_TITLES.journal, icon: 'history' },
+  // W26-D8: дежурства — задания Hermes по расписанию для этой комнаты.
+  { id: 'duties', title: TAB_TITLES.duties, icon: 'clock' },
 ];
 
 export const TAB_IDS = TABS.map((t) => t.id);
@@ -73,11 +83,30 @@ export function parseHash(hash) {
     };
     if (tab === 'request' && segments[3]) { route.name = 'request'; route.view = 'request'; }
     else route.view = TAB_IDS.includes(tab) ? tab : 'composer';
+    // W26-D6: вкладка комнаты называется «delos», файл вида — views/delo.js
+    // (один вид на список и карточку: различие — параметры маршрута).
+    if (route.view === 'delos') route.view = 'delo';
     return route;
+  }
+
+  // W26-D6: «Дела» — список всех дел (#/delos) и карточка дела (#/delo/<id>).
+  if (segments[0] === 'delos') {
+    return Object.assign(base, { name: 'delos', view: 'delo', params: {}, query, hash: '#/delos' });
+  }
+  if (segments[0] === 'delo' && segments[1]) {
+    return Object.assign(base, {
+      name: 'delo', view: 'delo', id: segments[1],
+      params: { id: segments[1] }, query, hash: '#/delo/' + segments[1],
+    });
   }
 
   if (segments[0] === 'search') {
     return Object.assign(base, { name: 'search', view: 'search', params: { q: query.q || '' }, query });
+  }
+
+  // W24-N3: «Сегодня» — отдельный экран приложения (не комната, не вкладка).
+  if (segments[0] === 'today') {
+    return Object.assign(base, { name: 'today', view: 'today', params: {}, query, hash: '#/today' });
   }
 
   if (segments[0] === 'settings') {

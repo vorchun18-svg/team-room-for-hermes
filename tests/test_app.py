@@ -81,8 +81,8 @@ class State:
         self.fail_detail = set()          # root_id, на которых request_detail падает
         self.rooms = [
             {"id": "cafe", "title": "Лето", "icon": "cake", "board": "team", "tenant": "room:cafe",
-             "orchestrator": "biz-director", "critic": "biz-critic",
-             "members": [{"profile": "biz-lawyer", "role": "worker", "note": "", "pinned": False,
+             "orchestrator": "team-director", "critic": "team-critic",
+             "members": [{"profile": "team-lawyer", "role": "worker", "note": "", "pinned": False,
                           "added_at": 1}],
              "context_files": [], "project_dir": "", "mode_default": "auto", "critic_pass": False,
              "created_at": 1793000000, "archived": False},
@@ -138,7 +138,7 @@ def _summary(state: State, root_id: str) -> dict:
             "finished_at": (DONE_AT if status == "done" else None),
             "duration_s": 1 if status == "done" else None,
             "progress": {"done": 1, "total": 1, "percent": 100 if status == "done" else 50},
-            "assignee": "biz-director", "needs_you": status == "needs_you",
+            "assignee": "team-director", "needs_you": status == "needs_you",
             "preview": (rec.get("text") or "")[:200], "archived": False}
 
 
@@ -150,7 +150,7 @@ def _detail(state: State, root_id: str, room_id="cafe") -> dict:
     summary.update({
         "text": rec.get("text") or "Проверь цены",
         "dispatcher": {"ok": True, "warning": None},
-        "synthesis": ({"state": "ready", "text_md": "# Ответ\n\nГотово", "author": "biz-director",
+        "synthesis": ({"state": "ready", "text_md": "# Ответ\n\nГотово", "author": "team-director",
                        "at": 2, "source_task": root_id, "legacy": False, "version": 1, "history": []}
                       if summary["status"] == "done" else
                       {"state": "pending", "text_md": "", "author": None, "at": None,
@@ -161,7 +161,7 @@ def _detail(state: State, root_id: str, room_id="cafe") -> dict:
             {"id": "idea", "title": "Идея", "status": "done", "note": ""},
             {"id": "legal", "title": "Легализация", "status": "active", "note": ""}]},
         "tree": [{"id": root_id, "parent_ids": [], "title": rec.get("title") or "Запрос",
-                  "assignee": "biz-director", "role": "root", "status": summary["status"],
+                  "assignee": "team-director", "role": "root", "status": summary["status"],
                   "started_at": 1, "finished_at": 2, "summary_md": "# Ответ", "metadata": {},
                   "comments": [], "runs": [], "needs_human": False, "error": None,
                   "outside_room": False}],
@@ -273,9 +273,9 @@ def build_fakes(state: State) -> dict:
     er.list_candidates = lambda cfg, board, registered_ids: []
 
     ew = mods["engine_write"]
-    ew.list_profiles = lambda cfg: [{"profile": "biz-director", "title": "Директор", "tags": [],
+    ew.list_profiles = lambda cfg: [{"profile": "team-director", "title": "Директор", "tags": [],
                                      "kind": "director", "available": True},
-                                    {"profile": "biz-lawyer", "title": "Юрист", "tags": [],
+                                    {"profile": "team-lawyer", "title": "Юрист", "tags": [],
                                      "kind": "worker", "available": True}]
     ew.create_request = lambda cfg, room, slug, title, body: (
         state.created_requests.append({"slug": slug, "title": title, "body": body, "room": room["id"]}),
@@ -612,7 +612,7 @@ class RoutingTests(HttpBase):
         self.assertEqual(archived["counters"], {"working": 0, "needs_you": 0, "done_today": 0})
 
     def test_room_crud_and_members(self):
-        created = self.post("/api/rooms", {"title": "Новая", "orchestrator": "biz-director"})
+        created = self.post("/api/rooms", {"title": "Новая", "orchestrator": "team-director"})
         self.assertEqual(created["status"], 201)
         self.assertEqual(created["headers"]["Location"], "/api/rooms/newroom")
         patch = self.patch("/api/rooms/newroom", {"title": "Переименована"})
@@ -628,18 +628,18 @@ class RoutingTests(HttpBase):
         self.assertTrue(rounds["json"]["critic_pass"])
         # режим только auto: swarm отклоняется
         self.assertEqual(self.patch("/api/rooms/newroom", {"mode_default": "swarm"})["status"], 400)
-        member = self.post("/api/rooms/newroom/members", {"profile": "biz-lawyer"})
+        member = self.post("/api/rooms/newroom/members", {"profile": "team-lawyer"})
         self.assertEqual(member["status"], 201)
-        self.assertEqual(member["json"]["member"]["profile"], "biz-lawyer")
-        dup = self.post("/api/rooms/newroom/members", {"profile": "biz-lawyer"})
+        self.assertEqual(member["json"]["member"]["profile"], "team-lawyer")
+        dup = self.post("/api/rooms/newroom/members", {"profile": "team-lawyer"})
         self.assertEqual(dup["status"], 409)
         unknown = self.post("/api/rooms/newroom/members", {"profile": "nobody"})
         self.assertEqual(unknown["status"], 400)
         self.assertIn("available", unknown["json"]["error"]["detail"])
-        lead = self.delete("/api/rooms/newroom/members/biz-director")
+        lead = self.delete("/api/rooms/newroom/members/team-director")
         self.assertEqual(lead["status"], 409)
         self.assertEqual(lead["json"]["error"]["detail"]["reason"], "room_lead")
-        removed = self.delete("/api/rooms/newroom/members/biz-lawyer")
+        removed = self.delete("/api/rooms/newroom/members/team-lawyer")
         self.assertEqual(removed["status"], 200)
         archived = self.post("/api/rooms/newroom/archive", {})
         self.assertEqual(archived["status"], 200)

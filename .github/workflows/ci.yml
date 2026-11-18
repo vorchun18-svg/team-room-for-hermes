@@ -37,6 +37,10 @@ jobs:
       # тесты читают этот флаг: то, что требует живой Hermes Desktop, GPU,
       # сеть или Windows-плагин, само себя пропускает (см. tests/ci_marks.py)
       TEAMROOM_CI: '1'
+      # CLI hermes на раннере нет; его песочные глаголы подменяет
+      # tools/ci_hermes_shim.py (tests/ci_marks.py по этому флагу видит подмену
+      # и честно пропускает то, что требует настоящего Hermes)
+      TEAMROOM_CI_HERMES_SHIM: '1'
       PYTHONUTF8: '1'
       PYTHONIOENCODING: 'utf-8'
       PYTHONDONTWRITEBYTECODE: '1'
@@ -53,6 +57,32 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Клиент hermes для проверок (shim)
+        run: |
+          bin_dir="$PWD/.ci-bin"
+          mkdir -p "$bin_dir"
+          cp tools/ci_hermes_shim.py "$bin_dir/"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp tools/ci_hermes_shim.cmd "$bin_dir/hermes.cmd"
+          else
+            cp tools/ci_hermes_shim.sh "$bin_dir/hermes"
+            chmod +x "$bin_dir/hermes"
+          fi
+          # GITHUB_PATH ждёт родной путь: в git-bash путь MSYS, в Linux — как есть
+          if command -v cygpath >/dev/null 2>&1; then
+            echo "$(cygpath -w "$bin_dir")" >> "$GITHUB_PATH"
+            echo "TEAMROOM_CI_SHIM=$(cygpath -w "$bin_dir")\\ci_hermes_shim.py" >> "$GITHUB_ENV"
+          else
+            echo "$bin_dir" >> "$GITHUB_PATH"
+            echo "TEAMROOM_CI_SHIM=$bin_dir/ci_hermes_shim.py" >> "$GITHUB_ENV"
+          fi
+
+      - name: Подмена hermes на месте
+        run: |
+          hermes --version
+          python -c "import shutil, sys; p = shutil.which('hermes'); print('hermes →', p); sys.exit(0 if p else 1)"
+          python -c "import shutil, subprocess; p = shutil.which('hermes'); out = subprocess.run([p, '--version'], capture_output=True, text=True).stdout; print(out.strip()); raise SystemExit(0 if 'team-room-ci-hermes-shim' in out else 1)"
 
       - name: Окружение
         run: |

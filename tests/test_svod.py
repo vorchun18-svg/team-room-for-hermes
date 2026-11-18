@@ -43,9 +43,9 @@ def make_room(**over):
         "title": "Лето",
         "board": "team",
         "tenant": "room:cafe",
-        "orchestrator": "biz-director",
-        "critic": "biz-critic",
-        "members": [{"profile": "biz-lawyer", "role": "worker", "note": "юрист"}],
+        "orchestrator": "team-director",
+        "critic": "team-critic",
+        "members": [{"profile": "team-lawyer", "role": "worker", "note": "юрист"}],
         "critic_pass": True,
     }
     room.update(over)
@@ -162,7 +162,7 @@ class RevisionBodyTest(unittest.TestCase):
             self.assertIn(answer["answer"][:60], body, "ответ Михаила попал в карточку")
         for note in digest["notes"]:
             self.assertIn(note["text"][:60], body)
-        self.assertIn("<<<ЗАМЕЧАНИЕ МАКСИМА>>>", body)
+        self.assertIn("<<<ЗАМЕЧАНИЕ МИХАИЛА>>>", body)
         self.assertIn("<<<ПРЕДЫДУЩИЙ ОТВЕТ (дорабатывается)>>>", body)
         self.assertIn("metadata.changes", body, "руководителя просят перечислить изменения")
         self.assertIn("version_reason", body)

@@ -23,6 +23,7 @@ from server import app as app_mod                  # noqa: E402
 from server import engine_db, engine_read, engine_write, http_util, registry, rooms  # noqa: E402
 from server import statefiles as sf                # noqa: E402
 from tests.helpers import Sandbox                  # noqa: E402
+from tests import ci_marks                       # noqa: E402
 
 ROOT_ID = "t_dd0c0001"
 
@@ -110,8 +111,8 @@ class TestValidation(AppCase):
 
     def test_room_fields_are_validated(self):
         """D7: board/icon/context_files/max_rounds — не произвольные значения."""
-        base = {"title": "Комната", "orchestrator": "biz-director",
-                "members": [{"profile": "biz-lawyer"}]}
+        base = {"title": "Комната", "orchestrator": "team-director",
+                "members": [{"profile": "team-lawyer"}]}
         for patch in ({"board": "../../escape-board"}, {"icon": [1, 2]},
                       {"context_files": "abc"}, {"critic_pass": "no"},
                       {"max_rounds": 99}, {"max_rounds": "abc"}):
@@ -177,6 +178,7 @@ class TestIdempotency(AppCase):
                             {"text": "текст", "client_id": bad})
             self.assertEqual(res["status"], 400, (bad, res.get("json")))
 
+    @unittest.skipUnless(ci_marks.has_hermes_machine(), ci_marks.WHY_NO_HERMES_MACHINE)
     def test_201_with_degraded_summary_when_read_fails(self):
         """D8: сбой чтения ПОСЛЕ create давал 500 и провоцировал повтор."""
         before = len(self.created)

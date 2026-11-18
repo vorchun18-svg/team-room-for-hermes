@@ -79,7 +79,7 @@ MSG_HERMES = "Папка внутри служебных каталогов Herm
 MSG_APP = "Это папка программы «Комната команды» — выберите другую"
 MSG_DATA = "Это папка данных приложения — выберите другую"
 MSG_VAULT = ("Папка внутри Vault: там уже лежат заметки. Для результатов команды "
-             "лучше отдельная папка — например D:\\Проекты\\<название>.")
+             "лучше отдельная папка — например C:\\Проекты\\<название>.")
 
 
 class DirError(Exception):
@@ -170,7 +170,7 @@ def check_dir(cfg, path) -> dict:
     raw = "" if path is None else str(path)
     text = raw.strip().strip('"').strip()
     if not text:
-        return _result(False, "Пустой путь: укажите папку, например D:\\Проекты\\Мой проект")
+        return _result(False, "Пустой путь: укажите папку, например C:\\Проекты\\Мой проект")
 
     if "\x00" in text or any(ord(ch) < 32 for ch in text):
         return _result(False, "В пути есть непечатаемые символы — проверьте путь")
@@ -187,7 +187,7 @@ def check_dir(cfg, path) -> dict:
     norm = ntpath.normpath(text)
     drive, rest = ntpath.splitdrive(norm)
     if not drive or not re.fullmatch(r"[A-Za-z]:", drive):
-        return _result(False, "Нужен полный путь, например D:\\Проекты\\Мой проект")
+        return _result(False, "Нужен полный путь, например C:\\Проекты\\Мой проект")
     if not (rest or "").strip("\\/"):
         return _result(False, "Нельзя выбрать весь диск (C:\\) — создайте папку внутри")
 

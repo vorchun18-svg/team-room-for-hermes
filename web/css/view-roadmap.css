@@ -20,7 +20,7 @@
   margin: 0; font-size: var(--text-2xl); line-height: var(--leading-tight);
   font-weight: 600; letter-spacing: var(--tracking-tight); color: var(--foreground);
 }
-.rm-hero__line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
+.rm-hero__line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-3); min-width: 0; }
 .rm-hero__progress-label { font-size: var(--text-sm); color: var(--ui-text-secondary); }
 .rm-hero__progress {
   max-width: 460px; height: 6px; margin: var(--space-1) 0 var(--space-2);
@@ -49,24 +49,68 @@
 .rm-steps__head-actions { display: flex; align-items: center; gap: var(--space-2); min-width: 0; flex-wrap: wrap; }
 .rm-steps__head-actions .btn { flex: none; }
 
-/* ── «Карта без этапов»: «Что дальше» и один блок про режим (W17-R §4) ──── */
+/* ── «Что дальше»: один блок (W20-U2 §16) ─────────────────────────────── */
 
+.rm-next__body { gap: var(--space-3); }
+.rm-next__text { margin: 0; color: var(--ui-text-secondary); line-height: var(--leading-relaxed); overflow-wrap: anywhere; }
+.rm-next__text--lead { color: var(--ui-text-secondary); max-width: 82ch; }
+.rm-next__state { color: var(--foreground); font-weight: 600; }
+.rm-next__note { margin: 0; }
+.rm-next__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.rm-next__actions .btn { flex: none; }
+
+.rm-next__phase {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--ui-bg-quaternary);
+  border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+}
+.rm-next__phase-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.rm-next__phase-title { font-size: var(--text-base); font-weight: 600; color: var(--foreground); overflow-wrap: anywhere; }
+.rm-next__phase-line { overflow-wrap: anywhere; }
+.rm-next__phase-icon { display: grid; place-items: center; width: 24px; height: 24px; flex: none; }
+.rm-tone--ok { color: var(--ok-ink); }
+.rm-tone--info { color: var(--link); }
+.rm-tone--warn { color: var(--warn-ink); }
+.rm-tone--muted { color: var(--ui-text-tertiary); }
+
+.rm-next__steps { display: flex; flex-direction: column; gap: var(--space-1); }
+.rm-next__subtitle { font-size: var(--text-sm); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ui-text-tertiary); }
 .rm-next__list { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
 .rm-next__item {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start; gap: var(--space-2); min-width: 0;
 }
-.rm-next__text { min-width: 0; overflow-wrap: anywhere; color: var(--foreground); }
+.rm-next__item .chip { justify-self: start; }
+.rm-next__text,
+.rm-next__item .rm-next__text { min-width: 0; overflow-wrap: anywhere; color: var(--foreground); }
 .rm-next__due { white-space: nowrap; }
 
-.rm-project-hint__text { margin: 0 0 var(--space-3); max-width: 78ch; color: var(--ui-text-secondary); }
-.rm-project-hint__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-.rm-project-hint__note { margin: var(--space-2) 0 0; }
+/* Подпись статусов этапов: цвет без слова ничего не значит. */
+.rm-steps__foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-2) var(--space-4); flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+.rm-legend { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.rm-legend__item {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: var(--text-sm); color: var(--ui-text-secondary); white-space: nowrap;
+}
+.rm-legend__icon { display: grid; place-items: center; }
+.rm-legend__item--done .rm-legend__icon { color: var(--ok-ink); }
+.rm-legend__item--active .rm-legend__icon { color: var(--link); }
+.rm-legend__item--blocked .rm-legend__icon { color: var(--warn-ink); }
+.rm-legend__item--next .rm-legend__icon { color: var(--ui-text-tertiary); }
+.rm-steps__hint { line-height: var(--leading-normal); }
 
 @media (max-width: 899px) {
   .rm-next__item { grid-template-columns: auto minmax(0, 1fr); }
   .rm-next__due { grid-column: 2; }
   .rm-steps__head { flex-direction: column; gap: var(--space-1); }
+  .rm-next__phase { grid-template-columns: auto minmax(0, 1fr); }
+  .rm-next__phase .btn { grid-column: 2; justify-self: start; }
 }
 
 /* ── степпер этапов ─────────────────────────────────────────────────────── */
@@ -74,17 +118,18 @@
 .rm-steps {
   display: flex; align-items: stretch; gap: 0; margin: 0; padding: 0;
   list-style: none; min-width: 0;
+  /* W20-U2 §16: 12 этапов с длинными названиями переносятся в 2–3 ряда —
+     ни один этап не спрятан за горизонтальной прокруткой. */
+  flex-wrap: wrap; overflow: visible;
 }
-.rm-step { position: relative; flex: 1 1 0; min-width: 0; display: flex; }
-.rm-step + .rm-step::before {
-  content: ""; position: absolute; left: 0; top: 15px; width: var(--space-3); height: 1px;
-  background: var(--border); transform: translateX(calc(-1 * var(--space-3)));
-}
+.rm-step { position: relative; flex: 1 1 190px; min-width: 190px; max-width: 340px; display: flex; }
 .rm-step + .rm-step { padding-left: var(--space-3); }
+/* W20-U2 §16: при переносе на второй ряд соединительные чёрточки выглядели
+   обрывками — статус несут значок и цвет, линий больше нет. */
 
 .rm-step__btn {
   flex: 1 1 auto; min-width: 0; display: grid;
-  grid-template-columns: auto minmax(0, 1fr); align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
   gap: var(--space-2); padding: var(--space-2);
   border: 1px solid transparent; border-radius: var(--radius-md);
   background: none; text-align: left; color: var(--ui-text-secondary);
@@ -92,6 +137,15 @@
 }
 .rm-step__btn:hover { background: var(--ui-row-hover-background); }
 .rm-step__btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+/* Клик по этапу: стрелка появляется у выбранного — видно, что панель ниже про него. */
+.rm-step__chevron {
+  display: grid; place-items: center; width: 16px; flex: none;
+  color: var(--ui-text-tertiary); opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.rm-step__btn:hover .rm-step__chevron { opacity: 0.6; }
+.rm-step--selected .rm-step__chevron { opacity: 1; color: var(--link); }
 
 .rm-step__marker {
   display: grid; place-items: center; width: 22px; height: 22px; flex: none;
@@ -101,7 +155,12 @@
 }
 .rm-step__marker .codicon { font-size: 11px; }
 .rm-step__body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.rm-step__title { font-size: var(--text-sm); font-weight: 500; line-height: 1.25; color: var(--foreground); }
+.rm-step__title {
+  font-size: var(--text-sm); font-weight: 500; line-height: 1.25; color: var(--foreground);
+  /* Полное название — в подсказке кнопки и в панели деталей ниже. */
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: break-word;
+}
 .rm-step__state { font-size: var(--text-sm); color: var(--ui-text-tertiary); }
 
 .rm-step--done .rm-step__marker { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); color: var(--ok-ink); }
@@ -192,12 +251,9 @@
   .rm-hero__mirror { align-items: flex-start; }
 
   /* степпер вертикально: маркеры в колонку, соединитель — вертикальная линия */
-  .rm-steps { flex-direction: column; gap: 0; }
-  .rm-step { flex: 1 1 auto; }
+  .rm-steps { flex-direction: column; flex-wrap: nowrap; gap: 0; overflow: visible; padding-bottom: 0; }
+  .rm-step { flex: 1 1 auto; min-width: 0; }
   .rm-step + .rm-step { padding-left: 0; padding-top: var(--space-2); }
-  .rm-step + .rm-step::before {
-    left: 21px; top: 0; width: 1px; height: var(--space-2); transform: none;
-  }
   .rm-step__btn { padding: var(--space-1) var(--space-2); }
 }
 

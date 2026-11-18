@@ -23,6 +23,8 @@ export const MEMBER_STATES = {
   idle: { label: 'свободен', kind: 'idle' },
   working: { label: 'работает', kind: 'working' },
   waiting: { label: 'ждёт человека', kind: 'waiting' },
+  // W23-MG2: работа остановлена человеком — не «работает» и не «ждёт человека».
+  paused: { label: 'остановлено', kind: 'paused' },
 };
 
 /** Живой статус участника → {state,label,kind}; pulse — только у работы. */
@@ -236,6 +238,10 @@ export function memberModel(member, profiles, now = Date.now()) {
       status: m.current.status || '',
       startedAt: m.current.started_at || null,
       since: sinceLabel(m.current.started_at, now),
+      // W23-MG2: номер запроса нужен кнопкам «Остановить / Продолжить» —
+      // действие отправляется на страницу запроса (`/api/requests/{id}/actions`).
+      requestId: m.current.request_id || m.current.requestId || null,
+      stopped: m.current.stopped && typeof m.current.stopped === 'object' ? m.current.stopped : null,
     }
     : null;
   const last = m.last && typeof m.last === 'object'

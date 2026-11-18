@@ -118,7 +118,7 @@ class _Base(unittest.TestCase):
         self.agents = SimAgents(self.sb)
 
     # --- помощники ---------------------------------------------------------
-    def card(self, title: str, status: str = "todo", assignee: str = "biz-ops",
+    def card(self, title: str, status: str = "todo", assignee: str = "team-ops",
              tenant: str = "room:cafe") -> str:
         return self.agents.card(title, assignee, status=status, tenant=tenant)
 
@@ -236,11 +236,11 @@ class ReportTests(_Base):
     def test_started_cards_take_titles_from_board(self):
         card = self.card("Юр-проверка ИП", status="ready")
         rep = kr.report(self.cfg, BOARD, {"spawned": 1, "reclaimed": 0, "promoted": 0,
-                                          "planned": [{"id": card, "assignee": "biz-ops"}],
+                                          "planned": [{"id": card, "assignee": "team-ops"}],
                                           "max": 3})
         self.assertEqual(rep["kind"], "started")
         self.assertEqual(rep["spawned"], 1)
-        self.assertEqual(rep["started"], [{"id": card, "assignee": "biz-ops",
+        self.assertEqual(rep["started"], [{"id": card, "assignee": "team-ops",
                                            "title": "Юр-проверка ИП"}])
 
     def test_reclaimed_and_promoted_kinds(self):
@@ -285,7 +285,7 @@ class KickReportResponseTests(_Base):
 
     def test_kick_returns_started_report(self):
         card = self.card("Смета упаковки", status="ready")
-        self.shim.dispatch_json = {"spawned": [{"id": card, "assignee": "biz-ops"}],
+        self.shim.dispatch_json = {"spawned": [{"id": card, "assignee": "team-ops"}],
                                    "promoted": 1, "reclaimed": 0}
         app = self._app_outside_sandbox()
         status, payload, _ = self.call(app, "POST", "/api/dispatcher/kick", {}, {"confirm": True})

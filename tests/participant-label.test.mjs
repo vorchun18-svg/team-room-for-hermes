@@ -16,10 +16,10 @@ import {
 
 const PROFILES = {
   items: [
-    { profile: 'biz-cfo', title: 'Финансист', name: 'Анна', job: 'финансы и экономика (CFO)',
+    { profile: 'team-cfo', title: 'Финансист', name: 'Анна', job: 'финансы и экономика (CFO)',
       label: 'Анна — финансы и экономика (CFO)', label_source: 'profile',
       description: 'Анна — финансы и экономика (CFO)' },
-    { profile: 'biz-ops', title: 'Операции', name: 'Марина', job: 'поставщики и доставка',
+    { profile: 'team-ops', title: 'Операции', name: 'Марина', job: 'поставщики и доставка',
       label: 'Марина — поставщики и доставка', label_source: 'describe', description: '' },
     { profile: 'default', title: 'Базовый профиль Hermes', name: '', job: '',
       label: '', label_source: 'role', description: '' },
@@ -34,11 +34,11 @@ test('assembleLabel соединяет части без пустых', () => {
 });
 
 test('labelOf: заголовок — имя и должность, роль отдельно, профиль отдельно', () => {
-  const label = labelOf({ profile: 'biz-cfo', name: 'Анна', job: 'финансы и экономика (CFO)', role: 'worker' });
+  const label = labelOf({ profile: 'team-cfo', name: 'Анна', job: 'финансы и экономика (CFO)', role: 'worker' });
   assert.equal(label.title, 'Анна — финансы и экономика (CFO)');
   assert.equal(label.short, 'Анна');
   assert.equal(label.role, 'исполнитель');       // роль — бейдж, не заголовок
-  assert.equal(label.sub, 'biz-cfo');            // техническое имя — мелкой строкой
+  assert.equal(label.sub, 'team-cfo');            // техническое имя — мелкой строкой
   assert.equal(label.source, 'profile');
 });
 
@@ -53,7 +53,7 @@ test('labelOf без описания отдаёт роль (профиль defa
   assert.equal(label.title, 'Руководитель комнаты');     // подпись из роли в комнате
   assert.equal(label.roleShort, 'руководитель');
   assert.equal(label.source, 'role');
-  const bare = labelOf({ profile: 'biz-ops', role: 'worker' });
+  const bare = labelOf({ profile: 'team-ops', role: 'worker' });
   assert.equal(bare.title, 'Исполнитель');
   const critic = labelOf({ profile: 'x', role: 'critic' });
   assert.equal(critic.title, 'Критик комнаты');
@@ -67,10 +67,10 @@ test('каталог профилей: подпись приходит из /api
   await ensureProfileDirectory(api);
   await ensureProfileDirectory(api);                 // второй раз — из памяти
   assert.equal(calls, 1);
-  const label = participantLabel('biz-cfo', { role: 'worker' });
+  const label = participantLabel('team-cfo', { role: 'worker' });
   assert.equal(label.title, 'Анна — финансы и экономика (CFO)');
   assert.equal(label.source, 'profile');
-  assert.equal(profileEntry('biz-cfo').name, 'Анна');
+  assert.equal(profileEntry('team-cfo').name, 'Анна');
   clearProfileDirectory();
 });
 
@@ -79,18 +79,18 @@ test('участник комнаты перекрывает подпись пр
   setProfileDirectory(PROFILES);
   const room = {
     orchestrator: 'default',
-    critic: 'biz-ops',
-    members: [{ profile: 'biz-cfo', role: 'worker', label: 'Ира — бухгалтер проекта',
+    critic: 'team-ops',
+    members: [{ profile: 'team-cfo', role: 'worker', label: 'Ира — бухгалтер проекта',
       name: 'Ира', job: 'бухгалтер проекта', label_source: 'member' }],
   };
-  const label = participantLabel('biz-cfo', { room });
+  const label = participantLabel('team-cfo', { room });
   assert.equal(label.title, 'Ира — бухгалтер проекта');
   assert.equal(label.source, 'member');
   // руководитель и критик — роль по настройкам комнаты
   assert.equal(roleOf(room, 'default'), 'orchestrator');
-  assert.equal(roleOf(room, 'biz-ops'), 'critic');
-  assert.equal(participantLabel('biz-ops', { room }).role, 'критик комнаты');
-  assert.equal(memberOf(room, 'biz-cfo').profile, 'biz-cfo');
+  assert.equal(roleOf(room, 'team-ops'), 'critic');
+  assert.equal(participantLabel('team-ops', { room }).role, 'критик комнаты');
+  assert.equal(memberOf(room, 'team-cfo').profile, 'team-cfo');
   assert.equal(memberOf(room, 'default'), null);
   clearProfileDirectory();
 });
@@ -98,9 +98,9 @@ test('участник комнаты перекрывает подпись пр
 test('ответ /team с полями подписи главнее каталога', () => {
   clearProfileDirectory();
   setProfileDirectory(PROFILES);
-  const member = { profile: 'biz-cfo', role: 'worker', name: 'Анна', job: 'финансы (CFO)',
+  const member = { profile: 'team-cfo', role: 'worker', name: 'Анна', job: 'финансы (CFO)',
     label: 'Анна — финансы (CFO)', label_source: 'describe', label_pending: true };
-  const label = participantLabel('biz-cfo', { member });
+  const label = participantLabel('team-cfo', { member });
   assert.equal(label.title, 'Анна — финансы (CFO)');
   assert.equal(label.source, 'describe');
   assert.equal(label.pending, true);
@@ -111,16 +111,16 @@ test('WAVE17 B-17: подпись руководителя и критика —
   clearProfileDirectory();
   const room = {
     orchestrator: 'default',
-    critic: 'biz-critic',
+    critic: 'team-critic',
     members: [{ profile: 'lawyer', role: 'worker' }],
-    role_labels: { default: 'Михаил — руководитель комнаты', 'biz-critic': 'Атлас — критик' },
+    role_labels: { default: 'Михаил — руководитель комнаты', 'team-critic': 'Атлас — критик' },
   };
   const lead = participantLabel('default', { room, role: 'orchestrator' });
   assert.equal(lead.title, 'Михаил — руководитель комнаты');
   assert.equal(lead.source, 'member');          // та же «ручная» подпись, что у исполнителя
   assert.equal(lead.role, 'руководитель комнаты');
 
-  const critic = participantLabel('biz-critic', { room, role: 'critic' });
+  const critic = participantLabel('team-critic', { room, role: 'critic' });
   assert.equal(critic.title, 'Атлас — критик');
   assert.equal(critic.source, 'member');
 

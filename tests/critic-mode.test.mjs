@@ -176,9 +176,9 @@ test('criticInfo: нет данных о ходе — строка прогре�
 /* ─────────────────────────────────── диалог комнаты: три варианта раундов */
 
 const PROFILES = [
-  { profile: 'biz-director', title: 'Директор Лето', kind: 'director' },
-  { profile: 'biz-critic', title: 'Критик', kind: 'critic' },
-  { profile: 'biz-ops', title: 'Операции', kind: 'worker' },
+  { profile: 'team-director', title: 'Директор Лето', kind: 'director' },
+  { profile: 'team-critic', title: 'Критик', kind: 'critic' },
+  { profile: 'team-ops', title: 'Операции', kind: 'worker' },
 ];
 
 function dialogCtx() {
@@ -198,8 +198,8 @@ function dialogCtx() {
 
 const EDIT_ROOM = {
   id: 'cafe', title: 'Лето', icon: 'cake', board: 'team', tenant: 'room:cafe',
-  orchestrator: 'biz-director', critic: 'biz-critic',
-  members: [{ profile: 'biz-ops', role: 'worker' }],
+  orchestrator: 'team-director', critic: 'team-critic',
+  members: [{ profile: 'team-ops', role: 'worker' }],
   context_files: [], project_dir: '', critic_pass: true, max_rounds: 2,
   critic_mode: 'rounds', critic_round_cap: 12,
   launch_mode: 'plan_first', max_parallel_streams: 2, project_mode: true,
@@ -325,7 +325,11 @@ test('settings: FAQ объясняет критика и раунды прост
 
 test('team.js: строка раундов объясняет режим и что такое раунд', () => {
   const source = readFileSync(new URL('../web/js/views/team.js', import.meta.url), 'utf8');
-  assert.ok(source.includes('Критик — участник, который проверяет сводный ответ'));
+  // W20-U1: между словом и объяснением стоит кнопка «?» (termHelp), поэтому
+  // проверяем части фразы, а не одну длинную строку.
+  assert.ok(source.includes(' — участник, который проверяет сводный ответ перед выдачей.'));
+  assert.ok(source.includes("termHelp('critic')"), 'у слова «критик» есть «?»');
+  assert.ok(source.includes("termHelp('round')"), 'у слова «раунд» есть «?»');
   assert.ok(source.includes('пока не одобрит полностью'));
   assert.ok(source.includes('1 раунд — быстро') || source.includes("'— быстро'"),
     'подпись «быстро/тщательнее» есть в строке раундов');

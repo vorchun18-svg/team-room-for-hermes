@@ -200,10 +200,19 @@ class TestWorkflows(unittest.TestCase):
     def test_release_on_tag_and_uploads_assets(self):
         text = RELEASE_YML.read_text(encoding="utf-8")
         self.assertRegex(text, r"tags:\s*\[\s*['\"]v\*['\"]\s*\]", "релиз должен запускаться на тег v*")
-        self.assertIn("softprops/action-gh-release", text)
+        # публикация своими руками через gh: повторный запуск по уже вышедшему тегу
+        # не должен ронять workflow (файлы догружаются с --clobber)
+        self.assertIn("gh release", text)
+        self.assertIn("--clobber", text)
+        self.assertIn("gh release view", text, "нужно проверять, есть ли уже релиз по тегу")
         self.assertIn("team-room-", text)
         self.assertIn("--run-tests", text, "релизный архив должен собираться с прогоном тестов")
         self.assertIn("--no-git", text)
+        # публичный репозиторий уже чист: таблица обезличивания не применяется
+        self.assertIn("--no-sanitize", text)
+        # установщики качают имена без версии — они обязаны быть в релизе
+        self.assertIn("dist/team-room.zip", text)
+        self.assertIn("dist/team-room.tar.gz", text)
 
     def test_artifact_names_match_version(self):
         version = read_version()

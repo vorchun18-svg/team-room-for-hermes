@@ -495,6 +495,18 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
                 "project_mode": bool(room.get("project_mode")),
                 # Этапы комнаты — в списке, чтобы карта не делала лишний запрос.
                 "phases": phases,
+                # W20 §1.7: предложение этапов руководителем — состояние и подпись
+                # для бейджа/строки сводки (полное предложение — в детали комнаты).
+                "phases_proposal": phase_book.proposal_of(room),
+                "phases_proposal_text": phase_book.state_text(room.get("phases_proposal")),
+                # W20: «Ход работы» и автообновление свода — настройки самой комнаты,
+                # нужны и в списке (боковое меню, бейджи) без отдельного запроса.
+                "worklog_mode": room.get("worklog_mode") or "full",
+                "digest_every_min": room.get("digest_every_min") if room.get("digest_every_min") is not None else 2,
+                "worklog": room.get("worklog") or {},
+                "auto_svod": room.get("auto_svod") is not False,
+                "auto_svod_quiet_s": int(room.get("auto_svod_quiet_s") or 180),
+                "auto_svod_min_gap_s": int(room.get("auto_svod_min_gap_s") or 600),
                 "counters": counters,
                 "phase": phase,
                 "updated_at": int(cached.get("updated_at") or room.get("created_at") or 0)}
@@ -505,6 +517,9 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
                   if key not in ("counters", "phase", "dispatcher")}
         detail.update({"counters": summary["counters"], "phase": summary["phase"],
                        "phases": summary.get("phases") or [],
+                       # W20 §1.7: предложение этапов и его короткая подпись — в карточке комнаты.
+                       "phases_proposal": summary.get("phases_proposal"),
+                       "phases_proposal_text": summary.get("phases_proposal_text") or "",
                        "dispatcher": self._dispatcher_short()})
         # Модель/провайдер/мышление участников (WAVE10): model_settings + agent_default
         # у каждого участника и общая карта agent_models_meta. Модуль не готов — Room без них.
@@ -568,7 +583,7 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
         view.setdefault("updated_at", int(time.time()))
         # W17-B §7 (B7): статус вопроса берётся из реестра ответов (единственный
         # источник истины), близнецы схлопываются, служебные вопросы скрываются.
-        # Читается каждый раз заново — поэтому ответ виден в «Дальше» сразу, без
+        # Читается каждый раз заново — поэтому ответ виден в «От вас нужно» сразу, без
         # ожидания следующего прохода плана. Данные на диске не меняются.
         if self._has_mod("answers"):
             try:
@@ -642,6 +657,9 @@ ROUTES = [(method, re.compile(pattern), handler) for method, pattern, handler in
     ("GET", r"/api/rooms/" + _ROOM, "h_room_get"),
     ("PATCH", r"/api/rooms/" + _ROOM, "h_room_patch"),
     ("POST", r"/api/rooms/" + _ROOM + r"/archive", "h_room_archive"),
+    # Этапы проекта: предложение руководителя (W20 §1.7, F-2).
+    ("POST", r"/api/rooms/" + _ROOM + r"/phases/proposal", "h_phases_proposal"),
+    ("POST", r"/api/rooms/" + _ROOM + r"/phases/propose", "h_phases_propose"),
     ("POST", r"/api/rooms/" + _ROOM + r"/members", "h_member_add"),
     ("DELETE", r"/api/rooms/" + _ROOM + r"/members/(?P<profile>[A-Za-z0-9_.\-]{1,64})", "h_member_remove"),
     # Особые указания участнику этой комнаты (WAVE9 §9): только реестр комнаты.
@@ -670,8 +688,14 @@ ROUTES = [(method, re.compile(pattern), handler) for method, pattern, handler in
     ("GET", r"/api/rooms/" + _ROOM + r"/journal", "h_journal"),
     ("GET", r"/api/search", "h_search"),
     ("GET", r"/api/file", "h_file"),
+    # W26-D4: существование файла для чипов-ссылок свода («не найден» вместо ложной кнопки).
+    ("GET", r"/api/files/info", "h_files_info"),
     ("POST", r"/api/open", "h_open"),
-    # B-22 WAVE19: «Открыть / В проводнике» для артефактов комнаты (папка проекта).
+    # W26-D3: «Открыть» (файл в программе по умолчанию) и «Показать в папке» —
+    # серверные действия, браузер новые окна внутри Hermes Desktop не открывает.
+    ("POST", r"/api/files/launch", "h_files_launch"),
+    # B-22 WAVE19: прежний адрес «В проводнике» для файлов комнаты — оставлен
+    # для совместимости (W26-D3), новое имя — /api/files/launch {mode:"reveal"}.
     ("POST", r"/api/artifacts/open", "h_artifact_open"),
     ("GET", r"/api/ics", "h_ics"),
     ("GET", r"/api/export/request/" + _RID + r"\.md", "h_export_md"),
@@ -715,6 +739,60 @@ install_stt_routes(App, ROUTES)
 from server.routes_members import install_member_routes                   # noqa: E402
 
 install_member_routes(App, ROUTES)
+
+# --- «Ход работы» запроса (W20 §1.6): лента событий агентов, только чтение ----------
+# ``GET /api/requests/{id}/worklog`` — server/worklog.py + server/routes_worklog.py.
+from server.routes_worklog import install_worklog_routes                        # noqa: E402
+
+install_worklog_routes(App, ROUTES)
+
+# --- экспорт свода одним действием (W20-U3, P13): заметки / HTML / печать ------------
+# ``POST /api/requests/{id}/export`` с телом {format} — server/routes_export.py.
+from server.routes_export import install_export_routes                          # noqa: E402
+
+install_export_routes(App, ROUTES)
+
+# --- «Разрешения агентам» (W22 §2): блокировки опасных команд в карточках ------------
+# ``GET /api/approvals/grants``, ``POST /api/approvals/revoke``; поле ``approvals[]``
+# в деталях запроса и действие ``{action:"approval"}`` — server/approvals.py.
+from server.routes_approvals import install_approvals_routes                   # noqa: E402
+
+install_approvals_routes(App, ROUTES)
+
+# --- экран «Сегодня» (W24 §3.1, пакет N2): что ждёт человека ------------------
+# ``GET /api/today`` — сводка по всем комнатам, ``POST /api/today/seen`` — отметка
+# захода (``data/state/today.json``). Правила — server/today.py.
+from server.routes_today import install_today_routes                             # noqa: E402
+
+install_today_routes(App, ROUTES)
+
+# --- дежурства и здоровье интеграций (W24 §3.2–3.3, пакет N4) -----------------
+# ``GET /api/duties?room=``, ``PUT /api/rooms/{id}/duties``, ``GET /api/health/integrations``
+# — server/duties.py, server/health.py, server/routes_duties.py.
+from server.routes_duties import install_duties_routes                          # noqa: E402
+
+install_duties_routes(App, ROUTES)
+
+# --- реестр решений комнаты (W25 §M1): append-only, хеш-цепочка -----------------
+# ``GET /api/rooms/{id}/registry`` — только чтение; запись — существующими
+# действиями решения и приёмом ответа. Правила — server/decision_registry.py.
+from server.routes_registry import install_registry_routes                       # noqa: E402
+
+install_registry_routes(App, ROUTES)
+
+# --- входящие комнаты (W26 §2, пакет D9): «Надиктовать» → разбор -------------
+# ``GET/POST /api/rooms/{id}/inbox``, ``POST /api/rooms/{id}/inbox/{item}/actions``
+# — server/inbox.py, server/routes_inbox.py.
+from server.routes_inbox import install_inbox_routes                              # noqa: E402
+
+install_inbox_routes(App, ROUTES)
+
+# --- дела (W26 §1–2, пакет D5): долгоживущий объект комнаты ---------------------
+# ``GET/POST /api/rooms/{id}/delos``, ``GET /api/delos[/{id}]``,
+# ``POST /api/delos/{id}/actions`` — server/delo.py, server/routes_delo.py.
+from server.routes_delo import install_delo_routes                               # noqa: E402
+
+install_delo_routes(App, ROUTES)
 
 
 # --- сервер ----------------------------------------------------------------

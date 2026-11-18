@@ -79,7 +79,7 @@ ANSWER_V2 = (
 META_V1 = {
     "next_steps": [
         {"text": "Снять блокер канала TG/WA", "owner": "mikhail", "due": "2026-11-15"},
-        {"text": "Согласовать упаковку с поставщиком", "owner": "biz-ops", "due": "2026-11-20"},
+        {"text": "Согласовать упаковку с поставщиком", "owner": "team-ops", "due": "2026-11-20"},
     ],
     "open_questions": [],
     "decisions": [{"text": "Канал D19 — V2 с собственным курьером", "why": "маржа выше на 13 п.п.",
@@ -98,7 +98,7 @@ META_V2 = {
         # первый шаг тот же по смыслу, но переписан; второй — новый
         {"text": "Снять блокер канала и подписать договор с курьером", "owner": "mikhail",
          "due": "2026-11-18"},
-        {"text": "Согласовать упаковку с Embalagens городе", "owner": "biz-ops", "due": "2026-11-22"},
+        {"text": "Согласовать упаковку с Embalagens городе", "owner": "team-ops", "due": "2026-11-22"},
     ],
     "open_questions": [],
     "decisions": [{"text": "Канал D19 — V2 с собственным курьером", "why": "маржа выше на 13 п.п.",
@@ -242,8 +242,8 @@ class E2ETest(unittest.TestCase):
 
         # --- decompose: дети running, связи child_id=root, событие decomposed
         kids = self.sim.decompose(rid, [
-            {"title": "Срез: экономика каналов", "assignee": "biz-cfo"},
-            {"title": "Срез: доставка и упаковка", "assignee": "biz-ops"},
+            {"title": "Срез: экономика каналов", "assignee": "team-cfo"},
+            {"title": "Срез: доставка и упаковка", "assignee": "team-ops"},
         ])
         self.assertEqual(len(kids), 2)
         self.assertEqual(self.card_count(), cards_at_start + 3)   # корень + 2 ребёнка
@@ -253,7 +253,7 @@ class E2ETest(unittest.TestCase):
         self.assertEqual(stats["errors"], 0, stats)
         detail = self.detail(rid)
         self.assertEqual(detail["status"], "working")
-        self.assertEqual(detail["assignee"], "biz-director")
+        self.assertEqual(detail["assignee"], "team-director")
         self.assertEqual(len(detail["tree"]), 3)
         self.assertEqual([n["role"] for n in detail["tree"]], ["root", "worker", "worker"])
         self.assertEqual(detail["synthesis"]["state"], "pending")

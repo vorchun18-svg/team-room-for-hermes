@@ -21,18 +21,18 @@ const profiles = JSON.parse(readFileSync(new URL('../fixtures/profiles.json', im
 /* ---------------------------------------------------------------------- D8 */
 
 test('машинные названия профилей распознаются: id через пробел — не имя', () => {
-  assert.equal(isMachineName('biz director', 'biz-director'), true);
+  assert.equal(isMachineName('biz director', 'team-director'), true);
   assert.equal(isMachineName('default', 'default'), true);
-  assert.equal(isMachineName('biz director', 'biz-ops'), true);   // без кириллицы
-  assert.equal(isMachineName('Директор Лето', 'biz-director'), false);
-  assert.equal(isMachineName('', 'biz-ops'), true);
+  assert.equal(isMachineName('biz director', 'team-ops'), true);   // без кириллицы
+  assert.equal(isMachineName('Директор Лето', 'team-director'), false);
+  assert.equal(isMachineName('', 'team-ops'), true);
 });
 
 test('displayName: человеческое название профиля, иначе роль с большой буквы', () => {
-  assert.equal(displayName('biz-director', 'orchestrator', 'Директор Лето'), 'Директор Лето');
-  assert.equal(displayName('biz-director', 'orchestrator', 'biz director'), 'Руководитель');
-  assert.equal(displayName('biz-ops', 'worker', ''), 'Исполнитель');
-  assert.equal(displayName('biz-critic', 'critic', 'Критик'), 'Критик');
+  assert.equal(displayName('team-director', 'orchestrator', 'Директор Лето'), 'Директор Лето');
+  assert.equal(displayName('team-director', 'orchestrator', 'biz director'), 'Руководитель');
+  assert.equal(displayName('team-ops', 'worker', ''), 'Исполнитель');
+  assert.equal(displayName('team-critic', 'critic', 'Критик'), 'Критик');
   // Ни одного системного id в подписи.
   for (const p of profiles) {
     const label = displayName(p.profile, p.kind, p.title);
@@ -42,8 +42,8 @@ test('displayName: человеческое название профиля, и�
 
 test('profileOptionLabel не повторяет id: «default · default» больше нет', () => {
   assert.equal(profileOptionLabel({ profile: 'default', title: 'default' }), 'default');
-  assert.equal(profileOptionLabel({ profile: 'biz-ops', title: 'biz ops' }), 'biz-ops');
-  assert.equal(profileOptionLabel({ profile: 'biz-ops', title: 'Операции' }), 'Операции · biz-ops');
+  assert.equal(profileOptionLabel({ profile: 'team-ops', title: 'biz ops' }), 'team-ops');
+  assert.equal(profileOptionLabel({ profile: 'team-ops', title: 'Операции' }), 'Операции · team-ops');
 });
 
 test('roleTitle и roleNoun дают русскую роль комнаты', () => {

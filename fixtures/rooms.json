@@ -5,8 +5,8 @@
       "title": "Лето",
       "icon": "cake",
       "archived": false,
-      "orchestrator": "biz-director",
-      "critic": "biz-critic",
+      "orchestrator": "team-director",
+      "critic": "team-critic",
       "members_count": 7,
       "mode_default": "auto",
       "critic_pass": true,
@@ -49,7 +49,16 @@
           "id": "sales",
           "title": "Продажи"
         }
-      ]
+      ],
+      "worklog_mode": "full",
+      "digest_every_min": 2,
+      "worklog": {
+        "mode": "full",
+        "mode_label": "Подробно (с рассуждениями)",
+        "digest_every_min": 2,
+        "digest_label": "Каждые 2 минуты",
+        "on": true
+      }
     },
     {
       "id": "fn",
@@ -71,15 +80,24 @@
       "max_rounds": 1,
       "critic_mode": "rounds",
       "critic_round_cap": 12,
-      "phases": []
+      "phases": [],
+      "worklog_mode": "brief",
+      "digest_every_min": 5,
+      "worklog": {
+        "mode": "brief",
+        "mode_label": "Кратко (только действия)",
+        "digest_every_min": 5,
+        "digest_label": "Каждые 5 минут",
+        "on": true
+      }
     },
     {
       "id": "long",
       "title": "Лето: производство и упаковка",
       "icon": "project",
       "archived": false,
-      "orchestrator": "biz-director",
-      "critic": "biz-critic",
+      "orchestrator": "team-director",
+      "critic": "team-critic",
       "members_count": 7,
       "mode_default": "auto",
       "critic_pass": true,
@@ -131,7 +149,16 @@
           "title": "Развитие: новые вкусы, сезонные наборы, партнёрства и юнит-экономика"
         }
       ],
-      "project_mode": true
+      "project_mode": true,
+      "worklog_mode": "off",
+      "digest_every_min": 0,
+      "worklog": {
+        "mode": "off",
+        "mode_label": "Выключено",
+        "digest_every_min": 0,
+        "digest_label": "Выключено",
+        "on": false
+      }
     }
   ],
   "engine": {

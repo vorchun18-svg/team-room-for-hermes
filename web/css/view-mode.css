@@ -1,0 +1,69 @@
+/**
+ * view-mode.css — режим вида «простой / подробный» (W20-U3, пункт 18 / P14).
+ *
+ * Правило одно: на <html data-view-mode="simple"> скрывается техника. Данные не
+ * удаляются и не перезапрашиваются — переключение мгновенное, страница не мигает.
+ *
+ * Техника — это: модель и её провайдер, внутренние номера запросов и задач,
+ * служебные строки, «подробности для разработчика», пути и код.
+ *
+ * Новые элементы, которые тоже надо скрыть, помечаются в разметке атрибутом
+ * `data-tech` (или классом `tech-only`) — перечислять их здесь не нужно.
+ */
+
+/* ── переключатель в подвале бокового меню ───────────────────────────────── */
+.viewmode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.viewmode-toggle [data-viewmode-label] {
+  font-size: var(--text-sm);
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+/* В узком окне подпись убираем: остаётся иконка с подсказкой (как у темы). */
+@media (max-width: 900px) {
+  .viewmode-toggle [data-viewmode-label] { display: none; }
+}
+
+/* ── простой вид: убрать технику ────────────────────────────────────────── */
+
+/* Подробности для разработчика (логи, JSON, stderr, стеки). */
+html[data-view-mode='simple'] .req-dev,
+
+/* Модель участника: название модели, провайдер, «ушло на …». */
+html[data-view-mode='simple'] .agent-model__line,
+
+/* Служебные пометки профиля Hermes в шапке запроса («Профиль: team-director»). */
+html[data-view-mode='simple'] .req__meta-item[title^='Профиль:'],
+
+/* Явные технические пометки в разметке любых экранов. */
+html[data-view-mode='simple'] [data-tech],
+html[data-view-mode='simple'] .tech-only,
+
+/* Внутренние номера запросов/задач, если они где-то выведены текстом. */
+html[data-view-mode='simple'] .id-text,
+html[data-view-mode='simple'] .req-id,
+html[data-view-mode='simple'] .task-id,
+
+/* «Сырые» пути и моно-строки в служебных блоках (не в тексте ответа!). */
+html[data-view-mode='simple'] .req-answer__ver-meta--tech,
+html[data-view-mode='simple'] .kv__row--tech {
+  display: none !important;
+}
+
+/* Скрытая техника не должна оставлять пустых отступов и разделителей. */
+html[data-view-mode='simple'] .req__meta-item[title^='Профиль:'] + .req__meta-sep {
+  display: none;
+}
+
+/**
+ * Технический блок, который в простом виде не исчезает совсем, а сворачивается
+ * до одной строки «подробности» — так человек при желании их найдёт.
+ */
+html[data-view-mode='simple'] .tech-fold:not([open]) > *:not(summary) {
+  display: none;
+}

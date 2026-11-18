@@ -24,6 +24,7 @@ try:  # пакетный и «плоский» импорт
     from .http_util import ApiError, Raw, err
     from .title_short import short_title as _short_title       # W17-B §4: короткое название
     from . import answers as _answers                          # W17-B §7: статус вопросов
+    from . import reaction_notice as _reactions                # W20-U4: реакции руководителя
 except ImportError:  # pragma: no cover
     import config  # type: ignore
     import http_util  # type: ignore
@@ -35,6 +36,7 @@ except ImportError:  # pragma: no cover
     from http_util import ApiError, Raw, err  # type: ignore
     from title_short import short_title as _short_title  # type: ignore
     import answers as _answers  # type: ignore
+    import reaction_notice as _reactions  # type: ignore
 
 
 def _stt_flag(cfg) -> bool:
@@ -106,13 +108,18 @@ DETAIL_FIELDS = {
     "future_questions": "future_questions", "artifacts": "artifacts", "report": "report",
     "tree": "tree", "timeline": "timeline", "thread": "thread", "warnings": "warnings",
     "critic": "critic", "heartbeats": "heartbeats",
+    # W22-AP1 §2.1: запросы разрешения — отдельным блоком (`?fields=approvals`).
+    "approvals": "approvals",
+    # W23-MG1 §2.5: лента контроля моделей — отдельным блоком (по умолчанию идёт всегда).
+    "model_guard": "model_guard",
 }
 #: поля-ядро (RequestSummary + связи с картой проекта): остаются при любом `fields`
 DETAIL_CORE = frozenset({"id", "room", "title", "title_short", "title_source", "title_locked",
                          "status", "status_reason", "mode",
                          "critic", "created_at", "started_at", "finished_at", "duration_s",
                          "progress", "assignee", "needs_you", "preview", "archived",
-                         "brief", "plan_link", "streams_summary", "legacy_metadata"})
+                         "brief", "plan_link", "streams_summary", "legacy_metadata",
+                         "pinned", "pinned_at"})
 #: что вернуть в `?include=` (пока только heartbeat)
 DETAIL_INCLUDE = {"heartbeat"}
 
@@ -153,6 +160,35 @@ def _decorate(description, entry, custom, log=None) -> dict:
         if log is not None:
             log.warning("подпись участника: %s" % exc)
         return {}
+
+
+def _merge_comment_questions(mod, questions, extra) -> list:
+    """Добавить вопросы руководителя из комментариев к вопросам из карточек (B-38).
+
+    Дубли не появляются дважды: сравнение по ``text_key`` (тот же вопрос, переписанный
+    в комментарии) и по id. Порядок сохраняется: сначала вопросы карточек (как были),
+    затем вопросы из ленты — в порядке сообщений.
+    """
+    out = [q for q in questions or [] if isinstance(q, dict)]
+    seen_ids = {str(q.get("id") or "") for q in out}
+    seen_keys = set()
+    for question in out:
+        key = mod.text_key(question.get("text"))
+        if key:
+            seen_keys.add(key)
+    for candidate in extra or []:
+        if not isinstance(candidate, dict):
+            continue
+        qid = str(candidate.get("id") or "")
+        key = mod.text_key(candidate.get("text"))
+        if (qid and qid in seen_ids) or (key and key in seen_keys):
+            continue
+        out.append(candidate)
+        if qid:
+            seen_ids.add(qid)
+        if key:
+            seen_keys.add(key)
+    return out
 
 
 class ReadRoutes:
@@ -235,8 +271,31 @@ class ReadRoutes:
                                 "kanban_write": bool(cli.get("ok")),
                                 "vault_mirror": vault_enabled,
                                 "dictation": _stt_mode(self.cfg)},
+                   # W23-MG1 §2.3: сводка быстрого сторожа моделей (последний тик, ошибка)
+                   "guard": self._guard_state(watcher_state),
                    "watcher": watcher_state, "warnings": warnings}
+        if payload["guard"].get("last_error"):
+            warnings.append({"code": "model_guard_error",
+                             "message": "Контроль моделей сообщил об ошибке",
+                             "detail": {"error": payload["guard"]["last_error"]}})
         return 200, payload, {}
+
+    def _guard_state(self, watcher_state: dict | None = None) -> dict:
+        """Состояние быстрого сторожа моделей для `/api/health.guard` (W23-MG1 §2.3)."""
+        watcher = getattr(self, "watcher", None)
+        getter = getattr(watcher, "guard_status", None)
+        try:
+            data = getter() if callable(getter) else {}
+        except Exception:  # noqa: BLE001 - health не должен падать из-за сторожа
+            data = {}
+        if not isinstance(data, dict) or not data:
+            state = watcher_state if isinstance(watcher_state, dict) else {}
+            data = {"running": False, "last_run_at": None, "last_error": None, "tick_s": None}
+            nested = state.get("guard")
+            if isinstance(nested, dict):
+                data.update({k: nested.get(k) for k in ("running", "last_run_at",
+                                                        "last_error", "tick_s") if k in nested})
+        return data
 
     @staticmethod
     def _state_warnings() -> list:
@@ -382,16 +441,43 @@ class ReadRoutes:
                        "finished_at": state.get("finished_at"),
                        "preview": preview(rec.get("text") or "")}
                 self._title_view(row, rec)          # W17-B §4: короткое имя в меню
+                self._pin_view(row, rec)            # W20-U3: закреплённые — сверху
                 last.append(row)
+            # Закреплённые запросы комнаты выше свежих: «Недавнее» уважает закрепление.
+            last.sort(key=lambda r: (bool(r.get("pinned")), int(r.get("created_at") or 0)), reverse=True)
             item = dict(summary)
-            item.update({"requests_count": len(rows),
-                         "last_at": max([int(r.get("created_at") or 0) for r in rows], default=0) or None,
-                         "last": last})
+            # W20-U4 (P9): реакции руководителя — время последней и по запросам.
+            # Точное «прочитано» хранит браузер: сервер отдаёт только факты.
+            try:
+                reactions = self._room_reactions(room, records.get(str(room.get("id"))) or [])
+            except Exception as exc:  # noqa: BLE001 — сводка меню важнее бейджа
+                self.log.warning("summary reactions %s: %s" % (room.get("id"), exc))
+                reactions = {"count": 0, "last_at": None, "requests": {}, "items": []}
+            item.update({
+                "reactions_unseen": reactions.get("count") or 0,
+                "reactions_total": reactions.get("count") or 0,
+                "last_reaction_at": reactions.get("last_at"),
+                "reactions": reactions.get("requests") or {},
+                "requests_count": len(rows),
+                "last_at": max([int(r.get("created_at") or 0) for r in rows], default=0) or None,
+                "last": last})
             items.append(item)
         payload = {"ok": True, "at": int(now), "count": len(items),
                    "engine": self._engine_brief(), "rooms": items}
         cache[key] = (now, payload)
         return 200, payload, {"Cache-Control": "no-store"}
+
+    def _room_reactions(self, room: dict, records: list) -> dict:
+        """Реакции руководителя по комнате для бейджа (W20-U4, P9).
+
+        Тонкая обёртка над `server/reaction_notice.py`: модуль читает доску одним-двумя
+        запросами и никогда не бросает наружу (нет доски, нет руководителя, битая
+        схема — пустая сводка). Свои порты/процессы не нужны: только чтение.
+        """
+        if not self._has_mod("reaction_notice"):
+            return {"count": 0, "last_at": None, "requests": {}, "items": []}
+        board = str(room.get("board") or self.board)
+        return _reactions.room_reactions(self.cfg, board, room, records)
 
     def h_dispatcher_preview(self, query, body):
         """`GET /api/dispatcher/preview` — состояние доски только чтением (W17-B §1).
@@ -423,7 +509,8 @@ class ReadRoutes:
         needle = (query.get("q") or [""])[0].strip().lower()
         offset = decode_cursor((query.get("cursor") or [""])[0].strip()) if (query.get("cursor") or [""])[0].strip() else 0
         records = sorted(self._records(room_id),
-                         key=lambda rec: (rec.get("created_at") or 0, rec.get("root_id") or ""),
+                         key=lambda rec: (bool(rec.get("pinned")),
+                                          rec.get("created_at") or 0, rec.get("root_id") or ""),
                          reverse=True)
         items = []
         for rec in records:
@@ -447,6 +534,7 @@ class ReadRoutes:
                 if needle not in haystack:
                     continue
             self._title_view(summary, rec)          # W17-B §4: имя из реестра сильнее
+            self._pin_view(summary, rec)            # W20-U3: закрепление в списке
             items.append(summary)
         page = items[offset:offset + limit]
         has_more = offset + limit < len(items)
@@ -493,8 +581,41 @@ class ReadRoutes:
         self._answers_view(room, rec, detail)          # W14-D: ответ ↔ вопрос, шаги
         self._detail_view(detail, fields)              # W17-B §5: один источник вопросов, `?fields=`
         self._title_view(detail, rec)                  # W17-B §4: название с приоритетом источников
+        self._pin_view(detail, rec)                    # W20-U3: закрепление запроса
+        self._svod_view(room, rec, detail)             # W20-S1 §1.1: живой свод + доставка
+        self._approvals_view(room, rec, detail)        # W22-AP1 §2.1: разрешения агентам
+        self._model_guard_view(room, rec, detail)      # W23-MG1 §2.5: лента контроля моделей
         return 200, detail, {"ETag": http_util.etag_of(http_util.json_bytes(detail)),
                              "Cache-Control": "no-cache"}
+
+    def _model_guard_view(self, room: dict, rec: dict, detail: dict) -> None:
+        """W23-MG1 §2.5: `model_guard[]` — что приложение исправило/остановило по запросу.
+
+        Тексты готовые (их собирает `server/model_guard.py`), интерфейс их только
+        показывает. Сбой ленты не роняет страницу запроса.
+        """
+        if not isinstance(detail, dict) or not self._has_mod("model_guard"):
+            return
+        try:
+            self.mod("model_guard").attach(detail, room, self.cfg)
+        except Exception as exc:  # noqa: BLE001 - лента вторична для страницы
+            self.log.warning("контроль моделей %s: %s" % (detail.get("id"), exc))
+            detail.setdefault("model_guard", [])
+
+    def _svod_view(self, room: dict, rec: dict, detail: dict) -> None:
+        """W20-S1 (B-36): ``synthesis.live`` и подписи ``delivery`` у сообщений.
+
+        Одно место: считает `svod_live.attach` по тем же полям, что уже собраны для
+        страницы запроса (версия, лента, вопросы, решения, дерево). Сбой не роняет
+        страницу: свод — подпись, а не данные запроса. `cfg` передаём, чтобы свод
+        знал «льготный старт» (события до включения автообновления не считаются).
+        """
+        if not isinstance(detail, dict) or not self._has_mod("svod_live"):
+            return
+        try:
+            self.mod("svod_live").attach(detail, room, rec, cfg=self.cfg)
+        except Exception as exc:  # noqa: BLE001 - живой свод вторичен для страницы
+            self.log.warning("живой свод %s: %s" % (detail.get("id"), exc))
 
     @staticmethod
     def _detail_view(detail: dict, fields: list) -> None:
@@ -534,6 +655,21 @@ class ReadRoutes:
         except Exception as exc:  # noqa: BLE001 - название не важнее страницы
             self.log.warning("название %s: %s" % (detail.get("id"), exc))
 
+    def _pin_view(self, detail: dict, rec: dict) -> None:
+        """Поля закрепления в ответе API (W20-U3, P13).
+
+        Одно место для всех трёх представлений: деталь запроса, список комнаты
+        и строка «Недавнего» в сводке. Флага достаточно интерфейсу; время
+        закрепления нужно, чтобы одинаково сортировать закреплённые между собой.
+        """
+        if not isinstance(detail, dict):
+            return
+        detail["pinned"] = bool((rec or {}).get("pinned"))
+        try:
+            detail["pinned_at"] = int((rec or {}).get("pinned_at") or 0) or None
+        except (TypeError, ValueError):
+            detail["pinned_at"] = None
+
     # --- ответы на вопросы и связка вопрос↔шаг (W14-D §1–§4) ------------------
     def _answers_view(self, room: dict, rec: dict, detail: dict) -> None:
         """Статус ответа, реакция руководителя у вопроса, метки шагов.
@@ -553,6 +689,15 @@ class ReadRoutes:
             stored = rec.get("answers") if isinstance(rec.get("answers"), dict) else {}
             questions = detail.get("open_questions")
             questions = questions if isinstance(questions, list) else []
+            # W20-D1 §1.2 (B-38): вопросы руководителя из его комментариев — метки
+            # `[Руководитель · вопрос] …` и кандидаты под «Что решить…» — встают рядом
+            # с вопросами из карточек. Отметка «это не вопрос» живёт в реестре ответов.
+            comment_questions = mod.questions_from_thread(detail.get("thread") or [],
+                                                          lead=room.get("orchestrator"),
+                                                          dismissed=stored)
+            if comment_questions:
+                questions = _merge_comment_questions(mod, questions, comment_questions)
+                detail["open_questions"] = questions
             reactions = mod.reactions_from_thread(detail.get("thread") or [], questions,
                                                   stored, lead=room.get("orchestrator"))
             # W19-D2 (B-21): первая дорога — исход в метаданных реакции
@@ -563,6 +708,10 @@ class ReadRoutes:
             for question in questions:
                 if not isinstance(question, dict):
                     continue
+                # W20-D1 (B-38): у вопроса всегда есть источник — карточка, сообщение
+                # руководителя или пункт под «Что решить…».
+                if not question.get("source"):
+                    question["source"] = "card"
                 # W17-B §7: ответ может быть записан на id-близнеца (тот же вопрос
                 # с новым id) — ищем и по тексту, иначе вопрос снова «ждёт ответа».
                 record = mod.record_for(question, stored)
@@ -575,6 +724,14 @@ class ReadRoutes:
                                    mod.reaction_for_question(question, reactions))
             if isinstance(detail.get("questions"), list):
                 detail["questions"] = questions
+            # W20-D1 §1.2 (B-38): у сообщения руководителя в ленте — `asks:[id]`
+            # («ждёт ваших ответов: N → справа»). Сообщения без вопросов поля не получают.
+            mod.mark_asks(detail.get("thread") or [], questions)
+            # «Нужен ваш ответ» и счётчики: вопрос из комментария — тоже причина ждать
+            # человека. Снятые («это не вопрос») и «ответил текстом» — не считаются.
+            if any(isinstance(q, dict) and (q.get("for") or "mikhail") == "mikhail"
+                   and q.get("needs_answer") for q in questions):
+                detail["needs_you"] = True
             # W19-D2 (B-20, B-21): решения — статус из реестра ответов и реакция
             # руководителя. Принятое/отклонённое (`open=False`) сразу уходит из
             # «Нужен ваш ответ» и из счётчиков — по данным API, без перезагрузки.
@@ -994,7 +1151,7 @@ class ReadRoutes:
 
     # --- файлы, календарь, экспорт ---
     def _artifact_room(self, room_id):
-        """Комната для артефактов ЭТОЙ комнаты (B-22): словарь или None, если не указана."""
+        """Комната для файлов ЭТОЙ комнаты (B-22): словарь или None, если не указана."""
         room_id = str(room_id or "").strip()
         if not room_id:
             return None
@@ -1004,7 +1161,7 @@ class ReadRoutes:
         return room
 
     def _artifact_guard(self, path: str, room: dict) -> None:
-        """Проверка пути артефакта: корни комнаты (папка проекта, зеркало) и внешние файлы.
+        """Проверка пути файла: корни комнаты (папка проекта, зеркало) и внешние файлы.
 
         Отказы — человеческим текстом: «Файл удалён или перемещён» только когда файла
         правда нет; «Файл нельзя открыть…» — когда он есть, но тип/имя запрещены.
@@ -1071,8 +1228,100 @@ class ReadRoutes:
         headers.setdefault("Cache-Control", "no-cache")
         return 200, Raw(payload or b"", str(ctype), headers), {}
 
+    def h_files_launch(self, query, body):
+        """POST /api/files/launch — «Открыть» и «Показать в папке» (W26-D3).
+
+        Тело: `{path, room?, mode?: "open"|"reveal"}`. `open` (по умолчанию) —
+        файл открывает программа по умолчанию (ShellExecute в сеансе человека,
+        как двойной клик); `reveal` — проводник с выделением файла. Оба действия
+        делает сервер: раньше окно открывал браузер, а внутри Hermes Desktop
+        новые окна (`window.open`) блокируются, и «Открыть» не делал ничего.
+
+        Путь проверяется так же, как чтение: `_artifact_guard` (корни комнаты,
+        зеркало, внешние файлы B-27) и белый список `files`; журналы не отдаются.
+        Ответ: `{ok, path, mode, opened}`; отказ — понятным русским текстом.
+        """
+        payload = body if isinstance(body, dict) else {}
+        path = payload.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise err(400, "Нужен path", field="path")
+        path = path.strip()
+        mode = str(payload.get("mode") or "open").strip().lower()
+        if mode not in ("open", "reveal"):
+            raise err(400, "mode: open или reveal", field="mode", value=mode)
+        room_id = str(payload.get("room") or "").strip()
+        self._deny_log_file(path)
+        if room_id:
+            room = self._artifact_room(room_id)
+            self._artifact_guard(path, room)
+            args = ((self.cfg, path),
+                    {"roots": config.room_roots(self.cfg, room), "allow_external": True})
+            fallback = ((self.cfg, path), {})
+        else:
+            self._file_guard(path)
+            args = ((self.cfg, path), {})
+            fallback = args
+        action, message = (("launch", "Не удалось открыть файл программой по умолчанию")
+                           if mode == "open" else
+                           ("reveal", "Не удалось показать файл в папке"))
+        try:
+            res = self.call("files", action, args, fallback)
+        except ApiError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self.log.error("%s %s" % (action, path), exc)
+            raise ApiError(500, message, detail={"path": path}) from exc
+        if isinstance(res, dict):
+            opened = bool(res.get("opened", res.get("revealed", res.get("ok", True))))
+        else:
+            opened = bool(res)
+        if not opened:
+            raise err(400, message, path=path)
+        return 200, {"ok": True, "path": path, "mode": mode, "opened": True,
+                     "revealed": mode == "reveal"}, {}
+
+    def h_files_info(self, query, body):
+        """GET /api/files/info?path=… — есть ли файл на диске (W26-D4).
+
+        Нужно чипам-ссылкам свода: прежде чем рисовать «Открыть», приложение
+        проверяет существование и показывает серую «не найден», а не ложную
+        кнопку. Ответ:
+          `{ok, exists: true|false|null, path, name, size}`;
+        `null` — путь вне разрешённых каталогов: существование не подтверждаем и
+        не отрицаем (чип остаётся обычным), чтобы не подсказывать чужие пути.
+        """
+        path = (query.get("path") or [""])[0].strip()
+        if not path:
+            raise err(400, "Нужен параметр path", field="path")
+        name = Path(path).name
+        try:
+            candidate = Path(path).resolve(strict=False)
+        except (OSError, ValueError):
+            raise err(400, "Некорректный путь", field="path", path=path) from None
+        inside = False
+        for root in getattr(self.cfg, "allowed_roots", ()) or ():
+            try:
+                candidate.relative_to(Path(root).resolve())
+                inside = True
+                break
+            except (OSError, ValueError, TypeError):
+                continue
+        if not inside:
+            return 200, {"ok": True, "exists": None, "path": path, "name": name,
+                         "size": None, "reason": "outside_roots"}, {}
+        try:
+            exists = candidate.is_file()
+            size = candidate.stat().st_size if exists else None
+        except OSError:
+            exists, size = False, None
+        return 200, {"ok": True, "exists": bool(exists), "path": path, "name": name,
+                     "size": size, "ext": candidate.suffix.lower()}, {}
+
     def h_artifact_open(self, query, body):
-        """POST /api/artifacts/open — «Открыть / В проводнике» для файла карточки (B-22).
+        """POST /api/artifacts/open — прежний адрес «Показать в папке» (до W26-D3).
+
+        Оставлен для совместимости (старые сборки и внешние ссылки): то же
+        действие, что `/api/files/launch {mode:"reveal"}`.
 
         Тело: `{path, room}`. Путь проверяется по корням ЭТОЙ комнаты (папка проекта,
         зеркало в Vault) и, как исключение B-27, по отдельной проверке внешних файлов.

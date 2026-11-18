@@ -229,13 +229,18 @@ test('external links open in a new tab safely', () => {
     '<a href="https://e.com" title="Подсказка" target="_blank" rel="noopener noreferrer">заголовок</a>');
 });
 
-test('local paths become data-path links', () => {
-  assert.equal(mdInline('[отчёт](C:\\TeamRoom\\Vault\\a.md)'),
-    '<a href="#" class="md-file" data-path="C:\\TeamRoom\\Vault\\a.md">отчёт</a>');
-  assert.equal(mdInline('[лог](/var/log/app.log)'),
-    '<a href="#" class="md-file" data-path="/var/log/app.log">лог</a>');
-  assert.equal(mdInline('[файл](file:///C:/tmp/a.txt)'),
-    '<a href="#" class="md-file" data-path="C:/tmp/a.txt">файл</a>');
+test('local paths become clickable chips (W26-D4)', () => {
+  // абсолютный путь → чип: имя (нажатие = открыть) + три действия
+  const win = mdInline('[отчёт](C:\\TeamRoom\\Vault\\a.md)');
+  assert.match(win, /^<span class="md-file-chip" data-path="C:\\TeamRoom\\Vault\\a\.md"/);
+  assert.match(win, /class="md-file-chip__name"[^>]*>отчёт</);
+  assert.equal((win.match(/md-file-chip__act--/g) || []).length, 3, 'три действия: открыть, папка, путь');
+  const unix = mdInline('[лог](/var/log/app.log)');
+  assert.match(unix, /md-file-chip/);
+  assert.match(unix, /data-path="\/var\/log\/app\.log"/);
+  assert.match(mdInline('[файл](file:///C:/tmp/a.txt)'), /data-path="C:\/tmp\/a\.txt"/);
+  // относительная ссылка чипом не становится — прежняя ссылка на файл
+  assert.equal(mdInline('[x](./docs/a.md)'), '<a href="#" class="md-file" data-path="./docs/a.md">x</a>');
   assert.equal(mdInline('[якорь](#section)'), '<a href="#section">якорь</a>');
 });
 
@@ -291,7 +296,8 @@ const XSS_VECTORS = [
 ];
 
 /** Tags the renderer is allowed to emit; anything else in the output is a bug. */
-const ALLOWED_TAGS = /<\/?(?:p|br|strong|em|del|code|pre|ul|ol|li|blockquote|h[1-4]|hr|table|thead|tbody|tr|th|td|a|img|input)\b[^>]*>/g;
+// W26-D4: чипы-ссылки — `span` с действиями (см. web/js/found.js)
+const ALLOWED_TAGS = /<\/?(?:p|br|span|strong|em|del|code|pre|ul|ol|li|blockquote|h[1-4]|hr|table|thead|tbody|tr|th|td|a|img|input)\b[^>]*>/g;
 
 for (const vector of XSS_VECTORS) {
   test('XSS: raw html is escaped — ' + vector.slice(0, 32), () => {

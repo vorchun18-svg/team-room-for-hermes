@@ -478,7 +478,11 @@ export function buildRow(person, env) {
     editBtn.setAttribute('aria-expanded', st.panelOpen ? 'true' : 'false');
     editText.textContent = st.panelOpen ? 'Свернуть' : 'Изменить';
     defaultLine.textContent = defaultsText(catalog, defaults);
-    defaultLine.setAttribute('title', 'Настройки самого агента: ' + (defaults.model || 'не заданы'));
+    // W20 §1.5: подсказка у «по умолчанию» — что именно стоит в настройках агента
+    // и откуда взято (свой профиль или общая настройка Hermes).
+    defaultLine.setAttribute('title', 'Настройки самого агента (профиль Hermes): '
+      + (defaults.provider || defaults.model ? settingsLabel(catalog, defaults) : 'не заданы')
+      + (defaults.note ? ' · ' + defaults.note : ''));
     resetBtn.classList.toggle('hidden', !isChanged && mode !== 'live');
     applyBtn.disabled = st.busy;
     restartBtn.classList.toggle('hidden', !st.pending);

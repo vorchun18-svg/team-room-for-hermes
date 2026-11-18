@@ -44,7 +44,7 @@ from tests.test_answers import LEAD, ROOM, _Base, _record  # noqa: E402
 LONG_TITLE = ("Так, начнём работу в этой комнате. Работа будет построена следующим образом. "
               "Для начала ты проверь доступ ко всем подключениям и инструментам, которые нам нужны.")
 Q1 = "Передаём папку «гранит 2026» юристу или в другую комнату?"
-Q2 = "Добавляем ли биз-финансиста (biz-cfo) в команду?"
+Q2 = "Добавляем ли биз-финансиста (team-cfo) в команду?"
 A1 = "Эта папка не относится к юристу — передайте в другую комнату."
 A2 = "Нет, финансиста не добавляем: команда заточена на Россию."
 
@@ -364,7 +364,7 @@ class AnswersResendTests(_Base):
 
 
 class BacklogQuestionTruthTests(_Base):
-    """B-7: «Дальше» знает об ответе, близнецы схлопнуты, служебные вопросы скрыты.
+    """B-7: «От вас нужно» знает об ответе, близнецы схлопнуты, служебные вопросы скрыты.
 
     Образцы — настоящие данные комнаты `fn` (запрос `t_1b0aa253`), сохранённые в
     `fixtures/questions_live_fn.json`: q_e7b16109 (отвечен, а в бэклоге был `open`),
@@ -401,7 +401,7 @@ class BacklogQuestionTruthTests(_Base):
         return payload
 
     def test_answered_question_leaves_inbox(self):
-        """B7-1: ответ в реестре закрывает вопрос в «Дальше» (было status=open)."""
+        """B7-1: ответ в реестре закрывает вопрос в «От вас нужно» (было status=open)."""
         self.seed_backlog(self.live_items())
         before = self.backlog()
         item = next(i for i in before["items"] if i["id"] == "t_1b0aa253:q_e7b16109")
@@ -439,7 +439,7 @@ class BacklogQuestionTruthTests(_Base):
         self.assertEqual(item["status"], "done", item)
 
     def test_service_question_hidden_from_backlog(self):
-        """B7-3: «раунды критика» не висят в «Дальше»."""
+        """B7-3: «раунды критика» не висят в «От вас нужно»."""
         self.seed_backlog(self.live_items())
         view = self.backlog()
         texts = [str(i.get("text") or "").lower() for i in view["items"]]
@@ -468,7 +468,7 @@ class BacklogQuestionTruthTests(_Base):
         self.assertNotIn("hidden_questions", detail)
 
     def test_answer_counters_agree_between_pages(self):
-        """Счётчики вкладки «Дальше» и вопроса в детали сходятся после ответа."""
+        """Счётчики вкладки «От вас нужно» и вопроса в детали сходятся после ответа."""
         root = self.sa.card("Согласование", LEAD, status="running")
         text = "Нужен ли отдельный профиль агента для TaskFlow?"
         self.sa.finish(root, "Готово.", {"open_questions": [{"text": text, "for": "mikhail"}]})

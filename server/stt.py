@@ -642,12 +642,23 @@ class _WorkerClient:
             raise SttError("stt_unavailable", 503,
                            "Распознавание речи не запущено: нет файла stt_worker.py",
                            {"reason": "no_worker_file"})
-        try:
+        def launch(interpreter: str):
             # CREATE_NO_WINDOW: python воркера не должен мигать консолью.
-            process = proc.popen(
-                [python, str(worker)], cwd=str(worker.parent), env=stt_worker.worker_env(),
+            return proc.popen(
+                [interpreter, str(worker)], cwd=str(worker.parent), env=stt_worker.worker_env(),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding="utf-8", errors="replace", bufsize=1)
+
+        try:
+            try:
+                process = launch(python)
+            except FileNotFoundError:
+                # интерпретатор пропал после обновления Hermes (venv пересоздан):
+                # ищем заново один раз и повторяем запуск
+                fresh = stt_worker.find_python(refresh=True)
+                if not fresh or fresh == python:
+                    raise
+                process = launch(fresh)
         except OSError as exc:
             raise SttError("stt_unavailable", 503,
                            "Распознавание речи не запущено: %s" % str(exc)[:160],

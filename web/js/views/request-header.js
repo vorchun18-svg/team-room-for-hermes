@@ -13,6 +13,12 @@ import { criticOf, synthesisOf } from './request-util.js';
 import { KICK_LABEL, kickStateFromTree, kickUsefulness, kickNow } from './kick-panel.js';
 import { buildTitleBlock } from '../title-edit.js';
 import { resetRequestTitles } from '../scope.js';
+import { termHelp } from '../term-help.js';
+// W25-L2 (R5 §7.4, §7.7, §7.9): «Фокус» и плотность — в меню «Действия», чтобы
+// в шапке осталось 3 видимых органа (R5 §9 п. 7). Состояние живёт в localStorage
+// (`teamroom.focus`, `teamroom.density`) и в атрибутах `#app` — оболочку L1 не трогаем.
+import { applyDensity, densityLabel, nextDensity, readDensity } from '../density.js';
+import { routeKeyOf, readFocusMap, writeFocus } from '../focus-mode.js';
 
 export function createHeader(R) {
   const { rid, ctx, state, render, runAction, cloneRequest, decompose } = R;
@@ -64,11 +70,31 @@ export function createHeader(R) {
   // Недоступный пункт всегда объясняет, КОГДА он станет доступен (Д3).
   const LATER = 'Станет доступно, когда ';
 
-  /** «Проверить доску сейчас» из меню: итог покажет «Свод команды» панелью. */
+  /** «Проверить доску сейчас» из меню: итог покажет «Свод» панелью. */
   async function kickFromMenu() {
     state.kick = await kickNow(ctx.api, rid);
     await R.refresh({ force: true });
     render();
+  }
+
+  /**
+   * Закрепить / открепить запрос (W20-U3, P13): `PATCH /api/requests/{id} {pinned}`.
+   * Меняется только реестр комнаты — текст, ответ и карточка не трогаются.
+   */
+  async function togglePin() {
+    const want = !(R.detail && R.detail.pinned);
+    try {
+      await ctx.api.patch(`/api/requests/${encodeURIComponent(rid)}`, { pinned: want });
+      if (typeof ctx.toast === 'function') {
+        ctx.toast(want ? 'Запрос закреплён — он будет сверху в «Недавнем»' : 'Закрепление снято', 'ok');
+      }
+      await R.refresh({ force: true });
+      render();
+    } catch (err) {
+      if (typeof ctx.toast === 'function') {
+        ctx.toast((err && err.message) || 'Не удалось изменить закрепление', 'danger');
+      }
+    }
   }
 
   function buildMenu() {
@@ -77,7 +103,41 @@ export function createHeader(R) {
     const ready = s.state === 'ready' && Boolean(s.text_md || s.version);
     const canCritique = c.enabled && ready;
     const kick = kickUsefulness(kickStateFromTree(R.detail.tree));
+    // W25-L2: «Фокус» и плотность. Одним нажатием каждое (R5 §9 пп. 15, 18):
+    // фокус переключается, плотность идёт по кругу компактно → обычно → просторно.
+    const app = (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('app') : null;
+    let store = null;
+    try { store = (typeof localStorage !== 'undefined' && localStorage) ? localStorage : null; } catch { store = null; }
+    const focusOn = (() => {
+      const map = readFocusMap(store);
+      return map[routeKeyOf({ name: 'request', roomId: R.roomId, id: rid })] === true;
+    })();
+    const dens = readDensity(store);
+
     const items = [
+      menuItem({
+        iconName: 'target',
+        label: focusOn ? 'Выйти из фокуса' : 'Фокус: только свод',
+        hint: 'Ctrl + Shift + F',
+        onclick: () => {
+          closeMenu();
+          const next = !focusOn;
+          writeFocus(store, routeKeyOf({ name: 'request', roomId: R.roomId, id: rid }), next);
+          if (app && app.dataset) app.dataset.focus = next ? 'on' : 'off';
+        },
+      }),
+      menuItem({
+        iconName: 'settings-gear',
+        label: 'Плотность: ' + densityLabel(dens).toLowerCase(),
+        hint: 'дальше — ' + densityLabel(nextDensity(dens)).toLowerCase(),
+        onclick: () => {
+          closeMenu();
+          applyDensity(app, nextDensity(dens), store);
+          // Кегль свода не меняется (R5 §7.9): CSS держит `--svod-fs` отдельно.
+          render();
+        },
+      }),
+      h('div', { class: 'menu__sep' }),
       // Главный пункт меню: написать руководителю комнаты (фокус в поле диалога).
       menuItem({
         iconName: 'comment-draft', label: 'Добавить сообщение руководителю',
@@ -114,6 +174,13 @@ export function createHeader(R) {
     items.push(menuItem({ iconName: 'markdown', label: 'Экспорт .md', href: mdHref, download: '', disabled: !ready, hint: exportHint }));
     items.push(menuItem({ iconName: 'globe', label: 'Экспорт .html', href: htmlHref, download: '', disabled: !ready, hint: exportHint }));
     items.push(h('div', { class: 'menu__sep' }));
+    // W20-U3 (P13): закрепление запроса — держится сверху в «Недавнем» и списках.
+    items.push(menuItem({
+      iconName: 'pin',
+      label: R.detail.pinned ? 'Открепить запрос' : 'Закрепить запрос',
+      hint: R.detail.pinned ? 'вернуть в общий порядок' : 'сверху в «Недавнем»',
+      onclick: () => { closeMenu(); togglePin(); },
+    }));
     items.push(menuItem({ iconName: 'output', label: 'Печать', onclick: () => { closeMenu(); window.print(); } }));
     items.push(menuItem({
       iconName: 'archive', label: 'Архивировать', danger: true,
@@ -174,10 +241,11 @@ export function createHeader(R) {
     const cr = criticOf(d);
     if (cr.enabled && String(cr.state || '') !== 'off' && Number(cr.round) > 0) {
       const mode = cr.mode === 'until_approved' ? 'до одобрения' : `из ${Number(cr.max_rounds) || 1}`;
+      // W20-U1 (P7): «?» у слова «раунд» — объяснение из общего словаря.
       items.push(h('span', {
         class: 'req__meta-item',
         title: 'Критик проверяет сводный ответ. Раунд — один цикл «проверил → доработали → проверили снова».',
-      }, icon('shield', { size: 11 }), `критик: раунд ${Number(cr.round)} ${mode}`));
+      }, icon('shield', { size: 11 }), `критик: раунд ${Number(cr.round)} ${mode}`, termHelp('round')));
     }
     if (d.assignee) {
       items.push(h('span', { class: 'req__meta-item', title: 'Профиль: ' + d.assignee },
@@ -190,10 +258,12 @@ export function createHeader(R) {
     });
 
     return h('header', { class: 'req__head' },
-      h('div', { class: 'req__crumb' },
-        h('a', { href: `#/room/${encodeURIComponent(R.roomId)}/composer` },
-          icon('arrow-left', { size: 12 }), 'К запросам')),
       h('div', { class: 'req__headrow' },
+        // W25-L1 (R5 §7.1): крошка «← К запросам» стоит В ОДНОЙ строке с названием —
+        // раньше она занимала отдельную строку и съедала 24 px до содержания.
+        h('div', { class: 'req__crumb' },
+          h('a', { href: `#/room/${encodeURIComponent(R.roomId)}/composer` },
+            icon('arrow-left', { size: 12 }), h('span', { class: 'req__crumb-text' }, 'К запросам'))),
         // W17-G §1 (B8/P5): короткое название + карандаш и замок. Полный текст
         // диктовки — в подсказке и в блоке «Запрос» ниже, не в заголовке.
         buildTitleBlock({

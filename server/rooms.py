@@ -42,13 +42,25 @@ UPDATABLE = ("title", "icon", "orchestrator", "critic", "context_files", "projec
              # Этапы проекта — свойство КОМНАТЫ (W17-R §1, B-8): необязательный
              # список `[{id, title}]`, правится в настройках комнаты.
              "phases",
+             # W20 §1.7 (F-2): предложение этапов руководителем. Пишется только
+             # маршрутами `phases/*` и приёмом metadata — не интерфейсом комнаты.
+             "phases_proposal",
              # Особые указания участникам этой комнаты (WAVE9 §9): только реестр комнаты,
              # файлы профилей (SOUL.md/config.yaml/skills) не меняются никогда.
              "agent_notes",
              # Журнал указаний (WAVE14 §13): кто/что/зачем/источник + откат изменения.
              "agent_notes_log",
              # Модель/провайдер/мышление участника ТОЛЬКО в этой комнате (WAVE10 §«Интерфейсы»).
-             "agent_models")
+             "agent_models",
+             # W20-S1 §1.1: живой свод — автообновление, «тишина» и потолок частоты.
+             "auto_svod", "auto_svod_quiet_s", "auto_svod_min_gap_s",
+             # «Ход работы» (W20 §1.6): подробность ленты и частота промежуточного итога.
+             "worklog_mode", "digest_every_min",
+             # Контроль моделей (W23 §2.3): enforce (исправляем сами) | warn (предупреждать).
+             "model_guard",
+             # Дежурства комнаты (W24 §3.2): только привязка id заданий Hermes —
+             # сами задания живут в Hermes и читаются на чтение (`server/duties.py`).
+             "duties")
 IMMUTABLE = ("id", "board", "tenant")
 DEFAULT_BOARD = "team"
 DEFAULT_MAX_ROUNDS = 1
@@ -59,6 +71,15 @@ DEFAULT_CRITIC_MODE = "rounds"
 DEFAULT_CRITIC_ROUND_CAP = 12
 MIN_CRITIC_ROUND_CAP = 2
 MAX_CRITIC_ROUND_CAP = 30
+# «Ход работы» (W20 §1.6, WAVE18 пакет W): сколько подробностей показывать и как часто
+# сторож кладёт промежуточный итог. По умолчанию — как в Hermes: подробно и раз в 2 минуты.
+WORKLOG_MODES = ("full", "brief", "off")
+DEFAULT_WORKLOG_MODE = "full"
+DIGEST_CHOICES = (0, 1, 2, 5)
+DEFAULT_DIGEST_MIN = 2
+#: Дежурства комнаты (W24 §3.2): сколько id заданий можно привязать и как они выглядят.
+MAX_ROOM_DUTIES = 40
+_DUTY_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 # --- транслитерация (id комнаты из русского названия) ----------------------
 
@@ -237,6 +258,211 @@ def _norm_critic_cap(value) -> int:
     return cap
 
 
+# --- «Ход работы» (W20 §1.6) ------------------------------------------------
+#: подписи для интерфейса — один источник, чтобы FE не собирал слова сам
+WORKLOG_MODE_LABELS = {"full": "Подробно (с рассуждениями)",
+                       "brief": "Кратко (только действия)",
+                       "off": "Выключено"}
+DIGEST_LABELS = {0: "Выключено", 1: "Каждую минуту", 2: "Каждые 2 минуты",
+                 5: "Каждые 5 минут"}
+
+
+def _check_worklog_mode(value) -> str:
+    """Показывать ход работы: full | brief | off (пусто — прежнее «подробно»)."""
+    mode = str(value or "").strip().lower()
+    if not mode:
+        return DEFAULT_WORKLOG_MODE
+    if mode not in WORKLOG_MODES:
+        raise RoomsError("Ход работы: «Подробно», «Кратко» или «Выключено»", "bad_request",
+                         {"field": "worklog_mode", "value": value,
+                          "allowed": list(WORKLOG_MODES)})
+    return mode
+
+
+def _norm_worklog_mode(value) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode in WORKLOG_MODES else DEFAULT_WORKLOG_MODE
+
+
+def _check_digest_min(value) -> int:
+    """Промежуточный итог каждые N минут: 0 (выкл.), 1, 2, 5."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RoomsError("Промежуточный итог: 0, 1, 2 или 5 минут", "bad_request",
+                         {"field": "digest_every_min", "value": value,
+                          "allowed": list(DIGEST_CHOICES)})
+    if value not in DIGEST_CHOICES:
+        raise RoomsError("Промежуточный итог: 0, 1, 2 или 5 минут", "bad_request",
+                         {"field": "digest_every_min", "value": value,
+                          "allowed": list(DIGEST_CHOICES)})
+    return int(value)
+
+
+def _norm_digest_min(value) -> int:
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_DIGEST_MIN
+    if isinstance(value, bool) or minutes not in DIGEST_CHOICES:
+        return DEFAULT_DIGEST_MIN
+    return minutes
+
+
+def _norm_card_watchdog(value) -> dict:
+    """Пороги сторожа зависаний (W25-M2): `{warn_min, stop_min, hard_stop}`.
+
+    Читается из `rooms.json`; битое значение — умолчания (10/20, остановка включена),
+    чтобы комната не осталась без сторожа из-за опечатки в файле.
+    """
+    try:
+        try:
+            from . import watchdog as wd
+        except ImportError:                  # pragma: no cover - плоский импорт
+            import watchdog as wd            # type: ignore
+        return wd.normalize(value)
+    except Exception:                        # noqa: BLE001 - пороги вторичны
+        return {"warn_min": 10, "stop_min": 20, "hard_stop": True}
+
+
+def worklog_block(mode, digest) -> dict:
+    """Готовая строка настроек «Хода работы» для карточки комнаты (W20 §1.6)."""
+    name = _norm_worklog_mode(mode)
+    minutes = _norm_digest_min(digest)
+    return {"mode": name, "mode_label": WORKLOG_MODE_LABELS[name],
+            "digest_every_min": minutes, "digest_label": DIGEST_LABELS[minutes],
+            "on": name != "off"}
+
+
+# --- контроль моделей (W23 §2.3) --------------------------------------------
+#: `enforce` — приложение само исправляет модель карточки и останавливает чужой запуск;
+#: `warn` — только предупреждает (ничего не останавливает и не переписывает).
+MODEL_GUARD_MODES = ("enforce", "warn")
+DEFAULT_MODEL_GUARD = "enforce"
+
+
+def _check_model_guard(value) -> str:
+    """Режим контроля моделей: `enforce` (по умолчанию) | `warn`."""
+    mode = str(value or "").strip().lower()
+    if not mode:
+        return DEFAULT_MODEL_GUARD
+    if mode not in MODEL_GUARD_MODES:
+        raise RoomsError("Контроль моделей: «Строго» или «Только предупреждать»", "bad_request",
+                         {"field": "model_guard", "value": value,
+                          "allowed": list(MODEL_GUARD_MODES)})
+    return mode
+
+
+def _norm_model_guard(value) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode in MODEL_GUARD_MODES else DEFAULT_MODEL_GUARD
+
+
+def model_guard_block(value) -> dict:
+    """Готовая строка настройки для карточки комнаты (W23.7) — слова для человека."""
+    labels = {"enforce": "Строго: неверную модель исправляю сам",
+              "warn": "Только предупреждать — решаю я"}
+    hints = {"enforce": "Расхождение исправляется до запуска; запущенное на чужой модели "
+                        "останавливается и перезапускается",
+             "warn": "Приложение только показывает расхождение — останавливать и "
+                     "перезапускать ничего не будет"}
+    mode = _norm_model_guard(value)
+    return {"mode": mode, "on": True, "label": labels[mode], "hint": hints[mode],
+            "modes": [{"id": m, "label": labels[m]} for m in MODEL_GUARD_MODES]}
+
+
+# --- дежурства комнаты (W24 §3.2) -----------------------------------------
+# Комната только ПРИВЯЗЫВАЕТ задания Hermes к себе: сами задания, расписание и
+# выводы остаются в Hermes и читаются на чтение (`server/duties.py`). Ничего в
+# Hermes приложение не пишет и не запускает.
+
+def _check_duties(value) -> list[str]:
+    """Список id дежурств: строки без повторов, разумной длины (порядок сохраняем)."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise RoomsError("Дежурства комнаты — список", "bad_request", {"field": "duties"})
+    out: list[str] = []
+    for raw in value:
+        job_id = str(raw or "").strip()
+        if not job_id:
+            continue
+        if not _DUTY_ID_RE.fullmatch(job_id):
+            raise RoomsError("Недопустимый номер дежурства", "bad_request",
+                             {"field": "duties", "value": job_id[:64]})
+        if job_id not in out:
+            out.append(job_id)
+    if len(out) > MAX_ROOM_DUTIES:
+        raise RoomsError("Слишком много дежурств у комнаты (не больше %d)" % MAX_ROOM_DUTIES,
+                         "bad_request", {"field": "duties", "limit": MAX_ROOM_DUTIES})
+    return out
+
+
+def _norm_duties(value) -> list[str]:
+    """Чтение поля из старой записи: битое значение — «ничего не привязано»."""
+    try:
+        return _check_duties(value)
+    except RoomsError:
+        return []
+
+
+
+# --- живой свод (W20-S1 §1.1): автообновление, «тишина», потолок частоты ---------
+SVOD_QUIET_RANGE = (30, 3600)       # сек: сколько ждать «тишину» после последнего события
+SVOD_GAP_RANGE = (60, 86400)        # сек: не чаще раза в N секунд
+DEFAULT_SVOD_AUTO = True
+DEFAULT_SVOD_QUIET_S = 180
+DEFAULT_SVOD_MIN_GAP_S = 600
+
+
+def _check_auto_svod(value) -> bool:
+    """Автообновление свода: да/нет (ошибка — понятная, с полем)."""
+    return _check_bool(value, "auto_svod")
+
+
+def _check_svod_quiet(value) -> int:
+    """«Тишина» перед обновлением свода — целое 30…3600 секунд."""
+    return _check_seconds(value, "auto_svod_quiet_s", SVOD_QUIET_RANGE,
+                          "«тишина» перед обновлением свода — от 30 до 3600 секунд")
+
+
+def _check_svod_gap(value) -> int:
+    """Потолок частоты обновлений свода — целое 60…86400 секунд."""
+    return _check_seconds(value, "auto_svod_min_gap_s", SVOD_GAP_RANGE,
+                          "обновление свода — не чаще раза в 60…86400 секунд")
+
+
+def _check_seconds(value, field: str, bounds: tuple, message: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RoomsError(message[0].upper() + message[1:], "bad_request",
+                         {"field": field, "value": value, "min": bounds[0], "max": bounds[1]})
+    if not bounds[0] <= value <= bounds[1]:
+        raise RoomsError(message[0].upper() + message[1:], "bad_request",
+                         {"field": field, "value": value, "min": bounds[0], "max": bounds[1]})
+    return int(value)
+
+
+def _norm_svod_seconds(value, default: int, bounds: tuple) -> int:
+    """Значение из старой записи: мусор и выход за границы — значение по умолчанию."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    if isinstance(value, bool) or not bounds[0] <= number <= bounds[1]:
+        return default
+    return number
+
+
+def svod_block(room: dict) -> dict:
+    """Готовая строка «живого свода» для карточки комнаты (W20-SVOD)."""
+    room = room if isinstance(room, dict) else {}
+    auto = DEFAULT_SVOD_AUTO if room.get("auto_svod") is None else bool(room.get("auto_svod"))
+    quiet = _norm_svod_seconds(room.get("auto_svod_quiet_s"), DEFAULT_SVOD_QUIET_S, SVOD_QUIET_RANGE)
+    gap = _norm_svod_seconds(room.get("auto_svod_min_gap_s"), DEFAULT_SVOD_MIN_GAP_S, SVOD_GAP_RANGE)
+    return {"auto_svod": auto, "auto_svod_quiet_s": quiet, "auto_svod_min_gap_s": gap,
+            "auto_svod_label": ("Включено: свод обновляется сам" if auto else "Выключено: только по кнопке"),
+            "quiet_label": "не раньше чем через %d мин тишины" % max(1, round(quiet / 60)),
+            "gap_label": "не чаще раза в %d мин" % max(1, round(gap / 60))}
+
+
 def _check_launch_mode(value) -> str:
     """«Сначала план» (plan_first) или «сразу без подтверждения» (auto).
 
@@ -324,6 +550,24 @@ def _norm_phases(value) -> list[dict] | None:
     return phase_mod.norm(value)
 
 
+def _norm_proposal(value) -> dict | None:
+    """Чтение реестра: предложение этапов руководителем (W20 §1.7).
+
+    Мусор и пустое предложение — `None` (предложения нет). Ошибок чтения нет:
+    реестр комнат важнее формы одного поля.
+    """
+    return phase_mod.norm_proposal(value)
+
+
+def _settle_proposal(phases, proposal) -> dict | None:
+    """После правки этапов пользователем: совпало с предложением — оно принято.
+
+    Плашка «Руководитель предлагает этапы» не должна висеть, если человек сам
+    собрал в редакторе ровно те же этапы: это и есть его решение.
+    """
+    return _norm_proposal(phase_mod.reconcile(phases, proposal))
+
+
 def _agent_notes_mod():
     """Модуль указаний (лениво: rooms ← agent_notes, обратной зависимости нет)."""
     try:
@@ -393,6 +637,35 @@ def _norm_agent_models(value) -> dict:
         return _agent_models_mod().normalize(value)
     except Exception:  # noqa: BLE001 - реестр комнат важнее моделей
         return {}
+
+
+def _drop_default_overrides(cfg, models: dict, members) -> dict:
+    """Новая комната: не хранить записи, совпадающие с настройками самих агентов (W20 §1.5).
+
+    Переопределение комнаты — это ВЫБОР пользователя. Если при создании прислали ровно
+    то, что и так стоит в профиле (бывает, когда интерфейс отправляет показанные
+    значения), хранить это нельзя: запись навсегда перекрыла бы будущую смену
+    настроек профиля и выглядела бы как «выбрано в комнате». Сравниваем провайдера,
+    модель и мышление; профиль, которого нет в составе, уже отсеян `validate_map`.
+    """
+    if not models:
+        return {}
+    mod = _agent_models_mod()
+    out: dict = {}
+    for profile, item in models.items():
+        if not isinstance(item, dict):
+            continue
+        try:
+            default = mod.default_info(cfg, profile)
+        except Exception:  # noqa: BLE001 - не прочитали настройки: запись оставляем
+            default = {}
+        same = (item.get("provider") or "") == (default.get("provider") or "") \
+            and (item.get("model") or "") == (default.get("model") or "") \
+            and (item.get("reasoning") or "") == (default.get("reasoning") or "")
+        if same and (default.get("provider") and default.get("model")):
+            continue
+        out[profile] = item
+    return out
 
 
 def _check_project_dir(cfg, value) -> str:
@@ -520,6 +793,7 @@ def _norm_rounds(value) -> int:
 
 def _norm_room(room: dict) -> dict:
     """Каноническая форма Room (ARCH §3): поля не теряем, недостающие дополняем."""
+    svod = svod_block(room)
     out = {
         "id": str(room.get("id") or ""),
         "title": str(room.get("title") or ""),
@@ -549,12 +823,32 @@ def _norm_room(room: dict) -> dict:
         # Этапы проекта — свойство комнаты (W17-R §1): нет поля в записи — `None`,
         # и этапы подтягиваются миграцией чтением из карты самой комнаты.
         "phases": _norm_phases(room["phases"]) if "phases" in room else None,
+        # W20 §1.7 (F-2): предложение этапов руководителем — ждёт решения человека.
+        "phases_proposal": _norm_proposal(room.get("phases_proposal")),
         # Особые указания участникам (WAVE9 §9): нет поля — пусто.
         "agent_notes": _norm_agent_notes(room.get("agent_notes")),
         # Журнал изменений указаний (WAVE14 §13): кто/что/зачем/источник, новые сверху.
         "agent_notes_log": _norm_notes_log(room.get("agent_notes_log")),
         # Модель/провайдер/мышление участников (WAVE10): нет записи — «как у агента».
         "agent_models": _norm_agent_models(room.get("agent_models")),
+        # «Ход работы» (W20 §1.6): у старых комнат полей нет — «подробно» и раз в 2 минуты.
+        "worklog_mode": _norm_worklog_mode(room.get("worklog_mode")),
+        "digest_every_min": _norm_digest_min(room.get("digest_every_min")),
+        "worklog": worklog_block(room.get("worklog_mode"), room.get("digest_every_min")),
+        # Сторож зависаний (W25-M2): пороги комнаты; нет поля — умолчания 10/20/вкл.
+        "card_watchdog": _norm_card_watchdog(room.get("card_watchdog")),
+        # Живой свод (W20-S1 §1.1): у старых комнат полей нет — обновляется сам,
+        # «тишина» 3 минуты, потолок частоты 10 минут.
+        "auto_svod": svod["auto_svod"],
+        "auto_svod_quiet_s": svod["auto_svod_quiet_s"],
+        "auto_svod_min_gap_s": svod["auto_svod_min_gap_s"],
+        "svod": svod,
+        # Контроль моделей (W23 §2.3): у старых комнат поля нет — «строго».
+        "model_guard": _norm_model_guard(room.get("model_guard")),
+        "model_guard_label": model_guard_block(room.get("model_guard"))["label"],
+        "model_guard_block": model_guard_block(room.get("model_guard")),
+        # Дежурства комнаты (W24 §3.2): id заданий Hermes; у старых комнат поля нет — пусто.
+        "duties": _norm_duties(room.get("duties")),
         "created_at": int(room.get("created_at") or 0),
         "archived": bool(room.get("archived")),
         "seeded": bool(room.get("seeded")),
@@ -634,6 +928,8 @@ def create_room(cfg, data: dict) -> dict:
         "project_mode": _check_bool(data["project_mode"], "project_mode") if "project_mode" in data else True,
         # Этапы проекта (W17-R §1): по умолчанию их НЕТ — пользователь задаёт сам.
         "phases": _check_phases(data.get("phases")),
+        # W20 §1.7: предложение этапов появляется только от руководителя — при создании его нет.
+        "phases_proposal": _norm_proposal(data.get("phases_proposal")),
         # Указания — участникам этой комнаты (профили сверяем с составом этого же запроса).
         "agent_notes": _check_agent_notes(
             data.get("agent_notes"),
@@ -641,11 +937,34 @@ def create_room(cfg, data: dict) -> dict:
             + ([str(data.get("critic") or "").strip()] if data.get("critic") else []),
         ),
         # Модели участников этой комнаты (WAVE10): так же — профиль из состава этого запроса.
-        "agent_models": _check_agent_models(
-            cfg, data.get("agent_models"),
+        # W20 §1.5: при создании override'ов НЕТ — только явный выбор пользователя,
+        # поэтому записи, равные настройкам самих агентов, не храним.
+        "agent_models": _drop_default_overrides(
+            cfg,
+            _check_agent_models(
+                cfg, data.get("agent_models"),
+                [orchestrator] + [str(m.get("profile") or "").strip() for m in members]
+                + ([str(data.get("critic") or "").strip()] if data.get("critic") else []),
+            ),
             [orchestrator] + [str(m.get("profile") or "").strip() for m in members]
             + ([str(data.get("critic") or "").strip()] if data.get("critic") else []),
         ),
+        # «Ход работы» (W20 §1.6): по умолчанию подробно, промежуточный итог раз в 2 минуты.
+        "worklog_mode": _check_worklog_mode(data.get("worklog_mode")),
+        "digest_every_min": (_check_digest_min(data["digest_every_min"])
+                             if "digest_every_min" in data else DEFAULT_DIGEST_MIN),
+        # Живой свод (W20-S1 §1.1): новая комната обновляет свод сама.
+        "auto_svod": (_check_auto_svod(data["auto_svod"]) if "auto_svod" in data
+                      else DEFAULT_SVOD_AUTO),
+        "auto_svod_quiet_s": (_check_svod_quiet(data["auto_svod_quiet_s"])
+                              if "auto_svod_quiet_s" in data else DEFAULT_SVOD_QUIET_S),
+        "auto_svod_min_gap_s": (_check_svod_gap(data["auto_svod_min_gap_s"])
+                                if "auto_svod_min_gap_s" in data else DEFAULT_SVOD_MIN_GAP_S),
+        # Контроль моделей (W23 §2.3): новая комната — «строго» (требование 17.11).
+        "model_guard": (_check_model_guard(data["model_guard"]) if "model_guard" in data
+                        else DEFAULT_MODEL_GUARD),
+        # Дежурства (W24 §3.2): при создании обычно пусто — привязка идёт отдельным PUT.
+        "duties": _check_duties(data.get("duties")),
         "created_at": now,
         "archived": False,
         "seeded": bool(data.get("seeded")),
@@ -716,6 +1035,14 @@ def update_room(cfg, room_id: str, patch: dict) -> dict:
                     room["launch_mode"] = _check_launch_mode(value)
                 elif key == "phases":
                     room["phases"] = _check_phases(value)
+                    # W20 §1.7: человек сам собрал ровно предложенные этапы — предложение
+                    # считается принятым (плашка не висит зря). Порядок/названия — его.
+                    room["phases_proposal"] = _settle_proposal(room["phases"],
+                                                               room.get("phases_proposal"))
+                elif key == "phases_proposal":
+                    # Пишут только внутренние маршруты (phases/*) и приём metadata;
+                    # из интерфейса комнаты поле не редактируется.
+                    room["phases_proposal"] = _norm_proposal(value)
                 elif key == "max_parallel_streams":
                     room["max_parallel_streams"] = _check_parallel_streams(value)
                 elif key == "project_mode":
@@ -742,6 +1069,23 @@ def update_room(cfg, room_id: str, patch: dict) -> dict:
                                                 if isinstance(m, dict)]
                     room["agent_models"] = _check_agent_models(
                         cfg, value, [m for m in members if m])
+                elif key == "worklog_mode":
+                    room["worklog_mode"] = _check_worklog_mode(value)
+                elif key == "digest_every_min":
+                    room["digest_every_min"] = _check_digest_min(value)
+                elif key == "auto_svod":
+                    # Живой свод (W20-S1 §1.1): переключатель «Автообновление свода».
+                    room["auto_svod"] = _check_auto_svod(value)
+                elif key == "auto_svod_quiet_s":
+                    room["auto_svod_quiet_s"] = _check_svod_quiet(value)
+                elif key == "auto_svod_min_gap_s":
+                    room["auto_svod_min_gap_s"] = _check_svod_gap(value)
+                elif key == "model_guard":
+                    # W23 §2.3: «строго» (исправляем сами) | «только предупреждать».
+                    room["model_guard"] = _check_model_guard(value)
+                elif key == "duties":
+                    # W24 §3.2: привязка дежурств Hermes к комнате (только id, без правки Hermes).
+                    room["duties"] = _check_duties(value)
                 else:
                     room[key] = value
             if "project_dir" in patch:
@@ -749,6 +1093,56 @@ def update_room(cfg, room_id: str, patch: dict) -> dict:
             data["rooms"][idx] = room
             _save(cfg, data)
             return _norm_room(room)
+    raise RoomsError("Комната не найдена", "not_found", {"room": str(room_id)})
+
+
+_UNSET = object()
+
+
+def set_phases_state(cfg, room_id: str, phases=_UNSET, proposal=_UNSET, compute=None) -> dict:
+    """W20 §1.7 (P1): записать этапы и/или предложение этапов ОДНИМ движением.
+
+    Нужно, потому что решение «принять этапы» меняет сразу два поля комнаты, а
+    между чтением и записью предложение может обновиться. Всё чтение-решение-
+    запись идёт под замком реестра комнат:
+
+    * `phases` — новый список этапов комнаты (проверяется как в PATCH);
+    * `proposal` — новое предложение (`None` — «предложения нет»);
+    * `compute(room) -> {поле: значение}` — решение считается на СВЕЖЕЙ копии
+      комнаты (так руководитель не затирает правки, сделанные секунду назад).
+
+    Возвращает `{changed, room}`; комната — в каноническом виде (`_norm_room`).
+    """
+    path = _rooms_path(cfg)
+    with sf.lock_for(path):
+        data = _load(cfg)
+        for idx, room in enumerate(data["rooms"]):
+            if str(room.get("id")) != str(room_id):
+                continue
+            patch: dict = {}
+            if callable(compute):
+                got = compute(dict(room)) or {}
+                if not isinstance(got, dict) or set(got) - {"phases", "phases_proposal"}:
+                    raise RoomsError("Решение по этапам: неизвестные поля", "bad_request",
+                                     {"fields": sorted(got) if isinstance(got, dict) else []})
+                patch.update(got)
+            if phases is not _UNSET:
+                patch["phases"] = phases
+            if proposal is not _UNSET:
+                patch["phases_proposal"] = proposal
+            if not patch:
+                return {"changed": False, "room": _norm_room(room)}
+            # Порядок важен: сначала этапы человека, затем явное предложение
+            # (при «принять» приходит и то, и другое — итог решает `decide`).
+            if "phases" in patch:
+                room["phases"] = _check_phases(patch["phases"])
+                room["phases_proposal"] = _settle_proposal(room["phases"],
+                                                           room.get("phases_proposal"))
+            if "phases_proposal" in patch:
+                room["phases_proposal"] = _norm_proposal(patch["phases_proposal"])
+            data["rooms"][idx] = room
+            _save(cfg, data)
+            return {"changed": True, "room": _norm_room(room)}
     raise RoomsError("Комната не найдена", "not_found", {"room": str(room_id)})
 
 
@@ -965,16 +1359,16 @@ def _seed_cafe(cfg) -> dict:
         "icon": "cake",
         "board": "team",
         "tenant": "room:cafe",
-        "orchestrator": "biz-director",
-        "critic": "biz-critic",
+        "orchestrator": "team-director",
+        "critic": "team-critic",
         "members": [
-            {"profile": "biz-lawyer", "role": "worker", "note": "Юрист: ИП, СЭС, Роспатент, договоры", "pinned": True, "added_at": SEED_CREATED},
-            {"profile": "biz-ops", "role": "worker", "note": "Операции: поставщики, упаковка, доставка", "pinned": True, "added_at": SEED_CREATED},
-            {"profile": "biz-strategy", "role": "worker", "note": "Стратегия, бренд, план 90 дней", "pinned": False, "added_at": SEED_CREATED},
-            {"profile": "biz-marketing", "role": "worker", "note": "Каналы, контент, D19", "pinned": False, "added_at": SEED_CREATED + 100},
-            {"profile": "biz-cfo", "role": "worker", "note": "Экономика, налоги, сметы", "pinned": False, "added_at": SEED_CREATED + 100},
-            {"profile": "biz-runner", "role": "worker", "note": "Сбор фактов по Vault и доске", "pinned": False, "added_at": SEED_CREATED + 200},
-            {"profile": "biz-critic", "role": "critic", "note": "Проверяет свод перед ответом Михаилу", "pinned": True, "added_at": SEED_CREATED + 200},
+            {"profile": "team-lawyer", "role": "worker", "note": "Юрист: ИП, СЭС, Роспатент, договоры", "pinned": True, "added_at": SEED_CREATED},
+            {"profile": "team-ops", "role": "worker", "note": "Операции: поставщики, упаковка, доставка", "pinned": True, "added_at": SEED_CREATED},
+            {"profile": "team-strategy", "role": "worker", "note": "Стратегия, бренд, план 90 дней", "pinned": False, "added_at": SEED_CREATED},
+            {"profile": "team-marketing", "role": "worker", "note": "Каналы, контент, D19", "pinned": False, "added_at": SEED_CREATED + 100},
+            {"profile": "team-cfo", "role": "worker", "note": "Экономика, налоги, сметы", "pinned": False, "added_at": SEED_CREATED + 100},
+            {"profile": "team-runner", "role": "worker", "note": "Сбор фактов по Vault и доске", "pinned": False, "added_at": SEED_CREATED + 200},
+            {"profile": "team-critic", "role": "critic", "note": "Проверяет свод перед ответом Михаилу", "pinned": True, "added_at": SEED_CREATED + 200},
         ],
         "context_files": context,
         "project_dir": base,

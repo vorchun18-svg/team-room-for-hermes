@@ -5,7 +5,7 @@
  *  - «Нужен ваш ответ (N)» идёт первым и раскрыт, «Шаги», «Решения», «Будущие
  *    вопросы», «Отвечено» — свёрнуты до заголовка со счётчиком; состояние
  *    запоминается (aside-fold.js), а не сбрасывается при перерисовке;
- *  - счётчики колонки и вкладки «Дальше» считаются ОДНОЙ функцией
+ *  - счётчики колонки и вкладки «От вас нужно» считаются ОДНОЙ функцией
  *    (inboxSummary/blockedCards) — одно число и одна расшифровка (B13);
  *  - кнопка «Отправить руководителю накопленные ответы» есть только при
  *    `answers.summary.can_resend` и шлёт `answers_resend` (W17-B §3);
@@ -143,17 +143,17 @@ function makeDetail(over = {}) {
     id: 't_root1',
     next_steps: [
       {
-        id: 'ns_1', owner: 'biz-cfo', due: '2026-11-10', state: 'open',
+        id: 'ns_1', owner: 'team-cfo', due: '2026-11-10', state: 'open',
         text: 'Свести противоречие по штрафам: раздел 7.3 говорит 0,1% в день, приложение Б — '
           + '0,3% в день и не более 10% от суммы партии. Нужно одно правило и явная ссылка '
           + 'из приложения в тело договора, иначе спор уйдёт в толкование против нас.',
       },
       {
-        id: 'ns_2', owner: 'biz-ops', due: '2026-11-12', state: 'asked',
+        id: 'ns_2', owner: 'team-ops', due: '2026-11-12', state: 'asked',
         text: 'Проверить приложение с спецификацией партий: объёмы, даты, единицы измерения '
           + '(штуки против коробов), кратность упаковки и вес — в текущей версии единицы не совпадают.',
       },
-      { id: 'ns_3', owner: 'biz-lawyer', state: 'done', text: 'Проверить историю правок договора от 04.11' },
+      { id: 'ns_3', owner: 'team-lawyer', state: 'done', text: 'Проверить историю правок договора от 04.11' },
     ],
     open_questions: [
       { id: 'q_1', text: QUESTION_LONG, for: 'mikhail', answered: false, answer: null, answer_state: 'open' },
@@ -205,7 +205,7 @@ function makeStand(opts = {}) {
       async get() { return {}; },
     },
     toast: (message, kind) => toasts.push({ message, kind }),
-    room: { id: 'cafe', members: [{ profile: 'biz-cfo', role: 'worker' }] },
+    room: { id: 'cafe', members: [{ profile: 'team-cfo', role: 'worker' }] },
     navigate() {},
   };
   const R = {
@@ -294,16 +294,16 @@ test('счётчик «Нужен ваш ответ» = вопросы + реш�
     assert.match(head, /Нужен ваш ответ/);
     assert.match(head, /4/, 'общее число дел');
     assert.match(head, /2 вопроса · 1 блокировка · 1 решение/,
-      'та же расшифровка, что у вкладки «Дальше» (inboxSummary)');
+      'та же расшифровка, что у вкладки «От вас нужно» (inboxSummary)');
     // предложенное решение видно в списке, а не только в числе
     assert.match(head, /Уменьшить партию на 20%/);
-    assert.match(head, /ждёт вашего решения — разобрать в «Дальше»/);
+    assert.match(head, /ждёт вашего решения — разобрать в «От вас нужно»/);
   } finally {
     uninstallFakeDom();
   }
 });
 
-test('числа колонки и вкладки «Дальше» сходятся на одних данных', async () => {
+test('числа колонки и вкладки «От вас нужно» сходятся на одних данных', async () => {
   const { inboxSummary, blockedCards } = await import('../web/js/views/backlog-model.js');
   installStorage();
   clearStorage();
@@ -324,15 +324,17 @@ test('числа колонки и вкладки «Дальше» сходят�
 
 /* ───────────────────────────────────── досылка ответов (answers_resend) */
 
-test('кнопка досылки ответов: только при can_resend, шлёт answers_resend', async () => {
+test('кнопка досылки ответов: только при can_resend и выключенном своде, шлёт answers_resend', async () => {
   installStorage();
   clearStorage();
   const s = makeStand();
   try {
     const btn = byClass(s.host, 'req-side__resend')[0];
-    assert.ok(btn, 'кнопка есть, когда есть ответы без реакции');
+    assert.ok(btn, 'кнопка есть, когда ответы ждут отправки (автообновление свода не задано)');
     assert.match(text(btn), /Отправить руководителю накопленные ответы/);
-    assert.match(text(byClass(s.host, 'req-side__resend-row')[0]), /1 ответ без реакции/);
+    // W21-Q1 (B-45): слова «без реакции» из интерфейса убраны — «1 ответ ждёт отправки».
+    assert.match(text(byClass(s.host, 'req-side__resend-row')[0]), /1 ответ ждёт отправки/);
+    assert.doesNotMatch(text(byClass(s.host, 'req-side__resend-row')[0]), /без реакции/);
     btn.dispatch('click');
     await tick();
     await tick();

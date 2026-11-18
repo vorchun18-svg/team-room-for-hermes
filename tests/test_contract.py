@@ -33,12 +33,12 @@ def make_room(**over):
         "title": "Лето",
         "board": "team",
         "tenant": "room:cafe",
-        "orchestrator": "biz-director",
-        "critic": "biz-critic",
+        "orchestrator": "team-director",
+        "critic": "team-critic",
         "members": [
-            {"profile": "biz-lawyer", "role": "worker", "note": "юрист по праву России"},
-            {"profile": "biz-ops", "role": "worker", "note": ""},
-            {"profile": "biz-critic", "role": "critic", "note": "критик"},
+            {"profile": "team-lawyer", "role": "worker", "note": "юрист по праву России"},
+            {"profile": "team-ops", "role": "worker", "note": ""},
+            {"profile": "team-critic", "role": "critic", "note": "критик"},
         ],
         "context_files": [r"C:\TeamRoom\Vault\Projects\Rooms\cafe\CONTEXT.md"],
         "critic_pass": True,
@@ -74,9 +74,9 @@ class RequestBodyTest(unittest.TestCase):
         body = contract.build_request_body(self.room, "текст", "r-slug", self.cfg)
         self.assertIn("Команда комнаты (назначай подзадачи только этим профилям):", body)
         line = next(l for l in body.splitlines() if l.startswith("Команда комнаты"))
-        for profile in ("biz-director", "biz-lawyer", "biz-ops", "biz-critic"):
+        for profile in ("team-director", "team-lawyer", "team-ops", "team-critic"):
             self.assertIn(profile, line)
-        self.assertNotIn("biz-cfo", line)
+        self.assertNotIn("team-cfo", line)
         self.assertIn("директор комнаты", line)
         self.assertIn("юрист по праву России", line)
 
@@ -116,7 +116,7 @@ class RequestBodyTest(unittest.TestCase):
     def test_room_without_members(self):
         room = make_room(members=[], critic=None, context_files=[])
         body = contract.build_request_body(room, "текст", "r-slug", self.cfg)
-        self.assertIn("biz-director — директор комнаты", body)
+        self.assertIn("team-director — директор комнаты", body)
         self.assertIn(contract.CONTRACT_OPEN, body)
         # путь STATE.md всё равно подставлен
         self.assertIn(str(Path(self.cfg.vault_dir) / "cafe" / "STATE.md"), body)
@@ -144,8 +144,8 @@ class CriticBodyTest(unittest.TestCase):
             self.assertIn(key, body)
         self.assertIn("по-русски", body)
         self.assertIn("в подзадачи", body)
-        self.assertIn("biz-critic", body)
-        self.assertIn("biz-director", body)
+        self.assertIn("team-critic", body)
+        self.assertIn("team-director", body)
         # у критика нет контракта ответа корня — он не должен его копировать
         self.assertNotIn(contract.CONTRACT_OPEN, body)
 
@@ -180,7 +180,7 @@ class RevisionBodyTest(unittest.TestCase):
         self.assertIn("Проблема: себестоимость без роста какао", body)
         self.assertIn("Исправить: пересчитать моти с ценой какао от 20.10", body)
         self.assertIn("В шаге 2 нет срока", body)
-        self.assertIn("ЗАМЕЧАНИЕ МАКСИМА", body)
+        self.assertIn("ЗАМЕЧАНИЕ МИХАИЛА", body)
         self.assertIn("Сделай короче, без таблиц", body)
         self.assertIn("НОВЫЙ цельный ответ", body)
         self.assertIn(contract.CONTRACT_OPEN, body)
@@ -190,7 +190,7 @@ class RevisionBodyTest(unittest.TestCase):
     def test_revision_body_without_issues(self):
         body = contract.build_revision_body(self.room, "запрос", "прошлый ответ", None, None, self.cfg)
         self.assertNotIn("ЗАМЕЧАНИЯ КРИТИКА", body)
-        self.assertNotIn("ЗАМЕЧАНИЕ МАКСИМА", body)
+        self.assertNotIn("ЗАМЕЧАНИЕ МИХАИЛА", body)
         self.assertIn("Замечаний нет", body)
         self.assertIn(contract.CONTRACT_OPEN, body)
 

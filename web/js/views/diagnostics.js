@@ -12,25 +12,27 @@
 
 import { h, plural } from '../util.js';
 import { icon } from '../icons.js';
-import { ensureCss, errorBanner, copyText, mdBlock, skeleton } from '../ui.js';
+import { ensureCss, errorBanner, copyText, mdBlock, skeleton, confirmDialog } from '../ui.js';
+import {
+  CHECK_STATUS, groupChecks, normalizeStatus as normalizeCheckStatus,
+} from './settings-groups.js';
 
 const VIEW_CSS = 'css/view-diagnostics.css';
 const DOC_NAME = 'INSTALL.md';
 
-/** Подписи и вид пункта по статусу. */
-export const STATUS_LABELS = {
-  ok: { label: 'в порядке', icon: 'check', chip: 'ok' },
-  warn: { label: 'обратите внимание', icon: 'warning', chip: 'warn' },
-  fail: { label: 'не работает', icon: 'error', chip: 'danger' },
-  off: { label: 'не настроено', icon: 'circle-slash', chip: 'muted' },
-};
+/**
+ * Подписи и вид пункта по статусу.
+ *
+ * Словарь общий с «Настройками» (settings-groups.js): один и тот же пункт не
+ * должен называться по-разному на двух экранах (W20-U2 §15).
+ */
+export const STATUS_LABELS = CHECK_STATUS;
 
 const STATUS_ORDER = { fail: 0, warn: 1, off: 2, ok: 3 };
 
 /** Нормализовать статус: неизвестное считаем предупреждением. */
 export function normalizeStatus(status) {
-  const key = String(status === null || status === undefined ? '' : status).trim().toLowerCase();
-  return STATUS_LABELS[key] ? key : 'warn';
+  return normalizeCheckStatus(status);
 }
 
 /** Подпись статуса человеческим языком. */
@@ -232,6 +234,12 @@ export async function mount(el, ctx) {
       return h('a', { class: 'btn btn--secondary btn--sm', href: value, target: '_blank', rel: 'noopener' },
         icon('link-external', { size: 12 }), label || 'Открыть');
     }
+    if (kind === 'action') {
+      // Действие приложения (например «Включить автозапуск»): спрашиваем
+      // подтверждение и только потом что-то меняем в системе.
+      return h('button', { class: 'btn btn--secondary btn--sm', type: 'button', 'data-action': value },
+        icon('zap', { size: 12 }), label || 'Выполнить');
+    }
     return h('button', { class: 'btn btn--secondary btn--sm', type: 'button' },
       icon('copy', { size: 12 }), label || 'Скопировать команду');
   }
@@ -240,6 +248,31 @@ export async function mount(el, ctx) {
     const kind = String(fix.kind || '');
     if (kind === 'doc') {
       button.addEventListener('click', () => { openDoc(true).catch(() => {}); });
+      return;
+    }
+    if (kind === 'action') {
+      button.addEventListener('click', async () => {
+        const label = String(fix.label || 'Выполнить');
+        const ok = await confirmDialog({
+          title: label + '?',
+          text: String(fix.confirm || ''),
+          confirmLabel: label,
+        });
+        if (!ok) return;
+        const name = String(fix.value || '').split('.').pop();
+        button.disabled = true;
+        button.classList.add('is-busy');
+        try {
+          const res = await api.post('/api/diagnostics/autostart', { action: name });
+          toast(String((res && res.message) || 'Готово'), res && res.ok === false ? 'warn' : 'ok');
+        } catch (err) {
+          toast(String((err && err.message) || 'Не получилось'), 'warn');
+        } finally {
+          button.disabled = false;
+          button.classList.remove('is-busy');
+        }
+        await load({ silent: true });
+      });
       return;
     }
     if (kind && kind !== 'command') return;
@@ -269,8 +302,12 @@ export async function mount(el, ctx) {
 
     const details = Array.isArray(item.details) ? item.details.filter(Boolean) : [];
     if (details.length) {
-      body.appendChild(h('ul', { class: 'diag-item__details' },
-        details.map((line) => h('li', { class: 'mono' }, String(line)))));
+      // Технические строки — под свёрнутый блок: пункт читается по заголовку и
+      // значению, подробности открываются по клику (W20-U2 §15).
+      body.appendChild(h('details', { class: 'diag-item__more' },
+        h('summary', { class: 'diag-item__more-summary' }, 'Подробности · ' + details.length),
+        h('ul', { class: 'diag-item__details' },
+          details.map((line) => h('li', { class: 'mono' }, String(line))))));
     }
 
     const fix = item.fix && typeof item.fix === 'object' ? item.fix : null;
@@ -278,6 +315,14 @@ export async function mount(el, ctx) {
       const button = fixButton(fix);
       bindFix(button, fix);
       body.appendChild(h('div', { class: 'diag-item__actions' }, button));
+    } else if (String(item.id || '') === 'model_guard' && roomId) {
+      // W23-MG2: пункт «Контроль моделей» ведёт к участникам комнаты — там видно,
+      // на какую модель уйдёт запуск, и есть кнопка «Проверить сейчас».
+      body.appendChild(h('div', { class: 'diag-item__actions' },
+        h('a', {
+          class: 'btn btn--secondary btn--sm',
+          href: '#/room/' + encodeURIComponent(roomId) + '/team',
+        }, icon('arrow-right', { size: 12 }), 'Модели участников')));
     }
     card.appendChild(body);
     return card;
@@ -306,7 +351,17 @@ export async function mount(el, ctx) {
         h('div', { class: 'banner__text' }, 'Проверка ничего не вернула — нажмите «Обновить».')));
       return;
     }
-    for (const item of sorted) listEl.appendChild(itemCard(item));
+    // Группы (W20-U2 §15): одна тема — один заголовок. Группа с падением идёт
+    // первой, поэтому красный пункт всегда наверху, а не в общем списке.
+    for (const group of groupChecks(sorted)) {
+      listEl.appendChild(h('section', { class: 'diag-group', 'data-group': group.id },
+        h('div', { class: 'diag-group__head' },
+          h('h2', { class: 'diag-group__title' }, group.title),
+          h('span', { class: 'diag-group__count tnum small muted', title: 'пунктов в группе' },
+            String(group.items.length))),
+        group.hint ? h('p', { class: 'diag-group__hint small muted' }, group.hint) : null,
+        h('div', { class: 'diag-group__items' }, group.items.map(itemCard))));
+    }
   }
 
   async function load({ silent = false } = {}) {

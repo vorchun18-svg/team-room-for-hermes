@@ -20,13 +20,18 @@ import { personName } from './request-util.js';
 import {
   KICK_LABEL, KICK_HINT, kickPreview, kickNow, kickUsefulness, kickWhyNot, kickPanel,
 } from './kick-panel.js';
+// W20-U2 §15 (P11): группировка экрана, сокращение путей, один сводный статус
+// и учёт несохранённых изменений — чистые функции, проверены node --test.
+import {
+  SETTINGS_GROUPS, shortenPathLeft, overallStatus,
+  checksSummary, topProblems, CHECK_STATUS, normalizeStatus as normalizeCheckStatus,
+  pendingChanges, saveSummary,
+} from './settings-groups.js';
 
 const VIEW_CSS = 'css/view-settings.css';
 const THEME_KEY = 'teamroom.theme';
 const NOTIFY_KEY = 'notify';
 const HEALTH_POLL_MS = 20000;
-
-const THEME_NAMES = { auto: 'как в системе', light: 'светлая', dark: 'тёмная' };
 
 /**
  * Имя пояса из Windows («Восточное Ю-Ам. время (зима)») → понятное человеку:
@@ -43,7 +48,7 @@ export function tzLabel(raw) {
   const hours = Math.floor(abs / 60);
   const rest = abs % 60;
   const offset = 'UTC' + sign + hours + (rest ? ':' + String(rest).padStart(2, '0') : '');
-  if (/Ю-Ам|Южная Америка|Brasilia|Bras[ií]lia|S[ãa]o Paulo|E\. South America/i.test(text)) {
+  if (/Ю-Ам|Южная Америка|Brasilia|Bras[ií]lia|S[ãa]o[\s_-]*Paulo|E\. South America/i.test(text)) {
     return 'Бразилиа (' + offset + ')';
   }
   if (/Москва|Moscow|Russian Standard/i.test(text)) return 'Москва (' + offset + ')';
@@ -81,10 +86,21 @@ export function notifyIfEnabled(title, body) {
 
 /* ---------------------------------------------------------------- тема */
 
-function applyTheme(pref) {
+/**
+ * Применить тему к странице.
+ *
+ * `persist: false` — предпросмотр в «Настройках» (W20-U2 §15): экран и подпись
+ * в шапке меняются сразу, а в браузер ничего не пишется до «Сохранить настройки».
+ * @param {string} pref
+ * @param {{persist?: boolean}} [opts]
+ * @returns {string} применённое значение
+ */
+function applyTheme(pref, { persist = true } = {}) {
   const value = ['auto', 'light', 'dark'].includes(pref) ? pref : 'auto';
   try { document.documentElement.dataset.theme = value; } catch { /* ignore */ }
-  try { localStorage.setItem(THEME_KEY, value); } catch { /* приватный режим */ }
+  if (persist) {
+    try { localStorage.setItem(THEME_KEY, value); } catch { /* приватный режим */ }
+  }
   return value;
 }
 
@@ -109,30 +125,30 @@ function stateChip(state) {
 
 /* --------------------------------------------------------------- FAQ */
 
-/** Вопросы Михаила → короткие ответы и ссылки на экраны. */
+/** Частые вопросы → короткие ответы и ссылки на экраны. */
 const FAQ = [
   { q: 'Где ответ на мой запрос?', a: 'На странице запроса: блок «Ответ» вверху. В ленте запросов у готового запроса стоит чип «готово». Откройте запрос из вкладки «Запрос».', tab: 'composer', link: 'К запросам' },
-  { q: 'Что дальше делать?', a: 'Вкладка «Дальше»: шаги с владельцем и сроком, будущие вопросы и то, что ждёт вашего решения. Тот же блок повторён на странице запроса.', tab: 'backlog', link: 'Открыть «Дальше»' },
-  { q: 'Что от меня ждут?', a: 'Число у комнаты слева и бейдж на вкладке «Дальше» — это дела, которые ждут вашего решения: вопросы, блокировки, предложенные решения. Откройте вкладку — ответить можно прямо в строке, ответ уйдёт комментарием и снимет блокировку.', tab: 'backlog', link: 'Что ждёт меня' },
+  { q: 'Что дальше делать?', a: 'Вкладка «От вас нужно»: шаги с владельцем и сроком, будущие вопросы и то, что ждёт вашего решения. Тот же блок повторён на странице запроса.', tab: 'backlog', link: 'Открыть «От вас нужно»' },
+  { q: 'Что от меня ждут?', a: 'Число у комнаты слева и бейдж на вкладке «От вас нужно» — это дела, которые ждут вашего решения: вопросы, блокировки, предложенные решения. Откройте вкладку — ответить можно прямо в строке, ответ уйдёт комментарием и снимет блокировку.', tab: 'backlog', link: 'Что ждёт меня' },
   { q: 'На каком мы этапе?', a: 'Вкладка «Карта проекта»: полоса фаз и решения. Текущая фаза показана чипом в шапке комнаты.', tab: 'roadmap', link: 'Карта проекта' },
-  { q: 'Кто что делает сейчас?', a: 'Вкладка «Команда»: у каждого профиля живой статус, текущая задача и последняя работа. Если все простаивают — смотрите «Здоровье» ниже.', tab: 'team', link: 'Команда' },
-  { q: 'Почему ничего не происходит?', a: 'Чаще всего остановился движок команды — он раздаёт задачи исполнителям. В блоке «Здоровье» видно его состояние и есть кнопка «Проверить доску сейчас»: она один раз запускает готовые задачи, не дожидаясь минутного таймера, и показывает, что именно запустилось. Второй вариант — запрос ещё не разобран на работы: нажмите «Разложить сейчас» на странице запроса (это обращение к модели, только по вашему клику).', tab: 'team', link: 'Кто чем занят' },
+  { q: 'Кто что делает сейчас?', a: 'Вкладка «Команда»: у каждого профиля живой статус, текущая задача и последняя работа. Если все простаивают — смотрите группу «Статус» выше.', tab: 'team', link: 'Команда' },
+  { q: 'Почему ничего не происходит?', a: 'Чаще всего остановился движок команды — он раздаёт задачи исполнителям. В группе «Статус» видно его состояние и есть кнопка «Проверить доску сейчас»: она один раз запускает готовые задачи, не дожидаясь минутного таймера, и показывает, что именно запустилось. Второй вариант — запрос ещё не разобран на работы: нажмите «Разложить сейчас» на странице запроса (это обращение к модели, только по вашему клику).', tab: 'team', link: 'Кто чем занят' },
   { q: 'Что сказал критик? Можно переделать?', a: 'На странице запроса есть блок «Проверка критика»: вердикт и замечания «где / в чём проблема / что исправить». Кнопка «На доработку» отправляет ответ руководителю комнаты с вашим замечанием — получится новая версия.', tab: 'composer', link: 'К запросам' },
   { q: 'Как попросить интерактивный отчёт?', a: 'Скажите в запросе прямо: «сделай интерактивный отчёт с таблицей и графиком». Команда соберёт страницу отчёта — она появится во вкладке «Отчёты» и откроется на весь экран.', tab: 'reports', link: 'Отчёты' },
   { q: 'Как добавить агента?', a: 'Вкладка «Команда» → «Добавить»: список профилей Hermes с описаниями. Можно добавить, например, программиста на постоянку — состав комнаты меняется в любой момент.', tab: 'team', link: 'Добавить агента' },
   { q: 'Как завести комнату?', a: 'Блок «Новая комната» ниже: название, руководитель комнаты и, если нужно, критик. После создания откройте блок «Команда» и добавьте исполнителей.', anchor: '#set-newroom', link: 'Новая комната' },
   { q: 'Что было раньше по теме?', a: 'Поиск по всему приложению — Ctrl+K, а также вкладки «Журнал» (хронология событий) и «Карта проекта» (решения).', tab: 'journal', link: 'Журнал' },
-  { q: 'Хочу в календарь', a: 'Во вкладке «Дальше» у шагов есть срок; кнопка экспорта отдаёт .ics — файл открывается календарём, без внешней сети.', tab: 'backlog', link: 'Шаги и сроки' },
+  { q: 'Хочу в календарь', a: 'Во вкладке «От вас нужно» у шагов есть срок; кнопка экспорта отдаёт .ics — файл открывается календарём, без внешней сети.', tab: 'backlog', link: 'Шаги и сроки' },
   { q: 'Хочу послать кому-то результат', a: 'На странице запроса — экспорт в .md и в автономный .html: один файл, всё внутри (текст ответа, шаги, решения, отчёт), открывается без сервера.', tab: 'composer', link: 'К запросам' },
-  { q: 'Сколько это шло и кто опоздал?', a: 'На странице запроса у задач в дереве работ видны длительности и прогресс N/M по работам. Сроки шагов — во вкладке «Дальше».', tab: 'composer', link: 'К запросам' },
+  { q: 'Сколько это шло и кто опоздал?', a: 'На странице запроса у задач в дереве работ видны длительности и прогресс N/M по работам. Сроки шагов — во вкладке «От вас нужно».', tab: 'composer', link: 'К запросам' },
   { q: 'Что делает критик?', a: 'После того как руководитель комнаты свёл ответ, критик получает запрос и свод и отвечает вердиктом: «принято» или «на доработку» со списком замечаний. При «на доработку» руководитель комнаты делает новую версию ответа. Сколько раз проверять — задаётся один раз в настройках комнаты, руководитель об этом вас не спрашивает.', tab: 'composer', link: 'К запросам' },
   { q: 'Что такое раунд критика и сколько их ставить?', a: 'Раунд — один цикл «критик проверил → если нашёл замечания, исполнители доработали → снова проверили». 1 раунд — быстро: одна попытка исправить замечания. 2 раунда — тщательнее. Третий вариант «До полного одобрения критиком» — цикл идёт, пока критик не скажет «принято»: удобно оставить на ночь и утром получить готовое. Страховки: остановка, если замечания повторяются три раунда подряд, пауза при лимите провайдера и потолок раундов (по умолчанию 12) — по достижении цикл останавливается с понятным отчётом. Выбирается в настройках комнаты («Изменить…» → «Раунды проверки») и при постановке запроса.', tab: 'team', link: 'Как работает комната' },
   { q: 'Сколько это стоит в токенах?', a: 'Деньги и токены считает Hermes, а не это приложение. Каждый запрос запускает агентов только по вашему нажатию «Отправить»: сначала руководитель комнаты разбирает запрос, потом работают исполнители, критик добавляет 1–2 запуска. Посмотреть расход: команда hermes insights --days 7 (токены и стоимость по сессиям) или hermes usage (лимиты). Здесь цифр нет намеренно — мы их не выдумываем.' },
   { q: 'Что если агент ошибся?', a: 'Три пути. «На доработку» на странице запроса: напишите, что не так, — руководитель комнаты перепишет ответ, прежние версии сохраняются. «Переназначить» задачу в дереве работ — её возьмёт другой профиль. «Повторить» на упавшей карточке. Факты всё равно проверяйте: система гарантирует, что ответ собран из работы команды и прошёл критика, а не истинность.' },
   { q: 'Куда смотреть, когда ответ готов?', a: 'Вкладка «Запрос»: у готового запроса чип «готово», откройте его — ответ вверху страницы. Если включены уведомления, придёт системное сообщение. Числа в сайдбаре показывают, сколько дел ждёт вашего решения.' },
-  { q: 'Где лежат данные?', a: 'Всё локально: папка data/ (реестр комнат, состояние проекта, отчёты), зеркало для людей в Vault (STATE.md и Журнал.md) и база задач Hermes. Точные пути с кнопкой копирования — в блоке «Здоровье» выше.', anchor: '#set-health', link: 'Пути в «Здоровье»' },
-  { q: 'Это точно локально и безопасно?', a: 'Приложение доступно только на этом компьютере, внешних запросов нет, тексты агентов экранируются, файлы отдаются лишь из белых папок, HTML-отчёты живут в песочнице. Порт и версия — в «Здоровье».', anchor: '#set-health', link: 'Проверить' },
-  { q: 'Как запустить? Само запустится?', a: 'Запуск — start-team-room.cmd: поднимает локальный сервер и открывает страницу. В автозапуск ничего не ставится: это делается только по отдельной просьбе.' },
+  { q: 'Где лежат данные?', a: 'Всё локально: папка data/ (реестр комнат, состояние проекта, отчёты), зеркало для людей в Vault (STATE.md и Журнал.md) и база задач Hermes. Точные пути с кнопкой копирования — в группе «Пути и данные» выше.', anchor: '#set-health', link: 'Пути и данные' },
+  { q: 'Это точно локально и безопасно?', a: 'Приложение доступно только на этом компьютере, внешних запросов нет, тексты агентов экранируются, файлы отдаются лишь из белых папок, HTML-отчёты живут в песочнице. Порт и версия — в «Технических подробностях» группы «Статус».', anchor: '#set-health', link: 'Проверить' },
+  { q: 'Как запустить? Само запустится?', a: 'Запуск — start-team-room.cmd: поднимает локальный сервер и открывает страницу. Установщик может включить автозапуск сразу; если нет — его включает кнопка «Включить автозапуск» в «Проверке системы». Само приложение ничего не меняет: только по вашему нажатию и с подтверждением.', anchor: '#/settings/diagnostics', link: 'Проверка системы' },
 ];
 
 const HOTKEYS = [
@@ -162,15 +178,22 @@ function infoRow(label, value, actions) {
   );
 }
 
-/** Строка пути с копированием (и «открыть папку», если это каталог). */
-function pathRow(label, path, ctx, { openable = false } = {}) {
+/**
+ * Строка пути: сокращённый вид слева, полный путь — в подсказке и при копировании.
+ *
+ * Сокращение делает `shortenPathLeft` (W20-U2 §15): человеку нужен хвост пути,
+ * а полный адрес не теряется — он в title и в буфере обмена.
+ */
+function pathRow(label, path, ctx, { openable = false, note = '' } = {}) {
   if (!path) return null;
+  const full = String(path);
+  const shown = shortenPathLeft(full, 52);
   const copy = iconButton({
     icon: 'copy',
     title: 'Копировать путь',
     size: 'sm',
     onclick: async () => {
-      const ok = await copyText(path);
+      const ok = await copyText(full);
       if (typeof ctx.toast === 'function') ctx.toast(ok ? 'Путь скопирован' : 'Не удалось скопировать', ok ? 'ok' : 'warn');
     },
   });
@@ -178,14 +201,14 @@ function pathRow(label, path, ctx, { openable = false } = {}) {
   if (openable) {
     actions.unshift(iconButton({
       icon: 'folder-opened', title: 'Открыть', size: 'sm',
-      onclick: () => { openPath(path); },
+      onclick: () => { openPath(full); },
     }));
   }
-  return h('div', { class: 'set-row set-row--path' },
-    h('span', { class: 'set-row__label' }, label),
-    h('code', { class: 'set-row__path mono truncate', title: path }, path),
-    h('span', { class: 'set-row__actions' }, actions),
-  );
+  return h('div', { class: 'set-path', 'data-path': label },
+    h('span', { class: 'set-path__label' }, label),
+    h('code', { class: 'set-path__text mono', title: full, 'aria-label': label + ': ' + full }, shown),
+    h('span', { class: 'set-path__actions' }, actions),
+    note ? h('span', { class: 'set-path__note small muted' }, note) : null);
 }
 
 /* --------------------------------------------------------------- вьюха */
@@ -201,17 +224,35 @@ async function mountSettings(el, ctx) {
   el.appendChild(root);
 
   const lead = h('p', { class: 'set__lead muted' },
-    'Одна точка настройки: здоровье движка, тема, уведомления и ответы на частые вопросы. '
+    'Одна точка настройки: статус приложения, пути к данным и проверка системы. '
       + 'Всё работает только на этом компьютере.');
+
   root.appendChild(lead);
 
-  /* ---------------------------------------------------------- здоровье */
+  /**
+   * Группа экрана (W20-U2 §15, P11).
+   *
+   * Раньше это был список из 15 строк подряд (PID, порт, пути вперемешку с
+   * настройками). Теперь у каждой группы своё имя, пояснение и якорь — в
+   * «Вопросах и ответах» на них можно ссылаться.
+   */
+  function groupSection({ id, anchor = '' }) {
+    const meta = SETTINGS_GROUPS.find((group) => group.id === id) || { title: id, hint: '' };
+    const body = h('div', { class: 'set-section__body set-group__body' });
+    const section = h('section', {
+      class: 'set-section set-group', id: anchor || ('set-' + id), 'data-group': id,
+    },
+    sectionHeader(meta.title),
+    meta.hint ? h('p', { class: 'set-group__hint small muted' }, meta.hint) : null,
+    body);
+    root.appendChild(section);
+    return { section, body };
+  }
 
-  const healthSection = h('section', { class: 'set-section', id: 'set-health' });
-  const healthBody = h('div', { class: 'set-section__body' });
-  healthSection.appendChild(sectionHeader('Здоровье'));
-  healthSection.appendChild(healthBody);
-  root.appendChild(healthSection);
+  /* ---------------------------------------------------------- статус */
+
+  const statusGroup = groupSection({ id: 'status', anchor: 'set-health' });
+  const statusBody = statusGroup.body;
 
   let healthSig = '';
   let healthData = null;
@@ -221,39 +262,17 @@ async function mountSettings(el, ctx) {
   let kickBusy = false;
   let kickSig = '';
 
-  function healthChips(data) {
-    const engine = data.engine || {};
-    const dispatcher = data.dispatcher || {};
-    const watcher = data.watcher || {};
-    const app = data.app || {};
-    return [
-      toneChip(engine.schema_ok !== false && engine.ok !== false, 'схема БД в порядке', 'проблема со схемой БД', 'engine.schema_ok'),
-      stateChip(dispatcher.state || (dispatcher.ok ? 'running' : 'stopped')),
-      toneChip(watcher.running !== false, 'фоновая проверка идёт', 'фоновая проверка остановлена', 'Фоновая проверка следит за доской и подхватывает готовые ответы'),
-      toneChip(app.sandbox !== true, 'обычный режим', 'песочница'),
-    ];
-  }
+  /* ------------------------------------------------- сводный статус */
 
-  function renderHealth(data, error) {
-    healthBody.replaceChildren();
-    if (error) {
-      healthBody.appendChild(errorBanner(error, () => loadHealth({ force: true })));
-      return;
-    }
-    if (!data) {
-      healthBody.appendChild(skeleton(4));
-      return;
-    }
+  /** Технические строки — под «Показать подробности»: на лице только статус. */
+  function techDetails(data) {
     const app = data.app || {};
     const engine = data.engine || {};
     const dispatcher = data.dispatcher || {};
     const watcher = data.watcher || {};
-    const dataInfo = data.data || {};
-    const vault = data.vault || {};
-
-    healthBody.appendChild(h('div', { class: 'set-chips' }, healthChips(data)));
-
+    const tasks = engine.tasks || {};
     const card = h('div', { class: 'set-card' });
+
     card.appendChild(infoRow('Версия', h('span', {},
       h('span', { class: 'mono' }, String(app.version || '—')),
       ' · порт ' + String(app.port || '—'))));
@@ -261,10 +280,8 @@ async function mountSettings(el, ctx) {
       card.appendChild(infoRow('Запущено', fmtDateTime(app.started_at) + (app.uptime_s ? ' · ' + fmtDuration(app.uptime_s) : '')));
     }
     if (app.tz) card.appendChild(infoRow('Часовой пояс', tzLabel(app.tz)));
-
-    card.appendChild(h('div', { class: 'set-card__sep' }));
-    card.appendChild(infoRow('Движок', 'доска задач' + (engine.schema_version ? ' · схема v' + engine.schema_version : '')));
-    const tasks = engine.tasks || {};
+    card.appendChild(infoRow('Схема доски', toneChip(engine.schema_ok !== false && engine.ok !== false,
+      'в порядке' + (engine.schema_version ? ' · v' + engine.schema_version : ''), 'проблема', 'engine.schema_ok')));
     if (tasks.total !== undefined) {
       card.appendChild(infoRow('Карточки', String(tasks.done || 0) + ' готово · ' + String(tasks.blocked || 0) + ' заблокировано · '
         + String(tasks.active || 0) + ' в работе · всего ' + countText(tasks.total || 0, ['карточка', 'карточки', 'карточек']),
@@ -280,61 +297,204 @@ async function mountSettings(el, ctx) {
           },
         }) : null));
     }
-
-    card.appendChild(h('div', { class: 'set-card__sep' }));
-    card.appendChild(infoRow('Движок команды', stateChip(dispatcher.state || (dispatcher.ok ? 'running' : 'stopped')),
-      kickControl()));
-    if (kickResult) {
-      card.appendChild(h('div', { style: { marginTop: 'var(--space-2)' } },
-        kickPanel(kickResult, {
-          labelOf: kickLabelOf,
-          onClose: () => { kickResult = null; renderHealth(healthData, null); },
-        })));
-    }
     if (dispatcher.pid) card.appendChild(infoRow('Номер процесса', h('span', { class: 'mono' }, String(dispatcher.pid))));
     if (dispatcher.updated_at) card.appendChild(infoRow('Обновлён', timeAgo(dispatcher.updated_at)));
     if (dispatcher.warning) card.appendChild(infoRow('Предупреждение', String(dispatcher.warning)));
-
-    card.appendChild(h('div', { class: 'set-card__sep' }));
-    card.appendChild(infoRow('Фоновая проверка', toneChip(watcher.running !== false, 'идёт', 'остановлена', 'Фоновая проверка читает доску и подхватывает готовые ответы'),
+    card.appendChild(infoRow('Фоновая проверка',
+      toneChip(watcher.running !== false, 'идёт', 'остановлена', 'Фоновая проверка читает доску и подхватывает готовые ответы'),
       watcher.last_run_at ? h('span', { class: 'small muted' }, 'последний раз ' + timeAgo(watcher.last_run_at)) : null));
     if (watcher.last_error) {
       card.appendChild(h('div', { class: 'banner banner--warn set-banner' }, icon('warning', { size: 14 }),
         h('div', { class: 'banner__text' }, 'Последняя ошибка фоновой проверки: ' + String(watcher.last_error))));
     }
-
-    card.appendChild(h('div', { class: 'set-card__sep' }));
-    const dataPath = pathRow('Данные', dataInfo.dir, ctx, { openable: true });
-    if (dataPath) card.appendChild(dataPath);
-    if (dataInfo.dir) {
-      card.appendChild(infoRow('Содержимое', String(dataInfo.rooms || 0) + ' ' + plural(dataInfo.rooms, ['комната', 'комнаты', 'комнат'])
-        + ' · ' + countText(dataInfo.requests || 0, COUNT_FORMS.request)
-        + (dataInfo.writable === false ? ' · только чтение' : '')));
-    }
-    const vaultPath = pathRow('Заметки', vault.dir, ctx, { openable: true });
-    if (vaultPath) card.appendChild(vaultPath);
-    if (vault.dir) card.appendChild(infoRow('Зеркало', h('span', { class: 'row row--tight' },
-      toneChip(vault.ok !== false, 'доступно', 'недоступно'),
-      h('span', { class: 'small muted' }, 'STATE.md и Журнал.md'))));
-    const dbPath = pathRow('База задач', engine.db, ctx);
-    if (dbPath) card.appendChild(dbPath);
-    healthBody.appendChild(card);
-
-    const warnings = Array.isArray(data.warnings) ? data.warnings : [];
-    for (const w of warnings) {
-      const text = typeof w === 'string' ? w : [w && w.message, w && w.code ? '(' + w.code + ')' : ''].filter(Boolean).join(' ');
-      if (text) healthBody.appendChild(h('div', { class: 'banner banner--warn set-banner' },
-        icon('warning', { size: 14 }), h('div', { class: 'banner__text' }, text)));
-    }
-
-    // Точка входа в «Проверку системы» (WAVE 12): что настроено и что сделать.
-    healthBody.appendChild(h('p', { class: 'set-hint small set-diag-link' },
-      h('a', { class: 'set-faq__link', href: '#/settings/diagnostics' },
-        icon('pulse', { size: 12 }), 'Проверка системы'),
-      h('span', { class: 'muted' }, ' — версия, доска, диктовка, Vault, порт, автозапуск, плагин и последние ошибки.')));
+    return h('details', { class: 'set-more', 'data-role': 'tech' },
+      h('summary', { class: 'set-more__summary' },
+        icon('chevron-right', { size: 12, className: 'set-more__chev' }),
+        'Технические подробности'),
+      card);
   }
 
-  /** Подпись исполнителя в итоге: «biz-ops» → «Операции» (техническое имя — в title). */
+  function renderStatus(data, error) {
+    statusBody.replaceChildren();
+    if (error) {
+      statusBody.appendChild(errorBanner(error, () => loadHealth({ force: true })));
+      return;
+    }
+    if (!data) {
+      statusBody.appendChild(skeleton(3));
+      return;
+    }
+    const app = data.app || {};
+    const dispatcher = data.dispatcher || {};
+    const watcher = data.watcher || {};
+    const verdict = overallStatus(data);
+    const meta = [];
+    if (app.started_at) meta.push('Запущено ' + fmtDateTime(app.started_at) + (app.uptime_s ? ' · ' + fmtDuration(app.uptime_s) : ''));
+    if (app.tz) meta.push(tzLabel(app.tz));
+
+    statusBody.appendChild(h('div', {
+      class: 'set-verdict set-verdict--' + verdict.tone,
+      'data-tone': verdict.tone, role: 'status', 'aria-live': 'polite',
+    },
+    h('span', { class: 'set-verdict__icon', 'aria-hidden': 'true' }, icon(verdict.icon, { size: 18 })),
+    h('div', { class: 'set-verdict__main' },
+      h('div', { class: 'set-verdict__title' }, verdict.title),
+      h('p', { class: 'set-verdict__text' }, verdict.text),
+      meta.length ? h('div', { class: 'set-verdict__meta small muted' }, meta.join(' · ')) : null),
+    h('div', { class: 'set-verdict__actions' },
+      h('a', { class: 'btn btn--secondary btn--sm', href: '#/settings/diagnostics' },
+        icon('pulse', { size: 12 }), 'Проверка системы'))));
+
+    // Единственное действие в статусе — «Проверить доску сейчас» (W13-F §8).
+    statusBody.appendChild(h('div', { class: 'set-status__engine' },
+      h('span', { class: 'set-status__engine-label' }, 'Движок команды'),
+      stateChip(dispatcher.state || (dispatcher.ok ? 'running' : 'stopped')),
+      h('span', { class: 'spacer' }),
+      kickControl()));
+    if (kickResult) {
+      statusBody.appendChild(h('div', { class: 'set-status__kick' },
+        kickPanel(kickResult, {
+          labelOf: kickLabelOf,
+          onClose: () => { kickResult = null; renderStatus(healthData, null); },
+        })));
+    }
+
+    for (const w of (Array.isArray(data.warnings) ? data.warnings : [])) {
+      const text = typeof w === 'string' ? w : [w && w.message, w && w.code ? '(' + w.code + ')' : ''].filter(Boolean).join(' ');
+      if (text) statusBody.appendChild(h('div', { class: 'banner banner--warn set-banner' },
+        icon('warning', { size: 14 }), h('div', { class: 'banner__text' }, text)));
+    }
+    if (watcher.last_error) {
+      statusBody.appendChild(h('div', { class: 'banner banner--warn set-banner' }, icon('warning', { size: 14 }),
+        h('div', { class: 'banner__text' }, 'Последняя ошибка фоновой проверки: ' + String(watcher.last_error))));
+    }
+
+    statusBody.appendChild(techDetails(data));
+    renderPaths(data);
+  }
+
+  /* --------------------------------------------------- пути и данные */
+
+  const pathsGroup = groupSection({ id: 'paths' });
+  const pathsBody = pathsGroup.body;
+
+  function renderPaths(data) {
+    if (!pathsBody.isConnected && !root.contains(pathsBody)) return;
+    pathsBody.replaceChildren();
+    if (!data) { pathsBody.appendChild(skeleton(2)); return; }
+    const dataInfo = data.data || {};
+    const vault = data.vault || {};
+    const engine = data.engine || {};
+    const rooms = Number(dataInfo.rooms || 0);
+    const contents = dataInfo.dir
+      ? rooms + ' ' + plural(rooms, ['комната', 'комнаты', 'комнат'])
+        + ' · ' + countText(dataInfo.requests || 0, COUNT_FORMS.request)
+        + (dataInfo.writable === false ? ' · только чтение' : '')
+      : '';
+
+    const card = h('div', { class: 'set-card' });
+    const rows = [
+      pathRow('Данные', dataInfo.dir, ctx, { openable: true, note: contents }),
+      pathRow('Заметки', vault.dir, ctx, {
+        openable: true,
+        note: vault.dir ? 'Зеркало для людей: STATE.md и Журнал.md' : '',
+      }),
+      pathRow('База задач', engine.db, ctx, { note: 'доска задач команды' }),
+    ].filter(Boolean);
+    if (!rows.length) {
+      pathsBody.appendChild(h('p', { class: 'set-hint small muted' },
+        'Пути ещё не определены — их задаёт установка приложения.'));
+      return;
+    }
+    for (const row of rows) card.appendChild(row);
+    pathsBody.appendChild(card);
+    if (vault.dir) {
+      pathsBody.appendChild(h('div', { class: 'set-path-note small muted row row--tight' },
+        toneChip(vault.ok !== false, 'зеркало доступно', 'зеркало недоступно'),
+        h('span', { class: 'muted' }, ' заметки читают люди, приложение пишет их только в папку хранилища')));
+    }
+  }
+
+  /* ----------------------------------------------------- диагностика */
+
+  const diagGroup = groupSection({ id: 'diagnostics' });
+  const diagBody = diagGroup.body;
+  const diag = { loading: false, data: null, error: null };
+
+  function diagActions() {
+    return h('div', { class: 'set-diag__actions' },
+      h('a', { class: 'btn btn--secondary btn--sm', href: '#/settings/diagnostics' },
+        icon('pulse', { size: 12 }), 'Открыть проверку системы'),
+      h('button', {
+        class: 'btn btn--ghost btn--sm', type: 'button',
+        onclick: (ev) => loadDiag(ev && ev.currentTarget),
+      }, icon('refresh', { size: 12 }), 'Обновить'));
+  }
+
+  function renderDiagSummary() {
+    diagBody.replaceChildren();
+    if (diag.loading && !diag.data) { diagBody.appendChild(skeleton(2)); return; }
+    if (!diag.data) {
+      diagBody.appendChild(h('div', { class: 'banner banner--info set-banner' }, icon('info', { size: 14 }),
+        h('div', { class: 'banner__text' },
+          'Выжимку проверки получить не удалось' + (diag.error && diag.error.message ? ': ' + String(diag.error.message) : '')
+            + '. Полная проверка открывается по кнопке — она ничего не меняет.')));
+      diagBody.appendChild(diagActions());
+      return;
+    }
+    const checks = Array.isArray(diag.data.checks) ? diag.data.checks : [];
+    const summary = diag.data.summary && typeof diag.data.summary === 'object'
+      ? diag.data.summary : checksSummary(checks);
+    const problems = topProblems(checks, 3);
+
+    diagBody.appendChild(h('div', { class: 'set-chips' },
+      ['fail', 'warn', 'off', 'ok'].map((status) => {
+        const meta = CHECK_STATUS[status];
+        const count = Number(summary[status] || 0);
+        return h('span', {
+          class: 'chip chip--' + meta.chip + (count ? '' : ' chip--quiet'),
+          'data-status': status, title: meta.label,
+        }, h('span', { class: 'chip__dot' }), h('span', { class: 'tnum' }, String(count)), ' ', meta.label);
+      })));
+
+    if (problems.length) {
+      diagBody.appendChild(h('ul', { class: 'set-diag__list' }, problems.map((item) => {
+        const status = normalizeCheckStatus(item.status);
+        const meta = CHECK_STATUS[status];
+        return h('li', { class: 'set-diag__item', 'data-status': status, 'data-id': String(item.id || '') },
+          h('span', { class: 'set-diag__icon set-diag__icon--' + status, 'aria-hidden': 'true' }, icon(meta.icon, { size: 13 })),
+          h('span', { class: 'set-diag__title' }, String(item.title || '')),
+          h('span', { class: 'set-diag__value small muted' }, String(item.value || meta.label)));
+      })));
+    } else {
+      diagBody.appendChild(h('p', { class: 'set-hint small muted' },
+        'Все обязательные пункты в порядке — делать ничего не нужно.'));
+    }
+    diagBody.appendChild(diagActions());
+  }
+
+  async function loadDiag(btn) {
+    if (diag.loading) return;
+    diag.loading = true;
+    if (btn) { btn.disabled = true; btn.classList.add('is-busy'); }
+    renderDiagSummary();
+    try {
+      const data = await api.get('/api/diagnostics');
+      if (stopped) return;
+      diag.data = data || null;
+      diag.error = null;
+    } catch (err) {
+      if (stopped) return;
+      diag.error = err;
+    } finally {
+      diag.loading = false;
+      if (btn) { btn.disabled = false; btn.classList.remove('is-busy'); }
+      if (!stopped) renderDiagSummary();
+    }
+  }
+
+
+  /** Подпись исполнителя в итоге: «team-ops» → «Операции» (техническое имя — в title). */
   const kickLabelOf = (profile) => {
     const raw = String(profile == null ? '' : profile).trim();
     if (!raw) return '';
@@ -366,7 +526,7 @@ async function mountSettings(el, ctx) {
     kickBusy = false;
     if (btn) { btn.disabled = false; btn.classList.remove('is-busy'); }
     refreshKick();
-    renderHealth(healthData, null);
+    renderStatus(healthData, null);
     setTimeout(() => loadHealth({ force: true }), 500);
   }
 
@@ -386,7 +546,7 @@ async function mountSettings(el, ctx) {
   }
 
   async function loadHealth({ silent = false, force = false } = {}) {
-    if (!silent) renderHealth(null, null);
+    if (!silent) renderStatus(null, null);
     try {
       // Без сохранённой подписи условный GET бессмыслен: каркас мог уже
       // положить ETag в общий кэш, и 304 оставил бы блок в скелетоне.
@@ -398,47 +558,74 @@ async function mountSettings(el, ctx) {
       const sig = JSON.stringify(data);
       if (sig !== healthSig) {
         healthSig = sig;
-        renderHealth(data, null);
+        renderStatus(data, null);
       }
       // Кнопка «Проверить доску сейчас» появляется/прячется по состоянию доски.
       refreshKick().then((changed) => {
-        if (changed && !stopped) renderHealth(healthData, null);
+        if (changed && !stopped) renderStatus(healthData, null);
       });
       if (store.health && store.health.set) {
         store.health.set({ loading: false, ok: Boolean(data && data.ok), error: null, data });
       }
     } catch (err) {
       if (stopped) return;
-      renderHealth(null, err);
+      renderStatus(null, err);
     }
   }
 
-  /* ------------------------------------------------------------ внешний вид */
+  /* ------------------------------------------- внешний вид и уведомления */
 
-  const look = h('section', { class: 'set-section', id: 'set-look' });
-  look.appendChild(sectionHeader('Внешний вид'));
-  const lookBody = h('div', { class: 'set-section__body' });
-  lookBody.appendChild(h('p', { class: 'set-hint small muted' },
-    'Тема меняется сразу и запоминается в браузере. «Как в системе» следует за настройкой Windows.'));
+  // Один сохраняющий блок (W20-U2 §15): поля ниже — черновик, он применяется
+  // и запоминается только по кнопке «Сохранить настройки». Тема показывается
+  // сразу (предпросмотр), но в хранилище попадает вместе с остальным.
+  const prefsGroup = groupSection({ id: 'prefs', anchor: 'set-look' });
+  const prefsBody = prefsGroup.body;
 
-  const currentPref = (store.theme && store.theme.get && store.theme.get('pref')) || 'auto';
-  const themeSeg = segmented({
-    options: [
-      { value: 'auto', label: 'Как в системе' },
-      { value: 'light', label: 'Светлая' },
-      { value: 'dark', label: 'Тёмная' },
-    ],
-    value: currentPref,
-    onchange: (value) => {
-      const pref = applyTheme(value);
-      if (store.theme && store.theme.set) {
-        const media = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
-        store.theme.set({ pref, resolved: pref === 'auto' ? (media && media.matches ? 'dark' : 'light') : pref });
-      }
-      if (typeof ctx.toast === 'function') ctx.toast('Тема: ' + THEME_NAMES[pref], 'info');
-      renderThemeNote();
-    },
-  });
+  const supported = typeof Notification !== 'undefined';
+  const saved = {
+    theme: (store.theme && store.theme.get && store.theme.get('pref')) || 'auto',
+    notify: lsGet(NOTIFY_KEY, false) === true && supported,
+  };
+  const draft = { theme: saved.theme, notify: saved.notify };
+
+  /** Подпись темы в шапке должна совпадать с тем, что видно на экране. */
+  function syncThemeStore(pref) {
+    if (!(store.theme && store.theme.set)) return;
+    const media = typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    store.theme.set({
+      pref,
+      resolved: pref === 'auto' ? (media && media.matches ? 'dark' : 'light') : pref,
+    });
+  }
+
+  const permission = () => (supported ? Notification.permission : 'unsupported');
+  const permissionText = { granted: 'разрешены', default: 'не запрошены', denied: 'запрещены в браузере', unsupported: 'браузер не поддерживает' };
+  const statusLine = h('span', { class: 'small muted' });
+  function renderPerm() {
+    statusLine.textContent = 'Разрешение: ' + (permissionText[permission()] || permission());
+  }
+
+  const themeHost = h('div', { class: 'set-field__control' });
+  function buildThemeSeg() {
+    return segmented({
+      options: [
+        { value: 'auto', label: 'Как в системе' },
+        { value: 'light', label: 'Светлая' },
+        { value: 'dark', label: 'Тёмная' },
+      ],
+      value: draft.theme,
+      onchange: (value) => {
+        // Предпросмотр: экран меняется сразу, в браузере пока ничего не пишем.
+        draft.theme = applyTheme(value, { persist: false });
+        syncThemeStore(draft.theme);
+        renderSaveState();
+        renderThemeNote();
+      },
+    });
+  }
+  themeHost.replaceChildren(buildThemeSeg());
+
   const themeNote = h('p', { class: 'set-hint small muted' });
   function renderThemeNote() {
     const urlTheme = new URLSearchParams(location.search).get('theme');
@@ -447,68 +634,14 @@ async function mountSettings(el, ctx) {
       : '';
   }
   renderThemeNote();
-  lookBody.appendChild(h('div', { class: 'set-field' },
-    h('span', { class: 'field__label' }, 'Тема'),
-    themeSeg,
-  ));
-  lookBody.appendChild(themeNote);
-  look.appendChild(lookBody);
-  root.appendChild(look);
 
-  /* ---------------------------------------------------------- уведомления */
+  const checkbox = h('input', { type: 'checkbox', id: 'set-notify-check' });
+  checkbox.checked = draft.notify;
+  checkbox.addEventListener('change', () => {
+    draft.notify = checkbox.checked === true;
+    renderSaveState();
+  });
 
-  const notify = h('section', { class: 'set-section', id: 'set-notify' });
-  notify.appendChild(sectionHeader('Уведомления'));
-  const notifyBody = h('div', { class: 'set-section__body' });
-
-  const supported = typeof Notification !== 'undefined';
-  let enabled = lsGet(NOTIFY_KEY, false) === true && supported;
-  const permission = () => (supported ? Notification.permission : 'unsupported');
-  const permissionText = { granted: 'разрешены', default: 'не запрошены', denied: 'запрещены в браузере', unsupported: 'браузер не поддерживает' };
-
-  const checkbox = h('input', { type: 'checkbox' });
-  checkbox.checked = enabled;
-  const statusLine = h('span', { class: 'small muted' });
-
-  function renderPerm() {
-    const perm = permission();
-    statusLine.textContent = 'Разрешение: ' + (permissionText[perm] || perm);
-  }
-
-  async function toggleNotify() {
-    if (typeof Notification === 'undefined') {
-      checkbox.checked = false;
-      if (typeof ctx.toast === 'function') ctx.toast('Браузер не поддерживает системные уведомления', 'warn');
-      return;
-    }
-    if (checkbox.checked) {
-      let perm = Notification.permission;
-      if (perm === 'default') {
-        try { perm = await Notification.requestPermission(); } catch { perm = 'denied'; }
-      }
-      if (perm !== 'granted') {
-        checkbox.checked = false;
-        enabled = false;
-        lsSet(NOTIFY_KEY, false);
-        renderPerm();
-        if (typeof ctx.toast === 'function') {
-          ctx.toast(perm === 'denied'
-            ? 'Браузер запретил уведомления — разрешите их в настройках сайта'
-            : 'Уведомления не разрешены', 'warn');
-        }
-        return;
-      }
-      enabled = true;
-      lsSet(NOTIFY_KEY, true);
-    } else {
-      enabled = false;
-      lsSet(NOTIFY_KEY, false);
-    }
-    renderPerm();
-    if (typeof ctx.toast === 'function') ctx.toast(enabled ? 'Уведомления включены' : 'Уведомления выключены', 'info');
-  }
-
-  checkbox.addEventListener('change', toggleNotify);
   const testBtn = h('button', {
     class: 'btn btn--secondary btn--sm', type: 'button',
     onclick: () => {
@@ -517,19 +650,133 @@ async function mountSettings(el, ctx) {
     },
   }, icon('bell', { size: 12 }), 'Проверить');
 
-  notifyBody.appendChild(h('label', { class: 'checkbox set-switch' }, checkbox,
-    h('span', {}, 'Уведомлять, когда ответ готов')));
-  notifyBody.appendChild(h('p', { class: 'set-hint small muted' },
-    'Системное уведомление появится, когда запрос завершится или команда задаст вам вопрос. '
-      + 'Показывать его будет приложение; настройка хранится в этом браузере.'));
-  notifyBody.appendChild(h('div', { class: 'row row--wrap set-notify__actions' }, statusLine, h('span', { class: 'spacer' }), testBtn));
+  prefsBody.appendChild(h('div', { class: 'set-field' },
+    h('span', { class: 'field__label' }, 'Тема'),
+    themeHost,
+    h('p', { class: 'set-hint small muted' },
+      '«Как в системе» следует за настройкой Windows. Выбор применится после «Сохранить настройки».')));
+  prefsBody.appendChild(themeNote);
+  prefsBody.appendChild(h('div', { class: 'set-field set-field--notify' },
+    h('label', { class: 'checkbox set-switch', for: 'set-notify-check' }, checkbox,
+      h('span', {}, 'Уведомлять, когда ответ готов')),
+    h('p', { class: 'set-hint small muted' },
+      'Системное уведомление появится, когда запрос завершится или команда задаст вам вопрос. '
+        + 'Показывать его будет приложение; настройка хранится в этом браузере.'),
+    h('div', { class: 'row row--wrap set-notify__actions' }, statusLine, h('span', { class: 'spacer' }), testBtn)));
   if (!supported) {
-    notifyBody.appendChild(h('div', { class: 'banner banner--info set-banner' }, icon('info', { size: 14 }),
+    prefsBody.appendChild(h('div', { class: 'banner banner--info set-banner' }, icon('info', { size: 14 }),
       h('div', { class: 'banner__text' }, 'Этот браузер не умеет системные уведомления — настройка не повлияет на работу приложения.')));
   }
+
+  // W24-N3: «Стартовая страница» — что открывать при запуске приложения.
+  // Сохраняется сразу (это навигационная привычка, а не черновик настроек):
+  // ключ тот же, что читает app.js при выборе начального маршрута.
+  const startGet = () => {
+    try { return localStorage.getItem('teamroom.start') === 'last' ? 'last' : 'today'; } catch { return 'today'; }
+  };
+  const startHost = h('div', { class: 'set-field__control' },
+    segmented({
+      options: [
+        { value: 'today', label: 'Сегодня' },
+        { value: 'last', label: 'Последняя комната' },
+      ],
+      value: startGet(),
+      onchange: (value) => {
+        const next = value === 'last' ? 'last' : 'today';
+        try { localStorage.setItem('teamroom.start', next); } catch { /* приватный режим */ }
+        if (typeof ctx.toast === 'function') {
+          ctx.toast(next === 'today' ? 'При запуске будем открывать «Сегодня»' : 'При запуске вернёмся в последнюю комнату', 'ok');
+        }
+      },
+    }));
+  prefsBody.appendChild(h('div', { class: 'set-field', 'data-setting': 'start-page' },
+    h('span', { class: 'field__label' }, 'Стартовая страница'),
+    startHost,
+    h('p', { class: 'set-hint small muted' },
+      'Что открывать при запуске: свод «Сегодня» (по умолчанию) или последнюю комнату, в которой вы работали. '
+        + 'Выбор сохраняется сразу.')));
+
+  const saveState = h('p', { class: 'set-save__state small muted' });
+  const saveBtn = h('button', {
+    class: 'btn btn--primary', type: 'button', 'data-action': 'settings-save',
+    onclick: () => { savePrefs(); },
+  }, icon('check', { size: 13 }), 'Сохранить настройки');
+  const revertBtn = h('button', {
+    class: 'btn btn--ghost', type: 'button', 'data-action': 'settings-revert',
+    onclick: () => { revertPrefs(); },
+  }, 'Отменить');
+  const saveBar = h('div', { class: 'set-save', 'data-dirty': '0' },
+    h('div', { class: 'set-save__text' }, saveState),
+    h('div', { class: 'set-save__actions' }, revertBtn, saveBtn));
+  prefsBody.appendChild(saveBar);
+
+  function renderSaveState() {
+    const info = saveSummary(pendingChanges(saved, draft));
+    saveState.textContent = info.text;
+    saveBtn.disabled = !info.dirty;
+    revertBtn.disabled = !info.dirty;
+    saveBar.classList.toggle('is-dirty', info.dirty);
+    saveBar.setAttribute('data-dirty', info.dirty ? '1' : '0');
+  }
+
+  /** Разрешение спрашиваем в момент сохранения: это действие человека. */
+  async function requestNotifyPermission() {
+    if (typeof Notification === 'undefined') return 'unsupported';
+    let perm = Notification.permission;
+    if (perm === 'default') {
+      try { perm = await Notification.requestPermission(); } catch { perm = 'denied'; }
+    }
+    return perm;
+  }
+
+  async function savePrefs() {
+    const changes = pendingChanges(saved, draft);
+    if (!changes.length) return;
+    if (changes.includes('notify') && draft.notify) {
+      const perm = await requestNotifyPermission();
+      if (perm !== 'granted') {
+        draft.notify = false;
+        checkbox.checked = false;
+        renderPerm();
+        renderSaveState();
+        if (typeof ctx.toast === 'function') {
+          ctx.toast(perm === 'denied'
+            ? 'Браузер запретил уведомления — разрешите их в настройках сайта'
+            : 'Уведомления не разрешены', 'warn');
+        }
+        return;
+      }
+    }
+    if (changes.includes('theme')) {
+      applyTheme(draft.theme, { persist: true });
+      syncThemeStore(draft.theme);
+      saved.theme = draft.theme;
+    }
+    if (changes.includes('notify')) {
+      lsSet(NOTIFY_KEY, draft.notify === true);
+      saved.notify = draft.notify === true;
+      checkbox.checked = saved.notify;
+      renderPerm();
+    }
+    renderSaveState();
+    if (typeof ctx.toast === 'function') ctx.toast('Настройки сохранены', 'ok');
+  }
+
+  function revertPrefs() {
+    const changes = pendingChanges(saved, draft);
+    if (!changes.length) return;
+    draft.theme = saved.theme;
+    draft.notify = saved.notify;
+    themeHost.replaceChildren(buildThemeSeg());
+    checkbox.checked = saved.notify;
+    applyTheme(saved.theme, { persist: false });
+    syncThemeStore(saved.theme);
+    renderSaveState();
+    if (typeof ctx.toast === 'function') ctx.toast('Изменения отменены', 'info');
+  }
+
   renderPerm();
-  notify.appendChild(notifyBody);
-  root.appendChild(notify);
+  renderSaveState();
 
   /* --------------------------------------------------------------- FAQ */
 
@@ -688,6 +935,26 @@ async function mountSettings(el, ctx) {
     }
   }
 
+  /* ------------------------------------ разрешения агентам (W22-AP2) */
+
+  // Раздел «Разрешения агентов»: список выданных разрешений и отзыв. Отдельный
+  // файл, как «Диктовка»: экран настроек подключает его, если он на месте.
+  const approvalsHost = h('div', { class: 'set-section', id: 'set-approvals' });
+  root.appendChild(approvalsHost);
+  (async () => {
+    try {
+      const m = await import('./settings-approvals.js');
+      if (stopped || !m || typeof m.mountApprovalsSettings !== 'function') {
+        approvalsHost.remove();
+        return;
+      }
+      await m.mountApprovalsSettings(approvalsHost, ctx);
+    } catch (err) {
+      console.warn('[settings] разрешения агентам недоступны', err);
+      approvalsHost.remove();
+    }
+  })();
+
   /* ------------------------------------------- диктовка и словарь (DICT-UI) */
 
   // Раздел пишет другой исполнитель: если файла ещё нет — просто не показываем
@@ -716,6 +983,7 @@ async function mountSettings(el, ctx) {
 
   loadHealth();
   loadProfiles();
+  loadDiag();
   const timer = api.poll ? api.poll(() => loadHealth({ silent: true }), HEALTH_POLL_MS, { pauseHidden: true, immediate: false }) : null;
 
   if (ctx.params && String(ctx.params.new || '') === '1') {

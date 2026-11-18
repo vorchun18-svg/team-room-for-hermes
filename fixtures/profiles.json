@@ -21,7 +21,7 @@
       "label_source": "role"
     },
     {
-      "profile": "biz-director",
+      "profile": "team-director",
       "title": "Руководитель проекта",
       "kind": "director",
       "description": "Глеб — руководитель штаба Лето",
@@ -37,7 +37,7 @@
       "label_source": "profile"
     },
     {
-      "profile": "biz-lawyer",
+      "profile": "team-lawyer",
       "title": "Юрист проекта",
       "kind": "worker",
       "description": "Антон — юрист по праву России",
@@ -53,7 +53,7 @@
       "label_source": "profile"
     },
     {
-      "profile": "biz-ops",
+      "profile": "team-ops",
       "title": "Операции",
       "kind": "worker",
       "description": "Марина — поставщики и доставка",
@@ -69,7 +69,7 @@
       "label_source": "profile"
     },
     {
-      "profile": "biz-strategy",
+      "profile": "team-strategy",
       "title": "Стратег",
       "kind": "worker",
       "description": "Илья — стратегия и бренд",
@@ -84,7 +84,7 @@
       "label_source": "profile"
     },
     {
-      "profile": "biz-marketing",
+      "profile": "team-marketing",
       "title": "Маркетолог",
       "kind": "worker",
       "description": "Вера — каналы и контент",
@@ -100,7 +100,7 @@
       "label_source": "profile"
     },
     {
-      "profile": "biz-cfo",
+      "profile": "team-cfo",
       "title": "Финансист",
       "kind": "worker",
       "description": "Анна — финансы и экономика (CFO)",
@@ -116,7 +116,7 @@
       "label_source": "profile"
     },
     {
-      "profile": "biz-runner",
+      "profile": "team-runner",
       "title": "Помощник",
       "kind": "utility",
       "description": "Сергей — мелкие поручения",
@@ -131,7 +131,7 @@
       "label_source": "profile"
     },
     {
-      "profile": "biz-critic",
+      "profile": "team-critic",
       "title": "Критик",
       "kind": "critic",
       "description": "Клим — проверка сводки",

@@ -1,0 +1,224 @@
+{
+  "_comment": "W24-N3: фикстура GET /api/today (контракт docs/WAVE24-RULES.md §3.1). Данные вымышленные и нейтральные. Метка generated_at — база: мок-сервер сдвигает все времена на «сейчас − generated_at», поэтому на учебном стенде «как давно» всегда выглядит живым.",
+  "generated_at": 1794976163,
+  "last_visit_at": 1794966263,
+  "counters": {
+    "needs_you": 8,
+    "overdue": 3,
+    "due_soon": 2,
+    "running": 2,
+    "changed": 8
+  },
+  "needs_you": [
+    {
+      "room": "long",
+      "room_title": "Годовой отчёт",
+      "request_id": "t_9f3c2a10",
+      "request_title": "Годовой отчёт: сбор цифр по подразделениям",
+      "kind": "failure",
+      "text": "Не удалось прочитать таблицу с расходами: файл открыт в другой программе. Закройте его и повторите.",
+      "since": 1794966563,
+      "urgent": true,
+      "recommended": "Закрыть файл — исполнитель повторит сам"
+    },
+    {
+      "room": "cafe",
+      "room_title": "Студия",
+      "request_id": "t_5c8e4a02",
+      "request_title": "Сайт студии: структура разделов",
+      "kind": "question",
+      "text": "Какой вариант главной страницы оставляем: с портфолио сразу или с короткого рассказа о работе?",
+      "since": 1794968363,
+      "urgent": true,
+      "recommended": "Вариант с портфолио: клиенты смотрят работы первыми"
+    },
+    {
+      "room": "cafe",
+      "room_title": "Студия",
+      "request_id": "t_5c8e4a02",
+      "request_title": "Сайт студии: структура разделов",
+      "kind": "decision",
+      "text": "Выберите язык сайта на первом этапе: только русский или русский и английский сразу.",
+      "since": 1794970763,
+      "urgent": true,
+      "recommended": null
+    },
+    {
+      "room": "fn",
+      "room_title": "Офис",
+      "request_id": "t_4e91c7b2",
+      "request_title": "Ремонт офиса: смета и порядок работ",
+      "kind": "step",
+      "text": "Нужна дата, когда можно освободить переговорную на два дня — от неё зависит график.",
+      "since": 1794969863,
+      "urgent": false,
+      "recommended": null
+    },
+    {
+      "room": "cafe",
+      "room_title": "Студия",
+      "request_id": "t_5c8e4a02",
+      "request_title": "Сайт студии: структура разделов",
+      "kind": "draft",
+      "text": "Черновик текста «О студии» готов — прочитайте и скажите, что поправить.",
+      "since": 1794971963,
+      "urgent": false,
+      "recommended": null
+    },
+    {
+      "room": "fn",
+      "room_title": "Офис",
+      "request_id": "t_4e91c7b2",
+      "request_title": "Ремонт офиса: смета и порядок работ",
+      "kind": "approval",
+      "text": "Подрядчик просит согласовать дополнительную сумму за замену проводки — без ответа работы стоят.",
+      "since": 1794972563,
+      "urgent": false,
+      "recommended": "Согласовать: без проводки не пройдёт приёмка"
+    },
+    {
+      "room": "fn",
+      "room_title": "Офис",
+      "request_id": "t_4e91c7b2",
+      "request_title": "Ремонт офиса: смета и порядок работ",
+      "kind": "step",
+      "text": "Выберите цвет стен из трёх образцов — от этого зависит заказ краски.",
+      "since": 1794973163,
+      "urgent": false,
+      "recommended": "Светлый вариант: в кабинете мало света"
+    },
+    {
+      "room": "long",
+      "room_title": "Годовой отчёт",
+      "request_id": "t_9f3c2a10",
+      "request_title": "Годовой отчёт: сбор цифр по подразделениям",
+      "kind": "decision",
+      "text": "Подтвердите, включаем ли расходы на обучение в общий отчёт или показываем отдельно.",
+      "since": 1794974663,
+      "urgent": false,
+      "recommended": null
+    }
+  ],
+  "overdue": [
+    {
+      "room": "cafe",
+      "room_title": "Студия",
+      "item_id": "st_0001",
+      "text": "Прислать логотип в векторе",
+      "owner": "Вы",
+      "due": "2026-11-11",
+      "days_overdue": 7,
+      "request_id": "t_5c8e4a02"
+    },
+    {
+      "room": "fn",
+      "room_title": "Офис",
+      "item_id": "st_0002",
+      "text": "Подписать акт приёмки первого этапа",
+      "owner": "Вы",
+      "due": "2026-11-14",
+      "days_overdue": 4,
+      "request_id": "t_4e91c7b2"
+    },
+    {
+      "room": "long",
+      "room_title": "Годовой отчёт",
+      "item_id": "st_0003",
+      "text": "Свести расходы за третий квартал",
+      "owner": "Исполнитель",
+      "due": "2026-11-16",
+      "days_overdue": 2,
+      "request_id": null
+    }
+  ],
+  "due_soon": [
+    {
+      "room": "cafe",
+      "room_title": "Студия",
+      "item_id": "st_0004",
+      "text": "Согласовать текст страницы «О студии»",
+      "owner": "Вы",
+      "due": "2026-11-19",
+      "days_left": 1,
+      "request_id": "t_5c8e4a02"
+    },
+    {
+      "room": "fn",
+      "room_title": "Офис",
+      "item_id": "st_0005",
+      "text": "Заказать мебель для переговорной",
+      "owner": "Помощник",
+      "due": "2026-11-21",
+      "days_left": 3,
+      "request_id": null
+    }
+  ],
+  "running": [
+    {
+      "room": "cafe",
+      "room_title": "Студия",
+      "request_id": "t_9f3c2a10",
+      "request_title": "Сайт студии: тексты разделов",
+      "members_working": 2,
+      "since": 1794973763
+    },
+    {
+      "room": "long",
+      "room_title": "Годовой отчёт",
+      "request_id": "t_7d21b8c4",
+      "request_title": "Годовой отчёт: проверка таблиц",
+      "members_working": 1,
+      "since": 1794974963
+    }
+  ],
+  "changed": {
+    "finished": [
+      {
+        "room": "cafe",
+        "request_id": "t_a1b2c3d4",
+        "request_title": "Сайт студии: план работ",
+        "at": 1794969563
+      },
+      {
+        "room": "fn",
+        "request_id": "t_4e91c7b2",
+        "request_title": "Ремонт офиса: смета и порядок работ",
+        "at": 1794967763
+      }
+    ],
+    "new_requests": 2,
+    "new_answers": 3,
+    "failures": [
+      {
+        "room": "long",
+        "request_id": "t_3b7e9d11",
+        "request_title": "Годовой отчёт: сверка с бухгалтерией",
+        "at": 1794967163,
+        "reason": "Не открылся файл с таблицей расходов"
+      }
+    ]
+  },
+  "rooms": [
+    {
+      "id": "cafe",
+      "title": "Студия",
+      "needs_you": 3,
+      "overdue": 1,
+      "running": 1
+    },
+    {
+      "id": "fn",
+      "title": "Офис",
+      "needs_you": 3,
+      "overdue": 1,
+      "running": 0
+    },
+    {
+      "id": "long",
+      "title": "Годовой отчёт",
+      "needs_you": 2,
+      "overdue": 1,
+      "running": 1
+    }
+  ]
+}

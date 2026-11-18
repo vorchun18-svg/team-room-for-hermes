@@ -27,10 +27,12 @@ import posixpath
 import re
 import socket
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from mock_app import App
+import mock_versions
 from mock_core import (ALLOWED_HOSTS, CRITIC_STATES, FIX_DIR, MAX_BODY, MIME, PHASES, PHASES_PLAIN,  # noqa: F401
                        WEB_DIR, ApiError, Raw, allowed_methods, inside)
 import mock_stt
@@ -80,6 +82,9 @@ class Handler(BaseHTTPRequestHandler):
                                {"method": method, "allowed": list(allowed)})
             if method == "POST" and path == "/api/stt/transcribe":
                 return self._respond(self._stt_transcribe(query))
+            # W24-N3: отметка захода на «Сегодня» — только в памяти демо.
+            if method == "POST" and path == "/api/today/seen":
+                return self._respond((200, app.today_seen()))
             m = re.fullmatch(r"/api/stt/recordings/([a-z0-9][a-z0-9_-]{5,40})/parts/(\d{1,3})", path)
             if m and method in ("PUT", "POST"):
                 return self._respond(self._stt_part_save(m.group(1), int(m.group(2))))
@@ -337,11 +342,19 @@ def main(argv=None) -> int:
     ap.add_argument("--fixtures", default=FIX_DIR, help="каталог фикстур")
     ap.add_argument("--phase-scale", type=float, default=1.0, help="ускорение эволюции (тесты)")
     ap.add_argument("--pid-file", default=None, help="записать PID сервера в файл (для stop-team-room.cmd)")
+    ap.add_argument("--demo-grace", action="store_true",
+                    help="показать «льготный старт»: сообщения, написанные до запуска демо, "
+                         "получат подпись «написано до включения автообновления» "
+                         "(то же включает переменная TEAMROOM_DEMO_GRACE)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args(argv)
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print("Отказ: мок слушает только loopback", file=sys.stderr)
         return 2
+    if args.demo_grace or os.environ.get("TEAMROOM_DEMO_GRACE"):
+        # W21-S2: демонстрация «льготного старта» — всё, что есть в данных на момент
+        # запуска демо, считается написанным до включения автообновления.
+        mock_versions.GRACE_START_AT = int(time.time())
     if args.pid_file:
         pid_path = os.path.abspath(args.pid_file)
         os.makedirs(os.path.dirname(pid_path), exist_ok=True)

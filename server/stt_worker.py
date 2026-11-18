@@ -153,7 +153,11 @@ def find_python(candidates: list[str] | None = None, probe=None, refresh: bool =
     global _LOOKUP_DONE, _LOOKUP_RESULT
     with _LOOKUP_LOCK:
         if _LOOKUP_DONE and not refresh and candidates is None and probe is None:
-            return _LOOKUP_RESULT
+            # Hermes при обновлении пересоздаёт venv (другой хеш каталога): найденный раньше
+            # интерпретатор мог исчезнуть — тогда ищем заново, а не отдаём мёртвый путь
+            # (иначе диктовка падает «[WinError 2]» до перезапуска сервера).
+            if _LOOKUP_RESULT is None or Path(_LOOKUP_RESULT).is_file():
+                return _LOOKUP_RESULT
     check = probe or has_faster_whisper
     result = None
     for path in (candidates if candidates is not None else python_candidates()):

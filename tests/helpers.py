@@ -12,11 +12,21 @@
         ...
         sb.assert_real_untouched(before)
 
-`snapshot_real()` читает реальную `kanban/boards/team/kanban.db` только в режиме
-`mode=ro` и запоминает НАШ след в ней: карточки и комментарии с `created_by`
-нашего приложения и число карточек. Сравнение до/после доказывает, что тест не
-писал в живую доску, и при этом не падает от чужих записей Hermes (диспетчер,
-агенты руководителя) — размер и mtime файла меняются и без нас.
+`snapshot_real()` больше НЕ сравнивает содержимое живой `kanban.db`: в ней
+одновременно работает сам пользователь и его приложение (диспетчер, агенты
+руководителя, новые запросы), поэтому карточки, комментарии, размер и mtime
+меняются законно и вне нашего процесса. Раньше сравнение «наш след» давало
+ложные падения (W20-I1 п.23). Что остаётся защитой:
+
+  * конфиги Hermes (`config.yaml`, `profiles/*/config.yaml`) — снимаем хэши и
+    требуем совпадения: тесты их только читают;
+  * живая доска не должна исчезнуть/появиться (факт наличия файла);
+  * запись в реальный Hermes по-прежнему запрещена сторожем
+    `safety.forbid_real_writes()` (включается в `Sandbox`), а `_assert_writable_db`
+    не даёт открыть живую БД на запись.
+
+Статистика по доске (число карточек, «наши» карточки, размер) остаётся в
+слепке как справка для отчёта, но решения об ошибке по ней не принимаются.
 """
 from __future__ import annotations
 
@@ -89,65 +99,112 @@ def real_db_path(cfg: Any = None) -> Path:
     return home / "kanban" / "boards" / REAL_BOARD / "kanban.db"
 
 
-def snapshot_real_db(cfg: Any = None) -> dict:
-    """Слепок «нашего следа» в реальной kanban.db — только чтение (`mode=ro`).
+def config_hashes(home: Any = None) -> dict:
+    """Хэши конфигов Hermes (`config.yaml`, `profiles/*/config.yaml`) — только чтение.
 
-    Почему не размер/mtime файла: в живой доске одновременно работает сам Hermes
-    (диспетчер, агенты, руководитель, Михаил). Любая чужая запись меняет и размер,
-    и mtime, поэтому сравнение «файл байт-в-байт» давало ложные падения
-    (устаревший тест, а не дефект продукта). Сравниваем то, что может изменить
-    ТОЛЬКО наш код: карточки и комментарии с `created_by` нашего приложения
-    (`OUR_CREATORS`), число карточек — для отчёта, размер/mtime — как справка.
+    Это единственная часть «реальных файлов», которую тесты обязаны не менять:
+    конфиги не трогает ни пользователь, ни его приложение во время прогона.
     """
-    db = real_db_path(cfg)
-    if not db.exists():
-        return {"exists": False, "tasks_count": 0, "ours": frozenset(),
-                "our_comments": 0, "board_bytes": 0, "board_mtime": 0}
-    stat = db.stat()
-    con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=10)
+    root = Path(home) if home is not None else _real_hermes_home()
+    out: dict = {}
+    candidates = [root / "config.yaml"]
     try:
-        tasks_count = con.execute("SELECT count(*) FROM tasks").fetchone()[0]
-        marks = ",".join("?" * len(OUR_CREATORS))
-        ours = frozenset(row[0] for row in con.execute(
-            "SELECT id FROM tasks WHERE COALESCE(created_by,'') IN (%s)" % marks, OUR_CREATORS))
+        candidates += sorted((root / "profiles").glob("*/config.yaml"))
+    except OSError:
+        pass
+    for path in candidates:
         try:
-            our_comments = con.execute(
-                "SELECT count(*) FROM task_comments WHERE COALESCE(author,'') IN (%s)" % marks,
-                OUR_CREATORS).fetchone()[0]
-        except sqlite3.Error:                  # старая/чужая схема — не падаем
-            our_comments = 0
-    finally:
-        con.close()
-    return {"exists": True, "tasks_count": int(tasks_count), "ours": ours,
-            "our_comments": int(our_comments),
-            "board_bytes": int(stat.st_size), "board_mtime": int(stat.st_mtime)}
+            out[config_label(path, root)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            continue
+    return out
+
+
+def config_label(path: Path, root: Path | None = None) -> str:
+    """Подпись конфига для сообщения об ошибке: без полного пути пользователя."""
+    root = Path(root) if root is not None else _real_hermes_home()
+    try:
+        rel = Path(path).relative_to(root).as_posix()
+    except (ValueError, OSError):
+        return Path(path).name
+    return rel
+
+
+def snapshot_real_db(cfg: Any = None) -> dict:
+    """Слепок реального Hermes: конфиги (хэши), наличие живой доски и справка.
+
+    Читаем живую `kanban.db` только в режиме `mode=ro` и ТОЛЬКО как справку:
+    содержимое живой доски меняется законно и вне нашего процесса (пользователь
+    работает в приложении, Hermes крутит диспетчера и агентов руководителя),
+    поэтому сравнивать её построчно нельзя — это давало ложные падения.
+    """
+    home = Path(getattr(cfg, "hermes_home", "") or _real_hermes_home()) if cfg is not None \
+        else _real_hermes_home()
+    db = real_db_path(cfg)
+    info = {"exists": False, "tasks_count": 0, "ours": frozenset(), "our_comments": 0,
+            "board_bytes": 0, "board_mtime": 0, "db": str(db)}
+    if not db.exists():
+        info["config"] = config_hashes(home)
+        return info
+    try:
+        stat = db.stat()
+    except OSError:
+        info["config"] = config_hashes(home)
+        return info
+    tasks_count = 0
+    ours: frozenset = frozenset()
+    our_comments = 0
+    try:
+        con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=10)
+        try:
+            tasks_count = con.execute("SELECT count(*) FROM tasks").fetchone()[0]
+            marks = ", ".join("?" * len(OUR_CREATORS))
+            ours = frozenset(row[0] for row in con.execute(
+                "SELECT id FROM tasks WHERE COALESCE(created_by,'') IN (%s)" % marks,
+                OUR_CREATORS))
+            try:
+                our_comments = con.execute(
+                    "SELECT count(*) FROM task_comments WHERE COALESCE(author,'') IN (%s)" % marks,
+                    OUR_CREATORS).fetchone()[0]
+            except sqlite3.Error:              # старая/чужая схема — не падаем
+                our_comments = 0
+        finally:
+            con.close()
+    except sqlite3.Error:                      # доска занята/битая — это не наша ошибка
+        pass
+    info.update({"exists": True, "tasks_count": int(tasks_count), "ours": ours,
+                 "our_comments": int(our_comments),
+                 "board_bytes": int(stat.st_size), "board_mtime": int(stat.st_mtime),
+                 "config": config_hashes(home)})
+    return info
 
 
 def assert_real_untouched(before: dict, cfg: Any = None) -> dict:
-    """Упасть, если НАШ код оставил след в живой доске после слепка `before`.
+    """Упасть, если тест изменил то, что менять нельзя: конфиги Hermes и доску.
 
-    Проверяем ровно то, за что отвечает приложение и тесты: новые карточки с
-    `created_by` нашего приложения, удаление/переименование наших карточек,
-    появление наших комментариев. Чужие записи Hermes (диспетчер, агенты
-    руководителя) — норма и ложным падением не считаются.
+    Содержимое живой `kanban.db` намеренно не сравнивается (см. `snapshot_real_db`):
+    она меняется законно. Проверяем ровно две вещи, которые от прогона тестов
+    зависеть не должны:
+
+    * хэши `config.yaml` / `profiles/*/config.yaml` — тесты их только читают;
+    * файл живой доски не исчез и не появился.
+
+    Запись в реальный Hermes при этом физически запрещена: `Sandbox` включает
+    `safety.forbid_real_writes()`, а `_assert_writable_db()` не пускает на запись
+    в живую канбан-БД (эти защиты проверяют test_safety и test_seed).
     """
     after = snapshot_real_db(cfg)
-    ours_before = frozenset(before.get("ours") or ())
-    problems: list[str] = []
+    problems: list = []
     if bool(after["exists"]) != bool(before.get("exists")):
-        problems.append("файл доски появился/исчез: %s → %s"
+        problems.append("файл живой доски появился/исчез: %s → %s"
                         % (before.get("exists"), after["exists"]))
-    added = sorted(after["ours"] - ours_before)
-    if added:
-        problems.append("наш код создал карточки в живой доске: %s" % ", ".join(added[:5]))
-    removed = sorted(ours_before - after["ours"])
-    if removed:
-        problems.append("наши карточки пропали из живой доски: %s" % ", ".join(removed[:5]))
-    if int(after["our_comments"]) > int(before.get("our_comments") or 0):
-        problems.append("наш код написал комментарий в живую доску (%s → %s)"
-                        % (before.get("our_comments"), after["our_comments"]))
+    was = dict(before.get("config") or {})
+    now = dict(after.get("config") or {})
+    for label, digest in sorted(was.items()):
+        if now.get(label) not in (None, digest):
+            problems.append("изменён конфиг Hermes: %s" % label)
     if problems:
-        raise AssertionError("реальная kanban.db: " + "; ".join(problems))
+        raise AssertionError("реальные файлы Hermes: " + "; ".join(problems))
     return after
 
 
@@ -161,7 +218,7 @@ class SimAgents:
     ``_assert_writable_db`` проверяет, что файл не в реальном Hermes.
 
         sa = SimAgents(sb)
-        kids = sa.decompose(root_id, [{"title": "Срез", "assignee": "biz-cfo"}])
+        kids = sa.decompose(root_id, [{"title": "Срез", "assignee": "team-cfo"}])
         sa.finish(kids[0], "Готово", {"next_steps": [...]})
     """
 

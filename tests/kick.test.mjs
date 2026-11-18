@@ -39,7 +39,7 @@ const collect = (root, pred) => {
 const textOf = (el) => String(el ? el.textContent : '');
 const byKick = (root, part) => collect(root, (el) => el.getAttribute('data-kick') === part);
 
-const node = (id, status, extra = {}) => ({ id, title: 'Работа ' + id, status, assignee: 'biz-ops', ...extra });
+const node = (id, status, extra = {}) => ({ id, title: 'Работа ' + id, status, assignee: 'team-ops', ...extra });
 
 /* ─────────────────────────────────────────── название и подсказка */
 
@@ -103,12 +103,12 @@ test('итог «запущено»: число, имена и подробно�
   const report = {
     kind: 'started', spawned: 2, reclaimed: 1, promoted: 0,
     started: [
-      { id: 't_1', assignee: 'biz-lawyer', title: 'Юр-проверка ИП' },
-      { id: 't_2', assignee: 'biz-ops', title: 'Смета упаковки' },
+      { id: 't_1', assignee: 'team-lawyer', title: 'Юр-проверка ИП' },
+      { id: 't_2', assignee: 'team-ops', title: 'Смета упаковки' },
     ],
     counts: { ready: 0, stuck: 0, running: 3, input: 1, blocked: 0, deps: 2 },
   };
-  const text = kickText(report, { labelOf: (p) => (p === 'biz-lawyer' ? 'Юрист' : 'Операции') });
+  const text = kickText(report, { labelOf: (p) => (p === 'team-lawyer' ? 'Юрист' : 'Операции') });
   assert.equal(text.title, 'Запущено 2 исполнителя');
   assert.equal(text.tone, 'ok');
   assert.match(text.lines[0], /Юрист — Юр-проверка ИП/);
@@ -119,7 +119,7 @@ test('итог «запущено»: число, имена и подробно�
 
 test('итог «один исполнитель» — единственное число', () => {
   const text = kickText({ kind: 'started', spawned: 1,
-    started: [{ id: 't_1', assignee: 'biz-ops', title: 'Смета' }], counts: {} });
+    started: [{ id: 't_1', assignee: 'team-ops', title: 'Смета' }], counts: {} });
   assert.equal(text.title, 'Запущен 1 исполнитель');
 });
 
@@ -154,14 +154,14 @@ test('ошибка прохода — понятный текст, без «дв
 
 test('итог по запросу: запуски из других запросов помечены', () => {
   const report = { kind: 'started', spawned: 1,
-    started: [{ id: 't_other', assignee: 'biz-ops', title: 'Чужая работа' }], counts: {} };
+    started: [{ id: 't_other', assignee: 'team-ops', title: 'Чужая работа' }], counts: {} };
   const text = kickText(report, { scopeIds: new Set(['t_mine']) });
   assert.match(text.lines.join(' '), /В этом запросе новых запусков нет/);
 });
 
 test('старый ответ сервера (без report) тоже превращается в итог', () => {
   const report = kickReport({ spawned: 1, reclaimed: 0, promoted: 0,
-    planned: [{ id: 't_1', assignee: 'biz-ops' }] });
+    planned: [{ id: 't_1', assignee: 'team-ops' }] });
   assert.equal(report.kind, 'started');
   assert.equal(report.legacy, true);
   assert.equal(report.started[0].id, 't_1');
@@ -172,7 +172,7 @@ test('старый ответ сервера (без report) тоже превр
 test('панель: заголовок, строки и кнопка «Скрыть»', () => {
   let closed = 0;
   const el = kickPanel({ kind: 'started', spawned: 1,
-    started: [{ id: 't_1', assignee: 'biz-ops', title: 'Смета упаковки' }], counts: {} },
+    started: [{ id: 't_1', assignee: 'team-ops', title: 'Смета упаковки' }], counts: {} },
   { labelOf: () => 'Операции', onClose: () => { closed += 1; } });
   assert.equal(el.getAttribute('data-kick'), 'result');
   assert.equal(textOf(byKick(el, 'title')[0]), 'Запущен 1 исполнитель');

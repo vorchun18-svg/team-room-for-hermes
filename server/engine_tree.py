@@ -15,7 +15,9 @@ try:  # пакетный и «плоский» импорт (python server/app.p
             FAILED_STATUS,
             MAX_DEPTH,
             MAX_NODES,
+            SVOD_KEY_PREFIX,
             _chunks,
+            like_prefix,
             _comment_rows,
             _json,
             _require_tables,
@@ -30,12 +32,14 @@ except ImportError:  # pragma: no cover
             FAILED_STATUS,
             MAX_DEPTH,
             MAX_NODES,
+            SVOD_KEY_PREFIX,
             _chunks,
             _comment_rows,
             _json,
             _require_tables,
             _run_rows,
-            _task_rows)  # type: ignore
+            _task_rows,
+            like_prefix)  # type: ignore
     import read_view as _view  # type: ignore
 
 _as_list = _view.as_list
@@ -88,8 +92,82 @@ def _legacy(meta: dict, canon: dict) -> bool:
 
 
 # --------------------------------------------------------------------- дерево ---
+def _svod_like(root_id: str) -> str:
+    """LIKE-шаблон ключа идемпотентности карточек обновления свода этого запроса (B-49b).
+
+    Ключ ставит `svod_live.create_update_card`: `svod-<rid>-<отпечаток>` (авто) и
+    `svod-<rid>-m<версия>-<отпечаток>` (ручная). Экранирование — общее, `engine_db.like_prefix`
+    (id запроса содержит `_`, а `_` в LIKE — любой символ).
+    """
+    return like_prefix(SVOD_KEY_PREFIX + str(root_id) + "-")
+
+
+def _collect_svod(con, root_id: str, tasks: dict, seen: set, depth: dict, parents: dict,
+                  links: list) -> list:
+    """Подтянуть карточки обновления свода ЗАПРОСА независимо от глубины дерева (B-49b).
+
+    Старые цепочки «обновление → обновление» уводят карточки за `MAX_DEPTH`, и тогда
+    вместе с ними из дерева пропадают версии свода (`_synthesis` собирает историю по
+    узлам дерева), а `delivery`, лимит 6 карточек в час и защита от цикла перестают
+    видеть уже выпущенные карточки. Ключ `svod-<rid>-…` однозначен, поэтому такие
+    карточки забираем одним SELECT-ом по префиксу (не больше остатка `MAX_NODES`).
+    Возвращает id добавленных карточек.
+    """
+    left = max(0, MAX_NODES - len(seen))
+    if not left:
+        return []
+    try:
+        rows = con.execute("SELECT id, created_at FROM tasks WHERE idempotency_key LIKE ? ESCAPE '\\' "
+                           "ORDER BY COALESCE(created_at, 0), id LIMIT ?",
+                           (_svod_like(root_id), left)).fetchall()
+    except sqlite3.Error:
+        return []                       # старая схема без idempotency_key — работаем как раньше
+    extra = [str(row["id"]) for row in rows if row["id"] and str(row["id"]) not in seen][:left]
+    if not extra:
+        return []
+    found = _task_rows(con, extra)
+    extra = [i for i in extra if i in found]
+    if not extra:
+        return []
+    tasks.update(found)
+    # Связи карточек обновления между собой и с корнем: depth/parents по фактам доски,
+    # а если связи нет — карточка висит на корне (в запросе она всё равно его часть).
+    edges = []
+    ph = ",".join("?" * len(extra))
+    try:
+        edges = con.execute(f"SELECT parent_id, child_id FROM task_links "
+                            f"WHERE child_id IN ({ph}) OR parent_id IN ({ph})",
+                            extra + extra).fetchall()
+    except sqlite3.Error:
+        edges = []
+    by_child = {}
+    for row in edges:
+        if row["child_id"] in extra and row["parent_id"]:
+            by_child.setdefault(str(row["child_id"]), []).append(str(row["parent_id"]))
+    # Порядок `extra` — по времени создания, поэтому родитель цепочки считается раньше ребёнка.
+    for tid in extra:
+        known = [p for p in by_child.get(tid, []) if p == root_id or p in depth]
+        if not known or root_id in known:
+            parent = root_id            # связь с корнем или её нет — карточка первого уровня
+        else:
+            parent = min(known, key=lambda p: int(depth.get(p) or 0))
+        parents[tid] = [parent]
+        depth[tid] = min(MAX_DEPTH, int(depth.get(parent) or 0) + 1)
+    for row in edges:
+        pair = (str(row["parent_id"]), str(row["child_id"]))
+        if all(i in tasks for i in pair) and pair not in links:
+            links.append(pair)
+    seen.update(extra)
+    return extra
+
+
 def _collect(con, root_id: str) -> dict:
-    """Корень и всё дерево в обе стороны (task_links.child_id=root ∪ parent_id=root)."""
+    """Корень и всё дерево в обе стороны (task_links.child_id=root ∪ parent_id=root).
+
+    Обход вширь до `MAX_DEPTH` уровней, не больше `MAX_NODES` карточек; после него —
+    подтяжка карточек обновления свода по ключу идемпотентности (B-49b), потому что
+    старые цепочки уводят их за глубину, а вместе с ними теряются версии свода.
+    """
     _require_tables(con, "tasks", "task_links")
     tasks = _task_rows(con, [root_id])
     if root_id not in tasks:
@@ -122,6 +200,7 @@ def _collect(con, root_id: str) -> dict:
                             if nid in (a, b) and depth.get(a if b == nid else b) == level]
         seen.update(fresh)
         frontier = fresh
+    _collect_svod(con, root_id, tasks, seen, depth, parents, links)
     order = sorted(seen & set(tasks), key=lambda i: (depth.get(i, 99), tasks[i].get("created_at") or 0, i))
     ids = [root_id] + [i for i in order if i != root_id]
     return {"root_id": root_id, "tasks": tasks, "ids": ids, "depth": depth, "parents": parents,
@@ -193,6 +272,60 @@ def _changes_of(meta: dict) -> list:
 def _synth_title(title: str) -> bool:
     low = (title or "").lower()
     return any(k in low for k in ("свест", "сводн", "synth"))
+
+
+#: Заголовок карточки обновления свода, которую ставит ПРИЛОЖЕНИЕ
+#: (`svod_live.create_update_card`): «Обновление свода» или «Обновление свода (авто)».
+UPDATE_TITLE_PREFIX = "Обновление свода"
+#: Подпись версии, если в реестре заметки нет (карточку ставило приложение без заметки).
+UPDATE_DEFAULT_NOTE = "Обновление свода приложением"
+
+
+def _stamp(value) -> int:
+    """Время записи числом (``0`` — нет значения или мусор)."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _card_completed(node: dict) -> bool:
+    """Карточка ЗАВЕРШИЛАСЬ успешно (`outcome=completed`), а не упала/отменена.
+
+    B-49: версией свода считается только успешное завершение. Упавшая, отменённая или
+    брошенная карточка обновления версией не становится — её разбирает «остывание»
+    (`svod_live.failed_updates`). Смотрим ПОСЛЕДНИЙ запуск: карточка могла упасть, а
+    потом успешно перезапуститься.
+    """
+    node = node if isinstance(node, dict) else {}
+    if str(node.get("status") or "") not in CLOSED:
+        return False
+    runs = [r for r in node.get("runs") or [] if isinstance(r, dict)]
+    if not runs:
+        return not node.get("error")
+    last = runs[-1]
+    outcome = str(last.get("outcome") or last.get("status") or "").lower()
+    if outcome:
+        return outcome in ("completed", "done")
+    return not (last.get("error") or node.get("error"))
+
+
+def _app_update_card(node: dict, card: dict | None) -> bool:
+    """Карточку обновления свода поставило ПРИЛОЖЕНИЕ (B-49), а не руководитель «руками».
+
+    Признаки, от надёжного к запасному: запись реестра запроса (`svod`/`auto`/ключ
+    идемпотентности `svod-<rid>-…`), заголовок «Обновление свода» (так ставит и сторож, и
+    кнопки «Обновить сейчас» / «Доработать с учётом ответов»). Признаки НАРОЧНО не зависят
+    от `metadata.svod`: руководитель-модель забывает это поле, а версия свода всё равно
+    выпущена — приложение должно её принять (12.11 из-за этого три запуска ушли впустую).
+    """
+    node = node if isinstance(node, dict) else {}
+    if str(node.get("title") or "").strip().startswith(UPDATE_TITLE_PREFIX):
+        return True
+    card = card if isinstance(card, dict) else {}
+    if card.get("svod") or card.get("auto"):
+        return True
+    return str(card.get("event_key") or "").startswith("svod-")
 
 
 #: короткие подписи уровней мышления для `model_label` (совпадают с agent_models.EFFORT_SHORT)
@@ -298,6 +431,7 @@ def _tree(ctx: dict, room, extra_cards: list, cfg=None, board=None) -> list:
         node = {"id": tid, "parent_ids": ctx["parents"].get(tid, []), "title": task.get("title") or "",
                 "assignee": assignee, "role": meta["roles"].get(tid, "worker"),
                 "status": task.get("status") or "todo", "started_at": started_at,
+                "created_at": task.get("created_at"),
                 "finished_at": task.get("completed_at"), "summary_md": summary,
                 "metadata": raw_meta, "comments": ctx["comments"].get(tid, []),
                 "runs": runs, "needs_human": _needs_human_node(task, ctx, tid), "error": _node_error(runs),
@@ -345,16 +479,82 @@ def _synthesis(ctx: dict, nodes: list, extra_cards: list) -> tuple:
                        key=lambda c: (c.get("at") or 0, str(c.get("id"))))
     for card in revisions:
         node = by_id[card["id"]]
-        if node.get("summary_md"):
+        # B-49: упавшая, отменённая или брошенная карточка версией свода НЕ становится —
+        # даже если в её запуске остался кусок текста. Её разбирает «остывание»
+        # (`svod_live.failed_updates`), а показанный свод остаётся прежним.
+        if _card_completed(node) and node.get("summary_md"):
             # W17-S §3: у версии есть причина («ваше замечание» / «ответы / критика»)
             # и список «что изменилось» — из реестра карточки доработки и/или metadata.
             raw = _raw_meta(node) if isinstance(_raw_meta(node), dict) else {}
-            history.append({"version": len(history) + 1, "kind": "revision", "task_id": node["id"],
-                            "author": node.get("assignee"), "at": _last_at(node), "verdict": None,
-                            "note": str(card.get("note") or "") or "Доработка после замечаний",
-                            "reason": str(card.get("reason") or ""),
-                            "answers_count": int(card.get("answers_count") or 0),
-                            "changes": _changes_of(raw) or list(card.get("changes") or [])})
+            entry = {"version": len(history) + 1, "kind": "revision", "task_id": node["id"],
+                     "author": node.get("assignee"), "at": _last_at(node), "verdict": None,
+                     "note": str(card.get("note") or "") or "Доработка после замечаний",
+                     "reason": str(card.get("reason") or ""),
+                     "answers_count": int(card.get("answers_count") or 0),
+                     "changes": _changes_of(raw) or list(card.get("changes") or [])}
+            if card.get("auto") or card.get("svod"):
+                # W20-S1 §1.1 (B-36): карточку обновления поставило ПРИЛОЖЕНИЕ —
+                # интерфейс показывает это отдельной подписью, а не «доработкой».
+                entry["auto"] = True
+                entry["source"] = "app"
+            # B-49: `posted_at` — когда карточка УШЛА руководителю. Всё, что Михаил написал
+            # позже, в неё не попало и остаётся «неучтённым»: `svod_live` считает `behind`
+            # по этому моменту, а не по времени завершения.
+            posted = _stamp(card.get("at")) or _stamp(node.get("created_at"))
+            if posted:
+                entry["posted_at"] = posted
+            history.append(entry)
+    # B-49: карточка обновления, которую поставило ПРИЛОЖЕНИЕ, — версия свода и БЕЗ
+    # `metadata.svod` руководителя. 12.11.2026 модель трижды не заполнила это поле, карточки
+    # завершились успешно, а приложение версий не увидело: события остались «неучтёнными»,
+    # ключ идемпотентности блокировал новую карточку, три запуска ушли впустую.
+    seen_ids = {h.get("task_id") for h in history}
+    cards_by_id = {str(c.get("id")): c for c in extra_cards
+                   if isinstance(c, dict) and c.get("id")}
+    for node in sorted([n for n in nodes if n["id"] not in seen_ids],
+                       key=lambda n: (_last_at(n) or 0, str(n.get("id") or ""))):
+        card = cards_by_id.get(str(node["id"])) or {}
+        if not _app_update_card(node, card) or not _card_completed(node):
+            continue                      # не наша карточка, или она не завершилась успешно
+        if not str(node.get("summary_md") or "").strip():
+            continue                      # текста свода нет — версии нет (ждём «Обновить сейчас»)
+        raw = _raw_meta(node) if isinstance(_raw_meta(node), dict) else {}
+        auto = (bool(card.get("auto") or card.get("svod"))
+                or str(node.get("title") or "").strip().endswith("(авто)"))
+        entry = {"version": len(history) + 1, "kind": "revision", "task_id": node["id"],
+                 "author": node.get("assignee"),
+                 "at": _stamp(node.get("finished_at")) or _last_at(node), "verdict": None,
+                 "note": str(card.get("note") or "").strip() or UPDATE_DEFAULT_NOTE,
+                 "reason": str(card.get("reason") or "") or ("auto" if auto else "note"),
+                 "answers_count": int(card.get("answers_count") or 0),
+                 "changes": _changes_of(raw), "auto": True, "source": "app"}
+        posted = _stamp(card.get("at")) or _stamp(node.get("created_at"))
+        if posted:
+            entry["posted_at"] = posted
+        history.append(entry)
+    # W20-S1 §1.1 (B-36): итоговая карточка РУКОВОДИТЕЛЯ с metadata.svod — это тоже
+    # новая версия свода (легальный способ опубликовать её без «переоткрытия» корня).
+    seen_ids = {h.get("task_id") for h in history}
+    leaders = []
+    for node in nodes:
+        if node["id"] in seen_ids:
+            continue
+        svod_meta = _raw_meta(node).get("svod") if isinstance(_raw_meta(node), dict) else None
+        if not isinstance(svod_meta, dict) or not str(node.get("summary_md") or "").strip():
+            continue
+        leaders.append((_last_at(node) or 0, node["id"], node, svod_meta))
+    for at, task_id, node, svod_meta in sorted(leaders, key=lambda item: (item[0], item[1])):
+        raw = _raw_meta(node) if isinstance(_raw_meta(node), dict) else {}
+        note = str(svod_meta.get("note") or svod_meta.get("version_note") or "").strip()
+        history.append({"version": len(history) + 1, "kind": "leader", "task_id": task_id,
+                        "source_task": task_id, "author": node.get("assignee"), "at": at,
+                        "verdict": None, "note": note or "Версия свода от руководителя",
+                        "reason": "leader", "answers_count": 0,
+                        "changes": _changes_of({"changes": svod_meta.get("changes")})
+                        or _changes_of(raw)})
+    history.sort(key=lambda entry: (entry.get("at") or 0, str(entry.get("task_id") or "")))
+    for index, entry in enumerate(history, start=1):
+        entry["version"] = index              # нумерация версий — по порядку выпуска
     critics = [n for n in nodes if n["role"] == "critic"]
     for i, entry in enumerate(history):
         nxt = history[i + 1]["at"] if i + 1 < len(history) else None

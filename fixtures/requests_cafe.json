@@ -1,6 +1,34 @@
 {
   "items": [
     {
+      "id": "t_d4f0a1c9",
+      "room": "cafe",
+      "title": "Поиск исходников по проекту «Витрина»",
+      "title_short": "Исходники «Витрины»: что нашлось",
+      "status": "done",
+      "status_reason": null,
+      "mode": "auto",
+      "critic": {
+        "enabled": true,
+        "state": "approved",
+        "verdict": "approve",
+        "round": 2
+      },
+      "created_at": 1793896400,
+      "started_at": 1793897000,
+      "finished_at": 1793951200,
+      "duration_s": 54200,
+      "progress": {
+        "done": 1,
+        "total": 1,
+        "percent": 100
+      },
+      "assignee": "default",
+      "needs_you": false,
+      "preview": "Искомое нашлось в папке проекта; спецификация партий — «не то».",
+      "archived": false
+    },
+    {
       "id": "t_5d0c11a2",
       "room": "cafe",
       "title": "Разбор договора поставки упаковки с бразильским поставщиком: штрафы, простой линии, спецификация партий",
@@ -78,7 +106,7 @@
         "total": 0,
         "percent": 0
       },
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "needs_you": false,
       "preview": "Сравни «Едок» и «Развоз» для первых 100 наборов. Срок — до пятницы.",
       "archived": false
@@ -105,7 +133,7 @@
         "total": 4,
         "percent": 100
       },
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "needs_you": false,
       "preview": "Собери шорт-лист поставщиков упаковки в Заозёрье под тираж 100 наборов, проверь MOQ и сроки.",
       "archived": false
@@ -132,7 +160,7 @@
         "total": 4,
         "percent": 50
       },
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "needs_you": false,
       "preview": "Собери котировки упаковки по 10 поставщикам городе и проверь MOQ под тираж 100.",
       "archived": false
@@ -159,7 +187,7 @@
         "total": 4,
         "percent": 75
       },
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "needs_you": false,
       "preview": "Проверь, подходит ли ОКВЭД 10.71 для производства моти и что требует СЭС.",
       "archived": false
@@ -186,7 +214,7 @@
         "total": 6,
         "percent": 100
       },
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "needs_you": true,
       "preview": "Собери картину по проекту «Лето»: что готово, что мешает, где мы по этапам и 5 шагов на две недели. Срок — до пятницы.",
       "archived": false
@@ -213,7 +241,7 @@
         "total": 3,
         "percent": 66
       },
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "needs_you": true,
       "preview": "Подготовь подачу в Роспатент и скажи, сколько это стоит. Срок — до пятницы.",
       "archived": false
@@ -240,7 +268,7 @@
         "total": 2,
         "percent": 50
       },
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "needs_you": false,
       "preview": "Посчитай юнит-экономику набора из 6 моти по каналам. Срок — до пятницы.",
       "archived": false
@@ -267,7 +295,7 @@
         "total": 5,
         "percent": 100
       },
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "needs_you": true,
       "preview": "Нужна одна сводная картина по проекту «Лето» (Заозёрье) и понятный следующий шаг.",
       "archived": false

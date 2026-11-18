@@ -59,6 +59,113 @@ export function treeStateKey(requestId) {
   return TREE_STATE_PREFIX + (rid || 'unknown');
 }
 
+/* ───────────────────────────────────── раскрытость блоков страницы (У-1) */
+
+/**
+ * Второй вид состояния — свёрнутость ЦЕЛЫХ блоков страницы запроса
+ * («Диалог», «Дерево работ», «Артефакты», «Запрос»): У-1, волна 21.
+ *
+ * Почему здесь: это тот же вопрос «что человек раскрыл на этом запросе»,
+ * и хранится он так же — по id запроса, но в `localStorage` (выбор должен
+ * пережить не только перерисовку и F5, но и закрытие браузера: это настройка
+ * вида, а не разовое действие. Раскрытость ВЕТОК дерева — `sessionStorage`,
+ * там состояние живёт в пределах вкладки).
+ *
+ * Формат: `{"thread": true, "tree": false}` — только явные выборы человека.
+ * Умолчания живут в `section-collapse.js::sectionDefaults` (одна функция),
+ * поэтому «не выбрано» и «выбрано свёрнутым» различимы.
+ */
+export const SECTION_STATE_PREFIX = 'teamroom.sections.';
+
+/** Ключ хранилища раскрытости блоков для запроса. */
+export function sectionStateKey(requestId) {
+  const rid = String(requestId || '').trim();
+  return SECTION_STATE_PREFIX + (rid || 'unknown');
+}
+
+/** localStorage как простое хранилище; нет доступа — память (не падаем). */
+export function localStore() {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage) {
+      const probe = SECTION_STATE_PREFIX + '__probe';
+      localStorage.setItem(probe, '1');
+      localStorage.removeItem(probe);
+      return {
+        get(key) { return localStorage.getItem(key); },
+        set(key, value) { localStorage.setItem(key, String(value)); },
+        remove(key) { localStorage.removeItem(key); },
+      };
+    }
+  } catch { /* приватный режим/запрет хранилища — работаем в памяти */ }
+  return memoryStore();
+}
+
+/** Сколько блоков помнить; больше — считаем мусором и начинаем заново. */
+const MAX_SECTIONS = 24;
+
+/**
+ * Состояние «свёрнут/развёрнут» у блоков страницы запроса.
+ *
+ * @param {{requestId?: string, store?: {get:Function, set:Function}|null, key?: string}} [opts]
+ */
+export function createSectionState(opts = {}) {
+  const o = opts || {};
+  const key = String(o.key || sectionStateKey(o.requestId));
+  const store = o.store === null ? memoryStore() : (o.store || localStore());
+  let data = normalizeSections(read());
+
+  function read() {
+    try {
+      const raw = store.get(key);
+      if (!raw) return null;
+      return JSON.parse(String(raw));
+    } catch { return null; }
+  }
+
+  function normalizeSections(src) {
+    const out = {};
+    if (!src || typeof src !== 'object') return out;
+    for (const name of Object.keys(src)) {
+      const v = src[name];
+      if (v === true || v === false) out[String(name)] = v;
+    }
+    return out;
+  }
+
+  function save() {
+    if (Object.keys(data).length > MAX_SECTIONS) data = {};
+    try { store.set(key, JSON.stringify(data)); } catch { /* переполнено — живём в памяти */ }
+  }
+
+  return {
+    key,
+    /** Есть ли явный выбор человека (иначе действует умолчание). */
+    has(name) { return Object.prototype.hasOwnProperty.call(data, String(name)); },
+    /** Раскрыт ли блок: выбор человека, иначе — умолчание из одной функции. */
+    isOpen(name, fallback) {
+      const k = String(name);
+      if (Object.prototype.hasOwnProperty.call(data, k)) return data[k] === true;
+      return fallback === true;
+    },
+    /** Запомнить выбор человека (он сильнее умолчаний). */
+    set(name, open) {
+      data[String(name)] = open === true;
+      save();
+      return open === true;
+    },
+    /** Забыть выбор (пригодится, если понадобится «как по умолчанию»). */
+    forget(name) {
+      const k = String(name);
+      if (!Object.prototype.hasOwnProperty.call(data, k)) return false;
+      delete data[k];
+      save();
+      return true;
+    },
+    /** Отладочный снимок (тесты, отчёт). */
+    snapshot() { return Object.assign({}, data); },
+  };
+}
+
 /**
  * Подпись проблемы узла: пустая, если проблемы нет.
  * Ошибка и «ждёт тебя» — разные подписи; новая попытка или новый текст ошибки меняют её.
@@ -190,4 +297,7 @@ export function createTreeState(opts = {}) {
   };
 }
 
-export default { createTreeState, problemSignature, treeStateKey, defaultStore };
+export default {
+  createTreeState, problemSignature, treeStateKey, defaultStore,
+  createSectionState, sectionStateKey, localStore,
+};

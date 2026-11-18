@@ -4,11 +4,11 @@
   "icon": "cake",
   "board": "team",
   "tenant": "room:cafe",
-  "orchestrator": "biz-director",
-  "critic": "biz-critic",
+  "orchestrator": "team-director",
+  "critic": "team-critic",
   "members": [
     {
-      "profile": "biz-lawyer",
+      "profile": "team-lawyer",
       "role": "worker",
       "note": "Юрист: ИП, СЭС, Роспатент, договоры",
       "pinned": true,
@@ -28,7 +28,7 @@
       "label": ""
     },
     {
-      "profile": "biz-ops",
+      "profile": "team-ops",
       "role": "worker",
       "note": "Операции: поставщики, упаковка, доставка",
       "pinned": true,
@@ -48,7 +48,7 @@
       "label": ""
     },
     {
-      "profile": "biz-strategy",
+      "profile": "team-strategy",
       "role": "worker",
       "note": "Стратегия, бренд, план 90 дней",
       "pinned": false,
@@ -68,7 +68,7 @@
       "label": ""
     },
     {
-      "profile": "biz-marketing",
+      "profile": "team-marketing",
       "role": "worker",
       "note": "Каналы, контент, D19",
       "pinned": false,
@@ -88,7 +88,7 @@
       "label": ""
     },
     {
-      "profile": "biz-cfo",
+      "profile": "team-cfo",
       "role": "worker",
       "note": "Экономика, налоги, сметы",
       "pinned": false,
@@ -108,7 +108,7 @@
       "label": ""
     },
     {
-      "profile": "biz-runner",
+      "profile": "team-runner",
       "role": "worker",
       "note": "Сбор фактов по Vault и доске",
       "pinned": false,
@@ -128,7 +128,7 @@
       "label": ""
     },
     {
-      "profile": "biz-critic",
+      "profile": "team-critic",
       "role": "critic",
       "note": "Проверяет свод перед ответом Михаилу",
       "pinned": true,
@@ -149,10 +149,10 @@
     }
   ],
   "context_files": [
-    "D:/Проекты/Vault/Projects/Rooms/cafe/STATE.md",
-    "D:/Проекты/Vault/Projects/Business areas/Лето/CONTEXT.md"
+    "C:/Проекты/Vault/Projects/Rooms/cafe/STATE.md",
+    "C:/Проекты/Vault/Projects/Business areas/Лето/CONTEXT.md"
   ],
-  "project_dir": "D:\\Проекты\\Лето",
+  "project_dir": "C:\\Проекты\\Лето",
   "launch_mode": "plan_first",
   "max_parallel_streams": 2,
   "project_mode": true,
@@ -178,7 +178,7 @@
   "max_rounds": 1,
   "seeded": true,
   "agent_notes": {
-    "biz-ops": {
+    "team-ops": {
       "text": "Отвечай коротко и только цифрами, когда речь о поставщиках: цена, MOQ, срок.\nВсегда указывай источник и дату котировки — без них ответ не принимаю.",
       "updated_at": 1793155000,
       "entries": [
@@ -207,7 +207,7 @@
         "due": false
       }
     },
-    "biz-cfo": {
+    "team-cfo": {
       "text": "Считай в ₽ и отдельно показывай долю каждого расхода.\nНе предлагай цену с маржой ниже 35% — это наше правило.",
       "updated_at": 1793155400,
       "entries": [
@@ -238,7 +238,7 @@
     }
   },
   "agent_models": {
-    "biz-ops": {
+    "team-ops": {
       "provider": "oblako-a",
       "model": "dilizhans-ultra",
       "reasoning": "high",
@@ -252,12 +252,12 @@
       "id": "j_demo0002",
       "at": 1793155400,
       "action": "add",
-      "profile": "biz-cfo",
+      "profile": "team-cfo",
       "entry_id": "n_demo04",
       "text": "Не предлагай цену с маржой ниже 35% — это наше правило.",
       "why": "правило комнаты",
       "origin": "комментарий Михаила, 05.11",
-      "actor": "biz-director",
+      "actor": "team-director",
       "source": "leader",
       "note": "",
       "rolled_back": false
@@ -266,7 +266,7 @@
       "id": "j_demo0001",
       "at": 1793155000,
       "action": "add",
-      "profile": "biz-ops",
+      "profile": "team-ops",
       "entry_id": "n_demo01",
       "text": "Отвечай коротко и только цифрами, когда речь о поставщиках: цена, MOQ, срок.",
       "why": "ручная запись",
@@ -302,5 +302,15 @@
       "id": "sales",
       "title": "Продажи"
     }
-  ]
+  ],
+  "worklog_mode": "full",
+  "digest_every_min": 2,
+  "model_guard": "enforce",
+  "model_guard_label": "Строго: неверную модель исправляю сам",
+  "model_guard_block": {"mode": "enforce", "on": true, "label": "Строго: неверную модель исправляю сам",
+                        "hint": "Расхождение исправляется до запуска; запущенное на чужой модели останавливается и перезапускается",
+                        "modes": [{"id": "enforce", "label": "Строго: неверную модель исправляю сам"},
+                                  {"id": "warn", "label": "Только предупреждать — решаю я"}]},
+  "worklog": {"mode": "full", "mode_label": "Подробно (с рассуждениями)", "digest_every_min": 2,
+              "digest_label": "Каждые 2 минуты", "on": true}
 }

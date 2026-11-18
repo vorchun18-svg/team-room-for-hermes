@@ -127,13 +127,13 @@ function makeApi(initial) {
   const state = {
     entries: (initial || []).map((one) => Object.assign({}, one)),
     calls: [],
-    journals: [{ id: 'j_1', at: 1700000000, action: 'add', profile: 'biz-lawyer',
+    journals: [{ id: 'j_1', at: 1700000000, action: 'add', profile: 'team-lawyer',
       text: 'Первая запись', source: 'user', why: '', rolled_back: false }],
   };
   let seq = 0;
   const limits = { max_entries: 24, max_text: 8000, review_every: 5 };
   const payload = () => ({
-    ok: true, profile: 'biz-lawyer', entries: state.entries.map((one) => Object.assign({}, one)),
+    ok: true, profile: 'team-lawyer', entries: state.entries.map((one) => Object.assign({}, one)),
     limits, text: state.entries.map((one) => one.text).join('\n'),
   });
   const api = {
@@ -238,8 +238,8 @@ test('ссылка «Особенности (N)» открывает окно и
   const api = makeApi(ENTRIES);
   try {
     const link = notesLink({ api }, {
-      roomId: 'cafe', profile: 'biz-lawyer', label: 'Юрист · договоры',
-      room: { id: 'cafe', agent_notes: { 'biz-lawyer': { entries: ENTRIES } } },
+      roomId: 'cafe', profile: 'team-lawyer', label: 'Юрист · договоры',
+      room: { id: 'cafe', agent_notes: { 'team-lawyer': { entries: ENTRIES } } },
     });
     assert.equal(String(link.textContent).trim(), 'Особенности (2)');
     doc.body.appendChild(link);
@@ -258,7 +258,7 @@ test('окно: список записей, редактор выбранной
   const doc = installDom();
   const api = makeApi(ENTRIES);
   try {
-    const ui = openNotesEditor({ ctx: { api }, roomId: 'cafe', profile: 'biz-lawyer', label: 'Юрист' });
+    const ui = openNotesEditor({ ctx: { api }, roomId: 'cafe', profile: 'team-lawyer', label: 'Юрист' });
     await ui.loaded;
 
     const dialog = ui.element;
@@ -308,7 +308,7 @@ test('сохранение правки: PATCH в записи и «Сохран
   const changes = [];
   try {
     const ui = openNotesEditor({
-      ctx: { api }, roomId: 'cafe', profile: 'biz-lawyer', label: 'Юрист',
+      ctx: { api }, roomId: 'cafe', profile: 'team-lawyer', label: 'Юрист',
       onChange: (summary) => changes.push(summary),
     });
     await ui.loaded;
@@ -321,7 +321,7 @@ test('сохранение правки: PATCH в записи и «Сохран
 
     const patch = api.state.calls.find((one) => one[0] === 'PATCH');
     assert.ok(patch, 'PATCH отправлен');
-    assert.equal(patch[1], '/api/rooms/cafe/agents/biz-lawyer/notes/entries/n_one');
+    assert.equal(patch[1], '/api/rooms/cafe/agents/team-lawyer/notes/entries/n_one');
     assert.match(patch[2].text, /рабочих днях/);
     assert.equal(byClass(ui.element, 'notes-ed__status')[0].textContent, 'Сохранено');
     assert.equal(changes.length, 1);
@@ -337,7 +337,7 @@ test('новая запись: POST и выбор созданной запис�
   const doc = installDom();
   const api = makeApi(ENTRIES);
   try {
-    const ui = openNotesEditor({ ctx: { api }, roomId: 'cafe', profile: 'biz-lawyer', label: 'Юрист' });
+    const ui = openNotesEditor({ ctx: { api }, roomId: 'cafe', profile: 'team-lawyer', label: 'Юрист' });
     await ui.loaded;
     const newBtn = byText(ui.element, 'Новая запись')[0];
     newBtn.dispatch('click', { type: 'click', target: newBtn });
@@ -366,7 +366,7 @@ test('Ctrl+S сохраняет, а закрытие с правкой прос�
   const doc = installDom();
   const api = makeApi(ENTRIES);
   try {
-    const ui = openNotesEditor({ ctx: { api }, roomId: 'cafe', profile: 'biz-lawyer', label: 'Юрист' });
+    const ui = openNotesEditor({ ctx: { api }, roomId: 'cafe', profile: 'team-lawyer', label: 'Юрист' });
     await ui.loaded;
     const area = byClass(ui.element, 'notes-ed__area')[0];
     area.value = 'Новый текст правила';
@@ -399,7 +399,7 @@ test('журнал изменений открывается и показыва
   const doc = installDom();
   const api = makeApi(ENTRIES);
   try {
-    const ui = openNotesEditor({ ctx: { api }, roomId: 'cafe', profile: 'biz-lawyer', label: 'Юрист' });
+    const ui = openNotesEditor({ ctx: { api }, roomId: 'cafe', profile: 'team-lawyer', label: 'Юрист' });
     await ui.loaded;
     const journalBtn = byText(ui.element, 'Журнал')[0];
     journalBtn.dispatch('click', { type: 'click', target: journalBtn });

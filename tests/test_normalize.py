@@ -181,13 +181,13 @@ class NewContractTest(unittest.TestCase):
     def setUp(self):
         self.meta = {
             "next_steps": [
-                {"text": "Согласовать спеку упаковки", "owner": "biz-ops", "due": "2026-10-31"},
-                {"text": "Запросить котировки", "owner": "biz-ops", "due": "10.11.2026"},
+                {"text": "Согласовать спеку упаковки", "owner": "team-ops", "due": "2026-10-31"},
+                {"text": "Запросить котировки", "owner": "team-ops", "due": "10.11.2026"},
                 {"text": "Решить по цене", "owner": "", "due": "к пятнице", "state": "done"},
             ],
             "open_questions": [
                 {"text": "Держим цену R$ 42?", "for": "mikhail", "answered": False},
-                {"text": "Кто пишет поставщикам?", "for": "biz-director", "answered": True},
+                {"text": "Кто пишет поставщикам?", "for": "team-director", "answered": True},
                 {"text": "Вопрос без адресата"},
             ],
             "decisions": [
@@ -233,7 +233,7 @@ class NewContractTest(unittest.TestCase):
 
     def test_open_questions_objects(self):
         questions = self.setUp_out()["open_questions"]
-        self.assertEqual([q["for"] for q in questions], ["mikhail", "biz-director", "mikhail"])
+        self.assertEqual([q["for"] for q in questions], ["mikhail", "team-director", "mikhail"])
         self.assertEqual([q["answered"] for q in questions], [False, True, False])
 
     def test_decisions(self):
@@ -284,7 +284,7 @@ class ToleranceTest(unittest.TestCase):
         {"stage": []}, {"stage": "жёстко"}, {"stage": {"финансы": "в работе"}},
         {"decisions": "одно решение"}, {"artifacts": [None, 1, "", {}]},
         {"issues": 2}, {"report": 0}, {"verdict": "?"}, {"future_questions": {"x": "y"}},
-        {"next_steps": [{"owner": "biz-ops"}, "строка"]},
+        {"next_steps": [{"owner": "team-ops"}, "строка"]},
         {"stage": {"current": "неизвестная фаза", "phases": "нет"}},
         {"__proto__": {"a": 1}},
     ]

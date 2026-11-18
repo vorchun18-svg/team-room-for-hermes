@@ -69,7 +69,7 @@
 
 * `Host` обязателен и должен быть одним из: `127.0.0.1:<port>`, `localhost:<port>`, `[::1]:<port>`. Иначе `403 forbidden` (`detail.reason = "bad_host"`).
 * Для `POST/PATCH/DELETE` проверяется `Origin`: если заголовок есть, он должен быть `http://127.0.0.1:<port>` или `http://localhost:<port>`; иначе `403` (`detail.reason = "bad_origin"`). Отсутствующий `Origin` (curl, тесты) допускается.
-* `GET /api/file` — только из белых корней (`data/`, `C:\TeamRoom\Vault`, `C:\TeamRoom\Team`, `C:\TeamRoom\Agents`, `%LOCALAPPDATA%\hermes\kanban\boards\*\workspaces`) после `realpath`; чёрный список: `.env`, `auth.json`, `*token*`, `*secret*`, `*.session`, `google_*`. Нарушение → `403 forbidden`. С `?room=<id>` к корням добавляются папка проекта этой комнаты (после проверки, что она не системная и не внутри Hermes) и её зеркало в Vault — для артефактов карточки (WAVE19, B-22).
+* `GET /api/file` — только из белых корней (`data/`, `C:\TeamRoom\Vault`, `C:\TeamRoom\Team`, `C:\TeamRoom\Agents`, `%LOCALAPPDATA%\hermes\kanban\boards\*\workspaces`) после `realpath`; чёрный список: `.env`, `auth.json`, `*token*`, `*secret*`, `*.session`, `google_*`. Нарушение → `403 forbidden`. С `?room=<id>` к корням добавляются папка проекта этой комнаты (после проверки, что она не системная и не внутри Hermes) и её зеркало в Vault — для файлов карточки (WAVE19, B-22).
 * HTML-отчёты и пользовательский HTML отдаются только в `<iframe sandbox="allow-scripts">`; сервер добавляет к `text/html` заголовок `Content-Security-Policy: default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'`.
 * `POST /api/open` вызывает `explorer /select,<path>` только для путей из белого списка.
 
@@ -114,8 +114,8 @@
 | `icon` | string | имя codicon (`cake`, `law`) |
 | `board` | string | слаг доски канбана (`team`) |
 | `tenant` | string | `room:<id>` — метка всех карточек комнаты |
-| `orchestrator` | string | профиль-директор (`biz-director`) |
-| `critic` | string \| null | профиль-критик (`biz-critic`) |
+| `orchestrator` | string | профиль-директор (`team-director`) |
+| `critic` | string \| null | профиль-критик (`team-critic`) |
 | `members` | `Member[]` | участники комнаты, **кроме директора**; критик входит сюда же с `role:"critic"` (дублирует `room.critic`) |
 | `context_files` | string[] | абсолютные пути, читаются агентом первыми |
 | `project_dir` | string | папка проекта комнаты: абсолютный путь Windows или `""` (§6.2.1) |
@@ -235,8 +235,9 @@
 | `source_task` | string \| null | карточка-источник последней версии (корень или доработка) |
 | `legacy` | bool | ответ получен из старого формата metadata |
 | `history` | `SynthesisVersion[]` | все версии по возрастанию номера; последняя = `version` |
+| `live` | `SynthesisLive` | **W20-SVOD** (§1.1, B-36): живой свод — `state`, `behind`, `text` |
 
-`SynthesisVersion` = `{version: int, kind: "initial"|"revision", task_id: string|null, author: string|null, at: int|null, verdict: null|"approve"|"revise", note: string, reason?: string, answers_count?: int, changes?: string[]}`.
+`SynthesisVersion` = `{version: int, kind: "initial"|"revision"|"leader", task_id: string|null, source_task?: string, author: string|null, at: int|null, verdict: null|"approve"|"revise", note: string, reason?: string, answers_count?: int, changes?: string[], auto?: true}`.
 `kind` — `initial` (первый свод корня) или `revision` (доработка после критика или замечания Михаила). `verdict` — вердикт, из-за которого появилась следующая версия (`revise`), либо `approve`, если версия принята критиком; иначе `null`. `note` — короткая русская заметка («Учтены три замечания критика»).
 
 **W17-S §3 (1.0.3):** у версии есть причина и список изменений —
@@ -287,7 +288,7 @@
 `leader_pending=true` + `can_remind=true` → «руководитель ещё не ответил» и кнопка «Напомнить руководителю» (`answer_remind`); `reaction_waited_s` — сколько секунд ждём, `reaction_overdue=true` — реакции нет дольше «разумного времени» (180 с). `answer_changes_done=true` — ответ изменил уже сделанное (в реакции есть карточки).
 
 `Decision` (W19-D2 §1, B-20): `{id, text, why: string|null, status: "proposed"|"accepted"|"rejected"|"discuss", at: int|null, source_request: string, open: bool, status_label, status_hint, status_source: "user"|"leader", answered: bool, answer_action: "accept"|"reject"|"discuss"|null, answer_action_label, answer_text: string|null, answered_at: int|null, answer_state, answer_label: string|null, answer_hint, reaction, leader_pending: bool, can_remind: bool, reaction_waited_s, reaction_overdue: bool, actions: [{action, label, hint, current}]}`. `id` — `d_<hash8>` от текста.
-`open=true` — решение ждёт слова Михаила (`proposed` — ещё не отвечено, `discuss` — он попросил обсудить, слово всё ещё за ним). «Принять»/«Отклонить» ставят `status=accepted|rejected`, `open=false`, и решение **сразу уходит** из «Нужен ваш ответ» и из счётчиков (деталь запроса, вкладка «Дальше», боковое меню) — по данным реестра ответов, без перезаписи файлов.
+`open=true` — решение ждёт слова Михаила (`proposed` — ещё не отвечено, `discuss` — он попросил обсудить, слово всё ещё за ним). «Принять»/«Отклонить» ставят `status=accepted|rejected`, `open=false`, и решение **сразу уходит** из «Нужен ваш ответ» и из счётчиков (деталь запроса, вкладка «От вас нужно», боковое меню) — по данным реестра ответов, без перезаписи файлов.
 `status_source` — кто закрыл решение: `user` (Михаил кнопкой) или `leader` (руководитель отметил в metadata); у второго `status_label` — «принято/отклонено руководителем».
 `answer_state`/`answer_label`/`answer_hint`/`reaction` — та же цепочка, что у вопросов (см. `OpenQuestion`): «ответ отправлен → руководитель прочитал → учтено (изменено N карточек / менять ничего не нужно)». Запись ответа лежит в реестре запроса: `answers[d_x] = {kind: "decision", decision_id, decision_text, action, outcome, text, user_text, at, answered, status: "sent"}`.
 `decision_actions` (на уровне детали) — `{labels, hints, status_labels, chain_hint}`: подписи действий и расшифровка цепочки одним источником, чтобы интерфейс не придумывал свои слова.
@@ -297,10 +298,11 @@
 Статус и `note` берутся из metadata ответа: этап комнаты сопоставляется с этапом из ответа по `id`, а если не совпал — по названию (старые ответы называли этапы словами). Этапы, которых комната не объявила, в ответ не попадают.
 `current` = `current` ответа, если он есть среди этапов комнаты; иначе первая фаза со статусом `active|blocked`, иначе последняя `done`, иначе первая `next`, иначе `null`.
 
-`Artifact`: `{path, title, kind, exists: bool, size: int|null, state: "ok"|"missing"|"outside"|"denied", outside_project: bool, reason: string|null}`.
-`kind`: `md|json|html|csv|image|pdf|docx|xlsx|pptx|other` (по расширению; неизвестное → `other`). `size` — байты, `null` если файла нет.
+`Artifact`: `{path, title, kind, exists: bool, size: int|null, state: "ok"|"missing"|"outside"|"denied", outside_project: bool, reason: string|null, mtime: int|null, group: "final"|"material"|"service", folder: string, newer_than_svod: bool}`.
+`kind`: `md|json|html|csv|image|pdf|docx|xlsx|pptx|other` (по расширению; неизвестное → `other`). `size` — байты, `null` если файла нет. `mtime` — время изменения файла (секунды), `null` если файла нет.
+`group`/`folder`/`newer_than_svod` и элемент-папка `{kind:"folder", title, count, items}` — W20-A1 (§1.4, B-43), см. раздел «W20-ARTIFACTS».
 
-**Где ищется файл (WAVE19, B-22).** Для артефактов запроса корни — общие (`data/`, Vault, `Team`,
+**Где ищется файл (WAVE19, B-22).** Для файлов запроса корни — общие (`data/`, Vault, `Team`,
 `Agents`, `workspaces`, `TEAMROOM_EXTRA_ROOTS`) **плюс папка проекта ЭТОЙ комнаты** (`Room.project_dir`,
 только после проверки `project_dir.check_dir`: системные каталоги, каталог Hermes, каталог программы и
 `data/` не допускаются) **и зеркальная папка комнаты в Vault** (`<vault_dir>/<room.id>`).
@@ -363,7 +365,7 @@
 * `description`: описание профиля для короткой строки под заголовком карточки.
 * `label_pending`: `true` — ответ `hermes profile describe` ещё не пришёл (подпись уточнится сама, ответ не ждёт CLI).
 * `state`: `idle | working | waiting`; `waiting` — есть blocked-карточка или вопрос к этому профилю.
-* `current`: `{task_id, title, status, started_at}` \| `null` — что делает сейчас: активная карточка профиля (`ready|running|review`) либо, если активной нет, blocked-карточка, на которой он стоит (тогда `status:"blocked"`, `state:"waiting"`).
+* `current`: `{task_id, title, status, started_at, request_id}` \| `null` — что делает сейчас: активная карточка профиля (`ready|running|review`) либо, если активной нет, blocked-карточка, на которой он стоит (тогда `status:"blocked"`, `state:"waiting"`). `request_id` — id **запроса** (корня дерева), к которому относится карточка (`null`, если по `task_links` корень найти не удалось): по нему интерфейс ведёт на страницу запроса, а не карточки (W23-ST).
 * `last`: `{task_id, title, status, finished_at, summary}` \| `null` — последняя завершённая работа.
 * `counts`: `{done, blocked, active}` по карточкам комнаты.
 
@@ -417,7 +419,7 @@
 **Решение «`done` + `needs_you`».** Статус отвечает на вопрос «на каком этапе запрос», а `needs_you` (флаг в `RequestSummary` и `RequestDetail`, §3.3) — «ждёт ли он тебя». Они независимы:
 
 * `status` **не перебивается** вопросом: завершённый запрос (`root.status == "done"`) с открытым вопросом Михаилу остаётся `status:"done"`, у него `needs_you:true`. То же для `reviewing` / `synthesizing` / `working`: вопрос или blocked-карточка статус не меняют, флаг поднимается.
-* `needs_you` = `status == "needs_you"` **или** неотвеченный вопрос `for="mikhail"` в последней версии ответа **или** blocked-карточка с `needs_human=true`. Вопрос, адресованный профилю (`for="biz-director"`), флаг не поднимает.
+* `needs_you` = `status == "needs_you"` **или** неотвеченный вопрос `for="mikhail"` в последней версии ответа **или** blocked-карточка с `needs_human=true`. Вопрос, адресованный профилю (`for="team-director"`), флаг не поднимает.
 * Статус `needs_you` бывает только у **незавершённого** корня (п.4 стоит ниже `done`). После `answer` (+ `unblock` блокирующих детей) флаг и статус пересчитываются; ответ на вопрос завершённого запроса снимает флаг, статус остаётся `done`.
 * `counters.needs_you` в `RoomSummary` (§3.2) считает запросы со статусом `needs_you` **и** `done` с `needs_you:true`; такой запрос входит и в `done_today`. `reviewing|synthesizing|working` с флагом идут в `counters.working`, а не в `needs_you`.
 * UI показывает значок «ждёт тебя» по **флагу** (`needs_you === true`), а не по `status === "needs_you"`; фильтр ленты «ждут ответа» — по тому же флагу.
@@ -524,7 +526,7 @@ report: KickReport, dispatcher: {ok, state, warning}, at: int}`.
             "started": [{"id": "t_e9c6c2b2", "assignee": "lawyer", "title": "Юр-проверка ИП и ОКВЭД"}],
             "counts": {"ready": 0, "stuck": 0, "running": 3, "review": 0, "input": 1, "blocked": 0,
                        "deps": 2, "triage": 0, "scheduled": 0, "queued": 0, "done": 12, "total": 18},
-            "cards": [{"id": "t_776c0be5", "title": "Пробный прогон 30 моти", "assignee": "biz-ops",
+            "cards": [{"id": "t_776c0be5", "title": "Пробный прогон 30 моти", "assignee": "team-ops",
                        "status": "blocked", "reason_code": "input", "reason": "ждёт вашего ответа",
                        "tenant": "room:cafe", "since": 1793195160}],
             "useful": false, "error": null, "at": 1793912795}}
@@ -581,7 +583,7 @@ Query: `requests` (0..10, по умолчанию `3`) — сколько пос
 {"ok": true, "at": 1793912795, "count": 2,
  "engine": {"ok": true, "board": "team", "warning": null},
  "rooms": [{"id": "fn", "title": "Гранит", "icon": "folder", "archived": false,
-            "orchestrator": "biz-director", "critic": "biz-critic", "members_count": 4,
+            "orchestrator": "team-director", "critic": "team-critic", "members_count": 4,
             "mode_default": "auto", "critic_pass": true, "max_rounds": 2,
             "critic_mode": "rounds", "critic_round_cap": 12,
             "launch_mode": "plan_first", "max_parallel_streams": 2, "project_mode": false,
@@ -649,8 +651,8 @@ Query: `requests` (0..10, по умолчанию `3`) — сколько пос
 
 `200` →
 ```json
-{"ok": true, "profile": "biz-lawyer", "text": "Всегда проверяй по закону X", "cleared": false,
- "agent_notes": {"biz-lawyer": {"text": "Всегда проверяй по закону X", "updated_at": 1793100000}},
+{"ok": true, "profile": "team-lawyer", "text": "Всегда проверяй по закону X", "cleared": false,
+ "agent_notes": {"team-lawyer": {"text": "Всегда проверяй по закону X", "updated_at": 1793100000}},
  "warnings": []}
 ```
 `400 bad_request` — профиль не в составе («Указания можно задать только участнику комнаты: «coder» в составе нет»), текст длиннее 8 000 («Указания: 8001 знаков, а можно не больше 8000»), текст не строка, NUL. `404 not_found` — нет комнаты. Похожее на секрет (`sk-…`, `password=`, `token:`, `bearer …`) **не блокирует** запись, но приходит в `warnings[]` в замаскированном виде.
@@ -713,7 +715,7 @@ origin, actor, source, note, rolled_back, before[], after[]}`, `action` —
 
 ```
 {action: "leader_review", source: "leader", profile: "<руководитель>",
- at, text: "оценил работу участников; добавил 2 записи (biz-lawyer, default)",
+ at, text: "оценил работу участников; добавил 2 записи (team-lawyer, default)",
  why: "добавил 2 записи", note: "<summary>",
  key: "leader_review:<hash12>", root_id, outcome: "no_change"|"note_added",
  outcome_ru, profiles: [профиль], added: [{profile, text}], count: N}
@@ -813,7 +815,7 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 ```json
 {"ok": true, "profile": "default", "label": "Михаил — руководитель комнаты",
  "role_labels": {"default": "Михаил — руководитель комнаты"},
- "members": [{"profile": "biz-cfo", "role": "worker", "note": "", "pinned": false,
+ "members": [{"profile": "team-cfo", "role": "worker", "note": "", "pinned": false,
               "added_at": 1793060000, "label": "Ира — бухгалтер проекта"}]}
 ```
 `role_labels` есть всегда (у исполнителя — без изменений). `400 bad_request` — `label` не строка, NUL в подписи.
@@ -966,7 +968,7 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 | `id` | string | стабильный в пределах ответа: `c12` (комментарий), `e31` (событие), `v2` (версия), `s7` (итог карточки «Уточнение») |
 | `at` | int | время, unix-секунды (локальную зону рисует клиент) |
 | `author_kind` | `mikhail \| agent \| system` | кто написал |
-| `author` | string | `mikhail`, профиль (`biz-director`) или `system` — ключ, не подпись |
+| `author` | string | `mikhail`, профиль (`team-director`) или `system` — ключ, не подпись |
 | `author_label` | string | подпись по-русски: `Михаил`, `Глеб · руководитель комнаты`, `Антон · исполнитель`, `Диалог запроса` |
 | `text` | string | текст комментария/события (события — короткая русская фраза) |
 | `task_id` | string \| null | карточка, к которой относится запись |
@@ -1030,7 +1032,7 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 У каждого участника есть подпись (WAVE13 §11): `name`, `job`, `label` («Анна — финансы и экономика (CFO)»), `label_source`, `custom_label`, `description`, `label_pending` — см. §3.5.
 У каждого участника также `model_settings` (что выбрано, §6.11) и необязательное `model_sent` —
 «что реально ушло» у его последнего запуска в комнате (`{}`, если запусков не было): поля
-`provider, model, reasoning, label, text, confirmed, expected, mismatch, note` (§6.11).
+`provider, model, reasoning, label, text, confirmed, expected, mismatch, note, cost_usd` (§6.11).
 **W19 B-29:** `mismatch` — только если карточка ушла не на выбранную модель ПОСЛЕ последней смены модели участника. Если смена позже последнего запуска или в очереди уже есть карточка с верной моделью — `mismatch:false`, `pending:true` и `pending_text:"Новая модель применится со следующей задачи"`; рядом `changed_at` (когда меняли модель, из `agent_models[…].updated_at`), `run_at` (начало последнего запуска) и необязательное `queue: {id, status, created_at}` — та самая карточка в очереди с верной моделью. Интерфейс показывает `pending` спокойной строкой, без значка тревоги.
 `state=working` — есть активный run профиля; `waiting` — blocked-карточка или вопрос к нему. `404 not_found`.
 → `fixtures/team_cafe.json`
@@ -1040,14 +1042,14 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 → `fixtures/roadmap_cafe.json`
 
 #### `GET /api/rooms/{id}/backlog`
-«Дальше»: шаги, будущие вопросы, вопросы, решения. Query: `status` (через запятую), `kind` (через запятую), `limit` (по умолчанию 200).
+«От вас нужно»: шаги, будущие вопросы, вопросы, решения. Query: `status` (через запятую), `kind` (через запятую), `limit` (по умолчанию 200).
 `200` → `{room, updated_at, counts: {open, asked, done, dismissed, total, hidden_service}, items: BacklogItem[], sections, hidden_service?}`.
 `400 bad_request` — неизвестный `status`/`kind`. `404 not_found`.
 → `fixtures/backlog_cafe.json`
 
 **Статус вопроса — из реестра ответов (W17-B §7, аудит B7).** Раньше бэклог хранил свой `status`
 и после ответа Михаила вопрос продолжал висеть в «ждут вашего решения» (боевой `q_e7b16109`:
-`answered=true` в детали, `status=open` в «Дальше»). Теперь при каждом чтении:
+`answered=true` в детали, `status=open` в «От вас нужно»). Теперь при каждом чтении:
 
 * вопрос с ответом → `status: "done"`, `state_label: "отвечен"`, `answer_state`, `answer`, `answered_at`;
 * просьба пояснить (`need_explanation`) → `status: "open"`, `state_label: "ждёт пояснения"`;
@@ -1057,7 +1059,7 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 * служебные вопросы (число раундов критика) не показываются: `counts.hidden_service` — сколько скрыто,
   `hidden_service: [{id, text}]` — какие (для диагностики).
 
-`counts` и `sections` пересчитываются на чтении, поэтому вкладка «Дальше», бейдж и страница запроса
+`counts` и `sections` пересчитываются на чтении, поэтому вкладка «От вас нужно», бейдж и страница запроса
 показывают одно и то же сразу после ответа — без ожидания следующего прохода плана. Данные на диске
 не перезаписываются (миграция чтением).
 
@@ -1113,14 +1115,34 @@ Range-запросы не поддерживаются (всегда `200`, не
 Белый список корней: `data/`, `C:\TeamRoom\Vault`, `C:\TeamRoom\Team`, `C:\TeamRoom\Agents`, `%LOCALAPPDATA%\hermes\kanban\boards\*\workspaces`; дополнительно проверяются `realpath`, расширение (`.md .txt .json .csv .html .png .jpg .jpeg .gif .webp .svg .pdf .docx .xlsx .pptx .ics .log`) и чёрный список имён в последних 4 сегментах пути. Исходники `.py`, `.js`, `.css` через `/api/file` не отдаются.
 
 **`room` (WAVE19, B-22).** С параметром `room` белый список расширяется папкой проекта этой комнаты
-(после проверки `project_dir.check_dir`) и её зеркалом в Vault — так открываются артефакты карточки.
+(после проверки `project_dir.check_dir`) и её зеркалом в Vault — так открываются файлы карточки.
 Файл, который лежит **вне** этих мест, но прошёл отдельную проверку (настоящий файл, разрешённое
 расширение, не запрещённое имя ни в одном сегменте, не системный каталог, не каталог Hermes,
 не каталог программы и не `data/`), тоже отдаётся — интерфейс показывает к нему предупреждение
 `artifact_outside` (B-27). Без `room` — ровно прежнее поведение.
 
+#### `POST /api/files/launch` (W26-D3)
+«Открыть» и «Показать в папке» для файла карточки. Тело: `{path, room?, mode?}`,
+`mode` — `"open"` (по умолчанию) или `"reveal"`.
+`200` → `{ok: true, path, mode, opened: true, revealed: <mode=="reveal">}`.
+
+* `open` — файл открывает **программа по умолчанию** в сеансе человека (`proc.open_path`,
+  на Windows `os.startfile` = ShellExecute, то же, что двойной клик в проводнике). Так
+  открываются `.docx/.xlsx/.pdf/.md` — браузер тут не участвует: внутри окна Hermes Desktop
+  `window.open` молча блокируется, и прежняя кнопка «Открыть» не делала ничего.
+* `reveal` — проводник с выделением файла: `explorer /select,"<путь>"` (кавычки вокруг **пути**,
+  а не вокруг всего аргумента; прежняя форма со списком аргументов ломалась на любом пути
+  с пробелом и открывала «Документы»). Если запустить не удалось — открывается папка файла.
+
+Проверки те же, что у `/api/file?room=…`: белые корни комнаты (папка проекта + зеркало),
+внешние файлы B-27, чёрный список имён, запрет исполняемых типов и журналов.
+`400` — нет `path`, `mode` не из списка, файл не открылся; `403` — файл есть, но открыть
+нельзя (`detail.reason="blacklisted"`); `404` — комнаты или файла нет («Файл удалён или перемещён»).
+Без `room` проверяется общий белый список (как у `/api/file`).
+
 #### `POST /api/artifacts/open`
-«Открыть / В проводнике» для файла карточки (WAVE19, B-22). Тело: `{path, room}`.
+Прежний адрес «Показать в папке» (WAVE19, B-22), оставлен для совместимости: то же
+действие, что `/api/files/launch {mode:"reveal"}`. Тело: `{path, room}`.
 `200` → `{ok: true, path, revealed: true}`. Проверки те же, что у `/api/file?room=…`:
 `400` — нет `path`/`room` или проводник не запустился; `403` — файл есть, но открыть нельзя
 (`detail.reason="blacklisted"`); `404` — комнаты нет или файла нет по этому пути
@@ -1150,7 +1172,7 @@ Range-запросы не поддерживаются (всегда `200`, не
 `400 bad_request` — нет `room`, нет `items` и нет `all`. `404 not_found` — комната не найдена или **ни один** id из `items` не найден (`detail.missing[]` — какие именно); элементы без `due` в календарь не попадают.
 
 #### `GET /api/export/request/{rid}.md` и `.html`
-Экспорт запроса: ответ, шаги, вопросы, решения, артефакты, дерево.
+Экспорт запроса: ответ, шаги, вопросы, решения, файлы, дерево.
 `.md` → `text/markdown; charset=utf-8`; `.html` → `text/html; charset=utf-8`, один автономный файл (рендерер встроен, без сети, отчёт — статикой).
 `Content-Disposition: attachment; filename="<slug>.md|html"`. `404 not_found` — нет запроса. `409 conflict` — `synthesis.state != "ready"` (`detail.reason="synthesis_pending"`). `502 engine_error` — экспорт HTML упал (`detail.stderr`).
 
@@ -1204,7 +1226,8 @@ Range-запросы не поддерживаются (всегда `200`, не
 | GET | `/api/file?path=` | байты | — |
 | GET | `/api/logs?name=&tail=` | `text/plain` (секреты маскируются) | — |
 | POST | `/api/open` | `{ok, revealed}` | — |
-| POST | `/api/artifacts/open` | `{ok, path, revealed}` — файл карточки с комнатой (`{path, room}`) | — |
+| POST | `/api/files/launch` | `{ok, path, mode, opened}` — «Открыть» (`mode:"open"`) / «Показать в папке» (`"reveal"`), `{path, room, mode?}` | — |
+| POST | `/api/artifacts/open` | `{ok, path, revealed}` — прежний адрес «Показать в папке» (`{path, room}`) | — |
 | GET | `/api/ics` | `text/calendar` | — |
 | GET | `/api/export/request/{rid}.md\|.html` | текст/HTML | — |
 | POST | `/api/rooms/{id}/consolidate` | `{request, root_id}` (201) | — |
@@ -1418,8 +1441,16 @@ agent_models = {"<профиль>": {provider:string, model:string, reasoning:st
               models: [{id, label}]}],
  efforts:   [{id, label}],        // none, minimal, low, medium, high, xhigh, max, ultra
  source:    "hermes:inventory" | "unavailable",
- cached:    bool, updated_at: int, warnings: [string]}
+ cached:    bool, updated_at: int, warnings: [string],
+ agent_defaults: {<профиль>: {provider, model, reasoning,
+                              source: "profile" | "global" | "none", note: string}}}
 ```
+
+`agent_defaults` (W20-MODELS §1.5) — что стоит **в настройках самого агента** и откуда взято:
+`profile` — свой `config.yaml` профиля; `global` — общая настройка Hermes (профиль модель не
+задаёт), `note` объясняет это словами; `none` — модели нет нигде. В карту попадают все профили
+Hermes на диске, а с `?room=<id>` ещё и участники этой комнаты (даже если файла профиля нет —
+тогда `none`). Значения никогда не «похожие»: ровно то, что записано в конфиге.
 
 `?refresh=1` — перечитать каталог, не дожидаясь 60 с. Пустой `providers` + `source:
 "unavailable"` = Hermes недоступен: интерфейс предлагает «своя модель» (ручной ввод), ошибки
@@ -1435,10 +1466,16 @@ agent_models = {"<профиль>": {provider:string, model:string, reasoning:st
     что реально применится к следующей карточке участника; `source:"agent"` — замена не задана;
     `provider`/`model` всегда одной парой из одного источника;
   * `agent_default = {provider, model, reasoning}` — настройки самого агента (для подписи
-    «по умолчанию: …»): `model.provider`, `model.default` и **только** `agent.reasoning_effort`
-    из его `config.yaml`. `delegation.reasoning_effort` — уровень делегированных детей, за
-    дефолт агента он не выдаётся. Пустая строка = «как в Hermes по умолчанию» (профиль без
-    `model.default` тоже даёт пустую модель, а не чужую).
+    «по умолчанию (из настроек агента): …»): `model.provider`, `model.default` и **только**
+    `agent.reasoning_effort` из его `config.yaml`. `delegation.reasoning_effort` — уровень
+    делегированных детей, за дефолт агента он не выдаётся. Пустая строка = «как в Hermes по
+    умолчанию» (профиль без `model.default` тоже даёт пустую модель, а не чужую).
+  * `agent_default_info = {provider, model, reasoning, source, note, label}` — то же плюс
+    источник (W20-MODELS §1.5): `profile` (свой конфиг), `global` (общая настройка Hermes —
+    профиль модель не задаёт) или `none`; `note` — готовая пометка по-русски. Форма
+    `agent_default` не менялась: старые клиенты читают её как раньше.
+  * в `model_settings` добавлены `default_source` и `default_note` — тот же источник
+    «по умолчанию» рядом с выбором комнаты, чтобы интерфейс не собирал это из двух мест.
 
 `POST /api/rooms` и `PATCH /api/rooms/{id}` принимают `agent_models` (та же форма, что в поле
 комнаты; профили — только из состава комнаты, иначе `400`). Интерфейс правит модели **в карточке
@@ -1519,7 +1556,7 @@ agent_models = {"<профиль>": {provider:string, model:string, reasoning:st
  cards:   [{id, assignee, status, model_label, model_sent}]}  // только подтверждённые/расходящиеся
 ```
 `model_sent` — та же форма, что у узла дерева (§6.11 «RequestDetail»): `provider/model/reasoning`,
-готовая подпись `text`, `confirmed`, `expected`, `pinned`, `mismatch`, `note`. Факт берётся из
+готовая подпись `text`, `confirmed`, `expected`, `pinned`, `mismatch`, `note`, `cost_usd` (`number|null` — стоимость запуска; `null`, если подтверждённой сессии с ценой нет). Факт берётся из
 сессии воркера профиля (`state.db`, `mode=ro`); нет подтверждения — `{}` у участника и запись
 карточки в `model_sent` с `confirmed:false`. У участника (вкладка «Команда») дополнительно
 `pending`, `pending_text`, `changed_at`, `run_at`, `queue` — расхождение только после смены модели, см. §6.4.
@@ -1558,6 +1595,7 @@ model_sent = {
   text:     "ушло на: ollama-cloud · glm-5.3-flash",// готовая подпись для интерфейса
   confirmed: bool,      // true — модель подтверждена из запуска (сессия воркера), false — из карточки
   run_id:   int|null, at: int|null,
+  cost_usd: number|null,                            // стоимость запуска (оценка сессии)
   expected: {provider, model, reasoning},           // выбор комнаты (или настройка агента)
   pinned:   {provider, model, reasoning},           // что записано в карточке
   mismatch: bool,                                   // расходится с выбором комнаты
@@ -1572,6 +1610,284 @@ model_sent = {
 где видно фактическую модель; лог воркера — свободный текст, `task_runs.metadata` хранит только
 id сессии. Если подтверждения нет, `model_sent` показывает запись карточки с `confirmed:false`
 («запуск ещё не подтверждён»), а не выдуманную модель.
+
+## W20-WORKLOG — «Ход работы» (v1.1.0, WAVE20 §1.6)
+
+Источник: `docs/WAVE18-RULES.md` пакет W. Поток событий «что сейчас делают агенты»:
+рассуждения, вызовы инструментов, результаты, сообщения, события карточек и промежуточный
+итог сторожа («дайджест»). Всё читается **только на чтение** (`sqlite mode=ro`, WAL) из
+`state.db` профилей и `kanban.db` доски; приложение ничего не пишет в чужие БД, моделей не
+запускает (0 токенов). Режим `off` полностью отключает чтение.
+
+### W20.1 Настройки комнаты
+
+`PATCH /api/rooms/{id}` и `Room` (`§3.2`) получают два поля:
+
+| поле | значения | по умолчанию | смысл |
+|---|---|---|---|
+| `worklog_mode` | `full` \| `brief` \| `off` | `full` | «Подробно (с рассуждениями)» / «Кратко (только действия)» / «Выключено» |
+| `digest_every_min` | `0` \| `1` \| `2` \| `5` | `2` | промежуточный итог сторожа раз в N минут; `0` — выключено |
+
+Неизвестное значение → `400 bad_request` с `detail.allowed`. У старых комнат полей в
+`rooms.json` нет — читаются как `full` и `2` (миграция чтением, файл не переписывается).
+Строка режима для интерфейса приходит в `Room.worklog` (`{mode, mode_label, digest_every_min,
+digest_label, on}`), чтобы клиент не собирал подписи сам.
+
+### W20.2 `GET /api/requests/{id}/worklog`
+
+| параметр | значения | по умолчанию |
+|---|---|---|
+| `since` | курсор из предыдущего ответа (непрозрачная строка) | пусто — последние `limit` записей |
+| `before` | курсор: «показать раньше» — записи строго старше него | пусто |
+| `level` | `thoughts` \| `steps` | из настройки комнаты (`full`→`thoughts`, `brief`→`steps`) |
+| `limit` | 1…200 | `50` |
+
+```
+200 → {
+  request: "t_1a2b3c4d",
+  room: "cafe",
+  mode: "full"|"brief"|"off",          // действующая настройка комнаты
+  level: "thoughts"|"steps",           // фактический уровень (brief всегда steps)
+  items: [Item],                        // по возрастанию ts
+  cursor: "w1.…",                       // курсор ПОСЛЕ последней записи ответа
+  before: "w1.…"|"",                    // курсор «показать раньше» (пусто — история кончилась)
+  more: bool,                           // есть ещё более новые/старые записи за limit
+  live: [Live],                         // кто работает прямо сейчас
+  digest: Digest|null,                  // последний промежуточный итог (если был)
+  stuck: [Stuck],                       // карточки, похожие на зависшие
+  generated_at: int
+}
+```
+
+`Item`:
+
+```
+{id: "m_12f3…",            // устойчивый ключ (для data-key фронтенда)
+ ts: 1762749600,            // секунды, UTC
+ card_id: "t_1a2b3c4d"|null,
+ profile: "lawyer",
+ label: "Юрист · Анна",      // подпись участника из 1.0.3 (пусто — профиль)
+ role: "orchestrator"|"critic"|"worker"|"observer"|"",
+ kind: "thought"|"action"|"result"|"message"|"status"|"handoff"|"digest",
+ text: "думает: проверяет, все ли пункты договора учтены…",
+ tool: "read_file"|"",
+ ok: bool|null}             // у result: false — инструмент вернул ошибку
+```
+
+Смысл `kind`: `thought` — рассуждение (только `level=thoughts`); `action` — вызов
+инструмента; `result` — короткий итог вызова; `message` — реплика агента в сеансе;
+`status` — событие карточки («принял карточку», «готово»); `handoff` — передача работы
+(«Руководитель → Юрист: …»); `digest` — промежуточный итог сторожа.
+
+`Live`:
+
+```
+{profile, label, card_id, state: "working"|"waiting"|"idle"|"stuck",
+ since: int|null,            // когда началось текущее действие
+ last_action: "ищет в договорах",
+ tools: int, messages: int,  // счётчики за сеанс
+ stuck: bool, stuck_text: ""}
+```
+
+`Digest`:
+
+```
+{id, ts, text, minutes, workers: [{profile, label, last_action, waiting: bool}],
+ done: int, total: int}
+```
+
+`Stuck`: `{card_id, profile, label, minutes, text}` — `text` = «возможно завис: нет
+активности 18 мин. Проверьте доску».
+
+Поведение:
+
+* `off` — `{mode:"off", items: [], live: [], digest: null, cursor: ""}` и **никакого**
+  чтения БД (проверяется тестом: файл `state.db` с битым содержимым не открывается);
+* `brief` — те же действия/статусы/передачи/дайджест, без `thought` и без `message`
+  (тексты реплик скрываются: «действует»); `level=thoughts` при `brief` не действует —
+  ответ честно возвращает `level:"steps"`;
+* курсор: `items` после `since` не повторяются и не теряются (сравнение по
+  `(ts, session, row_id × номер события)`, не по времени — записи в одну секунду и несколько
+  событий одной строки не склеиваются); `more:true` — есть ещё; `before` отдаёт предыдущую
+  страницу, не сдвигая курсор «что нового»;
+* **страницы «раньше» (W21-L1).** Первый ответ (без `since`) — последние `limit` записей: лента
+  открывается на свежем. `before` в ответе — курсор следующей страницы «раньше» (ключ самой старой
+  отданной записи + отметки строк по сеансам); пусто — история кончилась. Каждая следующая страница
+  строго старше предыдущей, повторов и пропусков нет. Сервер читает строки сеанса НАЗАД от отметки,
+  поэтому история доступна и у сеанса длиннее окна `limit`;
+* **мусор в `before` (W21-REV2).** Непустая строка, которая не является нашим курсором (обрезанный
+  адрес, `before=abc`, строка длиннее 4096 знаков), означает «страницы нет»: ответ — как без
+  параметра (свежие записи, `more:true`, новый `before`). Раньше такой запрос молча возвращал
+  ПУСТУЮ страницу с `more:false`, и «Показать раньше» переставало работать до перезагрузки;
+* нет `state.db`/`kanban.db`/сеанса — `{items: [], live: [], warnings: ["…"]}` и `200`,
+  никогда `500`; отсутствие сессии не ошибка (карточка ещё не стартовала);
+* объём: не больше `limit` записей, но не более 200; одно рассуждение — до 300 знаков
+  (дальше «…ещё»), результат инструмента — до 200 знаков, без дампов и base64;
+* маскирование: единая `agent_notes.mask_secrets()` на КАЖДЫЙ `text` (ключи `sk-…`,
+  `ghp_…`, `password=…`, `Bearer …`) + фильтр base64/длинных hex; пути укорачиваются
+  (`…\Отчёты\свод.md`);
+* записи `compacted`/`observed` не показываются;
+* ответ отдаётся с `Cache-Control: no-store`; опрос — 3 с во время работы, 30 с после
+  (решает фронтенд пакета FB).
+
+### W20.3 Сторож-дайджест (без модели)
+
+Пока запрос в работе (`queued/working/reviewing/synthesizing`), сторож (`server/watcher.py`)
+раз в `digest_every_min` минут кладёт в `data/state/<комната>/worklog_digest.json` запись
+`kind:"digest"` на запрос (по `root_id`): «Прошло 6 мин. Работают: Юрист — читал 3 файла,
+сейчас ищет в договорах; Сметчик — ждёт вашего ответа. Готово 2 из 5. Ничего нового с 17:40.»
+Формируется из событий и счётчиков (вызовы инструментов, последнее действие, статусы
+карточек), не чаще раза в `digest_every_min` минут, не дублируется, после завершения
+запроса прекращается и в карточки агентам не уходит. Дайджест приходит в `items` (`kind`
+`digest`) и в поле `digest`.
+
+Частоту задаёт **только** `digest_every_min` (0 — выключить совсем): настройка
+`worklog_mode=off` гасит экран и чтение через API, но промежуточный итог в ленте остаётся —
+так и просили: «сторож работает и при выключенных рассуждениях».
+
+**Обнаружение зависания:** карточка в `running`/`review` без активности (heartbeat,
+сообщения сеанса) дольше `stuck_after_min` (по умолчанию 15 мин) попадает в `stuck[]` и в
+`live[]` с `state:"stuck"`. Это только пометка, приложение ничего не останавливает.
+
+### W20.4 Ошибки
+
+`404 not_found` — запроса нет в реестре комнаты. `400 bad_request` — `limit` вне 1…200,
+`level` не из списка. `503 unavailable` — реестр комнат занят. Отсутствие БД **не** ошибка.
+
+## W20-MODELS — модель участника по умолчанию из настроек агента (v1.1.0, WAVE20 §1.5)
+
+Раньше «по умолчанию» означало «пусто, разберись сам»: интерфейс показывал «как у агента», а в
+реестре комнат оставались записи, которых никто не выбирал. Теперь правило одно и то же у сервера,
+интерфейса и скрипта сброса.
+
+### W20.1 Что считается «по умолчанию»
+* `profiles/<профиль>/config.yaml` → `model.provider`, `model.default` и `agent.reasoning_effort`.
+  Для профиля `default` — общий `config.yaml` в корне Hermes.
+* Если в профиле **нет пары** провайдер+модель — берётся **общая** настройка Hermes (корневой
+  `config.yaml`) **целой парой**, с пометкой «из общих настроек Hermes». Смешивать провайдера
+  одного источника с моделью другого нельзя: так на карточку попадала чужая модель.
+* Если модели нет нигде — пустые значения, `source: "none"`. Приложение ничего не придумывает и
+  не подставляет «похожую» модель.
+* `delegation.reasoning_effort` «по умолчанию» не считается: это уровень делегированных детей.
+* Файлы профилей (`config.yaml`, `SOUL.md`, `skills`) только читаются — ни один путь
+  приложения не пишет в них.
+
+`GET /api/models` → `agent_defaults[профиль] = {provider, model, reasoning,
+source: "profile"|"global"|"none", note, label}`. `?room=<id>` добавляет участников комнаты,
+даже если файла профиля нет (`source: "none"`). В карточке комнаты то же значение — полем
+`agent_default_info` (`agent_default` остаётся прежней формой из трёх полей), а в
+`model_settings` — `default_source`/`default_note`.
+
+### W20.2 Переопределение комнаты — только явный выбор
+* `rooms.agent_models` создаётся **только** кнопкой выбора модели у участника
+  (`PUT /api/rooms/{id}/agents/{profile}/model`) или явным `agent_models` в `POST`/`PATCH`
+  комнаты.
+* `POST /api/rooms` без `agent_models` → у комнаты нет ни одной записи. Если клиент пришлёт
+  «эхо» текущих настроек агента (ровно те же провайдер, модель и мышление), запись **не
+  сохраняется**: это не выбор пользователя, и она перекрыла бы будущую смену конфига профиля.
+* «Вернуть по умолчанию» в интерфейсе отправляет пустой объект — запись удаляется целиком
+  (`409`, если комната в архиве).
+
+### W20.3 Тексты интерфейса
+* «по умолчанию (из настроек агента): провайдер · модель · мышление» — под каждым участником;
+  при `source: "global"` добавляется «— из общих настроек Hermes».
+* «изменено для этой комнаты» — метка у участника, у которого запись комнаты есть.
+* «Вернуть по умолчанию» удаляет запись; окно настроек комнаты модели не меняет и при
+  создании отправляет `agent_models: {}`. Выбор пользователя показывается ровно как выбран —
+  без «ближайших» моделей и без предупреждений о цене.
+
+### W20.4 Скрипт сброса `tools/reset_room_models.py`
+Для данных, где переопределения остались с прошлых версий:
+
+```
+python tools/reset_room_models.py --room <id>            # только показывает
+python tools/reset_room_models.py --room <id> --apply    # копия данных + удаление
+```
+
+По умолчанию ничего не меняет: печатает по каждому участнику «было … → по умолчанию (из
+настроек агента): …». С `--apply` делает копию `data/rooms.json` (`rooms.json.bak-<дата-время>`)
+и убирает `agent_models` **только этой** комнаты; другие комнаты и файлы профилей не трогаются.
+`--data <папка>` — другой каталог данных, `--json` — машинный вывод. Коды возврата: `0` — готово
+(в том числе «менять нечего»), `2` — комната/файл не найдены или файл не читается.
+
+
+
+## W20-COMPOSER — диалог по запросу и панель диктовки (v1.1.0, WAVE20 §1.3)
+
+Три дефекта третьего круга (B-39, B-40, B-42) в одном месте: отправка сообщения и
+кнопки записи. Контракт интерфейса — один: блок диалога монтируется на странице
+ОДИН раз и дальше обновляется данными, а не пересобирается.
+
+### W20.1 `POST /api/requests/{id}/messages` — поля и идемпотентность
+
+Тело: `{text, attach?: [пути], urgent?: bool, client_id?: str}`.
+
+* `client_id` — ключ одного нажатия (6…120 знаков, без NUL). Клиент присылает его на
+  каждую отправку (`msg-<время>-<случайное>`); при ошибке связи повтор идёт с ТЕМ ЖЕ
+  ключом.
+* Повтор в окне **120 с** не создаёт второе сообщение. Дублем считается: тот же
+  `client_id` **или** тот же текст от того же автора с теми же вложениями (пробелы по
+  краям и сдвоенные пробелы не различаются). В ответ — тело ПЕРВОГО ответа и
+  `duplicate: true`.
+* Ответы: `201` — сообщение создано (`duplicate: false`), `200` — повтор
+  (`duplicate: true`, `message.id` прежний, карточка и лента не меняются), `400` —
+  пустой текст, `client_id` не строка/пустой/длиннее 120 знаков, `attach` не список,
+  `urgent` не bool; `403` — вложение вне разрешённых путей; `409` — комната в архиве;
+  `502` — сообщение записано, но ответ пуст.
+* Поля ответа: `message` (`ThreadItem`), `thread[]`, `routed_to`, `merged`,
+  `duplicate`, `client_id` (эхо ключа, если был), при наличии — `task_id`, `status`,
+  `revision`, `retry`. Заголовок `Location: /api/requests/{id}`.
+
+### W20.2 «Накопленные ответы» — `POST …/actions {action:"answers_resend"}`
+
+Второе нажатие в окне 120 с вторую карточку не создаёт: ответ `200` с прежним телом и
+`duplicate: true` (`sent`, `question_ids`, `task_id`, `at`, `request`). Ключ — состав
+отправляемого (вопросы и тексты ответов), поэтому новый ответ снова отправляется;
+`409 nothing_to_resend` — если отправлять нечего.
+
+### W20.3 `mountThread(container, ctx, {roomId, detail, rid, onSent})`
+
+Возвращает `{element, update(detail), focus(), destroy()}`.
+
+* Страница запроса монтирует блок ОДИН раз за визит и дальше зовёт `update(detail)`:
+  `update` пересобирает ленту (по подписи: id, время, длина текста) и, если сменился
+  статус, переключатели под полем. Поле ввода, кнопка «Отправить» и фокус остаются
+  ТЕМИ ЖЕ узлами — их не заменяют.
+* Место блока на странице помечено `data-keep-tree`, поле — `data-keep="thread-draft"`:
+  точечная правка страницы (`live-patch.js`) такое поддерево не заменяет и внутрь не
+  заходит. Это и есть исправление B-40: живая кнопка и живое поле всегда из одной
+  сборки.
+* Обработчик отправки берёт текст из ВИДИМОГО поля блока (а не из замыкания монтажа) —
+  защита на случай, если блок всё-таки окажется не в странице.
+* «Отправить» неактивна, пока поле пустое (пробелы не считаются текстом), и во время
+  отправки: подпись меняется на «Отправляется…», `aria-busy="true"`. Второй клик во
+  время отправки ничего не делает.
+* Ответ с `duplicate: true` показывает сообщение из ответа и подпись «Это сообщение уже
+  отправлено — второго не будет»; новых строк в ленте не появляется.
+
+### W20.4 Панель диктовки — `createPanel(...).update(state)`
+
+Кнопки («Стоп», «Отмена», «Распознать ещё раз», «Закрыть») создаются ОДИН раз на смену
+набора, а не на каждое обновление: набор задаётся фазой записи и доступностью повтора
+(`canRetry`, `retryLabel`). Таймер записи (250 мс) меняет только текст: время, подсказку,
+прогресс распознавания. Поэтому клик, у которого нажатие и отпускание попали в разные
+обновления, доходит до обработчика (B-42).
+
+### W20.5 Проверки в репозитории
+
+```
+python tools/probe_composer_rerender.py --port 8857   # 0 потерь отправок (Chromium + мок)
+python tools/probe_click_loss.py --port 8858          # 0 потерянных кликов (Chromium + мок)
+node --test tests/composer-send-once.test.mjs         # N отправок с перерисовками
+node --test tests/mic-panel-actions.test.mjs          # кнопки панели не пересоздаются
+python -m unittest tests.test_composer_idempotency    # 120 с, duplicate, ответы
+```
+
+Оба браузерных скрипта возвращают `0` только при нулевых потерях; `probe_click_loss.py`
+дополнительно проверяет чувствительность метода — на старой схеме (кнопка
+пересоздаётся каждые 250 мс) клики обязаны теряться.
+
+
 
 ## 7. Мок-сервер и фикстуры
 
@@ -1588,7 +1904,7 @@ python tests/test_mock_server.py            # unittest, сам поднимае�
 * Новый запрос с критиком: `queued → working (4 c) → reviewing (12 c, критик) → synthesizing (20 c, доработка) → done (35 c)` — две версии ответа. Без критика: `queued → working (4 c) → synthesizing (22 c) → done (30 c)` — одна версия. `GET /api/requests/{rid}` собирает ответ из фикстур с растущим `progress`.
 * Действия меняют состояние живого запроса: `decompose` → `working`, `critique` → `reviewing` (раунд +1), `revise` → `synthesizing` (новая версия). У статичных фикстур те же действия правят ответ в памяти, но дальнейшей эволюции нет.
 * `GET /api/rooms/{id}/candidates` отдаёт `fixtures/candidates_cafe.json` (2 карточки); `POST /api/adopt` привязывает кандидата и убирает его из списка (вторая карточка — с чужой меткой `room:fn`, `adopt` в `cafe` вернёт `409`).
-* Комнат две: `cafe` (команда исполнителей, критик `biz-critic`) и `fn` (`default`, lawyer/coder/surveyor, критика нет) — `/api/rooms/fn/...` работает полностью.
+* Комнат две: `cafe` (команда исполнителей, критик `team-critic`) и `fn` (`default`, lawyer/coder/surveyor, критика нет) — `/api/rooms/fn/...` работает полностью.
 * Сервер перезапускается без потери файлов — состояние только в памяти.
 * Проверки `Host`/`Origin` — как в §2 (те же коды и статусы), чтобы фронтенд сразу видел реальные 403.
 * Фикстуры — эталон форм; менять их можно только вместе с этим документом.
@@ -1612,6 +1928,822 @@ python tests/test_mock_server.py            # unittest, сам поднимае�
 | Журнал | `GET /api/rooms/{id}/journal` |
 | Палитра / поиск | `GET /api/search`, `POST /api/rooms/{id}/requests` |
 | Настройки | `GET /api/config`, `GET /api/health`, `PATCH /api/rooms/{id}` |
+
+## W20-ARTIFACTS — блок «Файлы» запроса (v1.1.0, WAVE20 §1.4; W26-D3 — переименован из «Артефактов»)
+
+Источник: B-43. Раньше блок собирался только из `metadata.artifacts` карточек: в настоящем
+запросе это 4 файла из 15, порядок — по порядку карточек, без даты и без «свежее свода».
+
+### W20.1 Что попадает в `artifacts[]`
+
+| источник | как ищется |
+|---|---|
+| метаданные карточек | `metadata.artifacts` карточек дерева — как раньше |
+| папка материалов запроса | папка проекта комнаты и её зеркало: подпапки, в названии которых есть id запроса, плюс папка, где уже лежат файлы из метаданных карточек |
+| содержимое папки материалов | файлы разрешённых типов на глубине ≤ 2 (`ARTIFACT_DEPTH`), включая подпапки |
+
+Ограничения: только внутри `config.room_roots` (общие корни + папка проекта комнаты + зеркало),
+не больше 200 элементов (`ARTIFACT_LIMIT`); запрещённые имена и типы отбрасываются; заметки
+запросов в зеркале (`Запросы/`) материалами не считаются; файлы с чужим id запроса в имени тоже.
+
+### W20.2 Поля и порядок
+
+* `mtime` — время изменения файла (секунды), `null` если файла нет; `size` — байты.
+* `group`: `final` — итоговые (в имени `итог|письмо|кратко|final|summary|letter`), `material` —
+  рабочие файлы, `service` — служебные `_*.json`, `_*.html`, `_*.log`. Явная `group` из
+  метаданных карточки важнее имени файла.
+* `folder` — относительная подпапка внутри папки материалов (`""` — файл лежит прямо в ней).
+* `newer_than_svod` — файл изменён позже последней версии свода (`synthesis.at`).
+* Порядок: `final` сначала, затем остальные по `mtime` от новых к старым (внутри группы — так же).
+
+### W20.3 Подпапки
+
+Все файлы одной подпапки возвращаются одним элементом:
+
+```
+{kind: "folder", title: "_ред2-копии", folder: "_ред2-копии", count: 2,
+ path: "<абсолютный путь подпапки>", mtime: int, group: "final"|"material"|"service",
+ newer_than_svod: bool, exists: true, size: null, state: "ok", items: [Artifact, …]}
+```
+
+Папка стоит там, где стоял её самый свежий файл; `group` папки — группа этого файла.
+Интерфейс рисует её свёрнутой группой (`<details>` со счётчиком), раскрытие запоминается
+на время сеанса.
+
+### W20.4 Ссылки внутри свода
+
+Markdown-ссылки на локальные файлы в тексте свода (`[письмо](C:/…/Письмо.docx)`) открываются
+в контексте комнаты, как кнопки блока файлов: «Просмотр» — `GET /api/file?path=…&room=…`,
+«Открыть»/«Показать в папке» — `POST /api/files/launch {path, room, mode}` (W26-D3;
+прежний адрес — `/api/artifacts/open`). Раньше клиент открывал
+`/api/file?path=…` без `room`, и сервер отвечал `403` на файлы папки проекта комнаты.
+
+## W20-PHASES — этапы проекта предлагает руководитель (v1.1.0, WAVE20 §1.7, F-2)
+
+Раздел описывает серверную часть пункта 20 (этапы проекта предлагаются автоматически).
+Интерфейс плашки и редактора — пакет FC (`docs/API.md` здесь только про данные).
+
+### W20.1 Поля комнаты
+
+| Поле | Тип | Что это |
+|---|---|---|
+| `phases` | `[{id, title}]` | этапы комнаты — как раньше (W17-R §1). Правит **только человек** в настройках комнаты: добавить, переименовать, переставить, удалить. `PATCH /api/rooms/{id} {phases}` |
+| `phases_proposal` | `{at, by, state, items, signature, source, decided_at?, accepted_ids?}` \| `null` | предложение этапов от руководителя (см. W20.2). **Не** редактируется через `PATCH` комнаты: его меняют маршруты `phases/*` и приём `metadata` |
+| `phases_proposal_text` | `str` | короткая подпись состояния для сводки: «Руководитель предлагает 4 этапа: Идея, Запуск, Проверка, Продажи», «Этапы приняты (4 этапа)», «Предложение этапов отклонено (3 этапа)». Пустая строка — предложения нет |
+
+`state` — `proposed` (ждёт решения), `accepted` (принято), `rejected` (отклонено).
+`items` — `[{id, title, description}]` в том порядке, в каком предложил руководитель
+(`id` выводится из названия, если руководитель его не прислал; `description` — одна строка).
+`signature` — отпечаток списка (id + название): по нему приложение понимает, что пришло
+то же самое предложение. `source` — `root_id` карточки, из которой пришло предложение,
+`by` — профиль, кто предложил. `decided_at` и `accepted_ids` появляются после решения.
+
+Где видно:
+
+* карточка комнаты (`GET /api/rooms/{id}`) и `GET /api/rooms/summary` — оба поля;
+* карта проекта (`GET /api/rooms/{id}/roadmap`) — `phases_proposal` и `proposal_text`;
+  `phases[]` берутся из самой комнаты, поэтому принятые этапы видны **сразу** после решения;
+* «От вас нужно» (`GET /api/rooms/{id}/backlog`) — `proposal_item` (та же строка, что в `items[0]`,
+  пока предложение ждёт решения) с подсказкой «что будет, если принять»; после решения —
+  `null`, строки в `items` нет.
+
+### W20.2 Как приходит предложение (`metadata.phases_proposal`)
+
+Руководитель пишет в metadata **любой** своей карточки:
+
+```json
+"phases_proposal": [
+  {"title": "Идея и вывеска", "description": "что проверяем и каким способом"},
+  {"title": "Проверка спроса", "description": "мини-опрос у стойки"}
+]
+```
+
+Приложение (`ingest.apply_phases_from_detail`) кладёт это в комнату с `state="proposed"`
+и **не трогает** `phases`:
+
+1. предложение совпало с текущими этапами комнаты → ничего не сохраняется (`same_as_phases`):
+   показывать нечего, этапы уже такие;
+2. то же предложение уже лежит (`signature` совпал) → ничего не меняется: повторное чтение
+   карточки **не сбрасывает** решение человека, в том числе «отклонено»;
+3. иначе — новое предложение с `state="proposed"`, `at` (время карточки), `by`, `source`;
+   в журнал комнаты пишется событие `phases_proposed`.
+
+Приём устойчив к мусору: пустые заголовки, дубли и лишние пункты отбрасываются с
+предупреждениями в `warnings` результата ingest, а не ошибкой приёма ответа. Больше 24
+этапов не принимается (как и в `PATCH phases`).
+
+### W20.3 `POST /api/rooms/{id}/phases/proposal`
+
+Тело: `{action: "accept" | "accept_selected" | "reject", ids?: ["<id этапа>", …]}`.
+
+| action | Что делает |
+|---|---|
+| `accept` | дописывает **все** этапы предложения в конец `phases` |
+| `accept_selected` | дописывает только перечисленные `ids` (обязательны; в порядке предложения) |
+| `reject` | `phases` не меняются, предложение получает `state="rejected"` |
+
+Правила, которые нельзя нарушать:
+
+* существующие этапы человека не переименовываются и не переставляются: новый этап ставится
+  **в конец**; совпавший по `id` **или по названию** (без учёта регистра, ё/е, знаков
+  препинания и продолжения названия целым словом — «Проверка спроса» ↔ «Проверка спроса, цен
+  и меню») пропускается, название человека остаётся;
+* оба поля (`phases` и `phases_proposal`) меняются одним движением под замком реестра
+  (`rooms.set_phases_state`), поэтому параллельная правка этапов не теряется;
+* если человек сам собрал в редакторе ровно предложенные этапы, предложение автоматически
+  становится `accepted` (`auto=true` в записи): плашка не висит зря.
+
+Ответ `200`:
+
+```json
+{"ok": true, "action": "accept", "changed": true, "state": "accepted",
+ "phases": [{"id": "ideya", "title": "Идея и вывеска"}],
+ "proposal": {"at": 1770000000, "by": "team-director", "state": "accepted", "items": […],
+              "decided_at": 1770000500, "accepted_ids": ["ideya"], "signature": "…", "source": "t_…"},
+ "added": ["ideya"], "skipped": [], "text": "Этапы приняты (1 этап)",
+ "room": {…карточка комнаты…}}
+```
+
+Ошибки:
+
+| Код | `detail.reason` | Когда |
+|---|---|---|
+| `400` | `field: "action"` | действия нет в списке |
+| `400` | `field: "ids"` | `accept_selected` без `ids`, `ids` не список строк или в предложении нет таких этапов (`detail.unknown`) |
+| `409` | `no_proposal` | предложения нет вовсе |
+| `409` | `already_decided` | предложение уже принято/отклонено, а просят противоположное (повтор **того же** действия — `200` с `changed:false`) |
+| `409` | `archived` | комната в архиве |
+
+### W20.4 `POST /api/rooms/{id}/phases/propose`
+
+Тело: `{note?: "<что учесть>"}` (≤ 2000 знаков). Ставит руководителю карточку
+«Какие этапы у проекта»: в ней просят только список этапов в формате `metadata.phases_proposal`
+и прямо запрещают начинать работу по проекту. В контекст карточки попадают уже заданные этапы
+комнаты и правило «эти этапы человек правил — не переписывай».
+
+Ответ `201`: `{ok, action:"phases_propose", root_id, title, request, warning}`.
+`409` с `reason:"proposal_pending"` — пока предыдущее предложение ждёт решения (и `400` на
+пояснение не строкой или длиннее 2000 знаков).
+
+### W20.5 Журнал и наблюдатель
+
+* `phases_proposed` — «Руководитель предложил этапы проекта: …» (при приёме metadata);
+* `phases_decided` — «Этапы проекта приняты: …» / «… приняты выбранные: …» / «Предложение
+  этапов отклонено: …» (при решении человека).
+* Наблюдатель ничего не запускает: карточку «предложи этапы» создаёт только кнопка, а модели
+  стартует обычный диспетчер, как у любого запроса.
+
+### W20.6 Интерфейс (пакет FC)
+
+Серверных изменений нет: интерфейс пользуется теми же маршрутами.
+
+| Действие в интерфейсе | Запрос |
+|---|---|
+| «Принять все» / «Принять выбранные» / «Отклонить» на плашке карты и в строке «От вас нужно» | `POST /api/rooms/{id}/phases/proposal {action, ids?}` |
+| «Предложить этапы» (карта, пустое состояние) | `POST /api/rooms/{id}/phases/propose {note?}`; `409 proposal_pending` — подсказка «сначала примите или отклоните», второй карточки нет |
+| «Сохранить этапы» в окне редактора и «Сохранить» в настройках комнаты (вкладка «Проект») | `PATCH /api/rooms/{id} {phases}` — этапы остаются свойством комнаты |
+| Открыть предложение и список с описаниями | `GET /api/rooms/{id}/roadmap` (`phases`, `phases_proposal`, `proposal_text`) |
+
+Редактор (`web/js/views/phases-editor.js`) — один на приложение: окно «Этапы проекта» с карты,
+встроенный блок на вкладке «Проект» настроек комнаты и строка предложения в «От вас нужно» берут из
+него и плашку, и список, и решения. «Изменить» на плашке открывает тот же редактор с блоком
+предложенных этапов («Добавить выбранные / Добавить все», дубли по названию пропускаются).
+Если человек собрал в редакторе ровно предложенные этапы, сервер сам закрывает предложение
+(`reconcile`) — плашка не висит зря. Демо-мок ведёт себя так же: `tools/mock_write.py`
+принимает `phases` в `PATCH` и пересчитывает предложение, а карта в `tools/mock_read.py`
+берёт этапы комнаты (правки, порядок и удаления видны сразу).
+
+## W20-DECQ — решения и вопросы: снятие, «устарело», вопросы из сообщений (v1.1.0, WAVE20 §1.2, B-37/B-38/B-41)
+
+Пакет D1. Описывает:
+статусы решения `dismissed`/`superseded`, действия `decision dismiss|restore` и `question_dismiss`,
+регистрацию вопросов руководителя из текста комментариев, метку `asks` у сообщения в ленте,
+состояние ответа `replied_text` и счётчики «Нужен ваш ответ» с новыми статусами.
+
+### W20-DECQ.1 Статусы решения
+
+| Статус | Подпись (`status_label`) | `open` | `needs_answer` | Откуда |
+|---|---|---|---|---|
+| `proposed` | `предложено` | `true` | `true` | `metadata.decisions[].status` |
+| `accepted` | `принято вами` / `принято руководителем` | `false` | `false` | действие `accept` |
+| `rejected` | `отклонено вами` / `отклонено руководителем` | `false` | `false` | действие `reject` |
+| `discuss` | `обсуждаем с руководителем` | `true` | `true` | действие `discuss` |
+| `dismissed` | `снято — не актуально` | `false` | `false` | действие `dismiss` (B-37) |
+| `superseded` | `устарело` | `false` | `false` | `metadata.decisions_retracted` или отсутствие в новой версии свода (B-37) |
+
+Элемент `decisions[]` в `GET /api/requests/{id}` дополнительно несёт:
+
+* `status_muted: bool` — показывать серым («снято»/«устарело»);
+* `previous_status` — прежний статус, если он сменился этим действием;
+* `can_dismiss`, `can_restore` — какие кнопки показывать;
+* `dismissed_at` — когда сняли;
+* `superseded`, `superseded_by` (версия свода), `superseded_at`, `superseded_why`
+  (`retracted` — руководитель отозвал, `absent` — решения нет в новой версии свода);
+* `needs_answer: bool` — ждёт ли решение слова владельца (единственный признак для «Нужен ваш ответ» и счётчиков);
+* `muted_actions: [{action, label, hint, available}]` — «Снять — неактуально» / «Вернуть».
+  Три привычных действия остаются в `actions[]` без изменений (обратная совместимость);
+* `carried: true`, `from_version: N` (W21-S5) — решение пришло из прежней версии: действующая
+  карточка руководителя его не повторяла, но список без `svod.decisions_full` — дополнение,
+  поэтому решение продолжает действовать.
+
+`status_source`: `user` — действие владельца, `leader` — руководитель закрыл/отозвал решение сам.
+
+Счётчики: `answers`/`decisions` в детали и бэклоге используют `needs_answer`; снятые и устаревшие
+решения не попадают в «Нужен ваш ответ» и в `counts.open`, но остаются в списке «Решения»
+(`decision_summary`: `{total, open, closed, dismissed, superseded, muted}`).
+
+### W20-DECQ.2 Действие `POST /api/requests/{id}/actions {action:"decision", decision:"dismiss"|"restore", decision_id, text?}`
+
+* `dismiss` — «Снять — неактуально»: `status=dismissed`, уходит из «Нужен ваш ответ», в списке
+  «Решения» показывается серым с возвратом. `restore` — «Вернуть»: снова `proposed` (или `discuss`,
+  если так и было). `accept`/`reject`/`discuss` работают как раньше.
+* Ответ `200`: `{ok, action:"decision", decision_id, decision, message, action_label, status,
+  status_label, status_hint, open, muted, decisions_summary, request}`.
+* `400` — неизвестное `decision` (в `allowed` перечислены все пять), пустой/NUL текст, текст > 2000 знаков;
+  `404` — решения с таким `decision_id` нет в запросе.
+* Побочные эффекты: запись в реестре ответов комнаты (`answers[d_id]`, `kind="decision"`,
+  `action`, `history:[{action, at, text}]`) и строка в ветке
+  `[Михаил · решение d_x «текст»] Снять — неактуально: …` / `… Вернуть`. **Карточка руководителю
+  не создаётся**: уборка списка не должна будить агента. Решает ПОСЛЕДНЕЕ действие пользователя
+  (`history`), поэтому «снял → принял» = `accepted`.
+
+### W20-DECQ.3 Автоматическое «устарело» (`superseded`)
+
+Источник — история версий свода, собираемая при чтении (`answers.decision_versions`,
+`answers.superseded_decisions`). Версия карточки берётся из `metadata.svod.version`; если её нет —
+порядковый номер карточки с решениями по времени завершения.
+
+* `metadata.decisions_retracted:["d_…"]` в ЛЮБОЙ карточке руководителя → решение устарело с этой версии
+  (`why:"retracted"`);
+* решение было в версии N и отсутствует в версии M > N, у которой есть непустой `metadata.decisions`
+  **и заявлен полный список** (`metadata.svod.decisions_full: true`, см. «W21-SVOD.9») → `why:"absent"`,
+  `superseded_by:M`. Без флага список решений карточки — дополнение: прежние решения не гаснут;
+* карточка с одним отзывом и без `decisions` НЕ объявляет устаревшими все прежние решения;
+* решение, снова попавшее в более позднюю полную версию, перестаёт быть «исчезнувшим» (последнее слово
+  руководителя сильнее прежней отметки); явный отзыв (`retracted`) так не снимается;
+* устаревшее решение, которого уже нет в действующем списке, добавляется в `decisions[]` отдельным
+  элементом со статусом `superseded` (чтобы было видно, что именно устарело).
+
+Данные карточек и реестра не переписываются: всё считается наложением при чтении.
+
+### W20-DECQ.4 Вопросы руководителя из комментариев (B-38)
+
+`GET /api/requests/{id}` → `open_questions[]` пополняется вопросами из ленты запроса:
+
+| Поле | Значение |
+|---|---|
+| `id` | `cq_<8hex>` — стабильный id (sha1 от текста, id комментария и номера в сообщении; между чтениями не меняется) |
+| `source` | `comment` — строка `[Руководитель · вопрос] текст`; `candidate` — пункт списка под заголовком; `card` — из `metadata.open_questions` |
+| `comment_id` | id элемента ленты (`c<номер>`), в котором вопрос задан |
+| `at` | время сообщения |
+| `kind` | `question`; у строк `[Руководитель · решение]` — `decision` (id `cd_<8hex>`) |
+| `dismissed` | `true`, если владелец нажал «Это не вопрос» |
+| `needs_answer` | `true`, пока вопрос ждёт ответа (снятые и `replied_text` — `false`) |
+
+Метки: `[Руководитель · вопрос]`, `[Руководитель · вопрос к Михаилу]`, `[Руководитель · вопросы]`
+(та же семья — `[Руководитель · решение]`/`решения`/`предложение`). Метка читается только в начале
+сообщения.
+
+**Кто имеет право «задать вопрос» (W21-L1, уточнение авторства).**
+
+* **кандидаты** (пункты под «Что решить…») — ТОЛЬКО из сообщений руководителя комнаты
+  (`room.orchestrator`). Реплика исполнителя или критика со списком «что решить» вопросов не даёт:
+  это чужой список задач, адресованный не владельцу;
+* **комната без руководителя** (допустимое состояние) — свободный текст вопросов не порождает
+  вовсе; свод при этом не обновляется сам (`synthesis.live.reason = "no_leader"`);
+* **явная метка** `[Руководитель · вопрос] …` — от ЛЮБОГО автора-агента, в том числе в комнате без
+  руководителя: её ставят осознанно, двусмысленности нет;
+* `[Руководитель · решение] …` — по-прежнему только от руководителя комнаты (в комнате без
+  руководителя — от любого агента).
+
+Кандидаты (`candidate`): нумерованные (`1)`, `1.`) и маркированные (`-`, `–`, `•`, `*`) пункты,
+идущие непосредственно под заголовком, который начинается с «Что решить», «Что нужно решить»,
+«Нужен ваш ответ», «Вопросы к вам/тебе», «Вопросы». Пустая строка после пунктов, новая проза или
+следующий заголовок список заканчивают; пункты длиннее 400 знаков отбрасываются; максимум 20 пунктов
+на сообщение. Дубли по нормализованному тексту схлопываются.
+
+У элемента ленты `thread[]` от руководителя с зарегистрированными вопросами появляется
+`asks:[id]` — по нему интерфейс рисует «ждёт ваших ответов: N → справа». Сообщения без вопросов
+поля не получают; снятые вопросы из `asks` исключаются.
+
+На вопрос из комментария можно ответить обычным действием `{action:"answer", question_id:"cq_…"}`
+и напомнить о реакции (`answer_remind`): поиск вопроса идёт сначала по карточкам, затем по ленте.
+Ответ на снятый вопрос — `409` (`detail.question_id`).
+
+### W20-DECQ.5 Действие `POST /api/requests/{id}/actions {action:"question_dismiss", question_id}`
+
+«Это не вопрос» — для вопроса из карточки и для кандидата/метки из комментария.
+
+* Ответ `200`: `{ok, action:"question_dismiss", question_id, question, answer_state:"dismissed",
+  answer_label:"это не вопрос", dismissed:true, needs_answer:false, request}`;
+* `400` — некорректный id; `404` — вопроса нет ни в карточках, ни в ленте;
+* запись в реестре ответов: `answers[cq_…] = {kind:"question", dismissed:true, status:"dismissed",
+  text:"", at, question_text, source}`; данные запроса не меняются, отметка ставится при чтении;
+* следствие: вопрос уходит из «Нужен ваш ответ», из счётчиков и из `asks`, пункт бэклога получает
+  `status="dismissed"` и `answer_state="dismissed"`.
+
+### W20-DECQ.6 `answer_state = replied_text` (B-41)
+
+Когда ответ владельца записан, а руководитель ответил **в ленте**, но не по формату (нет метки
+`[Руководитель · реакция на ответ …]` и нет `outcome`), вопрос получает:
+
+* `answer_state: "replied_text"`, `answer_label: "руководитель ответил текстом — посмотрите в ленте"`,
+  `answer_hint`: пояснение, что ответ есть в диалоге;
+* `answered_text_only: true`, `answered: true`, `leader_pending: false`, `needs_answer: false`;
+* `reaction: {status:"replied_text", text, at, implicit:true, unparsed:true}` — текст, который написал
+  руководитель.
+
+Признаки «ответа по делу» (все — только от руководителя комнаты и только после ответа):
+упоминание id вопроса; начало сообщения со слова реакции («Принято», «Учтено», «Согласен», «Понял»,
+«Работа пересмотрена», «Ничего менять» и т. п.); перекрытие текста вопроса двумя значимыми основами
+слов. Служебные метки (`[Михаил · …]`, `[Руководитель · …]`, `[Руководитель → …]`) реакцией не считаются.
+Если исход распознан (`metadata.reaction.outcome`, метка `outcome=…` или `[Руководитель · реакция на
+ответ q_x]`) — статус обычный: `received|applied|no_change`, и `replied_text` не появляется.
+
+### W20-DECQ.7 Обратная совместимость
+
+* старые записи реестра без `history`/`dismissed` читаются как раньше (`apply_decision`,
+  `state_of`: пустая запись → `open`, `sent` → `sent`);
+* `actions[]` решения по-прежнему содержит ровно `accept|reject|discuss` — новые кнопки в
+  `muted_actions` и флагах `can_dismiss`/`can_restore`;
+* вопросы из карточек получают `source:"card"`; отсутствие `source` трактуется как `card`;
+* `replied_text` появляется только там, где реакция была бы `sent`, — вопросы без ответа владельца
+  не меняются.
+
+## W20-SVOD — «живой свод»: версия растёт сама (v1.1.0, WAVE20 §1.1, B-36)
+
+Раньше новая версия свода рождалась только от карточки, которую ставило приложение по кнопке
+«Доработать с учётом ответов». Работа, сделанная руководителем по сообщению в диалоге, в свод не
+попадала: версия оставалась прежней, и интерфейс молчал. Теперь свод обновляется **сам**: событие →
+«тишина» → карточка обновления → версия N+1.
+
+### W20-SVOD.1 Поля комнаты
+
+| Поле | Тип | По умолчанию | Допустимо |
+|---|---|---|---|
+| `auto_svod` | bool | `true` | — |
+| `auto_svod_quiet_s` | int | `180` | 30…3600 |
+| `auto_svod_min_gap_s` | int | `600` | 60…86400 |
+
+Принимаются в `PATCH /api/rooms/{id}` (неизвестное значение → `400 bad_request` с `field` и
+границами `min`/`max`), возвращаются в карточке комнаты. Там же готовый блок `svod` для интерфейса:
+
+```json
+{"auto_svod": true, "auto_svod_quiet_s": 180, "auto_svod_min_gap_s": 600,
+ "auto_svod_label": "Включено: свод обновляется сам",
+ "quiet_label": "не раньше чем через 3 мин тишины", "gap_label": "не чаще раза в 10 мин"}
+```
+
+У комнат, созданных раньше, полей нет — читаются как «включено, 3 минуты, 10 минут», то есть
+живой свод работает и у старых комнат.
+
+### W20-SVOD.2 `synthesis.live` в `GET /api/requests/{id}`
+
+```json
+{"state": "pending", "since_version": 4, "behind": {"answers": 2, "notes": 1, "decisions": 0, "cards": 0},
+ "last_event_at": 1793164900, "next_update_at": 1793165080, "auto": true,
+ "text": "Отстаёт: 2 ответа и 1 сообщение не учтены — обновится в 14:05"}
+```
+
+| `state` | Когда | `text` |
+|---|---|---|
+| `fresh` | после последней версии значимых событий нет | «Актуально на 13:48 · версия 4 · учтено: 9 ответов, 3 сообщения, 2 решения» |
+| `pending` | события есть, ждём «тишину» и/или потолок частоты | «Отстаёт: 2 ответа и 1 сообщение не учтены — обновится в 14:05» |
+| `updating` | карточка обновления уже в работе | «Обновляется… версия 5» |
+| `stale` | события есть, автообновление выключено или невозможно | «Отстаёт: 2 ответа не учтены — автообновление свода выключено, обновите вручную» |
+| `off` | у запроса ещё нет свода | «Свод ещё не выпущен — появится после первого ответа команды.» |
+
+С версии 1.2.0 добавлено состояние `waiting_cards` (свод ждёт завершения работы команды) —
+см. «W21-SVOD.2».
+
+`behind` — сколько **не учтено** показанной версией: `answers` (ответы на вопросы), `notes`
+(сообщения владельца в диалоге), `decisions` (решения), `cards` (завершённые карточки работы).
+
+**Что считается событием:** ответ на вопрос, сообщение владельца в диалоге, решение и завершённая
+карточка работы (в том числе карточка руководителя, но не его итоговая версия свода).
+**Что НЕ считается** (защита от зацикливания): сама карточка обновления свода, карточка критика,
+ручная доработка, карточка «Уточнение от Михаила» (её содержимое уже учтено как сообщение) и
+корневая карточка-источник версии. Поэтому новая версия не порождает ещё одну.
+
+`last_event_at` — время последнего события (`null`, если событий нет). `next_update_at` — когда
+свод обновится: `max(last_event_at + quiet_s, version_at + min_gap_s)`; `null` в состояниях
+`fresh`, `updating`, `off` и `stale`, а также если расчётное время уже позади (B-49: прошедшее время
+не обещаем — в `text` тогда «обновится в ближайшие минуты», см. «W21-SVOD.7»).
+
+### W20-SVOD.3 `delivery` у сообщений в `thread[]`
+
+Каждый элемент ленты `thread[]` с `kind:"message"` (автор — человек) получает:
+
+```json
+{"state": "applied", "version": 4, "cards": ["t_c0ffee01"], "reason": "",
+ "text": "Учтено в версии 4"}
+```
+
+| `state` | Значение | `text` |
+|---|---|---|
+| `waiting` | ждёт обновления свода | «Ждёт обновления свода — в 14:05» |
+| `working` | обновление уже идёт | «В работе: 1 карточка» (карточки — в `cards`) |
+| `applied` | учтено версией | «Учтено в версии 4» |
+| `applied_nochange` | учтено, но менять в своде было нечего | «Учтено, менять нечего» |
+| `declined` | не будет учтено | «Не учтено — автообновление свода выключено, нажмите «Обновить сейчас»» |
+
+`reason` — `auto_off`, `no_leader`, `no_svod` (у `declined`/`waiting`); `version` — номер версии,
+которая учла сообщение, `cards` — карточки этой версии (или идущего обновления).
+Комментарии руководителя и служебные события `delivery` не получают.
+
+### W20-SVOD.4 `POST /api/requests/{id}/actions {action:"svod_refresh"}`
+
+Кнопка «Обновить сейчас»: версия свода по запросу пользователя, без ожидания «тишины».
+`note` (необязательно, ≤ 200 000 знаков) уходит в карточку как «замечание Михаила».
+
+* `200` → `{ok:true, action:"svod_refresh", card_id, behind:{…}}`;
+* `409` → `{code:"conflict", message:"Обновление свода уже идёт — дождитесь новой версии.",
+  detail.reason:"updating"}` — второй раз не запускаем;
+* `409`, если свода ещё нет (`detail.reason:"no_svod"`) или в комнате не выбран руководитель
+  (`no_leader`).
+
+Карточка создаётся тем же путём, что автоматическая и что кнопка «Доработать с учётом ответов»:
+`engine_write.create_child_card` + `contract.build_revision_body` + тот же дайджест «что появилось
+после версии». Приложение модели не запускает — карточку берёт обычный движок.
+
+### W20-SVOD.5 Автоматическая карточка обновления
+
+* Ставится сторожем (`server/watcher.py`, шаг после «оценки работы»), не чаще
+  `auto_svod_min_gap_s` и не раньше «тишины» `auto_svod_quiet_s`.
+* **«Льготный старт»:** события раньше момента включения автообновления событий свода не
+  образуют. Момент хранится в `<каталог состояния>/svod_started.json` (`started_at`; файла нет —
+  пишется текущее время при первом запуске версии). Поэтому после переноса в боевое дерево
+  старые ответы и сообщения **не** поднимают доработки и не показываются как «Отстаёт»;
+  перезапуск сервера порог не сдвигает. Кнопка «Обновить сейчас» видит все события.
+* **Лимит частоты:** не больше `MAX_CARDS_PER_HOUR = 6` автоматических карточек в час на
+  комнату (в том же файле, `launches`); седьмая не ставится, сторож возвращает
+  `{action:"wait", reason:"hour_limit"}`. Ручной `svod_refresh` лимит не соблюдает — это действие
+  пользователя.
+* Заголовок — «Обновление свода (авто)», исполнитель — руководитель комнаты, родитель — карточка
+  последней версии (или корень).
+* Заметка — «Автообновление: учтены события после версии — 2 ответа и 1 сообщение. Что учесть:
+  ответ на вопрос; сообщение.»
+* Идемпотентность: в реестре запроса хранится отпечаток набора событий (`svod_event_key`) и время
+  запуска (`svod_launched_at`). Тот же набор событий второй карточки не создаёт; в ключ
+  идемпотентности карточки входит тот же отпечаток (`svod-<rid>-<ключ>`).
+* В `history[]` такая версия помечена `auto: true` (её поставило приложение), в `reason` —
+  `auto`.
+
+### W20-SVOD.6 Версия от руководителя: `metadata.svod`
+
+Руководитель публикует свою версию итоговой карточкой:
+
+```json
+{"svod": {"note": "учли замечание про сроки поставки", "changes": ["сроки поставки", "состав меню"]}}
+```
+
+Приложение принимает такую карточку как следующую версию свода: `history[].kind = "leader"`,
+`source_task` — id этой карточки, `note` — из `note` (принимается и старое имя `version_note`),
+`changes` — из `changes`. Текст версии — свод этой карточки (`summary`).
+
+### W20-SVOD.7 Контракт руководителя
+
+В `КОМНАТА-КОНТРАКТ` (и в `docs/AGENT-GUIDE.md`) добавлено правило: свод обновляет **приложение**;
+руководитель работает через итоговую карточку и `metadata.svod`; советовать пользователю
+«переоткрыть», «пере-завершить» или «закрыть-открыть» корень **запрещено** — такого способа нет.
+Формулировки проверяются тестом `tests/test_svod_live.py` (`ContractTest`).
+
+### W20-SVOD.8 Совместимость
+
+* `synthesis.live` и `delivery` — **добавленные** поля; старые клиенты их просто не читают.
+* `history[].kind` получает новое значение `leader`; `SynthesisVersion.auto` появляется только у
+  автоматических версий.
+* У комнат без полей `auto_svod*` действуют значения по умолчанию — данные не переписываются.
+* Демо-сервер считает то же самое на лету (`tools/mock_versions.py`, `apply_svod_live`), включая
+  ответ на кнопку «Обновить сейчас».
+
+## W21-SVOD — живой свод: ответы вперёд, ожидание команды, «остывание» (v1.2.0, WAVE21 §2 S2, B-45/B-46/B-47)
+
+Три жалобы 11.11 и остатки ревью волны 1. Контракт §1.1 волны 20 не отменяется — меняются правила
+«когда пора», добавляется одно состояние и два `reason`.
+
+### W21-SVOD.1 Ответ на вопрос — приоритетное событие (B-45)
+
+Ответ на вопрос руководителя ждёт **60 секунд** «тишины» вместо `auto_svod_quiet_s`, и **потолок
+частоты** (`auto_svod_min_gap_s`) такую доработку не задерживает: человек уже ответил, руководителю
+нужно учесть ответ, а не выдерживать паузу. Лимит `MAX_CARDS_PER_HOUR = 6` карточек в час остаётся
+для всех.
+
+* «Приоритет» — только когда **последнее** событие набора — ответ (`kind:"answer"`). Если после
+  ответа пришло сообщение, действуют обычные правила: последнее слово снова за сообщением.
+* Если комната настроена на «тишину» короче минуты (`auto_svod_quiet_s < 60`), берётся настройка
+  комнаты — ответ не может ждать дольше неё.
+* `next_update_at` считается так: `last_event_at + quiet`, где `quiet = min(auto_svod_quiet_s, 60)`
+  для ответа и `auto_svod_quiet_s` для остальных; затем для остальных событий —
+  `max(…, version_at + auto_svod_min_gap_s)`, для ответа — без этого ограничения.
+* Проверки: `tests/test_svod_live.py` (`AnswersPriorityTest`, `AnswersPriorityLimitTest`).
+
+### W21-SVOD.2 `waiting_cards` — «обновится после завершения работы команды» (B-46)
+
+Карточка обновления **не ставится**, пока на запросе есть карточки команды в статусах
+`triage|todo|ready|running|review|scheduled` (или `blocked`, если это ожидание зависимости). Их ведут
+руководитель и исполнители: собранный сейчас свод вышел бы устаревшим в ту же минуту.
+
+```json
+{"state": "waiting_cards", "since_version": 5, "behind": {"answers": 0, "notes": 1, "decisions": 0, "cards": 0},
+ "last_event_at": 1793164900, "next_update_at": null, "auto": true,
+ "text": "Обновится после завершения работы команды"}
+```
+
+* `next_update_at` — `null`: точное время неизвестно, оно зависит от команды (кнопка «Обновить
+  сейчас» работает: это действие человека).
+* **Не держат** свод: сами карточки обновления (иначе свод ждал бы сам себя), карточки-сообщения
+  «Уточнение от Михаила» (их содержимое уже в диалоге) и карточки, которые ждут человека
+  (`blocked` с вопросом, `needs_human:true`) — иначе ожидание было бы вечным, пока Михаил не
+  ответит.
+* В `plan()` это `{action:"wait", reason:"waiting_cards"}`; в `delivery` сообщений — «Ждёт
+  завершения работы команды» (`reason:"waiting_cards"`).
+* Полный список состояний `synthesis.live` теперь: `fresh`, `pending`, `waiting_cards`, `updating`,
+  `stale`, `off`.
+* Проверки: `WaitingCardsTest` (цепочка из трёх карточек, «ждёт человека», карточка-сообщение).
+
+**Потолок ожидания (W21-REV2).** Карточка команды, которая держит свод дольше **двух часов**
+(`BUSY_MAX_S = 7200`), свод больше не держит: в дереве нет сердцебиений, и брошенная карточка
+«в работе» иначе останавливала бы обновление навсегда. Время считается по `started_at` карточки и
+времени её запусков (`runs[]`); если времени нет вовсе, карточка считается свежей (доказать
+«зависла» нельзя) — и ждём, как раньше. При срабатывании потолка:
+
+* `live.state` уже `pending`, `text` = «Отстаёт: … — работа команды идёт дольше двух часов,
+  обновлю в 14:20» (причина названа, иначе это выглядело бы обычной «тишиной»);
+* в заметке карточки обновления — «Собрано, не дожидаясь карточек (работа команды идёт дольше двух
+  часов): «…»»;
+* `plan()` отдаёт `stalled:[id…]` рядом с `action:"create"`.
+* Проверки: `WaitingCardsCeilingTest`.
+
+### W21-SVOD.3 Снятие и возврат решения — не событие свода (B-47)
+
+Строки ветки `[Михаил · решение d_… «…»] Снять — неактуально` и `… Вернуть` **событием не
+считаются**: они меняют только список решений (сам статус виден при чтении), а автообновление из-за
+уборки списка будило руководителя (в боевых данных — карточка `t_eb947e05`).
+
+* В ленте у такой строки `svod_event:false` и `decision_action:"dismiss"|"restore"`.
+* `delivery` у неё — `{state:"applied_nochange", reason:"decision_status", text:"Учтено, менять
+  нечего"}`.
+* Ответы на решения (`Принять`, `Отклонить`, `Обсудить`) — по-прежнему сообщения владельца и событие
+  свода.
+* Проверки: `DismissNotEventTest` (снятие, возврат, «Принять» всё ещё считается).
+
+### W21-SVOD.4 «Остывание» после неудачной карточки обновления
+
+Если карточка обновления упала, ушла в таймаут или `blocked`, сторож больше не пробует на каждом
+тике: ожидание растёт **10 → 20 → 40 минут** (`600 · 2^(n−1)`), но не больше **двух часов**.
+
+* В `live` это `state:"pending"`, `text:"Обновление не удалось — повтор в 14:40, кнопка «Обновить
+  сейчас» работает"`, `next_update_at` — момент повтора.
+* В `plan()` — `{action:"wait", reason:"cooldown"}`.
+* Упавшая карточка больше не выглядит как «Обновляется…» (раньше `updating` висело вечно, потому что
+  статус `failed` не закрытый).
+* Повтор после «остывания» разрешён даже на том же наборе событий (`svod_event_key` тот же) — иначе
+  одна неудача блокировала бы свод навсегда.
+* После `MAX_AUTO_RETRIES = 5` попыток подряд автоматика останавливается: `state:"stale"`,
+  `text:"… — обновление не удалось несколько раз, нажмите «Обновить сейчас»"`, `reason:"retry_limit"`.
+  Кнопка «Обновить сейчас» работает в любой момент, в том числе во время «остывания».
+* Проверки: `CooldownTest`.
+
+### W21-SVOD.5 Если отметку о старте сохранить нельзя — не молчим
+
+«Льготный старт» (`<каталог состояния>/svod_started.json`) — единственное место, где помнится момент
+включения автообновления. Если записать его нельзя (нет каталога, нет прав, файл нечитаем), раньше
+это происходило молча и автообновление фактически не работало.
+
+* `svod_live.state_problem(cfg)` → `""` / `"no_state_dir"` / `"unreadable"`.
+* Сторож пишет об этом в журнал **не чаще раза в час на комнату** (`log_problem`, шаг 7 `tick_once`).
+* `live` в этом случае `state:"stale"`, `text:"Отстаёт: … — автообновление свода не может сохранить
+  отметку (…), нажмите «Обновить сейчас»"`.
+* Проверки: `StateProblemTest`.
+
+### W21-SVOD.6 Демо-мок
+
+`tools/mock_versions.py` считает то же самое на лету (`waiting_cards`, минутная «тишина» после
+ответа, `delivery` «Ждёт завершения работы команды»). «Льготный старт» в демо включается явно:
+
+```
+python tools/mock_server.py --demo-grace        # или TEAMROOM_DEMO_GRACE=1
+```
+
+Тогда всё, что было в данных на момент запуска демо, получает подпись «Не учтено — написано до
+включения автообновления; «Обновить сейчас» учтёт вручную» (`delivery.reason = "grace_start"`).
+
+### W21-SVOD.7 Версия свода по завершению карточки приложения (B-49)
+
+**Симптом на боевом (12.11).** Три карточки «Обновление свода (авто)» подряд завершились
+`outcome=completed`, но в `task_runs.metadata` не было ключа `svod` (руководитель-модель забыл поле).
+Приложение такие карточки версией не признавало: `behind` не обнулялся, `next_update_at` оставался в
+прошлом (страница обещала «обновится в 11:47» через 18 часов), а ключ идемпотентности на том же
+наборе событий блокировал новую карточку. Три запуска агента ушли впустую.
+
+**Правило.** Карточка обновления, которую поставило ПРИЛОЖЕНИЕ, — новая версия свода **и без
+`metadata.svod`**:
+
+* опознание: запись реестра (`svod`/`auto`/ключ идемпотентности `svod-<rid>-…`) **или** заголовок
+  «Обновление свода» / «Обновление свода (авто)» (так ставит и сторож, и кнопки «Обновить сейчас» /
+  «Доработать с учётом ответов»); `metadata.svod` НЕ требуется;
+* условие: карточка завершилась успешно (`status` закрыт, последний запуск `outcome=completed`) и в
+  ней есть текст свода; **упавшая, отменённая или незавершённая карточка версией не становится** —
+  её разбирает «остывание» (`W21-SVOD.4`) как раньше;
+* `synthesis.history[]` получает `{kind:"revision", reason:"auto"|"note", task_id, at, auto:true,
+  source:"app", posted_at}`: `at` — время завершения карточки, `changes` — из `metadata.changes`
+  (список строк), `note` — заметка карточки (в реестре), `posted_at` — когда карточка ушла;
+* текст свода берётся по прежним правилам — последний принятый текст из ответа карточки
+  (`synthesis.text_md`, `synthesis.source_task` — эта карточка).
+
+**Какие события считаются учтёнными.** Граница — `posted_at` (когда карточка ушла руководителю), а не
+время её завершения: события с `at <= posted_at` в карточку вошли и учтены, а написанные **пока
+карточка работала** — остаются в `behind` и попадут в следующую версию. Нет `posted_at` (старые
+записи, первая версия) — граница прежняя, время выпуска (`contract.accounted_at`).
+
+**Прошлое время не обещаем.** Если расчётное время (`last_event_at + quiet`, `version_at + min_gap`)
+уже позади, `live.next_update_at` не отдаётся (`null`), а `live.text` говорит «обновится в ближайшие
+минуты» (у ожидания карточек — «обновлю в ближайшие минуты»). У `delivery` сообщений в этом случае
+«Ждёт обновления свода — в ближайшие минуты».
+
+**Защита от цикла.** Если на тот же набор событий (`event_key`) уже выпущена успешная
+автоматическая карточка, а `behind` всё ещё не ноль (версия не зарегистрировалась — например,
+руководитель вернул пустой ответ), автоматика останавливается: набор и руководитель те же, вторая
+такая же карточка тоже не даст версии. Жёсткий потолок — `MAX_AUTO_TRIES_PER_KEY = 2` карточки на
+набор (третьей не будет ни при каких условиях):
+
+```json
+{"state": "stale", "since_version": 5, "behind": {"answers": 0, "notes": 1, "decisions": 0, "cards": 0},
+ "auto": true, "next_update_at": null,
+ "text": "Обновление выполнено, но что-то не учтено — нажмите «Обновить сейчас»"}
+```
+
+`plan()` → `{action:"none", reason:"loop_guard"}` (`LOOP_GUARD_AFTER = 1`). Неудачные карточки
+счётчик не расходуют (это «остывание» W21-SVOD.4), ручные — тем более; кнопка «Обновить сейчас»
+работает всегда, в том числе в этом состоянии.
+
+**Контракт руководителя усилен** (`contract.svod_rule`, `docs/AGENT-GUIDE.md`): «**после доработки
+свода обязательно заполни `metadata.svod`**» — но приложение от этого поля не зависит.
+
+* Проверки: `tests/test_svod_live.py` (`AppCardVersionTest`, `AppCardLiveTest`, `LoopGuardTest`).
+
+### W21-SVOD.8 Карточка обновления крепится к КОРНЮ, дерево читается до 12 уровней (B-49b)
+
+**Симптом на боевом (12.11).** Каждая новая карточка «Обновление свода (авто)» привязывалась
+`task_links` ребёнком ПРЕДЫДУЩЕЙ карточки обновления (родителем был `synthesis.source_task`), поэтому
+цепочка «корень → … → обновление → обновление → …» росла в глубину. Чтение дерева обходило его вширь
+только до `MAX_DEPTH = 6` уровней, и карточки глубже в дерево запроса не попадали: три завершённые
+карточки обновления и четвёртая (в очереди) не были видны → версии свода не регистрировались (даже
+после `W21-SVOD.7`), события оставались «неучтёнными», а предохранители, которые опираются на
+видимые карточки (лимит `MAX_CARDS_PER_HOUR`, защита от цикла `W21-SVOD.7`), не срабатывали.
+
+**Правило 1 — новая карточка ставится ребёнком корня запроса** (`svod_live.create_update_card`):
+
+* и автообновление сторожа, и ручные «Обновить сейчас» / «Доработать с учётом ответов» пишут
+  `parent_id = <root_id>` — и только его; `synthesis.source_task` для связи больше не используется;
+* порядок «одна карточка за другой» держит не связь, а `open_update_cards` (пока идёт предыдущая,
+  новая не ставится), идемпотентность — прежний ключ `svod-<rid>-<отпечаток>` (ручные —
+  `svod-<rid>-m<версия>-<отпечаток>`), формат ключа не изменился;
+* глубина новых цепочек не растёт: все карточки обновления — первого уровня.
+
+**Правило 2 — старые цепочки читаются без правки данных.** `engine_tree._collect` после обхода
+дерева делает дополнительный шаг `_collect_svod`:
+
+* один `SELECT ... WHERE idempotency_key LIKE 'svod-<rid>-%' ESCAPE '\' ... LIMIT <остаток
+  MAX_NODES>` — карточки обновления этого запроса попадают в дерево **независимо от глубины**;
+* `depth`/`parents` — по фактическим связям доски (если родитель известен), иначе карточка считается
+  ребёнком корня (`depth = 1`); при цепочке `depth` растёт по связям, но не выше `MAX_DEPTH`;
+* шаблон экранируется (`engine_db.like_prefix`): `_` в id запроса — не «любой символ» в `LIKE`,
+  поэтому карточки чужих запросов с похожим id (`t_1000aaaa` / `tX1000aaaa`) не подтягиваются;
+  тем же экранированием пользуется поиск карточек «Уточнение от Михаила» (`thread._note_cards`,
+  ключ `tr-note-<rid>-…`);
+* предел схемы без `tasks.idempotency_key` — шаг молча пропускается (чтение работает как раньше).
+
+**Правило 3 — `MAX_DEPTH = 12`, `MAX_NODES = 400`** (`engine_db`). Замер на песочной доске
+(`tests/test_engine_read.py`, `TreeDepthTest`): 69 карточек в дереве (20 линейной цепочкой + 8 карточек
+обновления + 60 под корнем) — медиана чтения детали 25,8 мс против 25,4 мс на прежнем коде (15
+прогонов; разница — в пределах шума, лишний `SELECT` по ключу бесплатен на таком размере), прежний
+сторож `test_21` (8 карточек, медиана < 50 мс) остался зелёным. Предел остался документированным: карточка КОМАНДЫ глубже 12
+уровней в дерево не попадает (для линейной цепочки из 20 карточек видны 12 уровней), а карточки
+обновления видны всегда — их подтягивает отдельный шаг.
+
+Что меняется для клиента: ничего (`tree[]`, `parent_ids`, `depth`-порядок — те же поля). Версии
+свода в `synthesis.history[]` теперь приходят целиком даже у старых запросов с длинной цепочкой;
+`synthesis.version` может вырасти (например, 2 → 9), потому что ранее невидимые карточки обновления
+наконец учтены.
+
+* Проверки: `tests/test_engine_read.py` (`TreeDepthTest` — 8 тестов: цепочка из 8 карточек обновления
+  даёт все версии, новая схема держит дерево плоским, хвост 20-карточной цепочки виден, чужой запрос
+  не цепляется, `open_update_cards`/`compute`/`plan`/`update_tries` видят самую глубокую карточку,
+  время чтения), `tests/test_svod_live.py` (`UpdateCardParentTest`, `UpdateCardsSeenTest`).
+
+### W21-SVOD.9 `metadata.svod.decisions_full` и результат карточки обновления — не событие (B-50)
+
+Два дефекта в логике решений, найденные на боевых данных после переноса 1.2.0 (когда карточки
+обновления стали видны в дереве — `W21-SVOD.8`).
+
+**1. «Решения нет в новой версии» только по полному списку.** Прежнее правило («есть непустой
+`metadata.decisions` → пропущенное устарело») ложно срабатывало: карточка обновления с одним
+элементом в `metadata.decisions` (руководитель перечисляет только открытое/новое) объявляла
+устаревшими ВСЕ прежние решения — на боевом посерели два правильно принятых решения.
+
+* `absent` (`superseded_why:"absent"`) ставится ТОЛЬКО если карточка заявила полный список:
+  `metadata.svod.decisions_full: true` (`true`/`1`/`"true"`/`"да"`);
+* без флага карточка со списком решений их **добавляет/обновляет** и ничего не гасит; решения
+  прежних версий, которые она не повторила, продолжают действовать и приходят в `decisions[]`
+  элементами с `carried: true` и `from_version: N` (статус — тот, что был);
+* явный отзыв `metadata.decisions_retracted` работает как раньше (`why:"retracted"`);
+* решение, снова попавшее в более позднюю полную версию, перестаёт быть «исчезнувшим»; отзыв так
+  не снимается;
+* последнее действие ЧЕЛОВЕКА сильнее статуса в карточке руководителя: если владелец снял решение
+  (`dismissed`), повторное перечисление его руководителем (в том числе со `status:"accepted"`) его
+  не воскрешает — `status_source:"user"`, `status:"dismissed"`.
+
+**2. Результат карточки обновления не запускает следующую карточку.** Решения карточки обновления
+приложения получают время версии (`at`) и на следующем тике выглядели новым событием: приложение
+ставило карточку обновления по собственному результату, та снова перечисляла решение — бесконечный
+цикл с запуском модели раз в ~30 минут.
+
+* правило «собственные карточки автоматики событием не считаются» распространено на их РЕШЕНИЯ:
+  `svod_live.events()` не считает решения, чьё `at` совпадает с временем версии, выпущенной
+  карточкой обновления приложения (`synthesis.history[].auto`/`source:"app"`;
+  `svod_live.app_versions`, `own_decision_times`);
+* завершённые карточки обновления не считаются и событием-карточкой (`_cards_after` отсекает их по
+  заголовку «Обновление свода…» — даже если запись реестра потерялась, а роль в дереве не `revision`);
+* ответы и сообщения Михаила отсекаются как раньше (по своим `at`, `_no_event_marks`); вопросы и шаги
+  событиями свода не являются вовсе;
+* следствие: после завершения карточки обновления `live.state = "fresh"`, `behind` = 0, `plan` →
+  `none/fresh` — сколько тиков подряд ни пройдёт;
+* решения, появившиеся ПОСЛЕ версии (например, от рабочей карточки), событием остаются.
+
+* Проверки: `tests/test_dec_q.py` (`DecisionsFullTests`, `PureFunctionTests.test_absent_needs_the_full_flag`,
+  `test_decision_returning_to_the_swod_is_live_again`), `tests/test_svod_live.py` (`OwnCardResultTest`).
+
+## W21-ANSWERS — «Пояснить» без текста и ответы без кнопки досылки (v1.2.0, WAVE21 §2 Q1, B-44/B-45)
+
+Раздел описывает клиент и серверные поля, которых касается пакет Q1: кнопка «Пояснить…» у вопроса
+теперь работает без текста, а кнопка «Отправить руководителю накопленные ответы» больше не
+показывается, пока свод обновляется сам.
+
+### W21-ANSWERS.1 `POST /api/requests/{id}/actions {action:"answer"}` — текст необязателен для пояснения
+
+`need_explanation: true` (bool, по умолчанию `false`) — это просьба ПОЯСНИТЬ вопрос, а не ответ.
+Для неё `text` может отсутствовать или быть пустым.
+
+| Тело | Ответ | Что происходит |
+|---|---|---|
+| `{action:"answer", question_id, need_explanation:true}` | `200` | В ветку уходит `[Михаил · просит пояснить по вопросу q_x «…»] Поясни вопрос подробнее: зачем он, какие варианты ответа и их последствия — простыми словами`; реестр ответов получает `status:"waiting_explanation"`, `answered:false` (**вопрос остаётся открытым**); руководителю создаётся (или дописывается) карточка «Уточнение» — та же, что у пояснения с текстом |
+| `{action:"answer", question_id, need_explanation:true, text:"уточни вот это…"}` | `200` | То же, но в ветке и в карточке — слова человека («поясни вот это: …») |
+| `{action:"answer", question_id}` (или `text:""`) без `need_explanation` | `400` | `{"error":{"message":"Нужен текст","detail":{"field":"text"}}}` — «Отправить» с пустым полем по-прежнему ничего не отправляет |
+| тот же запрос повторно в окне 120 с | `200`, `duplicate:true` | Вторая просьба НЕ создаётся: ключ идемпотентности — запрос + вопрос + текст просьбы (другой текст = новая просьба) |
+
+Стандартная формулировка — одна на сервер, ветку и демо-мок: `answers.DEFAULT_EXPLAIN_TEXT`.
+Ответ на вопрос (`need_explanation` не задан) остаётся как раньше: текст обязателен, вопрос
+закрывается (`status:"sent"`, `answered:true`).
+
+**Проверка типов (W21-REV2).** `need_explanation` принимается только как булево (`"true"`, `1`,
+`"да"` → `400` с `detail.field="need_explanation"`), а `text`, если передан, — только строкой:
+`text:123` или `text:[…]` дают `400` с `detail.field="text"`, а не молчаливую подмену
+стандартной просьбой. Ключ идемпотентности содержит id вопроса, поэтому просьбы по разным
+вопросам одного запроса не смешиваются (две просьбы — две карточки). Состояние
+`waiting_explanation` видно и в `open_questions[]` (`needs_explanation:true`, `answered:false`,
+`needs_answer:true`), и в счётчиках `answers.summary.waiting_explanation`.
+
+### W21-ANSWERS.2 `answers.summary` — спокойные подписи вместо «без реакции»
+
+`RequestDetail.answers.summary` (без изменений в структуре; `can_resend` оставлен для
+совместимости и старых клиентов):
+
+```json
+{"answers": 2, "states": {"applied": 1, "sent": 1}, "pending": 1, "waiting_explanation": 0,
+ "can_resend": true, "resend_pending": 1,
+ "resend_label": "Отправить руководителю накопленные ответы",
+ "resend_hint": "Ответы переданы руководителю — он учтёт их в ближайшем обновлении свода",
+ "resend_hint_soon": "Ответы переданы руководителю — он учтёт их в ближайшее время"}
+```
+
+* `resend_hint` / `resend_hint_soon` — спокойная строка для показа вместо счётчика «N ответа без
+  реакции руководителя». Слова «без реакции» из интерфейса убраны; в данных состояния `sent` /
+  `received` остаются как были.
+* `waiting_explanation` в `resend_pending` не входит: просьба о пояснении — не накопленный ответ,
+  досылать нечего.
+
+### W21-ANSWERS.3 Где показывать кнопку — решает клиент по `synthesis.live.auto`
+
+`RequestDetail.synthesis.live` (см. W20-S1 §1.1):
+
+* `live.auto == true` (автообновление свода включено) → кнопки «Отправить руководителю
+  накопленные ответы» НЕТ. Вместо неё и вместо счётчика «без реакции» — строка
+  `«Ответы переданы руководителю — он учтёт их в ближайшем обновлении свода (около 14:20)»`;
+  время берётся из `live.next_update_at` (локальное `ЧЧ:ММ`), без него — «…в ближайшее время».
+* `live.auto == false` → кнопка `answers_resend` остаётся, подпись под ней — «N ответ(ов)
+  ждёт отправки» (без слов «без реакции»). Это единственный случай, когда ответы правда ждут
+  нажатия.
+* поля `live` нет вовсе (старый сервер) → ведём себя как при `auto == false`: кнопка есть.
+
+### W21-ANSWERS.4 Демо-мок
+
+`tools/mock_write.py` повторяет сервер: `need_explanation:true` без `text` → стандартная просьба,
+`waiting_explanation`, запись в ленте, защита от повтора в 120 с (`duplicate:true`); «Отправить»
+с пустым полем → `400`. `tools/mock_read.py` отдаёт `synthesis.live` у готового свода, причём
+`auto` берётся из настроек КОМНАТЫ (`auto_svod`): выключите автообновление в «Настройках» демо —
+кнопка досылки появится.
 
 ## 9. Открытые вопросы контракта
 
@@ -1643,3 +2775,1745 @@ python tests/test_mock_server.py            # unittest, сам поднимае�
 | 12 | Посев `tools/seed_content.py` беднее фикстур (у `working` нет run'ов, у `needs_you` нет metadata) | **Не закрыто:** файл вне зоны этого контракта; вызывает «пустые списки» в предупреждениях `check_conformance.py`, форму ответов не нарушает | — |
 
 Найдено при актуализации (не из записи W4): статус `failed` по `critic.state="failed"` и предупреждения `critic_failed` / `critic_rounds_exhausted` в прежней редакции §4 бэкендом не реализованы (падение критика статус запроса не меняет) — §4 приведён к фактическому порядку проверок, коды предупреждений остаются зарезервированными. Путь `STATE.md` единый для контракта агентов и записи зеркала: `<vault_dir>/<room.id>/STATE.md` (§6.7).
+
+## W20-I1 — сборка, проверки и автозапуск (v1.1.0, WAVE20, п.22–24)
+
+### POST /api/diagnostics/autostart — «Включить автозапуск» из приложения
+
+Пункт «Автозапуск» в `GET /api/diagnostics` при выключенном автозапуске получает действие
+
+```json
+{"fix": {"kind": "action", "label": "Включить автозапуск", "value": "autostart.enable",
+         "confirm": "Сервер будет подниматься сам при входе в систему (…). Окно не появится — сервер слушает только этот компьютер."}}
+```
+
+`kind: "action"` — новое действие пункта проверки: интерфейс обязан спросить подтверждение
+(показывает `confirm`) и только после согласия отправить запрос. Другие пункты по-прежнему
+используют `command` (скопировать команду), `doc` (открыть документацию), `route` (перейти) и
+`link` (открыть ссылку).
+
+```http
+POST /api/diagnostics/autostart
+Content-Type: application/json
+
+{"action": "enable"}
+```
+
+| Код | Когда | Тело |
+|---|---|---|
+| 200 | действие выполнено (даже если автозапуск уже был включён) | `{"ok": true, "message": "Автозапуск включён: …", "how": "…", "os": "windows\|macos\|linux", "written": ["~/…"], "notes": []}` |
+| 400 | неизвестное действие или включать нечего | `{"error": {"code": "bad_request", "message": "В установке нет файла bin/team-room-server.cmd — автозапуску нечего запускать. Поставьте программу установщиком (install.ps1 / install.sh)."}}` |
+| 500 | система отказала | `{"error": {"code": "internal", "message": "Не получилось включить автозапуск: …"}}` |
+
+Правила ответа:
+
+* `ok: false` и человеческий `message` — если ни один способ не сработал; «тихого успеха» не
+  бывает, приложение говорит, что именно отказало;
+* `written` — только `~`-пути (полные пути пользователя наружу не отдаются);
+* `how` — способ, который реально применён: `задача планировщика TeamRoomServer`,
+  `ярлык в «Автозагрузке»`, `LaunchAgent com.teamroom.server`,
+  `служба systemd --user teamroom`, `строка в ~/.profile`;
+* повторный вызов не дублирует автозапуск (маркер блока в профиле, `schtasks /F`, `launchctl
+  unload` перед `load`).
+
+Реализация — `server/autostart.py` (одна точка правды для всех систем); интерфейс —
+`web/js/views/diagnostics.js` (`fix.kind === "action"`). Установщики (`install.ps1`,
+`install.sh`) ставят ровно тот же автозапуск, поэтому кнопка и установщик не расходятся.
+
+### CI и проверки на чистом раннере
+
+`tools/ci_hermes_shim.py` (+ `ci_hermes_shim.cmd` / `ci_hermes_shim.sh`) — замена CLI `hermes`
+для проверок: `kanban boards create|list`, `create`, `complete`, `comment`, `show`, `list`,
+`unblock`, `assign`, `reassign`, `promote`, `reopen-review`, `archive`. Не поддерживает
+диспетчер, декомпозицию и запуск агентов — на такие команды отвечает кодом 2 с объяснением.
+Признак подмены для тестов: `TEAMROOM_CI_HERMES_SHIM=1` и строка `--version`
+(`team-room-ci-hermes-shim …`), см. `tests/ci_marks.py` (`cli_is_shim`,
+`has_real_hermes_cli`, `WHY_CI_SHIM`).
+
+## W20-U4 — уведомление о реакции руководителя и композер (v1.1.0, WAVE20 §4, P9/P10)
+
+Пакет U4. Описывает:
+
+* поля сводки комнат для бейджа «есть новые реакции» (`last_reaction_at`,
+  `reactions_unseen`, `reactions`);
+* строку «Ответ учтён: …» у вопроса — из уже существующего `reaction` вопроса/шага/решения;
+* локальную отметку «прочитано» (браузер, не сервер);
+* композер нового запроса: один селектор проверки критиком при прежних полях API.
+
+### W20-U4.1 Сводка комнат: реакции руководителя
+
+`GET /api/rooms/summary` — по каждой комнате добавлены поля (старые не менялись):
+
+| Поле | Тип | Значение |
+|---|---|---|
+| `last_reaction_at` | `int\|null` | время последней реакции руководителя в комнате (секунды эпохи); `null` — реакций нет |
+| `reactions_unseen` | `int` | сколько реакций найдено (точное «непрочитанное» считает браузер) |
+| `reactions_total` | `int` | то же число явным именем (для читаемости и тестов) |
+| `reactions` | `{<id запроса>: {count, last_at}}` | реакции по запросам — для отметок в «Недавнем» |
+
+Что считается реакцией: комментарий руководителя комнаты (`room.orchestrator`) с меткой
+`[Руководитель · реакция на ответ|шаг|решение …]` **или** `metadata.reaction` в его карточке
+(первая дорога чтения — `answers.reactions_from_tree`). Считается по корню запроса: реакция
+на дочернюю карточку (шаг) поднимается к своему запросу.
+
+Считаются только запросы, по которым в реестре комнаты есть `answers` или `step_actions` —
+без ответа человека реагировать не на что, такие запросы не читаются вовсе. Ограничения:
+до 40 свежих запросов комнаты, глубина дерева ≤ 2, до 20 элементов в `items` модуля
+`server/reaction_notice.py` (в API они не отдаются). Чтение — `sqlite mode=ro`, два запроса на
+комнату (`task_links`, `task_comments` + `tasks.metadata LIKE '%reaction%'`), без сборки деталей —
+сводку меню опрашивают часто. Нет доски/таблиц/руководителя — пустые значения, ответ 200:
+бейдж не важнее страницы.
+
+### W20-U4.2 «Прочитано» — локально
+
+Браузер хранит `localStorage['teamroom.reactions.<комната>'] = {at, req:{<id>: <время>}}`:
+
+* `req[<id>]` — реакция в этом запросе показана на экране (ставится при отрисовке строки
+  «Ответ учтён» в правой колонке запроса);
+* `at` — «прочитал всё по комнате до этого времени» (резерв для «прочитать всё»).
+
+«Непрочитанное» = `last_at` реакции больше `max(at, req[id])`. Сервер об отметках не знает и в
+доску не пишет; очистка — удалением ключа в браузере или `resetReactionState()` в консоли.
+
+### W20-U4.3 Строка «Ответ учтён: …»
+
+Собирается на клиенте из полей `reaction` (`status`, `label`, `at`) — `views/reaction-notice.js`,
+функция `noticeLine`:
+
+| `reaction.status` | Строка |
+|---|---|
+| `applied` / `no_change` | `Ответ учтён: работа пересмотрена · 13:48`, `Ответ учтён: менять ничего не нужно · 13:52` |
+| `received` | `Руководитель прочитал ответ · 13:40` |
+| нет исхода, только текст | `Ответ учтён: <текст реакции> · 13:48` |
+
+Повтор «учтено» в подписи снимается (`учтено: работа пересмотрена` → `работа пересмотрена`).
+Для шага и решения — «Шаг учтён: …», «Решение учтено: …». Новых полей API не требуется.
+
+### W20-U4.4 Композер: `POST /api/rooms/{id}/requests`
+
+Один селектор проверки критиком, значения уходят в прежние поля:
+
+| Выбор в интерфейсе | Тело запроса |
+|---|---|
+| «Без критика» | `{critic: false}` |
+| «1 раунд — быстро» | `{critic: true, critic_mode: "rounds", max_rounds: 1}` |
+| «2 раунда» | `{critic: true, critic_mode: "rounds", max_rounds: 2}` |
+| «До полного одобрения» | `{critic: true, critic_mode: "until_approved"}` |
+
+Значение по умолчанию — настройки комнаты (`critic_pass`, `critic_mode`, `max_rounds`): критик не
+настроен или проверка в комнате выключена → «Без критика». Черновик запоминает выбор ключом
+`criticChoice`; старый булев `critic` в черновике читается как «раунды комнаты / без критика».
+Кнопка «Отправить» неактивна на пустом поле (пробелы не считаются) и объясняет причину в `title`;
+подсказки аватаров команды — из `participantLabel` («имя — роль»), а не из профиля.
+
+## W20-U3 — горячие клавиши, закрепление, экспорт и режим вида (v1.1.0, WAVE20 §4, P13/P14)
+
+Пакет U3. Три вещи, у которых есть серверная часть, и две — только в браузере:
+
+| Что | Где живёт | Требует сервера |
+|---|---|---|
+| Закрепление запроса | поле `pinned` реестра комнаты + `PATCH /api/requests/{id}` | да |
+| Экспорт свода «В Obsidian» / «HTML» / «Печать» | `POST /api/requests/{id}/export` | да (печать — нет) |
+| Горячие клавиши (`J`/`K`, `Ctrl+Enter`, `?`, `V`) | `web/js/hotkeys.js` | нет |
+| Режим «простой / подробный» | `web/js/view-mode.js` + `web/css/view-mode.css` | нет |
+
+### W20-U3.1 Закрепление запроса: `PATCH /api/requests/{id} {pinned}`
+
+```
+PATCH /api/requests/t_a1b2c3d4
+{"pinned": true}          → 200 {"ok": true, "action": "pin", "pinned": true, "pinned_at": 1761700000, "request": RequestSummary}
+{"pinned": false}         → 200 {"ok": true, "action": "unpin", "pinned": false, "pinned_at": 0, "request": …}
+{"pinned": "true"}        → 200 (строки "1"/"true"/"yes"/"on" понимаются как true)
+{"pinned": {"x": 1}}      → 400 {"field": "pinned"}
+{}                        → 400 (нужно `title` или `pinned`)
+```
+
+Меняется **только реестр комнаты** (`data/state/<комната>/requests.json`): поля `pinned`
+(`bool`, по умолчанию `false`) и `pinned_at` (`int`, время закрепления; `0` — не закреплён).
+Текст, название, карточка на доске и ответ руководителя не трогаются.
+
+Тот же маршрут по-прежнему переименовывает: `{title: "…"}` → `action: "rename"`
+(пустая строка снимает блокировку). Если в теле есть оба поля, сначала ставится закрепление,
+потом название; ответ один.
+
+**Где видно закрепление** (все три представления отдают одинаковые поля):
+
+| Ответ | Поле |
+|---|---|
+| `GET /api/requests/{id}` | `pinned: bool`, `pinned_at: int\|null` (входят в ядро детали, не срезаются `?fields=`) |
+| `GET /api/rooms/{id}/requests` | `pinned`, `pinned_at` в каждом элементе; **закреплённые идут первыми**, дальше по `created_at` |
+| `GET /api/rooms/summary` → `rooms[].last[]` | те же поля; закреплённые комнаты-запросы выше свежих |
+
+Клиент дополнительно сортирует «Недавнее» по `pinned` (сводка отдаёт до 10 строк на комнату,
+а «Недавнее» смешивает комнаты) и показывает у закреплённого значок скрепки.
+
+### W20-U3.2 Экспорт свода: `POST /api/requests/{id}/export {format}`
+
+Один маршрут на три кнопки блока «Свод команды». Форматы: `obsidian`, `html`, `print`.
+
+**`{"format": "obsidian"}`** — файл в зеркальную папку комнаты в хранилище заметок
+(то же место, куда приложение ведёт `Запросы/<YYYY-MM-DD> <название> (<id>).md`):
+
+```json
+{"ok": true, "format": "obsidian", "path": "…\\Запросы\\2026-11-11 Мука для моти (t_a1b2c3d4).md",
+ "folder": "…\\Запросы", "name": "2026-11-11 Мука для моти (t_a1b2c3d4).md",
+ "changed": true, "room": "cafe", "request": "t_a1b2c3d4"}
+```
+
+* повторный экспорт **обновляет ту же заметку** (`changed: false`, если текст не изменился),
+  а дописанное человеком вне служебных маркеров `<!-- teamroom:begin NAME -->` сохраняется;
+* в демо (`TEAMROOM_MOCK=1`, `cfg.mock`) и без хранилища — `200 {"ok": false, "skipped": "mock"|"no_vault", "reason": "…по-русски…", "path": ""}`
+  (интерфейс покажет причину, а не выдуманный путь);
+* нет готового ответа — `409 reason: "synthesis_pending"`.
+
+**`{"format": "html"}`** — автономный файл (`Content-Type: text/html`, `Content-Disposition: attachment`):
+тот же рендер, что `GET /api/export/request/{id}.html` (свод, шаги, вопросы, решения, дерево,
+встроенный отчёт; ни одной внешней ссылки). Клиент скачивает его blob-ом, не уходя со страницы.
+
+**`{"format": "print"}`** — `200 {"ok": true, "format": "print", "hint": "print_css"}`:
+сервер только подтверждает формат, печать собирает браузер по стилю
+`web/css/request-export.css` (`@media print`: печатается свод, скрыты правая колонка,
+лента, «Ход работы», меню, кнопки и служебные подсказки; фон белый даже в тёмной теме).
+
+Неизвестный/пустой формат — `400` с `allowed: ["obsidian", "html", "print"]`.
+
+### W20-U3.3 Горячие клавиши
+
+`web/js/hotkeys.js`, установка один раз в `app.js` (`installHotkeys`), обработчик `keydown`
+на `document`:
+
+| Клавиши | Действие |
+|---|---|
+| `J` / `K` | следующий / предыдущий вопрос в колонке «Нужен ваш ответ»: прокрутка к центру и фокус в поле ответа; по кругу |
+| `Ctrl+Enter` (`Cmd+Enter`) | отправить из поля. Запасной путь: `form.requestSubmit()` или блок с `data-enter-submit="<селектор кнопки>"` |
+| `?` (Shift+7) | справка по клавишам |
+| `V` | простой / подробный вид |
+
+Правила, чтобы не мешать вводу:
+
+* одиночные клавиши (`J`, `K`, `V`, `?`) **молчат**, если фокус в `input`/`textarea`/`select`
+  или в `contenteditable`; в поле `?` — это обычный знак вопроса;
+* `Ctrl+Enter` не отправляет дважды: если поле уже обработало клавишу (`event.defaultPrevented`),
+  общий обработчик ничего не делает (`submitFromField` возвращает `false`);
+* русская раскладка: `J`/`K` работают и как `о`/`л` (те же физические клавиши).
+
+Разметка, на которую опираются клавиши (её ставят `request-aside.js` и другие экраны):
+`[data-hotkey-list="questions"]` → `[data-hotkey-item]` → `[data-hotkey-input]`. Новому экрану
+достаточно поставить эти атрибуты — `J`/`K` заработают без правок `hotkeys.js`.
+
+### W20-U3.4 Режим «простой / подробный» (P14)
+
+Только браузер: `localStorage['teamroom.viewMode'] = "simple" | "full"`, по умолчанию **`full`**
+(вид не меняется у того, кто ничего не нажимал). Применяется атрибутом
+`<html data-view-mode="simple">` (+ класс `view-simple`), поэтому переключение мгновенное и не
+требует перезагрузки данных.
+
+Что скрывает простой вид (`web/css/view-mode.css`): модель и провайдер участника
+(`.agent-model__line`), служебные пометки профиля в шапке запроса (`.req__meta-item[title^="Профиль:"]`),
+«подробности для разработчика» (`.req-dev`), внутренние номера и служебные строки —
+всё, что помечено `data-tech` или классом `tech-only`.
+
+Переключатель — в подвале бокового меню рядом с темой (`#viewmode-toggle`, класс
+`viewmode-toggle`, подпись «просто»/«подробно», `aria-pressed`), он же клавишей `V`.
+Смена режима рассылает событие `teamroom:viewmode` — подписи всех переключателей обновляются сами.
+
+## W20-U1 — словарь интерфейса и шапка (v1.1.0, WAVE20 §4, P7/P8)
+
+Пакет U1. **Контракт HTTP+JSON не менялся**: ни одного нового маршрута, ни одного нового поля,
+ни одной новой записи в данных. Меняются подписи и раскладка, и вот что об этом нужно знать
+тем, кто читает наши файлы и ссылки снаружи.
+
+### W20-U1.1 Один словарь: `web/js/text-ru.js`
+
+| Экспорт | Что это |
+|---|---|
+| `TERMS` | слова одного смысла: `svod` (свод), `round` (раунд), `critic` (критик), `version` (версия), `phase` (этап). У каждого — `name` (в строке), `title` (заголовок), `hint` (объяснение для «?»), `example` |
+| `term(key)` / `termHint(key)` / `termTitle(key)` | безопасный доступ: неизвестный ключ даёт пустые строки, интерфейс не падает |
+| `TAB_TITLES` | названия вкладок комнаты — единственный источник: `router.js` строит `TABS` из него, поэтому шапка, крошки (`tabTitle`) и палитра (`palette-model`) не расходятся |
+| `tabTitleOf(id)` | название вкладки по id ('' для неизвестной) |
+| `SCOPE_LABELS` | `{whole: 'Вся комната', request: 'Этот запрос'}` — слова охвата для шапки, бейджа крошек и чипа фильтра |
+| `roundsLabel(n)` / `versionsLabel(n)` | «1 раунд», «2 раунда», «5 раундов» — «раунд» одним словом везде |
+
+Правило: подпись берётся из словаря, а не пишется строкой на месте. Иначе одно и то же снова
+начнёт называться по-разному («ответ», «свод команды», «прогон»).
+
+### W20-U1.2 Переименование вкладки: «Дальше» → «От вас нужно»
+
+* Идентификатор остался **`backlog`**: `#/room/<id>/backlog`, `?request=<id>`,
+  подпись вкладки в `TABS`, `FILTER_TABS` и маршруты не изменились. Все закладки, ссылки
+  из уведомлений и записи в документации продолжают работать.
+* Изменились **подписи**: вкладка, крошка (`Комната «…» › От вас нужно`), палитра команд
+  («Перейти: От вас нужно»), счётчик (`aria-label`: «От вас нужно, 9 дел…»), чип фильтра
+  («Этот запрос ✕»), ссылка в правой колонке запроса.
+* **Заголовок раздела в файлах** (то, что читают люди и внешние инструменты):
+  `## Дальше` → `## От вас нужно` в `server/export.py` (Markdown-экспорт запроса) и в
+  `server/vault_mirror.py` (заметка Obsidian), а также в моке `tools/mock_core.py`.
+  Если у вас есть обработчик, который искал строку `## Дальше`, поменяйте его на новую —
+  старые заметки в зеркале остаются как есть и не переписываются задним числом.
+
+### W20-U1.3 Подсказка «?»: `web/js/term-help.js`
+
+```js
+import { termHelp, termHelpLabel, openTermHelp } from '../term-help.js';
+termHelp('svod');          // <button class="term-help" data-term="svod">?</button>
+```
+
+* `termHelp(key, {className})` — маленькая кнопка «?»: `title` = объяснение (наведение),
+  `aria-label` = «Что такое свод: …» (скринридер), клик открывает окно с объяснением и примером.
+* `openTermHelp(key)` — само окно (на общем каркасе `ui.buildDialog`); `null`, если объяснять
+  нечего или нет DOM.
+* Текст окна — из `TERMS`, то есть правится в одном месте. Где стоит: заголовок блока «Свод»,
+  переключатель версий, чип «критик: раунд N» в шапке запроса, строка раундов на вкладке
+  «Команда», чип «Этап: …» в шапке.
+
+### W20-U1.4 Шапка: `web/js/topbar-scope.js` (+ правки `app.js`)
+
+| Экспорт | Что делает |
+|---|---|
+| `phaseLabel(phase)` | `'Этап: Легализация'`; пустая строка, если этапов у комнаты нет |
+| `scopeModel({roomId, tab, name, requestId})` | правило охвата: страница запроса → активен «Этот запрос», `whole.href` = `#/room/<id>/composer`; вкладка с `?request=` → активен «Этот запрос»; вкладка без фильтра → активна «Вся комната», второй сегмент не предлагается; вкладки без охвата (`team`, `roadmap`, `composer`) → `null` |
+| `scopeSwitcher(model)` | разметка `.topbar__scope.scope-switch` с двумя сегментами, `aria-current="page"` у активного |
+| `toolsGroup({navigate, openPalette, onSettings})` | одна группа `.topbar__group--tools`: поиск (`data-tool="search"`), палитра (`palette`, подсказка «Палитра команд · Ctrl K»), настройки приложения (`settings`, `#/settings`) |
+| `tabName(id)` | то же, что `tabTitleOf` — для тестов и внешних вызовов |
+
+Из шапки убраны аватары команды и бейдж «вся команда» (дублировали вкладку «Команда»), а также
+отдельная кнопка поиска с надписью «Ctrl K» (это сочетание открывает палитру). Правая часть
+теперь две группы: комната (папка проекта, настройки комнаты) и инструменты, между ними — черта.
+
+### W20-U1.5 Проверки
+
+* `node --test tests/vocab.test.mjs tests/topbar-scope.test.mjs` — словарь, переименование,
+  подсказки, правила охвата, состав группы значков (тесты красные на коде до U1).
+* `tools/probe_u1_header.py` (Chromium, локальный мок) — 15 проверок живьём: подписи шапки,
+  клик по «?» открывает и закрывает окно, вкладка и крошка называются одинаково, палитра знает
+  новое имя.
+* `tools/ui_audit.py --widths 1440,1100,900,640 --themes light,dark` — 0 проблем на всех
+  комнатах мока (200 экранов), вёрстка шапки на длинных названиях.
+
+## W20-U2 — «Настройки» по группам и карта проекта (v1.1.0, WAVE20 §4, P11/P12)
+
+Пакет интерфейсный: **новых маршрутов и полей API нет**. Экран настроек использует
+существующие `GET /api/health` и `GET /api/diagnostics` без изменений ответов; карта
+проекта — существующий `GET /api/rooms/{id}/roadmap` и `GET /api/rooms/{id}/backlog`.
+Контракт руководителя (`server/contract.py`, `docs/AGENT-GUIDE.md`) не менялся.
+
+### W20-U2.1 Настройки: `web/js/views/settings-groups.js` (чистые правила)
+
+| Экспорт | Что делает |
+|---|---|
+| `SETTINGS_GROUPS` | четыре группы экрана: `status`, `paths`, `diagnostics`, `prefs`; `settingsGroup(id)` — одна по id |
+| `shortenPathLeft(path, maxChars=46)` | сокращение пути **слева**: остаётся хвост (последние папки и файл), начало заменяется «…»; полный путь вьюха кладёт в `title`/`aria-label` |
+| `baseName(path)` | последний сегмент пути (для подписей «Содержимое») |
+| `CHECK_GROUPS`, `checkGroupId(id)` | темы «Проверки системы»: `program`, `hermes`, `data`, `comfort`; неизвестный id → `other` (не пропадает) |
+| `groupChecks(checks)` | `[{id,title,hint,items,worst,counts}]`: внутри группы «сначала проблемы», группы по худшему статусу (группа с `fail` — первой), пустые не возвращаются |
+| `checksSummary(checks)`, `worstStatus(items)`, `topProblems(checks, limit=3)` | счётчики, худший статус, до `limit` проблем (`fail` → `warn`) |
+| `CHECK_STATUS` | словарь статуса проверки: `label`, `icon`, `chip`, `tone` (его реэкспортирует `diagnostics.js` как `STATUS_LABELS`) |
+| `overallStatus(health)` | один сводный статус: `{tone:'ok'|'warn'|'danger'|'muted', icon, title, text, issues[]}` |
+| `PREF_LABELS`, `pendingChanges(saved, draft)`, `saveSummary(changes)` | что не сохранено и подпись строки состояния для единственного сохраняющего блока |
+
+Правила `overallStatus`: `engine.schema_ok === false` или `engine.ok === false` → `danger`
+«Движок не отвечает»; `dispatcher.state !== 'running'` → `danger` «Движок команды не
+запущен»; остановленная фоновая проверка, `data.writable === false` и `warnings[]` →
+`warn` «Работает, но есть замечания»; `app.sandbox` → `muted` «Песочница»; иначе `ok`
+«Всё работает».
+
+### W20-U2.2 Настройки: экран `web/js/views/settings.js`
+
+Якоря сохранены: `#set-health` (группа «Статус»), `#set-look` (внешний вид и
+уведомления), `#set-newroom`; добавлены `#set-paths`, `#set-diagnostics`, у каждой
+группы есть `data-group`. Свёрнутый блок техники — `<details class="set-more"
+data-role="tech">`. Сохраняющий блок — `[data-action="settings-save"]` и
+`[data-action="settings-revert"]`, состояние черновика — `[data-dirty]` у `.set-save`.
+Тема в «Настройках» применяется как предпросмотр (`applyTheme(pref, {persist:false})`):
+`localStorage` и store темы пишутся только по «Сохранить настройки».
+
+### W20-U2.3 Карта проекта: `web/js/views/roadmap-next.js` (чистые правила)
+
+| Экспорт | Что делает |
+|---|---|
+| `legendItems()` | подпись статусов этапа (`done/active/blocked/next`) — значок, цвет, слово |
+| `nextPhase(roadmap)` | следующий этап: `current` (если не `done`) → `active` → `blocked` → `next`; `null`, когда все готовы |
+| `nextSteps(backlog, limit=4)` | открытые шаги (`kind:next_step`, `status:open|asked`) по сроку, без срока — в конце |
+| `nextBlock(roadmap, backlog, {limit})` | `{phase, steps, allDone, hasPhases, empty, line, note, detail}` — всё для одного блока «Что дальше» |
+| `emptyPlan({modeOn, proposalPending})` | текст и действия пустой карты: `{title, text, primary, secondary, note}`; `secondary = null`, пока предложение этапов ждёт решения (иначе 409) |
+| `stepsCountLabel(n)` | «1 шаг», «3 шага», «11 шагов», «шагов нет» |
+
+Карта рендерит **один** заголовок «Что дальше» (в `renderNext()`), этап — кнопка с
+`data-phase` и `aria-expanded`; редактор этапов (`phases-editor.js`, W20-FC) по клику на
+этап не открывается.
+
+### W20-U2.4 Проверки
+
+* `node --test tests/settings-groups.test.mjs tests/roadmap-next.test.mjs` — правила
+  группировки, сокращения пути, сводного статуса, несохранённых изменений, выбора
+  следующего этапа, шагов и пустой карты; плюс структурные проверки вьюх (тесты красные
+  на коде до U2).
+* `node --test tests/diagnostics.test.mjs` — группировка не сломала порядок «падает —
+  первым» и отчёт для поддержки.
+* `python tools/ui_audit.py --base http://127.0.0.1:8894/ --rooms map,empty
+  --widths 1440,1100,900,640 --themes light,dark` → 112 экранов, 0 проблем (комната
+  `map` — 12 этапов с названиями 60–80 знаков и путь 120 знаков из песочницы).
+
+## W22-APPROVALS — «Разрешения агентам» (v1.2.0, WAVE22 §2)
+
+Зачем: карточки комнаты — «конечные» запуски (`-q`), в них Hermes блокирует «опасные»
+команды сразу, окна разрешения нет (`approvals.single_query_mode: deny`). Участник
+упирается в стену и либо бросает работу, либо ищет обход. Здесь у пользователя
+появляется то же, что в обычном чате Hermes: **разрешить один раз / разрешать всегда /
+запретить**, — но кнопкой в приложении.
+
+Что важно знать сразу:
+
+* приложение находит запросы разрешения **само, чтением** (`state.db` профилей —
+  `mode=ro`): блокировки в сессиях карточек комнаты видны без участия агентов;
+* выдаётся разрешение **только** штатным механизмом Hermes — списком `command_allowlist`
+  в `config.yaml` профиля (подпроцесс `server/approval_grant.py`);
+* «один раз» = запись того же списка, которая снимается, когда карточка завершилась или
+  через 30 минут (реестр комнаты `data/state/<room>/approvals.json`);
+* интерпретатора Hermes нет (чистая машина/CI) → `422`, ничего не пишем.
+
+### W22.1 `GET /api/requests/{id}` → `approvals[]`
+
+```json
+"approvals": [
+  {"id": "ap_3f7c1a90", "task_id": "t_5b2c1e04", "profile": "ivan-petrov",
+   "member_title": "Исполнитель", "kind": "terminal",
+   "command": "python - <<'EOF'\nprint(1)\nEOF",
+   "description": "запуск скрипта через heredoc", "pattern_key": "script execution via heredoc",
+   "floor": false, "grantable": true, "state": "pending", "at": 1763381000,
+   "decided_at": null, "count": 2, "card_state": "running", "note": ""}
+],
+"approvals_pending": 1
+```
+
+| Поле | Что это |
+|---|---|
+| `id` | `ap_<8hex>`; один и тот же (карточка, `pattern_key`, хэш команды) = один запрос. У `execute_code` команда в ключ не входит (код каждый раз другой) — один запрос на карточку |
+| `kind` | `terminal` или `execute_code` |
+| `command` | команда целиком (≤ 4000 знаков, секреты замаскированы). Для `execute_code` — первые строки кода |
+| `description` | по-русски, человеческим языком: «запуск скрипта через heredoc», «выполнение кода python -c», «execute_code — произвольный код» |
+| `pattern_key` | ключ записи в `command_allowlist` (что именно разрешается); `null`, если Hermes ключ не отдал |
+| `floor` | `true` — жёсткий запрет политики Hermes (например удаление корня): **разрешить нельзя ничем** |
+| `grantable` | `false` — разрешить нельзя штатно (`execute_code`: Hermes не сверяет `command_allowlist` в режиме без человека). Действие вернёт `422` |
+| `state` | `pending` · `granted_once` · `granted_always` · `denied` · `expired` |
+| `count` | сколько раз участник натыкался на эту же блокировку (у строки-группы — сумма по всем её командам) |
+| `card_state` | статус карточки в доске (`running`, `done`, `failed`, …) |
+| `note` | короткая подпись для интерфейса («разрешение на время этой работы», «ждёт вашего решения») |
+| `group` | **необязательное.** `gr_<8hex>` — строка-группа: одинаковые по причине блокировки запросы (W22.4) |
+| `approval_ids` | **необязательное.** Все `ap_…` этой группы, свежие первыми; решение по строке закрывает их все |
+| `commands[]` | **необязательное.** `{id, command, at, count}` — все различные команды группы, свежие первыми (в `command` — первая из них) |
+
+Счётчики: `approvals_pending` — сколько запросов ждут решения. `needs_you` у запроса
+истинно, пока есть `pending` у незавершённых карточек **или** у завершённых, если агент
+прямо написал о блокировке в итоге. В `GET /api/rooms` / `GET /api/rooms/summary`
+`counters.needs_you` учитывает такие запросы наравне с вопросами и решениями.
+
+Откуда берутся запросы: сообщения `role='tool'` в сессиях карточек комнаты, где
+`status: "blocked"` (или текст `BLOCKED:`) и упомянут режим без человека (`-q`,
+«single-query»). Связь «карточка ↔ сессия» — как у «Хода работы» (метаданные прогона,
+событие `owner_admitted`, первый запрос пользователя с id карточки). Команда — из
+предыдущего сообщения ассистента (`tool_calls`). Блокировки жёсткой политики
+(`BLOCKED (hardline)`) тоже показываются — с `floor: true`.
+
+### W22.4 Схлопывание одинаковых по причине блокировок (W22-ST)
+
+Разрешение «на вид» (`command_allowlist`) выдаётся на **класс** команд: один `pattern_key`
+закрывает все команды этого правила. Поэтому десять разных `python -c …` одного
+участника в одной карточке — это один вопрос, а не десять (у `ornith` на живой доске их
+было 20 — список превращался в стену).
+
+Сервер отдаёт их **одной строкой** (`collapse`), если совпали карточка, участник и
+`pattern_key`, а состояние — `pending`:
+
+```json
+{"id": "ap_ab12cd34", "group": "gr_7e51f0aa",
+ "approval_ids": ["ap_ab12cd34", "ap_cd34ef56"],
+ "command": "python -c \"print(3)\"",
+ "commands": [{"id": "ap_ab12cd34", "command": "python -c \"print(3)\"", "at": 1763381200, "count": 1},
+              {"id": "ap_cd34ef56", "command": "python -c \"print(2)\"", "at": 1763381000, "count": 2}],
+ "count": 3, "state": "pending", "pattern_key": "script execution via -e/-c flag", "...": "…"}
+```
+
+Правила:
+
+* **`id` строки** — самый свежий запрос группы; `approval_id` в действии — он же
+  (`approval_ids[0]`). Поле `group` в теле действия **необязательное** (`{"action":"approval",
+  "approval_id", "decision", "group"?}`): сервер и без него решает всю группу;
+* **`command`** — последняя команда (её и видно в строке), остальные — в `commands[]`
+  (интерфейс показывает их раскрываемым списком: человек видит ВСЁ, что разрешает);
+* **`count`** — сумма блокировок по всем командам группы; «×N» в интерфейсе;
+* **решение атомарно**: `once`/`always`/`deny` записывается всем запросам группы сразу
+  (`applied: [id…]` в ответе, в реестре — запись на каждый `ap_…`). Если хоть один запрос
+  группы уже решён или исчез — `409`, и **ничего** не пишется: половина разрешённой группы
+  хуже, чем честный отказ;
+* не сливаются: решённые запросы (у каждого своя история), записи без `pattern_key`
+  (`floor`: разрешить нельзя, пусть видно каждую команду), разные участники и разные карточки;
+* `approvals_pending` и счётчики «ждёт вашего решения» считают **строки** (одно решение —
+  один пункт), а не команды.
+
+### W22.2 `POST /api/requests/{id}/actions {action:"approval"}`
+
+```json
+{"action": "approval", "approval_id": "ap_3f7c1a90", "decision": "once", "note": "нужно для отчёта"}
+```
+
+| `decision` | Что делает сервер |
+|---|---|
+| `once` | добавляет `pattern_key` в `command_allowlist` профиля, ставит в реестр комнаты запись «до завершения карточки / 30 мин», пишет в карточку `[Михаил · разрешено один раз: <описание>] повтори команду`, перезапускает остановленную карточку |
+| `always` | то же, но запись остаётся навсегда; в ответе `grant.scope = "always"` |
+| `deny` | состояние `denied`, в карточку `[Михаил · запрещено: <описание>] найди другой способ`, перезапуска нет |
+
+Ответ `200`:
+
+```json
+{"ok": true, "approval": {"id": "ap_3f7c1a90", "state": "granted_once", "decided_at": 1763381120, "...": "…"},
+ "grant": {"profile": "ivan-petrov", "pattern_key": "script execution via heredoc",
+           "description": "запуск скрипта через heredoc", "scope": "once", "expires_at": 1763382920},
+ "restarted": true, "message": "Разрешено один раз. Команда будет выполняться до конца этой работы."}
+```
+
+`applied` — только при решении строки-группы (W22.4): все `ap_…`, которым записано это
+решение. `grant` у `deny` отсутствует. `restarted` — `true`, только если карточка была
+остановлена и её удалось вернуть в очередь штатным действием движка (`retry`). Для
+завершённой карточки (`done`/`failed`/`archived`) перезапуска нет: разрешение всё равно
+запишется и подействует, а `message` попросит повторить работу кнопкой «Доработать».
+
+Ошибки: `404` — нет такого запроса разрешения; `409` — уже решено (двойное нажатие
+безопасно); `422` — `floor: true` (жёсткий запрет), `grantable: false` или нет
+интерпретатора Hermes (текст по-русски, ничего не записано); `400` — плохое тело.
+
+### W22.3 `GET /api/approvals/grants?room=<id>`
+
+```json
+{"items": [{"profile": "ivan-petrov", "member_title": "Исполнитель",
+            "pattern_key": "script execution via heredoc",
+            "description": "запуск скрипта через heredoc",
+            "scope": "always", "granted_at": 1763381120, "expires_at": null,
+            "source": "room"}], "room": "r_1", "at": 1763381200}
+```
+
+Читает `command_allowlist` профилей участников комнаты (`config.yaml`, `yaml.safe_load`,
+только чтение). `source: "room"` — запись выдана из приложения (есть в реестре комнаты),
+`"manual"` — стоит в конфиге сама по себе (правил человек или другая сессия Hermes).
+`room` без параметра — все комнаты. Ошибка чтения одного профиля не ломает список:
+в `warnings[]` будет строка.
+
+### W22.4 `POST /api/approvals/revoke {profile, pattern_key, room?}`
+
+Убирает запись из `command_allowlist` профиля штатным путём Hermes (`load_config` →
+изменить список → `save_config`; другие ключи конфига не меняются) и снимает её из
+реестра комнаты. Ответ `200 {ok, revoked: {...}, items: [...], message}`; `404` — такой
+записи в конфиге нет; `422` — нет интерпретатора Hermes; `400` — нет профиля/ключа.
+В журнал комнаты (`journal.jsonl`) пишется строка «разрешено/отозвано, кем, что, когда».
+
+### W22.5 Что НЕ делает сервер
+
+* не правит `config.yaml` руками (никакого `sed` и YAML-текста): только
+  `tools.approval.save_permanent_allowlist` / `hermes_cli.config.save_config`;
+* не обходит жёсткие запреты Hermes (`approval_floors`) — такие блокировки показываются
+  как «разрешить нельзя»;
+* не выдаёт разрешения сам: только по действию пользователя;
+* в песочнице (`TEAMROOM_HERMES_HOME`) пишет **не** в реальные профили, а в поддельный
+  домашний каталог `<data>/hermes-home` — демо-сервер на живых конфигах не тренируется.
+
+### W22.6 Проверки
+
+* `python -m unittest tests.test_approvals -v` — поиск блокировок в поддельном
+  `state.db`, идемпотентность (`count`), «разово/всегда/запретить», запись и отзыв в
+  поддельном `HERMES_HOME`, жёсткий запрет (`floor`), `execute_code` (`grantable:false`),
+  снятие «разового» разрешения по завершении карточки и по сроку, сохранность остальных
+  ключей конфига, отсутствие интерпретатора → отказ без записи.
+* Реальная сверка с Hermes (только на поддельном профиле): после «разрешать всегда»
+  `tools.approval.check_all_command_guards(<команда>, "local")` в режиме
+  `single_query_mode: deny` возвращает `approved: true`, после отзыва — снова `false`.
+  Тест ищет интерпретатор Hermes через `%LOCALAPPDATA%`, а без него честно пропускается.
+
+## W26-FOUND — чипы-ссылки и блок «Найдено» (WAVE26 §2 D4)
+
+Одно правило оформления объекта-ссылки во всём интерфейсе (свод, чат, «Ход работы»,
+файлы, справки, экспорт): локальный файл — имя файла, которое открывает файл, плюс
+«Показать в папке» и «Копировать путь»; адрес — название, которое открывает сайт, плюс
+«Копировать ссылку». Реализация — `web/js/found.js` (разметка и действия),
+`web/js/svod-format.js` (пути в тексте), `web/js/md.js` + `md-inline.js` (рендер),
+`web/css/found.css` (вид в обеих темах).
+
+### W26-FOUND.1 `GET /api/files/info?path=<путь>` — есть ли файл
+
+Нужен чипам: прежде чем рисовать «Открыть», приложение проверяет существование и
+показывает серую «не найден» вместо ложной кнопки.
+
+```json
+{"ok": true, "exists": true, "path": "C:/Работа/Планы/Годовой план.md",
+ "name": "Годовой план.md", "size": 18432, "ext": ".md"}
+```
+
+* `exists: false` — путь внутри разрешённых каталогов, но файла нет (чип становится
+  серым «не найден», действия убираются);
+* `exists: null` — путь **вне** разрешённых каталогов: существование не подтверждаем и
+  не отрицаем, чип остаётся обычным (`reason: "outside_roots"`);
+* `400` — нет `path`. Содержимое файла маршрут не отдаёт — только имя, размер и тип.
+* Журналы (`data/logs/*.log`) — `403`, как и у `/api/file` (в них бывают секреты).
+
+Действия чипа: «Открыть» и «Показать в папке» — `POST /api/files/launch {path, room?, mode}`
+(W26-D3, `mode: "open"|"reveal"`); «Копировать путь/ссылку» — в браузере
+(`navigator.clipboard` с запасным способом). Если маршрута `launch` в сборке нет —
+«Показать в папке» уходит в прежний `POST /api/open`, «Открыть» — в `/api/file`
+(кнопка не остаётся мёртвой).
+
+### W26-FOUND.2 Машинный блок «Найдено» в своде
+
+Поисковая задача обязана содержать раздел `## Найдено` с блоком ```` ```найдено ````:
+YAML-список (или JSON-массив) записей `{название, тип, где, описание, отношение, комментарий}`.
+
+| Поле | Значения | Обязательное |
+|---|---|---|
+| `название` | строка | да |
+| `тип` | `файл` \| `сайт` \| `письмо` \| `запись` | нет (угадывается по `где`) |
+| `где` | путь или адрес объекта | да |
+| `описание` | 1–2 строки, что это и что отвечает | нет |
+| `отношение` | `искомое` \| `упоминает` \| `смежное` \| `не то` | нет (`смежное`) |
+| `комментарий` | где/в каком смысле упомянуто | нет |
+
+Вместо массива допустима обёртка `{искали, где искали, найдено: [...]}` — она даёт
+«что и где искали» для честной плашки. Ключи понимаются и по-английски
+(`title, type, where, description, relation, comment`).
+
+Рендер (`renderFoundBlock`): заголовок «Найдено» со счётчиком, группы «Нашли то, что
+искали (N)», «Нашли упоминания (N)», «Нашли смежное (N)», «Похожее, но не то (N)»;
+пустая группа не рисуется. Если записей с `отношение: искомое` нет — сверху плашка
+«Искомого нет; нашли смежное». Действия по типу: файл — «Открыть · Показать в папке ·
+Копировать путь»; сайт — «Перейти на сайт · Копировать ссылку»; письмо — «Открыть письмо»;
+запись — «Открыть в CRM». Тот же блок питает панель «Файлы», реестр источников и экспорт.
+
+Запасной разбор: если раздела `## Найдено` нет в машинном виде, но он написан обычным
+текстом, приложение вытаскивает из него пути и адреса и рисует те же карточки с меткой
+«разобрано из текста» — найденное не теряется.
+
+В экспорте (`server/export.py`) блок превращается в тот же список с группами и метками
+(HTML-экспорт рисует карточки тем же `md.js` + `found.css`). Правило для агентов —
+`contract.summary_format_rule()` и `docs/AGENT-GUIDE.md` §«Найдено».
+
+## W26-DEADENDS — «Без тупиков»: недоговорные блокировки, автозакрытие, действия (v1.3.0, WAVE26 §2 D1)
+
+Правило Михаила (`Requirements-Mikhail.md`): всё, что показано как «ждёт вашего решения»,
+обязано иметь действие, которое реально что-то меняет. На скриншоте 8777 было иначе:
+`ornith хочет выполнить команду · execute_code · блокировалось 2 раза · ждёт вашего
+решения` — и **ни одной кнопки**, причём карточка уже `done`. Разбор — Vault
+`Prep-2026-11-18-dead-ends-rail-duties.md` §1 (дефекты T1–T3).
+
+### W26.1 Три вида блокировки (`mode`) и состояния (`state`)
+
+| `mode` | Когда | `state` по умолчанию | Кнопки (`actions[]`) |
+|---|---|---|---|
+| `grant` | разрешить можно штатно (`command_allowlist`) | `pending` | `once` · `always` · `deny` |
+| `workaround` | нельзя штатно (`execute_code`: Hermes не сверяет список разрешений в `-q`) | `workaround` | `hint_agent` · `trust_profile` (со сроком) · `dismiss` |
+| `floor` | жёсткий запрет политики Hermes (`BLOCKED (hardline)`) | `info` | `hint_agent` · `dismiss` («Понятно, скрыть») |
+
+**`pending` — только `grant`.** У недоговорной блокировки и жёсткого запрета состояния
+«ждёт вашего решения» больше нет: это статус/информация, а не вопрос к человеку.
+
+Состояния: `pending` · `granted_once` · `granted_always` · `denied` · `expired` ·
+`workaround` · `hinted` · `info` · `closed` · `dismissed` · `trusted`.
+
+| Поле строки `approvals[]` | Что это |
+|---|---|
+| `mode` | `grant` · `workaround` · `floor` |
+| `mode_label` | по-русски: «можно разрешить» / «нельзя разрешить штатно — есть другой способ» / «жёсткий запрет Hermes — только информация» |
+| `actions[]` | `{id, label, kind}` — кнопки строки; у `trust_profile` есть `ttl_required: true` и `ttl_options[]` (`30` / `card` / `forever`). **Пустой список = пункт не «ждёт вас»** (история) |
+| `actionable` | `true` — у строки есть чем ответить |
+| `closed_reason` | `card_finished` — карточка завершилась, строка закрыта автоматически (T2) |
+
+Счётчики: `approvals_pending` и `needs_you` считают **только** строки `state="pending"`
+с непустым `actions[]`. Новое поле детали: `approvals_actionable` — сколько строк вообще
+можно чем-то закрыть (для сворачиваемого блока «нельзя разрешить штатно» в интерфейсе).
+
+### W26.2 Автозакрытие (T2)
+
+Строка в состоянии «ещё не решено» (`pending`/`workaround`/`info`) у карточки в
+`done`/`archived`/`failed`/`cancelled` отдаётся как `state: "closed"`,
+`closed_reason: "card_finished"`, `actions: []`, подпись «работа завершена — закрыто
+автоматически; если блокировка ещё нужна, повторите работу кнопкой «Доработать»».
+
+Это чтение (`collect`), а не запись: состояние пересчитывается на каждом запросе,
+поэтому «зависших» `pending` у завершённых карточек не остаётся даже в старых реестрах.
+Решение человека (`denied`/`granted_*`/`dismissed`/`hinted`) автозакрытие не перетирает.
+
+### W26.3 `POST /api/requests/{id}/actions {action:"approval"}` — новые `decision`
+
+```json
+{"action": "approval", "approval_id": "ap_3f7c1a90", "decision": "hint_agent"}
+{"action": "approval", "approval_id": "ap_3f7c1a90", "decision": "trust_profile", "ttl": "card"}
+{"action": "approval", "approval_id": "ap_3f7c1a90", "decision": "trust_profile", "ttl_min": 30}
+{"action": "approval", "approval_id": "ap_3f7c1a90", "decision": "dismiss", "note": "уже не нужно"}
+```
+
+| `decision` | Что делает сервер | Ответ |
+|---|---|---|
+| `hint_agent` | кладёт в ветку карточки штатным действием движка (`comment`, от лица Михаила) текст «execute_code недоступен в фоновой работе: сделай через файл и терминал — запиши скрипт файлом (`write_file`) и запусти `python файл.py`…». Разрешений не выдаёт, в профиль не пишет | `approval.state = "hinted"`; без канала записи → `422 no_channel` |
+| `trust_profile` | пишет `approvals.single_query_mode: approve` **только** в профиль участника (`hermes_cli.config.load_config` → `save_config`), **только** по этому действию и **только** с названным сроком; запись реестра комнаты позволяет отозвать | `approval.state = "trusted"`, `trust: {profile, scope, ttl_min, expires_at, previous, label}` |
+| `dismiss` | закрывает пункт как неактуальное (работает и для `pending`: «отклонить без запрета») | `approval.state = "dismissed"` |
+
+Срок обязателен: `ttl: "card"` (до конца карточки — снимается сторожем, когда карточка
+завершилась), `"forever"` или `ttl_min` (1…1440). Без срока → `400 ttl_required`,
+в профиль ничего не пишется.
+
+Почему `trust_profile` отдельным действием: `single_query_mode: approve` снимает защиту
+со **всех** «опасных» команд профиля в конечных запусках (жёсткие запреты Hermes —
+`approval_floors` — остаются). Поэтому: ясное предупреждение в интерфейсе, отдельный
+срок, отзыв и запись только в присланный профиль (в песочнице — поддельный
+`<data>/hermes-home`).
+
+Ошибки: `404` — нет такого пункта; `409 already_decided` — уже решён/закрыт;
+`422 floor` — доверие не снимает жёсткий запрет; `422 grantable` — эта блокировка
+разрешается обычным способом, доверие не нужно; `422 no_hermes` — нет интерпретатора
+Hermes; `400` — плохое тело/срок.
+
+Регресс: `decision: "once"|"always"` на недоговорной блокировке по-прежнему `422
+not_grantable` — но в `detail.actions` теперь приходят `["hint_agent", "trust_profile",
+"dismiss"]`, а текст перечисляет кнопки (раньше человек видел только «нельзя»).
+
+### W26.4 Доверие профилю: `GET /api/approvals/trusts`, `POST /api/approvals/untrust`
+
+```json
+GET /api/approvals/trusts?room=cafe
+{"items": [{"profile": "team-ops", "member_title": "Операции", "scope": "minutes",
+            "ttl_min": 30, "expires_at": 1763382920, "granted_at": 1763381120,
+            "card_title": "Смета упаковки", "label": "30 мин.", "room": "cafe"}],
+ "room": "cafe", "at": 1763381200}
+
+POST /api/approvals/untrust {"profile": "team-ops", "room": "cafe"}
+{"ok": true, "revoked": {"profile": "team-ops", "previous": "deny"},
+ "message": "Доверие отозвано: профиль «team-ops» снова спрашивает разрешения.",
+ "items": []}
+```
+
+Отзыв возвращает прежнее `single_query_mode` (или убирает ключ, если его не было).
+Сторож (`approvals.sweep`) снимает доверие сам: по сроку (`ttl_min`) и по завершении
+карточки (`ttl: "card"`). В ответе `sweep` появились `trusts_revoked`/`closed`.
+
+### W26.5 `POST /api/approvals/tidy {room, request_id, delay?}` — способ A без человека
+
+Подсказка участнику (та же `hint_agent`) для всех недоговорных блокировок запроса:
+`{"ok": true, "hinted": 1, "ids": ["ap_…"], "failed": 0, "message": "Подсказано участникам: 1."}`.
+`delay` — сколько секунд блокировка должна провисеть (интерфейс зовёт с `120`; в
+предложении было «сама через 2 минуты»). Разрешений не выдаёт, в профили не пишет.
+Хук в сторож (`watcher.py`) не ставился: файл принадлежит другой волне — вызов
+оставлен маршрутом (и `approvals.auto_hint` для кода).
+
+### W26.6 `tools/check_dead_ends.py` — сторожевой обход
+
+```bash
+python tools/check_dead_ends.py --base http://127.0.0.1:8851          # живой сервер
+python tools/check_dead_ends.py --base http://127.0.0.1:8851 --json dead-ends.json --quiet
+python tools/check_dead_ends.py --items approvals.json                # офлайн-массив
+python tools/check_dead_ends.py --selftest                            # проверка проверки
+```
+
+Обходит все комнаты → запросы с `needs_you` → детали, и проверяет:
+
+1. у каждой строки `pending`/`workaround`/`info` есть непустой `actions[]`;
+2. нет `pending` у карточки в `done`/`archived`/`failed`/`cancelled`;
+3. жёсткий запрет и недоговорная блокировка не показаны как «ждёт вашего решения»;
+4. надпись «ждёт вашего решения» не стоит у строки без кнопок;
+5. `approvals_pending` не больше числа строк с действием (иначе счётчик считает
+   недоговорное); «нужен ваш ответ» не висит над запросом, где решать нечего;
+6. пункты `questions`/`decisions`/`next_steps` с явным пустым `actions[]` — тупик.
+
+Код возврата: `0` — тупиков нет, `1` — есть, `2` — сервер/файл не прочитан.
+Публично: `check_approval`, `check_items`, `check_detail`, `walk`, `selftest`, `main`.
+
+### W26.7 Что НЕ делает D1 (границы волны)
+
+* не отправляет письма и ничего не пишет во внешние системы (это гейт человека);
+* не трогает набор инструментов профиля (способ C из разбора — «убрать `execute_code`
+  у рабочих профилей» — решение Михаила, отдельная волна);
+* не ставит хук автоподсказки в `watcher.py` (файл другой волны): маршрут `tidy` +
+  `auto_hint` готовы, включение — одна строка у владельца файла;
+* интерфейс (три вида строк, сворачивание колонки, единый стор) — пакет D2.
+
+### W26.8 Проверки
+
+* `python -m unittest tests.test_dead_ends -v` — 29 тестов: `execute_code`/`floor` не
+  `pending` и не в счётчиках; у каждой строки есть действие; автозакрытие
+  `done/archived/failed/cancelled` (и сохранение решения человека); `hint_agent` пишет
+  комментарий с точной формулировкой и честно отказывает без канала;
+  `trust_profile` без срока → `400`, пишет только в профиль участника, отзывается,
+  истекает по сроку и по концу карточки; `dismiss` идемпотентен (`409` на повтор);
+  `check_dead_ends.selftest` и ловля старого тупика; счётчик «Сегодня».
+* `python -m unittest tests.test_approvals -v` — прежние 36 тестов приведены к новому
+  правилу (у завершённой карточки блокировка закрыта, а не «ждёт»).
+
+## W23-MODEL-GUARD — «Контроль моделей» (v1.2.0, WAVE23 §2)
+
+Жалоба 17.11: исполнитель `ornith` (локальная Qwen, бесплатно) выполнил карточку на
+`anthropic/claude-sonnet-5-5` — $2,45 за один запуск. Причина: приложение клеило **модель
+руководителя** на корневую карточку в момент создания (исполнитель ещё неизвестен,
+`assignee=null`, статус `triage`), а когда Hermes назначал исполнителя, переопределение
+оставалось. Сверки «модель карточки ↔ ожидаемая модель исполнителя» не было нигде.
+
+Правило волны: **запрос уходит только на ту модель, которая ожидается**, и если он
+собирается уйти не туда — приложение исправляет это **до** запуска, а запущенное на
+чужой модели **останавливает и перезапускает** на верной. Предупреждений «проверьте»
+по умолчанию больше нет.
+
+Модуль: `server/model_guard.py`. Настройка комнаты: `model_guard` = `enforce` (по
+умолчанию) | `warn`. Состояние: `data/state/<room>/model_guard.json`, журнал комнаты —
+`journal.jsonl`.
+
+### W23.1 Единый источник ожидаемой модели
+
+```python
+expected_model(cfg, room, profile, card_id=None) -> {
+    "provider": str, "model": str, "reasoning": str,
+    "source": "user" | "room" | "profile" | "none",
+    "base_url": str,            # только если задан в конфиге (локальный провайдер)
+    "label": str,               # «провайдер · модель · мышление» для текстов
+}
+```
+
+Порядок (первый непустой побеждает — как в §2.1 WAVE23):
+
+1. **`source: "user"`** — модель, которую человек выбрал **для этой карточки** действием
+   `card_model` (W23.8). Выбор пользователя сильнее настроек комнаты: сторож его не
+   «исправляет».
+2. **`source: "room"`** — `room.agent_models[profile]` (переопределение комнаты), если
+   пользователь сам его задал.
+3. **`source: "profile"`** — пара `provider`+`model` из `config.yaml` профиля Hermes
+   (`default` → общий `config.yaml`), правило W20 §1.5 (профиль → общие настройки).
+4. **`source: "none"`** — модель определить нельзя. Сторож **ничего не останавливает и не
+   правит**, только пишет предупреждение `unknown`: из-за собственной слепоты работу не
+   убиваем.
+
+`override_for_card(room, profile)` — что писать в карточку при создании:
+`model_override`/`provider_override` ставятся **только** при `source:"room"`; иначе пусто
+(`NULL`) — Hermes берёт модель профиля, и это и есть «модель в настройках агента».
+
+**Сравнение моделей** (`same_model(expected, actual)`) — с нормализацией, но без угадывания:
+
+* регистр и лишние пробелы не важны (`Qwen36` = `qwen36`);
+* `provider/model` в поле модели равно паре `provider` + `model`;
+* известные алиасы (`ALIASES` в модуле) и суффикс `:latest` — то же самое;
+* **похожесть — не равенство**: `qwen36` ≠ `qwen36v`, `deepseek-v4-pro` ≠
+  `deepseek-v4-pro:0813`, `glm-5.3` ≠ `glm-5.3-flash` (те же грабли, из-за которых работа
+  уходила «на почти ту» модель, W10-FIX);
+* провайдер сравнивается, если он известен с обеих сторон (`billing_provider` в сессии
+  бывает пустым — тогда это не расхождение); `anthropic` ≠ `llamacpp` при одинаковом
+  имени модели — расхождение (та же модель через платного провайдера = те же деньги).
+
+### W23.2 Создание карточки (единственный путь)
+
+Любое создание карточки приложением идёт через `engine_write._model_args` →
+`model_guard.override_for_card`:
+
+| что создаётся | `assignee` | переопределение модели |
+|---|---|---|
+| корневая карточка запроса (`--triage`) | неизвестен | **не ставится никогда** |
+| карточка-ребёнок (критик, доработка, подзадача) | известен | только выбор комнаты (`source:"room"`) |
+| направление карты проекта (под-запрос) | неизвестен до назначения | **не ставится** |
+
+Модель профиля в карточку не переносится: она и так действует (движок читает
+`config.yaml` профиля), а «пин» навсегда перекрыл бы будущую смену настроек агента.
+Уровень мышления (`reasoning_effort`) по-прежнему ставит приложение через мост — только
+когда он выбран в комнате.
+
+### W23.3 Быстрый сторож (`server/watcher.py`, свой цикл ≤ 3 с)
+
+Отдельный поток наблюдателя (не общий тик `TICK_ACTIVE`): раз в `GUARD_TICK = 3` с по
+каждой неархивной комнате, только карточки `tenant LIKE 'room:%'`. Чужие доски и карточки
+других tenant не трогаются **никогда**.
+
+| состояние карточки | что делает сторож |
+|---|---|
+| `triage, todo, ready, blocked, queued, scheduled` (не запущена) | сверяет `model_override/provider_override` с `expected_model`. Расхождение → **немедленно** правит штатной функцией движка (мост `tools/kb_bridge.py`, та же, что закрепляет модель участника), событие `fixed` |
+| `running` и есть `owner_admitted` с `session_id` | читает `sessions.model` + `billing_provider` (`state.db` профиля, `mode=ro`). Не та модель → **немедленно** останавливает (`reclaim`), ставит верное переопределение, возвращает в очередь (`ready`), событие `stopped` со стоимостью на момент остановки |
+| модель определить нельзя (`source:"none"`) | ничего не останавливает, событие `unknown` (один раз на карточку в сутки) |
+| `running` без `session_id` (воркер ещё поднимается) | ждёт: `unknown`, ничего не делает |
+| `review, done, archived` | не трогает |
+
+Ограничения (защита от петли и от убийства нормальной работы):
+
+* не более **2** автоперезапусков на карточку (`GUARD_MAX_RESTARTS`). Исчерпала —
+  карточка остаётся остановленной (`blocked`) с пометкой «модель не совпадает, нужно
+  решение» и сообщением в ветку запроса; дальше её ведёт человек;
+* карточку моложе `GUARD_MIN_AGE = 15` с не трогаем: воркер мог ещё не записать сессию;
+* карточка, остановленная **человеком** (`card_stop`, W23.8), сторожем не поднимается;
+* `mode = "warn"` (настройка комнаты) — сторож только пишет события `warned`, ничего не
+  останавливает и не правит;
+* ошибка моста/БД не валит цикл: она уходит в `data/logs/app.log` и в
+  `/api/health.guard.last_error`.
+
+Состояние (`data/state/<room>/model_guard.json`):
+
+```json
+{"updated_at": 1763381200,
+ "restarts": {"t_375d5a5f": {"count": 1, "at": 1763380000, "model": "claude-sonnet-5-5"}},
+ "user_model": {"t_375d5a5f": {"provider": "llamacpp", "model": "qwen36v", "at": 1763381000}},
+ "stopped": {"t_375d5a5f": {"by": "user", "at": 1763381200, "reason": "остановлено пользователем"}},
+ "unknown": {"t_11111111": 1763381200},
+ "events": [{"at": 1763380000, "kind": "stopped", "card_id": "t_375d5a5f",
+             "root_id": "t_aaaaaaaa", "profile": "ornith",
+             "expected": {"provider": "llamacpp", "model": "qwen36v"},
+             "actual": {"provider": "anthropic", "model": "claude-sonnet-5-5"},
+             "cost_usd": 2.45,
+             "text": "Запуск шёл на claude-sonnet-5-5 вместо локальной qwen36v — остановлено и перезапущено"}]}
+```
+
+`events` — кольцо последних 200 событий (журнал комнаты остаётся полным).
+
+### W23.4 `GET /api/rooms/{id}/model-check` — «куда собирается уйти запрос»
+
+Проверка по кнопке и для диагностики: ожидаемая модель участника, переопределение карточки
+и факт последнего запуска из `sessions`. `guard.open` — сколько карточек комнаты прямо
+сейчас расходятся (это же число рисуется рядом с кнопкой «Проверить сейчас»).
+
+```json
+{"room": "fn", "at": 1763381200,
+ "members": [
+   {"profile": "ornith", "title": "Орнит — исполнитель",
+    "expected": {"provider": "llamacpp", "model": "qwen36v", "reasoning": "",
+                 "source": "profile", "base_url": "http://127.0.0.1:8090/v1"},
+    "card_model": {"provider": "anthropic", "model": "claude-sonnet-5-5"},
+    "last_run": {"provider": "anthropic", "model": "claude-sonnet-5-5",
+                 "at": 1763378000, "cost_usd": 2.45, "card_id": "t_375d5a5f"},
+    "ok": false,
+    "problem": "ornith: ожидалась qwen36v (llamacpp), запущено claude-sonnet-5-5 (anthropic)"},
+   {"profile": "anna", "title": "Анна — руководитель",
+    "expected": {"provider": "anthropic", "model": "claude-sonnet-5-5", "reasoning": "high",
+                 "source": "room"},
+    "card_model": null, "last_run": null, "ok": true, "problem": null}],
+ "guard": {"mode": "enforce", "open": 1, "fixed_24h": 3, "stopped_24h": 1,
+           "saved_usd_est": 2.45,
+           "text": "Строгий контроль: 3 исправления и 1 остановка за сутки, сэкономлено ≈ $2,45"},
+ "warnings": []}
+```
+
+* `members[]` — по каждому участнику комнаты (руководитель, критик, исполнители);
+  `title` — «Имя — роль» по подписям комнаты (как в «Команде»);
+* `expected.source` — как в W23.1 (`user|room|profile|none`);
+* `card_model` — что записано в карточках участника, `null` — переопределения нет
+  (карточка пойдёт на модель профиля);
+* `last_run` — факт последнего запуска участника из `sessions` (`mode=ro`), `null` — не
+  запускался или `state.db` недоступен; `cost_usd` — `estimated_cost_usd` сессии;
+* `ok=false` + `problem` — по-русски: «ожидалась X, запущено Y» (без id и служебных слов);
+  `ok=false` бывает и тогда, когда в карточке записана не та модель (карточка уйдёт не туда);
+* `ok=null` — модель участника определить нельзя (в профиле и в комнате не задана):
+  контроль не вмешивается, `problem` объясняет почему — интерфейс рисует нейтральный статус;
+* `guard.saved_usd_est` — сумма `estimated_cost_usd` остановленных запусков за сутки
+  (оценка «сколько не сгорело»), округление до цента;
+* `warnings[]` — что не удалось прочитать (нет `state.db`, нет конфига профиля).
+
+`404` — нет комнаты. `200` и в `warn`-режиме: `guard.mode` показывает режим.
+
+### W23.5 `model_guard[]` в деталях запроса
+
+`GET /api/requests/{id}` получает поле `model_guard` (массив, новые первыми, ≤ 50):
+
+```json
+"model_guard": [
+  {"at": 1763380000, "kind": "stopped", "card_id": "t_375d5a5f", "profile": "ornith",
+   "expected": {"provider": "llamacpp", "model": "qwen36v"},
+   "actual": {"provider": "anthropic", "model": "claude-sonnet-5-5"},
+   "cost_usd": 2.45,
+   "text": "Запуск шёл на claude-sonnet-5-5 вместо локальной qwen36v — остановлено и перезапущено на qwen36v"},
+  {"at": 1763379000, "kind": "fixed", "card_id": "t_375d5a5f", "profile": "ornith",
+   "expected": {"provider": "llamacpp", "model": "qwen36v"},
+   "actual": {"provider": "anthropic", "model": "claude-sonnet-5-5"}, "cost_usd": null,
+   "text": "Модель карточки исправлена до запуска: claude-sonnet-5-5 → модель профиля (qwen36v)"}]
+```
+
+Виды (`kind`): `fixed` (исправлено до запуска), `stopped` (остановлено и перезапущено),
+`unknown` (модель определить нельзя — предупреждение), `warned` (расхождение найдено, но
+комната в режиме «только предупреждать»), `stopped_by_user` / `resumed` / `model_changed`
+(действия человека, W23.8). **`text` — готовый русский текст**: интерфейс показывает его
+как есть и не собирает фразы сам. Неизвестный вид клиент рисует нейтрально (по `text`).
+
+Поле есть всегда (пустой массив, если вмешательств не было). Дополнительно доступно имя
+`?fields=model_guard` — только этот блок сверх ядра.
+
+### W23.6 Пункт диагностики «Контроль моделей»
+
+`GET /api/diagnostics[?room=]` получает пункт:
+
+```json
+{"id": "model_guard", "title": "Контроль моделей",
+ "status": "ok|warn|fail|off",
+ "value": "Строгий контроль: 3 исправления и 1 остановка за сутки",
+ "hint": "Запрос уходит только на модель из настроек агента — расхождения исправляются до запуска",
+ "fix": null,
+ "details": ["ornith: ожидалась qwen36v (llamacpp), запущено claude-sonnet-5-5"]}
+```
+
+`status`: `ok` — расхождений нет; `warn` — есть карточки с расхождением или режим `warn`;
+`off` — проверять нечего (нет доски/комнат); `fail` — сторож падал (последняя ошибка в
+`details`). Пункт есть и без `?room=` (сводка по всем комнатам).
+
+### W23.7 Настройка комнаты `model_guard`
+
+`PATCH /api/rooms/{id} {"model_guard": "enforce"|"warn"}`. В карточке комнаты:
+
+```json
+"model_guard": "enforce",
+"model_guard_label": "Строго: неверную модель исправляю сам",
+"model_guard_block": {"mode": "enforce", "on": true,
+                      "label": "Строго: неверную модель исправляю сам",
+                      "hint": "Расхождение исправляется до запуска; запущенное на чужой модели останавливается и перезапускается",
+                      "modes": [{"id": "enforce", "label": "Строго: неверную модель исправляю сам"},
+                                {"id": "warn", "label": "Только предупреждать — решаю я"}]}
+```
+
+Старые комнаты без поля — `enforce` (требование пользователя 17.11: жёсткий контроль по
+умолчанию). Другие значения → `400 bad_request` (`detail.field = "model_guard"`).
+
+### W23.8.1 Метка `stopped` в узле дерева (W23-ST)
+
+Узел `tree[]` (`RequestDetail`, §6.11) получает необязательное поле `stopped`, если карточку
+остановил **человек** и она ещё не продолжена:
+
+```json
+"stopped": {"by": "user", "at": 1793169060, "model": "qwen36v", "provider": "llamacpp",
+            "cost_usd": 0.37}
+```
+
+* `by` — `"user"` (остановку сторожа в узел не кладём: это не решение человека, о ней
+  рассказывает лента `model_guard[]`);
+* `at` — когда остановили (unix-время, `0` — неизвестно);
+* `model`/`provider` — модель, на которой шла работа на момент остановки (`""`, если прогона
+  не было: карточка стояла в очереди);
+* `cost_usd` — стоимость этого прогона на момент остановки (`number|null`, `null` — считать
+  нечем: нет подтверждённой сессии с ценой).
+
+Источник — реестр сторожа `data/state/<room>/model_guard.json: stopped[<task_id>]`; поле
+снимается, когда карточку продолжают (`card_resume`). Зачем: `status: "blocked"` бывает и у
+карточки, ждущей зависимостей, поэтому интерфейс по одной метке отличает «остановлено вами»
+(строка «Остановлено вами в 10:41 · модель: qwen36v» + кнопка «Продолжить») от обычной
+блокировки. У старых записей реестра (без модели и стоимости) `model` — `""`, `cost_usd` — `null`:
+подпись будет короче, но остановка всё равно видна.
+
+### W23.8 Управление карточкой: остановить / продолжить / сменить модель
+
+Те же три действия, что кнопки остановки в самом Hermes. Работают **только** для карточек
+комнат (`tenant = room:<эта комната>`) и **только в статусах** `running`, `ready`,
+`blocked` — то есть пока работа идёт или вот-вот пойдёт.
+
+```
+POST /api/requests/{id}/actions
+  {"action": "card_stop",   "task_id": "t_375d5a5f", "note": "сначала уточню задачу"}
+  {"action": "card_resume", "task_id": "t_375d5a5f", "note": "продолжай"}
+  {"action": "card_model",  "task_id": "t_375d5a5f", "model": "qwen36v", "provider": "llamacpp"}
+  {"action": "card_model",  "task_id": "t_375d5a5f", "model": "none"}
+```
+
+Ответ `200`:
+
+```json
+{"ok": true, "action": "card_model", "task_id": "t_375d5a5f", "status": "ready",
+ "model": {"provider": "llamacpp", "model": "qwen36v", "source": "user"},
+ "message": "Модель карточки: qwen36v (llamacpp). Работа перезапущена на ней.",
+ "detail": {"stopped": true, "resumed": true, "queue": "ready"}}
+```
+
+**`card_stop`** — остановить работу, **не теряя прогресс**: рабочая папка, коммиты и
+комментарии остаются, воркер завершается. Двумя вызовами CLI останавливать нельзя (проверено
+по `hermes_cli/kanban_db.py`):
+
+1. `reclaim_task` — **единственный** глагол, который завершает процесс воркера
+   (`_terminate_reclaimed_worker`), но карточку он возвращает в очередь (`ready`/`todo`), и
+   диспетчер подхватывает её на следующем тике (30 с), а если слот освободился — сразу;
+2. `block_task` — удерживает карточку (`blocked`, `claim_lock`/`worker_pid` в NULL), но
+   процесс воркера **не убивает**.
+
+Поэтому остановка — **одна операция в одном процессе интерпретатора Hermes**
+(`server/kanban_atomic.py`, W23-AT1): `reclaim_task` и сразу за ним `block_task` — одно
+соединение, без промежуточного состояния `ready`: зазор между шагами — микросекунды (замер на
+поддельной доске: 13–19 мкс против 1,4–2,0 с у второго вызова CLI), а `block` держит блокировку
+записи всё время своей работы, так что захватить карточку в этом окне практически нельзя. Затем результат проверяется по доске (статус `blocked` и «pid
+воркера больше не жив» — `_worker_alive` с отпечатком запуска) и при неудаче действие
+повторяется (до 3 раз). Если интерпретатора Hermes нет (чистая машина), идёт прежний путь
+«CLI + проверка + повтор»: медленнее, результат тот же; в ответе это видно по
+`detail.path` (`"atomic"` — один процесс, `"cli"` — последовательность команд).
+
+Тип блокировки — `needs_input`; при повторных остановках он **чередуется с «без типа»**, чтобы
+счётчик петель Hermes (`BLOCK_RECURRENCE_LIMIT = 2`) не принял решение человека за цикл
+воркера и не увёл карточку в `triage`: «остановил → продолжил → остановил» остаётся
+остановкой, а не исчезновением карточки из очереди.
+
+3. метка `stopped[task_id] = {by: "user", at, reason, model, provider, cost_usd}` — сторож
+   моделей такую карточку не поднимает (проверено двумя тиками подряд), а сообщение
+   пользователя по запросу её возобновляет (ниже). В метку попадает то, что было в работе на
+   момент остановки (модель и стоимость прогона), — снимается ДО `reclaim`, пока открытый
+   прогон ещё есть.
+
+Если удержать карточку не удалось, `block` не сработал или воркер не завершился (например,
+claim принадлежит другому хосту — чужой pid Hermes не сигналит), ответ честный: `200`,
+`detail.paused: false` (или `detail.worker_alive: true`) и текст «работа снята, карточка снова
+в очереди» / «процесс воркера ещё жив — нажмите ещё раз». Молчаливого «остановлено» над живым
+воркером больше нет.
+
+**`card_resume`** — вернуть в очередь: `unblock <id> --reason "продолжаем"`, для `todo`
+(`unblock` вернул в ожидание родителей или карточка и так в `todo`) — `promote <id>`.
+Обе штатные функции вызываются подряд в одном процессе (`server/kanban_atomic.py`), поэтому
+между снятием паузы и постановкой в очередь нет окна, в котором диспетчер видит карточку
+`todo` без причины.
+Воркер стартует заново с контекстом карточки: тело, история комментариев (включая
+последний комментарий пользователя) и рабочая папка на месте. Метка `stopped` снимается,
+в журнал — «карточка продолжена». `409`, если карточка уже `running`.
+
+**`card_model`** — сменить модель карточки или вернуть её к модели профиля:
+
+* `model: "none"` (`"null"`, `"-"`, `""`) → `set-model <id> none` — переопределение
+  снимается, воркер пойдёт на модели профиля (ровно то, что пользователь сделал руками
+  17.11 для `t_375d5a5f`: `set-model … none` + `reclaim`);
+* `model: "<id>"` (+ `provider`) → проверка по каталогу Hermes (`agent_models.validate`:
+  неизвестная модель → `422` с понятным текстом), затем `set-model <id> <model> --provider P`;
+* идущую карточку смена не ждёт: `set-model` применяется со следующего запуска, поэтому
+  сразу `reclaim` — и она продолжается уже на новой модели («Сменить и продолжить» одним
+  нажатием). `blocked` — `unblock` + `promote`. Обе штатные функции идут **в одном процессе**
+  (`server/kanban_atomic.py`, W23-AT1): диспетчер не успевает подхватить карточку между
+  записью модели и снятием работы, то есть на старой модели она уже не запустится;
+* выбор человека запоминается (`user_model[task_id]`) и **сильнее** настроек комнаты:
+  сторож его не «исправляет». Снятие (`none`) возвращает обычное правило (комната → профиль).
+
+Ошибки (все тексты по-русски):
+
+| код | когда | текст |
+|---|---|---|
+| `404` | карточки нет в этом запросе / чужой tenant | «Карточка не из этого запроса» |
+| `409` | статус `done`, `archived` | «Карточка уже завершена» |
+| `409` | статус `triage`, `todo` | «Карточка ещё не запускалась — модель применится при запуске» |
+| `409` | статус `review` | «Карточка ждёт проверки — останавливать нечего» |
+| `409` | `card_resume` на `running` | «Карточка уже работает» |
+| `409` | `card_stop`, воркер уже снят | «Работа уже остановлена» |
+| `422` | `card_model`: модель не из каталога / провайдер не настроен | «Такой модели нет у провайдера «X» — выберите из списка» |
+| `400` | нет `task_id`, мусор в `model` | «Нужен task_id» |
+
+Журнал комнаты (`journal.jsonl`): «карточка t_… остановлена пользователем (ornith)»,
+«карточка t_… продолжена», «модель карточки t_…: claude-sonnet-5-5 → qwen36v» (в записи
+`actor: "mikhail"` — видно, что действовал человек). Те же события — в `model_guard[]`
+запроса (`stopped_by_user`, `resumed`, `model_changed`).
+
+**Возобновление сообщением.** Если у запроса есть карточка, остановленная пользователем
+(`stopped[task_id].by == "user"`), то любое новое сообщение пользователя по запросу
+(`POST /api/requests/{id}/messages`) возобновляет её: текст уже лежит в ветке (карточка его
+увидит), затем вызывается `card_resume` для всех таких карточек. В ответе появляется
+`resumed: ["t_…"]` (дополнительное поле, старые клиенты его игнорируют). Так «продолжай» в
+чат работает так же, как кнопка.
+
+### W23.9 Что НЕ делает сервер
+
+* не пишет в `kanban.db` напрямую: только CLI `hermes kanban`, штатный мост
+  (`set_model_override` / `set_reasoning_effort`) и `server/kanban_atomic.py` — отдельный
+  процесс интерпретатора Hermes, который **вызывает функции самого `hermes_cli.kanban_db`**
+  (`reclaim_task`, `block_task`, `unblock_task`, `promote_task`, `set_model_override`),
+  а не свой SQL. Нужен он ровно затем, чтобы остановка была одной операцией (W23-AT1):
+  своего SQL по карточкам сервер не пишет нигде;
+* не правит `config.yaml`, `SOUL.md` и `skills` профилей — только читает (`mode=ro`);
+* не запускает модели сам: карточки ставит в очередь, работу берёт обычный движок;
+* не трогает карточки чужих tenant, чужих досок и архивных комнат;
+* не останавливает работу, если ожидаемую модель определить нельзя (лучше пропустить, чем
+  убить нормальный запуск);
+* не «лечит» выбор пользователя: `card_model` и переопределение комнаты для сторожа —
+  ожидаемая модель, а не ошибка.
+
+### W23.10 Проверки
+
+* `python -m unittest tests.test_model_guard -v` — корневая карточка без переопределения
+  при неизвестном исполнителе; сторож приводит override к ожидаемому ДО старта;
+  запущенная на чужой модели останавливается, перезапускается и пишет стоимость; не
+  больше 2 перезапусков; профиль без модели — не убиваем; чужой tenant не трогаем;
+  нормализация имён; режим `warn` ничего не останавливает; десять тиков — одно
+  исправление; регрессия на всех путях создания карточек; `card_stop` / `card_resume` /
+  `card_model` на поддельной доске; возобновление сообщением.
+* `python -m unittest tests.test_kanban_atomic -v` (W23-AT1) — атомарная остановка на
+  поддельной доске с собственным интерпретатором Hermes и **настоящим процессом-воркером**:
+  воркер убит и карточка удержана одной операцией (проверено по доске и по ОС); карточка в
+  очереди удерживается без убийства; три «остановить/продолжить» подряд не уводят её в
+  `triage`; чужой claim честно отвечает «воркер жив»; `resume` / `сменить модель и продолжить` /
+  перезапуск сторожа — одним процессом; запасной путь CLI (последовательность, проверка,
+  повтор) и два тика сторожа после остановки (карточку не поднимает, движок не зовёт). Без
+  интерпретатора Hermes эти проверки честно пропускаются (`skip`), а не «проходят».
+* `GET /api/rooms/{id}/model-check`, `model_guard[]` в деталях, пункт диагностики и
+  настройка комнаты — те же тесты через `App.dispatch`.
+* Живая проверка (только чтение реальных данных, после переноса на 8777): модуль
+  показывает для `t_375d5a5f` проблему «ornith: ожидалась qwen36v (llamacpp), запущено
+  claude-sonnet-5-5 (anthropic)».
+
+## W24-DUTIES — «Дежурства» и «Здоровье интеграций» (v1.3.0-dev, WAVE24 §3.2–3.3)
+
+Дежурство — задание Hermes по расписанию. Приложение показывает их **только на чтение**
+(`cron/jobs.json`, `cron/executions.db` через `sqlite mode=ro`, `cron/output/<job_id>/*.md`)
+и не запускает, не правит расписание и не пишет в Hermes ничего. «Запустить сейчас» и
+правка расписания — не в этой волне.
+
+Модули: `server/duties.py` (чтение, расписание по-русски, маски), `server/health.py`
+(регистрируемые проверки), `server/routes_duties.py` (маршруты). Поле комнаты `duties`
+(список id заданий) хранится в `data/rooms.json` — правится маршрутом ниже, Hermes не
+меняется.
+
+### W24.1 `GET /api/duties?room=<id|all>`
+
+`room` по умолчанию — `all`. Неизвестная комната → `404 not_found`. Ответ (все массивы
+упорядочены, пустые — `[]`, не `null`):
+
+```
+{ "generated_at": int,
+  "items": [ { "job_id": str, "name": str, "enabled": bool,
+               "schedule": str,                 // schedule_display из jobs.json («0 8 * * *», «every 30m»)
+               "schedule_human": str,           // «каждый день в 08:00», «каждые 30 минут», «по будням в 07:30»
+               "bound_rooms": [str],            // комнаты, привязавшие дежурство (rooms.json, duties[])
+               "last_run": { "status": "completed"|"failed"|"running"|"missed"|"unknown",
+                             "started_at": int|null, "finished_at": int|null,
+                             "scheduled_for": int|null, "late_s": int|null,
+                             "delivered": bool|null, "error": str|null } | null,
+               "next_run_at": int|null,
+               "missed_recent": int,            // пропусков за 7 суток
+               "recent": [ {"status": str, "started_at": int|null, "scheduled_for": int|null} ],  // до 5
+               "excerpt": str,                  // ≤ 600 знаков из «## Response» последнего вывода
+               "problem": null | {"kind": "failed"|"stale"|"never_ran"|"disabled_but_due",
+                                  "text": str} } ] }
+```
+
+Правила расчёта:
+
+* **`last_run`** — последняя запись ведомости (`executions`, окно 40 запусков **на каждое**
+  задание, а не общий хвост: у частого задания тысячи записей). Ведомости нет — берём
+  `last_run_at`/`last_status` из `jobs.json` (`delivered` тогда `null`).
+* **`missed_recent`** — записи `status='missed'` за 7 суток (по `claimed_at`, иначе по
+  `scheduled_instant`).
+* **`excerpt`** — из блока «## Response» самого свежего файла вывода. Текст задания,
+  памятки и «## Prompt» в итог не попадают. Секреты маскируются (`server/worklog.py`
+  маски + `token=`-пары), домашний каталог заменяется на `~`, длина ≤ 600 знаков.
+  У «тихих» запусков (скрипт без вывода, `no_change`) блока нет — `excerpt` пустой.
+* **`problem`** (первое подходящее): `failed` — последний запуск с ошибкой; `disabled_but_due`
+  — задание выключено; `never_ran` — ни одного запуска; `stale` — `next_run_at` прошёл
+  больше 15 минут назад, либо последний запуск старше двух шагов расписания (шаг из cron:
+  сутки / неделя / месяц, из интервала — его минуты).
+* Порядок `items`: сначала с замечанием, затем по имени.
+
+### W24.2 `PUT /api/rooms/{id}/duties`
+
+```
+{ "job_ids": ["<id задания>", …] }        // [] — отвязать всё
+→ 200 { "ok": true, "room": str, "duties": [str], "generated_at": int, "items": [Item] }
+```
+
+* Проверка: список строк, формат `[A-Za-z0-9_.-]{1,64}`, без повторов, не больше 40;
+  неизвестный id (нет в `jobs.json`) → `422 unknown_job` с `detail.unknown`;
+  тело без `job_ids` → `400` с `detail.missing`; неизвестная комната → `404`.
+* Меняется только запись комнаты (`duties`). Файлы Hermes не трогаются — это проверено
+  тестом (снимок mtime до и после) и живой проверкой.
+
+### W24.3 `GET /api/health/integrations`
+
+```
+{ "generated_at": int, "overall": "ok"|"warn"|"fail",
+  "checks": [ {"id": str, "title": str, "status": "ok"|"warn"|"fail"|"unknown",
+               "detail": str, "since": int|null, "hint": str|null} ] }
+```
+
+`overall`: `fail`, если есть хоть один `fail`; иначе `warn`, если есть `warn`; `unknown`
+сам по себе оценку не портит (неизвестное ≠ плохое). Проверки идут в порядке регистрации
+(`server/health.py`, декоратор `@register`) — новая проверка сразу попадает в ответ:
+
+| id | что смотрит | статусы |
+|---|---|---|
+| `gateway` | `gateway_state.json`: состояние, свежесть записи (> 300 с → warn) | ok / warn / fail / unknown |
+| `dispatcher` | `engine_health.dispatcher_status` (та же диагностика, что в «Проверке системы») | ok / warn / fail |
+| `peer_link` | `bot_peers` из `config.yaml`: TCP-подключение к localhost-портам (0,8 с). Адресов нет → `unknown` | ok / warn / fail / unknown |
+| `calendar_token` | `google_token.json` (наличие, `expiry`) **и** `invalid_grant`/`REFRESH_FAILED` в блоках «## Response» дежурств за 3 суток | ok / warn / fail / unknown |
+| `duties` | задания с `problem` (см. W24.1) | ok / warn / unknown |
+| `backups` | самая свежая папка в `TEAMROOM_BACKUPS` или `C:/TeamRoom/Backups`; > 14 суток → warn | ok / warn / unknown |
+| `disk` | свободное место там, где данные: < 10 % → warn, < 3 % → fail | ok / warn / fail / unknown |
+| `stt` | `diagnostics._stt_status`: режим диктовки | ok / warn |
+| `model_guard` | `model_guard.diag_item` по комнатам | ok / warn / unknown |
+
+Внешняя сеть не используется: только файлы Hermes (на чтение) и localhost-порты из
+настроек. Исключение внутри проверки не роняет отчёт — проверка становится `unknown` с
+текстом причины. Ответы `GET`-маршрутов отдаются с `Cache-Control: no-store`.
+
+### W24.4 Проверки
+
+* `python -m unittest tests.test_duties -v` (31) — расписание по-русски (cron, `*/30`,
+  `every 30m`, `in 2h`, дни недели, месяцы), `last_run`/`missed`, `failed`/`stale`/
+  `never_ran`/`disabled_but_due`, маскирование и длина `excerpt`, фильтр по комнате,
+  привязка (дубли, мусор, неизвестный id → 422, предел 40, отвязка), «Hermes не изменён»
+  (снимок mtime), битые `jobs.json` и отсутствие каталога.
+* `python -m unittest tests.test_health -v` (34) — форма ответа, порядок и расширяемость
+  реестра, падение проверки → `unknown`, приоритет `overall`, шлюз (ok/warn/fail/нет файла),
+  раздача заданий, сосед (нет настроек/отвечает/молчит), календарь (истёк, `invalid_grant`
+  в выводах, упоминание вне окна, нет файла, здоровый), дежурства, копии, диск, диктовка,
+  контроль моделей, «в Hermes не пишем» (снимок файлов).
+
+## W24-TODAY — экран «Сегодня» (v1.3.0-dev, WAVE24 §3.1, пакет N2)
+
+Два маршрута отвечают на вопрос «что ждёт человека сейчас и что изменилось с прошлого
+раза». Правила собраны в `server/today.py` (чистые функции), HTTP-слой — в
+`server/routes_today.py`. Новых хранилищ нет: единственный файл — отметка захода
+`data/state/today.json`.
+
+### W24-TODAY.1 `GET /api/today`
+
+```
+{ "generated_at": int, "last_visit_at": int|null,
+  "counters": {"needs_you": int, "overdue": int, "due_soon": int, "running": int, "changed": int},
+  "needs_you": [ {"room", "room_title", "request_id", "request_title",
+                  "kind": "question"|"decision"|"approval"|"step"|"draft"|"failure"|"stalled",
+                  "text", "since", "urgent", "recommended"} ],
+  "overdue":  [ {"room", "room_title", "item_id", "text", "owner", "due", "days_overdue", "request_id"} ],
+  "due_soon": [ { …то же…, "days_left": int } ],
+  "running":  [ {"room", "room_title", "request_id", "request_title", "members_working", "since"} ],
+  "changed":  { "finished": [ {"room", "request_id", "request_title", "at"} ],
+                "new_requests": int, "new_answers": int,
+                "failures": [ {"room", "request_id", "request_title", "at", "reason"} ] },
+  "rooms":    [ {"id", "title", "needs_you", "overdue", "running"} ] }
+```
+
+Время — пояс сервера (unix). Пустые разделы — пустые массивы, не `null`. Массив `rooms`
+включает все неархивные комнаты, даже пустые (нули) и недоступные (нули: экран «Сегодня»
+не должен падать из-за одной комнаты).
+
+**Откуда берётся каждый раздел** (только существующее чтение):
+
+| раздел | источник |
+|---|---|
+| `needs_you` (вопросы, решения, шаги) | пункты «От вас нужно» (`ingest.backlog_view`, с наложением ответов `answers`), владелец = человек (`mikhail`), статус `open`/`asked` |
+| `needs_you` (предложение этапов) | тот же бэклог, вид `phases_proposal` → `kind: "decision"`; `request_id` — пустая строка (пункт не привязан к запросу) |
+| `needs_you` (разрешения) | `approvals.collect` — только у корней со статусом `needs_you`, не больше 8 на комнату |
+| `needs_you` (черновик карты) | `plan.load`: `status="draft"` и есть потоки → «ждёт утверждения» |
+| `needs_you` (сбой) | корень со статусом `failed`; `text` — причина из карточки, секреты замаскированы (`worklog.mask`) |
+| `needs_you` (карточка не отвечает — **W25-M2**) | `watchdog.stalled(cfg, room)`: только состояние сторожа (`data/state/<room>/watchdog.json`), доска не читается; `text` — «Карточка <кто> не отвечает N мин» (после остановки — «…остановлена, нужно внимание»); `urgent` — при N ≥ 20 мин (`today.URGENT_STALL_MIN`) |
+| `overdue` / `due_soon` | открытые пункты бэклога с `due` (`YYYY-MM-DD`); «просрочено» = `due` раньше сегодняшнего дня, «ближайшие» = сегодня и ≤ 3 суток |
+| `running` | `engine_read.today_states`: корень `working`/`reviewing`/`synthesizing` или живые карточки (`running`/`review`) |
+| `changed` | реестр запросов (`created_at`, `answer_at`) и состояние корней (`done`/`failed`) относительно `last_visit_at` |
+| `rooms` | `rooms.list_rooms` (неархивные) |
+
+**Правила, которых нет в §3.1, но нужны интерфейсу**
+
+* `urgent` — сбой и запрос разрешения срочны всегда, остальное — если ждёт больше суток.
+* `recommended` — короткая подсказка следующего шага («Ответить на вопрос», «Разрешить или
+  запретить», «Посмотреть, на чём остановилось»…), может быть `null`.
+* `counters.changed` = `len(finished) + new_requests + new_answers + len(failures)` — значка
+  столько, сколько строк в сводке «что изменилось».
+* «Изменилось» при `last_visit_at = null` считается за последние 24 часа.
+* `running.members_working` — сколько разных исполнителей занято (не меньше 1 у идущего
+  запроса, даже если карточки ещё не взяты).
+* Порядок: `needs_you` — срочные сверху, затем кто ждёт дольше; `overdue` — больше
+  просрочка выше; `due_soon` — ближайший срок выше; `running` — кто начал раньше;
+  `finished`/`failures` — свежие сверху.
+* Кэш ответа — 10 секунд (опроса раз в 20 секунд достаточно). `POST /api/today/seen`
+  сбрасывает кэш.
+* Ошибка одного источника (комната, бэклог, доска) не роняет ответ: раздел этой комнаты
+  пустой. Ошибки чтения доски попадают в `data/logs/app.log`.
+
+### W24-TODAY.2 `POST /api/today/seen`
+
+```
+→ 200 {"ok": true, "last_visit_at": int, "previous": int|null, "changed": bool}
+```
+
+* Отмечает заход: пишет `data/state/today.json` (`{"last_visit_at", "updated_at"}`, атомарно,
+  под замком файла). Это значение отдаёт `GET /api/today` как «предыдущий заход».
+* Идемпотентно: если отметка моложе 60 секунд, файл не переписывается (`changed: false`),
+  ответ — прежнее значение.
+* Тело не читается. Запись не удалась (нет прав/диск) → `503 state_unavailable` с русским
+  текстом; экран продолжает работать, «изменилось» считается за сутки.
+
+### W24-TODAY.3 Проверки
+
+* `python -m unittest tests.test_today -v` (35) — форма ответа и порядок, все виды
+  `needs_you`, просрочка и ближайшие сроки (границы 0 и 3 суток), `last_visit_at` и окно
+  24 часа, пустые и битые комнаты, маска секретов в причине сбоя, обрезка «сути» до 200
+  знаков, отметка захода (идемпотентность, 60 секунд, битый файл), живой маршрут в
+  песочнице (кэш, `POST /api/today/seen`), замер 2 комнаты × 50 запросов, сверка ключей с
+  фикстурой интерфейса `fixtures/today.json`.
+* `python tools/probe_today_be.py --port 8855` — живая проверка в Chromium на своём
+  мок-сервере: ключи из браузера, замеры `fetch`, скриншоты в `docs/shots/w24-today-be/`.
+* Замер 18.11: 2 комнаты × 50 запросов — медиана сборки **6 мс**, худший **7 мс** (без кэша),
+  ответ маршрута из браузера — **0,8–1,5 мс** при кэше. Требование §3.1 — ≤ 200 мс.
+
+## W26-DUTIES — действия с дежурствами и недельная сетка (v1.4.0-dev, WAVE26 §2, пакет D8)
+
+Развитие §W24-DUTIES. Чтение осталось прежним (`GET /api/duties`), добавлены: недельная
+сетка в том же ответе и маршрут действий. Единственная запись в Hermes — штатный CLI
+`hermes cron run|pause|resume <id>`, и только по явному подтверждению человека
+(`confirm: true`). Правка расписания — **предложение**, Hermes не меняется.
+
+### W26.1 `GET /api/duties?room=<id|all>` — новый ключ `week`
+
+```
+{ "generated_at": int, "items": [Item…],           // как в §W24.1, без изменений
+  "week": { "start": "2026-11-16", "end": "2026-11-22",
+            "runs": int, "failed": int, "missed": int,
+            "days": [ { "date": "2026-11-16", "weekday": 0, "label": "пн", "full": "понедельник",
+                        "day": 16, "month": 11, "today": bool, "future": bool,
+                        "runs": int, "failed": int, "missed": int,
+                        "jobs": [{"job_id": str, "name": str, "runs": int,
+                                  "state": "ok"|"failed"}],      // до 3, чаще — сверху
+                        "more": int,                             // «+N ещё»
+                        "planned": int } ] } }                    // сколько по расписанию
+```
+
+Правила: `weekday` 0 — понедельник; неделя начинается с понедельника по местному времени;
+`runs` — **фактические** запуски из `executions` (окно читается прямо в SQL, а не хвостом
+в 40 записей на задание); `planned` — ожидаемое число по расписанию (интервал —
+`86400/минуты`, cron с днями недели — только в свои дни, выключенные — 0). В будущих днях
+`runs = 0`, а `planned > 0`: интерфейс пишет «план: N», а не «0 запусков». Если посчитать
+не удалось, `week.error` — строка по-русски.
+
+### W26.2 `POST /api/duties/{id}/actions`
+
+```
+{ "action": "run"|"pause"|"resume"|"bind"|"unbind"|"schedule",
+  "confirm": true,                    // обязательно, иначе 409 confirm_required
+  "room": "<id комнаты>",             // обязателен для bind/unbind
+  "schedule": "every 2h" }            // обязателен для schedule (≤ 80 знаков)
+→ 200 { "ok": true, "action": str, "label": str, "job_id": str, "name": str,
+        "applied": bool, "dry": bool, "command": str|null, "text": str,
+        "bound_rooms": [str], "proposal": {...}|null, "job": Item|null, "generated_at": int }
+```
+
+* `run|pause|resume` — ровно `hermes cron <action> <id>` (argv, без shell, `HERMES_HOME`
+  из конфигурации, таймаут 25 с). Ненулевой код → `502 cli_failed` с
+  `detail.command|code|err|out`: «не получилось» не выдаётся за успех.
+* `bind|unbind` — меняется только реестр комнат (`data/rooms.json`, поле `duties`),
+  задание в Hermes остаётся; в ответе новый список `duties`.
+* `schedule` — сохраняется **предложение** в `data/state/duties/proposals.json`
+  (`state: "proposed"`), `applied: false`, текст говорит «расписание в Hermes не изменено».
+* Пробный режим `TEAMROOM_DUTIES_DRY=1` (или `cfg.duties_dry_run`): CLI не вызывается,
+  ответ `dry: true`, в `command` — что было бы выполнено.
+* Подставной CLI для тестов и песочницы: `duties.set_cli_runner(fn)` / `TEAMROOM_HERMES_BIN`.
+* В песочнице (`TEAMROOM_HERMES_HOME`) дежурства читаются из песочного дома, а не из
+  реального: действие из песочницы не может попасть в живые задания.
+
+Коды ошибок: `400 bad_request|schedule_required|room_required`, `409 confirm_required`,
+`422 unknown_job`, `502 cli_failed`. Тесты: `tests/test_duties_actions.py` (17) и
+`tests/duties-view.test.mjs` (14).
+
+## W25-REGISTRY — реестр решений комнаты: append-only и хеш-цепочка (v1.3.0-dev, WAVE25 §M1)
+
+Источник правды по решениям комнаты — `data/state/<room>/memory/registry.jsonl`
+(одна строка = одно событие, ничего не перезаписывается). `decisions.json` остаётся,
+но становится **проекцией** реестра (`"projection_of": "registry.jsonl"`): статус в нём
+теперь совпадает с паспортом комнаты. Причина: раньше решение, снятое в запросе
+(`dismissed`) или отменённое новой версией свода (`superseded`), оставалось в
+`decisions.json` как `accepted` и попадало в паспорт — исполнитель работал по
+отменённому решению (R4 §3 п.1).
+
+### W25-REGISTRY.1 Формат строки реестра
+
+```
+{ "id": "<root_id>:d_<id>", "seq": int, "at": int, "text": str, "why": str|null,
+  "status": "proposed"|"accepted"|"rejected"|"dismissed"|"superseded",
+  "prev_status": str|null, "by": "app"|"user"|"migration", "source_request": str|null,
+  "due": "YYYY-MM-DD"|null, "supersedes": int|null, "prev_hash": str, "hash": str }
+```
+
+* `seq` — номер строки журнала (1, 2, …); он же адрес версии;
+* `supersedes` — `seq` прежней строки того же решения при смене статуса;
+* `prev_hash` — хеш предыдущей строки, `hash` — sha256 канонического JSON строки
+  вместе с `prev_hash`. Подмена любой строки ломает цепочку (проверка — `verify`);
+* `by` — кто записал: приложение (`app`), действие владельца (`user`), миграция (`migration`).
+  Автоматический слой не понижает `accepted` до `proposed` и не «возвращает» снятое:
+  это делает только явное действие владельца (`by="user"`).
+
+Запись — **единственная функция** `server.decision_registry.append`: межпроцессная
+блокировка файла (`msvcrt`/`fcntl`), `O_APPEND`, `fsync`, перечитывание хвоста под замком.
+Отдельного «POST в реестр» нет: статусы меняются штатными действиями решения
+(`POST /api/requests/{id}/actions`, `decision: accept|reject|dismiss|restore`) и приёмом
+ответа (`ingest`), которые пишут строку сами.
+
+### W25-REGISTRY.2 `GET /api/rooms/{id}/registry`
+
+Только чтение. Параметры: `history=1` — все строки журнала (иначе свёртка по `id`),
+`status=accepted,dismissed` — фильтр по статусам, `limit` — 1…500 (по умолчанию 200).
+
+```
+{ "room": "fn", "generated_at": int,
+  "registry": {"path": "memory/registry.jsonl", "rows": int, "decisions": int, "append_only": true},
+  "chain": {"ok": bool, "rows": int, "broken_at": int|null, "reason": str},
+  "counts": {"proposed": int, "accepted": int, "rejected": int, "dismissed": int, "superseded": int},
+  "pinned": {"ids": [str], "count": int, "limit": 30, "over_limit": bool},
+  "items": [ {"id", "at", "text", "why", "status", "prev_status", "by",
+              "source_request", "due", "seq", "pinned"} ],
+  "total": int, "limit": int, "history": bool,
+  "warnings": [ {"code": "registry_chain_broken"|"pin_limit", "message", "detail"} ] }
+```
+
+* `chain.ok=false` — цепочка повреждена; `broken_at` — номер строки, где разрыв.
+  API не «чинит» файл: это сигнал человеку и сторожу (`tools/check_room_memory.py`).
+* `pinned.limit` — потолок закрепления (**30** записей на комнату). При достижении
+  новые закрепления не добавляются, в ответе `over_limit: true` и предупреждение
+  `pin_limit` — то же попадает в «Здоровье».
+* `404 not_found` — нет комнаты; `400 bad_request` — неизвестный статус в фильтре.
+* Пустая комната: `items: []`, `counts` нули, `chain.ok: true` — это норма, не ошибка.
+
+### W25-REGISTRY.3 Файлы памяти комнаты
+
+| Файл | Что | Кто пишет |
+|---|---|---|
+| `memory/registry.jsonl` | журнал решений (источник правды) | `decision_registry.append` |
+| `memory/registry.lock` | замок записи | `_FileLock` |
+| `memory/pinned.json` | закреплённые `id` (не сжимаются), потолок 30 | действия закрепления |
+| `memory/snapshot.json` | снимок множества `id` (инвариант «только растёт») | приём ответа |
+| `decisions.json` | проекция реестра (совместимость) | `project_decisions` |
+| `Rooms/<id>/Решения/реестр.md` | читаемый вид реестра в Vault | `write_mirror` |
+
+Миграция: `python tools/migrate_decisions.py --room fn` (или `--all`, `--dry-run`,
+`--check`). Кладёт резервную копию `decisions.json.bak-<unixtime>` и идемпотентна:
+повторный запуск не добавляет строк.
+
+### W25-REGISTRY.4 Проверка памяти комнаты
+
+`python tools/check_room_memory.py --room fn [--json] [--only 1,2]` — 7 инвариантов
+R4 §4.5 (CLI и функция `check(cfg, room_id)` для экрана «Здоровье»). Код возврата 1 —
+нарушен блокирующий инвариант (цепочка реестра, append-only, паспорт ↔ реестр, обрезка
+ответа), 0 — только предупреждения/пропуски. Инварианты 5–6 (бюджеты тела карточки и
+дублирование устава) сейчас дают `warn`: их лечит пакет M2, а не реестр. Инвариант 7
+(recall@5 золотого набора) — честный `skip`: набора вопросов нет.
+
+## W25-CARD-BUDGETS — бюджеты тела карточки и сторож зависаний (v1.3.0-dev, WAVE25 §M2)
+
+### W25-CARD-BUDGETS.1 Бюджеты (знаки, `server/card_budget.py`)
+
+| Тип карточки | `kind` | Потолок | Что в теле |
+|---|---|---|---|
+| Руководитель (корневой запрос, бриф) | `leader` | **6 000** | текст Михаила + шапка + устав комнаты |
+| Исполнитель (направление) | `worker` | **2 500** | задача + выжимка дела + 2 решения |
+| Критик | `critic` | **8 000** | запрос + выжимка свода + критерии |
+| Обновление свода (доработка) | `svod` | **8 000** | дайджест ≤ 4 000 + выжимка прошлой версии ≤ 3 000 + ссылка на карточку версии + ядро контракта |
+| Приёмщик, служебные | `service` | **2 000** | письмо + 5 строк инструкции |
+
+Правила: текст Михаила **не режется** — при длинном тексте ужимается текст приложения
+(сначала дополнительные правила, затем необязательные поля `metadata`); выкинутое
+перечисляется строкой со ссылкой на `docs/AGENT-GUIDE.md`, не молча. Прошлый свод в
+доработку больше не вставляется целиком: выжимка + `Прошлая версия целиком — карточка t_…`.
+Полный устав комнаты живёт в корневой карточке; доработка получает ядро (8–10 строк).
+Замер: `tools/check_card_budgets.py [--fixtures] [--board <kanban.db>]` (только чтение).
+
+### W25-CARD-BUDGETS.2 Сторож зависаний (`server/watchdog.py`)
+
+Настройка комнаты (необязательное поле `card_watchdog` в `rooms.json`):
+
+```
+"card_watchdog": {"warn_min": 10, "stop_min": 20, "hard_stop": true}
+```
+
+* `warn_min` (2–120, по умолчанию 10) — через сколько минут без событий и вывода
+  инструментов предупредить: строка в «Ход работы» и вид дела `stalled` в «Сегодня»;
+* `stop_min` (больше `warn_min`, по умолчанию 20) — через сколько остановить карточку
+  **штатным механизмом W23** (`kanban_atomic.stop`: воркер убит, карточка в `blocked`)
+  и пометить «Нужно внимание» (варианты: «Продолжить», «Сменить модель и продолжить»);
+* `hard_stop: false` — только предупреждать, не останавливать.
+
+Карточка с **живым выводом инструментов** зависшей не считается: таймер идёт от
+последнего сообщения сессии (`worklog.activity`), а незавершённый вызов инструмента у
+живого воркера снимает подозрение. Один активный проход на карточку — замок
+`data/state/<room>/watchdog/locks/<card>.json` с TTL 300 с. Состояние:
+`data/state/<room>/watchdog.json` (`cards`, `warns`, `stops`). Проход — свой поток
+наблюдателя (`watcher.watchdog_tick_once`, интервал 30 с), статус — `status()["watchdog"]`.
+
+
+## W26-INBOX — «Входящие комнаты» и полоса «Надиктовать» (v1.4.0-dev, WAVE26 §2, пакет D9)
+
+Быстрая запись мысли в комнате и её разбор. Хранилище —
+`data/state/<room>/inbox.json` (через `statefiles`, атомарная запись). Запись
+создаётся полосой «Надиктовать» внизу экранов комнаты (клавиша `N`, микрофон —
+существующая диктовка `/api/stt/*`; ничего в диктовке не менялось).
+
+### W26-INBOX.1 Маршруты
+
+| Метод | Путь | Что делает |
+|---|---|---|
+| `GET` | `/api/rooms/{id}/inbox?status=active\|new\|processing\|processed\|deleted\|all` | список записей (по умолчанию `active` = новые + в разборе) |
+| `POST` | `/api/rooms/{id}/inbox` `{text, source:"dictation\|manual"}` | записать мысль; `201` и свежие счётчики |
+| `POST` | `/api/rooms/{id}/inbox/{item}/actions` `{action, …}` | разбор записи |
+
+Ответ списка:
+
+```
+{ room, generated_at, filter, counts:{new,processing,processed,deleted,total,active,proposals},
+  items:[InboxItem…], notes:[…], queue:[Card…], updated_at, warning }
+```
+
+`warning` непустой, если файл входящих был повреждён: копия сохранена рядом
+(`inbox.json.corrupt-<unixtime>`), список начат заново — молчаливой подмены нет.
+
+### W26-INBOX.2 Запись `InboxItem`
+
+```
+{ id:"in_xxxxxxxx", room, text, source:"dictation|manual", source_title:"диктовка|вручную",
+  created_at:"2026-11-18T14:03:11+03:00", created_hhmm:"14:03",
+  status:"new|processing|processed|deleted", kind:"delo|step|question|duty|note"|null,
+  proposal:{id,at,kind,kind_title,title,body,state:"waiting|accepted|rejected",by,actions:[…]}|null,
+  resolution:{action,kind,kind_title,title,at}|null,
+  note, actions:[{id,label}…] }
+```
+
+`actions` — единственный источник кнопок интерфейса. Он **никогда не пуст**:
+у `new`/`processing` — `propose` + ручной разбор (`to_delo|to_step|to_question|
+to_duty|to_note`) + `delete`; у записи с ожидающим предложением — `accept|edit|
+reject|delete`; у `deleted` — `restore`; у `processed` — `restore|delete`.
+Правило «без тупиков» проверяется тестом `tests/test_inbox.py`.
+
+### W26-INBOX.3 Действия и предложение
+
+| `action` | Что происходит |
+|---|---|
+| `propose` | разбор руководителем: вид угадывается по словам, собирается шаблон-предложение `state:"waiting"`, запись → `processing`, в `queue` кладётся карточка «разобрать входящее» |
+| `to_delo` / `to_step` / `to_question` / `to_duty` / `to_note` | тот же шаблон, но вид выбирает человек |
+| `edit` `{text, title?}` | правка текста предложения (`by:"ваша правка"`) |
+| `accept` | предложение принято: `status:"processed"`, заготовка уходит в `delos_drafts` / `steps_drafts` / `questions_drafts` / `duties_drafts` / `notes`, карточка очереди закрывается |
+| `reject` `{text?}` | предложение отклонено, запись возвращается в `new` (разбор можно повторить), причина — в `note` |
+| `delete` / `restore` | мягкое удаление и возврат |
+
+Предложение — **шаблон этой волны**: разбор делает руководитель-модель, а
+интерфейс показывает «Предлагаю оформить так: … [Принять] [Изменить] [Отклонить]».
+Карточка руководителю кладётся в очередь `queue` (ветка «руководитель») внутри
+`inbox.json`, в песочнице: агентов не запускаем, наружу ничего не отправляем.
+
+Заготовки разбора остаются в самом `inbox.json`: дела (D5), шаги, вопросы и
+дежурства (D8) в этой волне — отдельные пакеты со своими хранилищами, поэтому
+здесь лежит текст заготовки (`state:"draft"`), а не выдуманная запись в чужом
+файле. `notes` — «справки» комнаты (видны в ответе списка).
+
+### W26-INBOX.4 Ошибки
+
+`400` — пустой/слишком длинный текст (лимит 4000 знаков), неизвестный источник,
+неизвестный `action`/`status`; `404` — комната или запись не найдены (в том числе
+неверный вид `id`); `409` — принять/изменить нечего (предложения нет или оно уже
+решено); `503 state_unreadable` — файл входящих занят, повторите.
+
+## W26-DELO — «Дело»: серверная часть (v1.4.0-dev, WAVE26 §1–2, пакет D5)
+
+Долгоживущий объект комнаты. Запрос — одно событие внутри дела; дело живёт неделями:
+этапы, срок, «ждём: кого/чего», части результата и файлы, исходящее с состояниями,
+«Ход дела». Форма — контракт `docs/WAVE26-RULES.md` §1, общий с интерфейсом (D6).
+Кода: `server/delo.py` (правила + хранение), `server/routes_delo.py` (HTTP),
+`tests/test_delo.py`, `tools/probe_delo.py`, демо — `tools/mock_delos.py`.
+
+### W26.1 Хранение
+
+`data/state/<room>/delos.json` — один файл на комнату, запись атомарная
+(`statefiles.write_json_atomic`) под замком файла:
+
+```
+{version:1, updated_at:<unix>, items:[Delo…]}
+```
+
+Правила чтения файла — как у остальных файлов состояния: нет файла → пусто;
+битый JSON → копия `delos.json.corrupt-<время>` рядом и пустой список (тревога уходит
+в `/api/health`); файл занят другим процессом → `503 state_unavailable`
+(значениями по умолчанию НЕ подменяем). Порядок списка — свежие сверху (`updated_at`).
+Потолок — 500 дел на комнату (`409`).
+
+### W26.2 Форма `Delo`
+
+```
+{ id:"dl_xxxxxxxx", room, title, status:"open|waiting|paused|done|cancelled",
+  due:"2026-11-21"|null, owner:"manager", members:["profile"…], updated_at:<unix>,
+  request_id:"t_…"|null,
+  stages:[{id:"st_1", title, state:"done|now|todo"}],
+  waiting_on:[{who:"you|<текст>", what, since:<unix>}],
+  needs_you:[{id:"ny_…", kind:"approve|question|permission", text, recommended,
+              since:<unix>, options?:[{id,label}], actions:["approve","reject"…],
+              source:{kind, request_id, question_id|decision_id|step_id|approval_id}}],
+  result:{parts:[{id:"pt_1", title, state:"agreed|discussing|todo"}],
+          files:[{path, title, role:"final|source|draft", note}]},
+  outbox:[{id:"ob_1", kind:"email|file|message", to, subject, body,
+           attachments:[path], state:"draft|approved|sent|failed|cancelled",
+           sent_at?, error?}],
+  found:[…формат «Найдено» D4, как есть…],
+  timeline:[{at:<unix>, who:"manager|you|system", text, kind}],
+  duties:[{id, title, schedule_human, state}] }
+```
+
+* `status` на чтении **вычисляется**: `paused|done|cancelled` — явные (их ставят
+  действиями), иначе `waiting` при непустом `waiting_on`, иначе `open`.
+* `needs_you` **не хранится**, а собирается при каждом чтении из существующих
+  модулей (§W26.3) — поэтому ответ на вопрос сразу убирает пункт из дела.
+  `actions` — имена действий этого же маршрута; `recommended` — короткая подсказка
+  (её пишет источник, иначе вид пункта). `source` — служебная ссылка на пункт
+  источника (интерфейсу не нужна, нужна действию).
+* `stages` по умолчанию: Сбор → Черновик → Согласование → Исполнение → Готово;
+  «сейчас» в цепочке ровно один (если дело не завершено).
+* `timeline` — «Ход дела», до 300 последних строк (старое обрезается).
+* В коде и данных нет терминов конкретного бизнеса: только дела, этапы, ожидания.
+
+### W26.3 Откуда «ждёт вашего решения»
+
+Дело не заводит своих правил, а спрашивает:
+
+| источник | что берём | как |
+|---|---|---|
+| бэклог комнаты (`App._backlog` → `ingest.backlog_view`) | `open_question` (владелец `mikhail`), `decision`, `next_step` со статусом `open|asked` и `source_request` = запрос дела | `kind`: `question` / `approve` / `approve` |
+| разрешения (`approvals.collect` + `pending`) | только у корня со статусом `needs_you` и только `grantable:true` (недоговорные не ждут решения — правило D1) | `kind:"permission"` |
+| связь с запросом (`registry.list_requests`) | заголовок дела, если он не задан | `request_id` |
+
+Порядок пунктов: разрешения → решения/шаги → вопросы; внутри вида — кто ждёт дольше.
+У каждого пункта ≥1 действие (правило «без тупиков»). Дело без `request_id`
+(создано вручную) пунктов не имеет — пустой список честнее выдуманного.
+
+### W26.4 Маршруты
+
+| метод и путь | что |
+|---|---|
+| `GET /api/rooms/{id}/delos` | `{items:[Delo…], generated_at}` — дела комнаты |
+| `POST /api/rooms/{id}/delos` | открыть дело → `201 Delo` |
+| `GET /api/delos?room=<id|all>` | дела всех комнат (бейдж в меню) |
+| `GET /api/delos/{id}` | одно дело |
+| `POST /api/delos/{id}/actions` | действие → `{ok:true, action, delo, delegated?}` |
+
+Тело создания: `{request_id?, title?, due?, owner?, members?, stages?, waiting_on?,
+result?{parts,files}, outbox?, found?, duties?, status?}`. `title` можно не передавать
+при `request_id` — возьмётся из запроса. Одно дело на запрос: повтор → `409` с id
+существующего дела (иначе на один запрос появятся клоны).
+
+### W26.5 Действия `POST /api/delos/{id}/actions`
+
+| `action` | поля | что происходит |
+|---|---|---|
+| `approve` | `item_id` (или `need_id`), `text?` | пункт вида `approve|permission` утверждён — уходит в механизм запроса |
+| `reject` | `item_id` (или `need_id`), `text?` | отклонён — туда же |
+| `answer` | `item_id` (или `need_id`), `text` или `option_id` | ответ на вопрос — в механизм ответов; выбранный вариант (`option_id`) уходит подписью варианта |
+| `set_stage` | `stage_id`, `state?`, `title?` | «сейчас» закрывает предыдущие; «сделано» делает следующий текущим; `title` переименовывает; **без `state`** этап просто становится текущим |
+| `add_part` | `title`, `state?` | часть результата |
+| `set_part` | `part_id`, `state`, `title?` | «согласовано / обсуждаем / не начато» |
+| `approve_outbox` | `outbox_id` | `draft|failed` → `approved` (ваше «да») |
+| `edit_outbox` | `outbox_id`, `to?|subject?|body?|attachments?` | правка; утверждённое возвращается в `draft` (текст изменился — «да» заново) |
+| `cancel_outbox` | `outbox_id` | `cancelled`; отправленное не отменяется (`409`) |
+| `mark_sent` | `outbox_id`, `error?` | `approved` → `sent` + `sent_at`; с `error` → `failed` + текст ошибки |
+| `pause` / `resume` | — | пауза / продолжение (повтор → `409`) |
+| `done` | — | дело закрыто (повтор → `409`) |
+| `add_waiting` | `who`, `what` | «Ждём» + лента |
+| `clear_waiting` | `all:true` или `who`/`what`/`index` | снять ожидание (нечего снимать → `404`) |
+
+Действия по пункту (`approve|reject|answer`) **не переписывают** правила запроса:
+маршрут вызывает штатный обработчик (`App.h_request_actions`) с телом
+`{action:"answer"|"decision"|"step_agree"|"step_drop"|"approval", …}`. Если запрос
+отказал — дело **не меняется** (сначала внешнее действие, потом одна атомарная
+запись файла). Без связи с запросом — `409 channel_unavailable`.
+
+**Наружу ничего не отправляется.** `mark_sent` — смена состояния и время; письма,
+файлы и сообщения реально не уходят (гейт «необратимо/видно третьему лицу» остаётся
+за человеком). `sent_at` — момент отметки, а не подтверждение доставки.
+
+### W26.6 Ошибки
+
+`400` — нет названия/поля, неизвестное действие (в `detail.allowed` — список),
+мусор вместо строки, срок не `YYYY-MM-DD`, некорректный id; `404` — комната, дело,
+этап, часть или исходящее не найдены; `409` — дубль дела по запросу, повтор
+паузы/закрытия, отправка без утверждения, правка отправленного, пункт уже не ждёт
+решения; `503 state_unavailable` — файл дел занят.
+
+### W26.7 Проверки
+
+* `python -m unittest tests.test_delo` — 85 тестов: этапы (переходы, «ровно один
+  сейчас», переименование, «сделать текущим» без `state`), пункты «ждёт вас» (виды,
+  действия, порядок, опции, битый источник, `need_id` и `option_id` интерфейса),
+  создание (из запроса, вручную, дубль, срок, лимит, 8 одновременных созданий),
+  действия (все 15, коды, лента, «нечего править»), исходящее (draft→approved→sent,
+  ошибка канала, правка после «да», отмена), делегирование (текст ответа, отказ
+  запроса не пишет дело), форма по контракту и сверка с `fixtures/delo.json`.
+* `python tools/probe_delo.py --port 8855` — живой сервер в песочнице: 24 проверки
+  по HTTP, замеры списка (p50 ≈ 3 мс, p95 ≈ 18 мс на 2 делах), отчёт
+  `docs/status/delo-be.json`.
+* `python tools/check_conformance.py` — нарушений 0.

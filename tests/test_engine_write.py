@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 
 from server import contract, engine_write as ew  # noqa: E402
 from tests.helpers import Sandbox              # noqa: E402
+from tests import ci_marks                       # noqa: E402
 
 REQUEST = ("Проверь, пожалуйста, «Алвара Sanitário» — что делать и в каком порядке?\r\n"
            "Второй абзац: кавычки \"двойные\", тире — и дефис - внутри.\r\n"
@@ -32,9 +33,9 @@ ROOM = {
     "title": "Песочная комната",
     "board": "team",
     "tenant": "room:sbx",
-    "orchestrator": "biz-director",
-    "critic": "biz-critic",
-    "members": [{"profile": "biz-lawyer", "role": "worker", "note": "юрист"}],
+    "orchestrator": "team-director",
+    "critic": "team-critic",
+    "members": [{"profile": "team-lawyer", "role": "worker", "note": "юрист"}],
     "context_files": [],
     "critic_pass": True,
 }
@@ -68,6 +69,7 @@ class EngineWriteTest(unittest.TestCase):
         return ew.create_request(self.cfg, ROOM, slug, title, body)
 
     # --- профили и доска -----------------------------------------------------
+    @unittest.skipUnless(ci_marks.has_real_profiles(), ci_marks.WHY_NO_PROFILES)
     def test_01_list_profiles_from_files(self):
         profiles = ew.list_profiles(self.cfg)
         self.assertTrue(profiles, "ростер профилей пуст")
@@ -75,10 +77,10 @@ class EngineWriteTest(unittest.TestCase):
         self.assertEqual(profiles[0]["name"], "default")
         self.assertTrue(profiles[0]["is_default"])
         by_name = {p["name"]: p for p in profiles}
-        self.assertIn("biz-lawyer", by_name)
-        self.assertEqual(by_name["biz-lawyer"]["provider"], "ollama-cloud")
-        self.assertTrue(by_name["biz-lawyer"]["model"])
-        self.assertIn("юрист", by_name["biz-lawyer"]["description"])
+        self.assertIn("team-lawyer", by_name)
+        self.assertEqual(by_name["team-lawyer"]["provider"], "ollama-cloud")
+        self.assertTrue(by_name["team-lawyer"]["model"])
+        self.assertIn("юрист", by_name["team-lawyer"]["description"])
         self.assertFalse(any(p["is_default"] for p in profiles[1:]))
 
     def test_02_ensure_board(self):
@@ -127,6 +129,7 @@ class EngineWriteTest(unittest.TestCase):
         self.assertEqual(count, 1)
 
     # --- действия ------------------------------------------------------------
+    @unittest.skipUnless(not ci_marks.cli_is_windows_shim(), ci_marks.WHY_WIN_SHIM_LINES)
     def test_05_act_comment(self):
         root = self._create("wb-20261028-0003")["root_id"]
         text = "Комментарий Михаила:\r\n- пункт один «кавычки»\r\n- пункт два"
@@ -165,12 +168,12 @@ class EngineWriteTest(unittest.TestCase):
     def test_08_act_reassign(self):
         card = self.sb.state("working")["child_ids"][-1]   # срез strategy, ready
         before = self._row(card)["assignee"]
-        self.assertNotEqual(before, "biz-lawyer")
+        self.assertNotEqual(before, "team-lawyer")
         res = ew.act(self.cfg, "team", self.sb.state("working")["root_id"], "reassign",
-                     task_id=card, profile="biz-lawyer")
+                     task_id=card, profile="team-lawyer")
         self.assertTrue(res["ok"])
-        self.assertEqual(self._row(card)["assignee"], "biz-lawyer")
-        self.assertEqual(res["profile"], "biz-lawyer")
+        self.assertEqual(self._row(card)["assignee"], "team-lawyer")
+        self.assertEqual(res["profile"], "team-lawyer")
 
     def test_09_act_archive_root_and_children(self):
         tree = self.sb.state("candidate")
@@ -199,26 +202,26 @@ class EngineWriteTest(unittest.TestCase):
 
     def test_11_create_child_card_links_parent_and_tenant(self):
         parent = self.sb.state("queued")["root_id"]
-        card_id = ew.create_child_card(self.cfg, ROOM, "team", parent, "biz-critic",
+        card_id = ew.create_child_card(self.cfg, ROOM, "team", parent, "team-critic",
                                        "Проба: карточка-ребёнок", "Тело дочерней карточки «тест»",
                                        "critic", idem_key="wb-child-0001")
         self.assertRegex(card_id, r"^t_[0-9a-f]{8}$")
         row = self._row(card_id)
-        self.assertEqual(row["assignee"], "biz-critic")
+        self.assertEqual(row["assignee"], "team-critic")
         self.assertEqual(row["tenant"], "room:sbx")
         self.assertIn("Тело дочерней карточки «тест»", row["body"])
         link = self.sb.one("SELECT parent_id FROM task_links WHERE child_id=?", (card_id,))
         self.assertIsNotNone(link)
         self.assertEqual(link["parent_id"], parent)
         # повторный вызов с тем же ключом не создаёт дубль
-        again = ew.create_child_card(self.cfg, ROOM, "team", parent, "biz-critic",
+        again = ew.create_child_card(self.cfg, ROOM, "team", parent, "team-critic",
                                      "Проба: карточка-ребёнок", "другое тело", "critic",
                                      idem_key="wb-child-0001")
         self.assertEqual(again, card_id)
 
     def test_12_retarget_root(self):
         root = self.sb.state("working")["root_id"]
-        self.assertEqual(self._row(root)["assignee"], "biz-director")
+        self.assertEqual(self._row(root)["assignee"], "team-director")
         res = ew.retarget_root(self.cfg, "team", root, "default")
         self.assertTrue(res["ok"])
         self.assertTrue(res["changed"])
@@ -273,7 +276,7 @@ class EngineWriteTest(unittest.TestCase):
         self.assertIn("На доработку", res["detail"])
         row = self._row(root)
         self.assertIn(row["status"], ("ready", "todo"))
-        self.assertEqual(row["assignee"], "biz-director")
+        self.assertEqual(row["assignee"], "team-director")
 
     def test_17_retry_ready_card_is_noop(self):
         card = self.sb.state("working")["child_ids"][-1]

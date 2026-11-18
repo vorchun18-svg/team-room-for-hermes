@@ -4,7 +4,7 @@
  *
  * Почему отдельным модулем: в правой колонке запроса решение было ТОЛЬКО текстом
  * с меткой «предложено» — принять или отклонить его было нельзя, хотя оно входило
- * в «Нужен ваш ответ» и в счётчик «Дальше». Теперь у решения те же действия, что
+ * в «Нужен ваш ответ» и в счётчик «От вас нужно». Теперь у решения те же действия, что
  * у вопроса и шага, и тот же механизм ответа руководителю:
  *
  *   POST /api/requests/{rid}/actions
@@ -23,6 +23,7 @@ import { h } from '../util.js';
 import { icon } from '../icons.js';
 import { ensureCss } from '../ui.js';
 import { enhanceAll } from '../dictation-auto.js';
+import { noticeLine } from './reaction-notice.js';
 
 /** Запасные подписи, если сервер старой версии и не прислал `decision.actions`. */
 export const DECISION_ACTIONS = [
@@ -49,6 +50,30 @@ export const DECISION_STATUS = {
     label: 'обсуждаем с руководителем', tone: 'info',
     hint: 'Вы просите обсудить: решение остаётся за вами, пока руководитель не ответит.',
   },
+  // W20 §1.2 (B-37): снятое и устаревшее — серым, без ожидания ответа.
+  dismissed: {
+    label: 'снято — не актуально', tone: 'muted',
+    hint: 'Вы сняли решение как неактуальное: оно не ждёт ответа и не считается в счётчиках. Вернуть можно в любой момент.',
+  },
+  superseded: {
+    label: 'устарело', tone: 'muted',
+    hint: 'Решение больше не действует: руководитель его отозвал или в новой версии свода его нет. В работу оно не идёт.',
+  },
+};
+
+/** Подписи «снять» и «вернуть» — те же слова, что в API (`answers.DECISION_ACTION_RU`). */
+export const MUTED_ACTIONS = {
+  dismiss: {
+    action: 'dismiss', label: 'Снять — неактуально', title: 'Снять решение',
+    hint: 'Убрать устаревшее или не ваше решение: оно уйдёт из «Нужен ваш ответ», '
+      + 'в списке «Решения» останется серым — вернуть можно в любой момент.',
+    placeholder: 'Почему решение неактуально (необязательно, можно надиктовать)…',
+  },
+  restore: {
+    action: 'restore', label: 'Вернуть', title: 'Вернуть решение',
+    hint: 'Вернуть снятое решение в работу: оно снова станет «предложено».',
+    placeholder: 'Почему вернуть решение (необязательно)…',
+  },
 };
 
 /**
@@ -74,6 +99,12 @@ export const ANSWER_STATE = {
     label: 'учтено: менять ничего не нужно', tone: 'muted',
     hint: 'Руководитель учёл ответ и решил, что менять в работе ничего не нужно.',
   },
+  // W20 §1.2 (B-41): ответ записан, руководитель ответил в ленте, но не по формату.
+  replied_text: {
+    label: 'руководитель ответил текстом — посмотрите в ленте', tone: 'info',
+    hint: 'Ответ руководителя есть в диалоге запроса, но он написал его словами, без метки реакции. '
+      + 'Посмотрите ленту — там сказано, что решили.',
+  },
 };
 
 /** Подсказка «что значит» для всей цепочки — одна на все экраны. */
@@ -94,6 +125,32 @@ export function decisionActions(decision) {
     };
   });
   return known;
+}
+
+/**
+ * «Снять — неактуально» и «Вернуть» (W20 §1.2, B-37). Сервер отдаёт их отдельно
+ * от трёх привычных действий (`muted_actions`, `can_dismiss`, `can_restore`),
+ * чтобы старые клиенты не получили незнакомую кнопку в основном списке.
+ * @param {object} decision элемент `decisions[]`
+ * @returns {Array<{action:string,label:string,hint:string}>}
+ */
+export function decisionMutedActions(decision) {
+  const d = decision || {};
+  const list = Array.isArray(d.muted_actions) ? d.muted_actions : [];
+  const out = [];
+  for (const key of ['dismiss', 'restore']) {
+    const meta = MUTED_ACTIONS[key];
+    const found = list.find((item) => item && String(item.action) === key);
+    const flag = key === 'dismiss' ? d.can_dismiss : d.can_restore;
+    const available = found ? Boolean(found.available) : Boolean(flag);
+    if (!available) continue;
+    out.push({
+      action: key,
+      label: (found && found.label) || meta.label,
+      hint: (found && found.hint) || meta.hint,
+    });
+  }
+  return out;
 }
 
 /** Статус решения с подсказкой (что он значит). */
@@ -135,6 +192,29 @@ export function decisionAnswerOf(decision) {
   };
 }
 
+/** Состояния реакции, после которых уместна строка «Решение учтено» (U4, W21-L1). */
+export const DECISION_NOTICED = new Set(['applied', 'no_change']);
+/** Меньше этого времени (2001 год) — не часы, а заглушка в данных: время не пишем. */
+export const CLOCK_MIN = 1000000000;
+
+/**
+ * Строка «Решение учтено · 13:48» (W21-L1, недоделка U4).
+ *
+ * Рядом с решением уже стоит подпись цепочки («учтено: работа изменена»), поэтому
+ * в этой строке слов исхода не повторяем — только сам факт и время. Пока
+ * руководитель не ответил или только прочитал, строки нет: «учтено» было бы неправдой.
+ * @param {object} decision элемент `decisions[]`
+ * @returns {string}
+ */
+export function decisionNotice(decision) {
+  const d = decision || {};
+  const reaction = d.reaction && typeof d.reaction === 'object' ? d.reaction : null;
+  const status = String(d.answer_state || (reaction && reaction.status) || '');
+  if (!DECISION_NOTICED.has(status)) return '';
+  const at = Number((reaction && reaction.at) || d.answered_at) || 0;
+  return noticeLine({ status, at: at > CLOCK_MIN ? at : 0 }, { kind: 'decision' });
+}
+
 /** Тело запроса действия над решением — ОДНО место (и для окна, и для кнопок). */
 export function decisionPayload(decision, outcome, text = '') {
   const body = {
@@ -171,7 +251,8 @@ export function openDecisionDialog(opts) {
   ensureCss('css/view-request.css');
   const toast = typeof o.toast === 'function' ? o.toast : () => {};
   const outcome = String(o.outcome || 'discuss');
-  const meta = outcomeMeta(outcome);
+  const muted = MUTED_ACTIONS[outcome] || null;
+  const meta = muted || outcomeMeta(outcome);
   const discuss = outcome === 'discuss';
 
   const overlay = h('div', { class: 'dialog-backdrop decdlg-backdrop', 'data-decision-dialog': '' });
@@ -204,7 +285,7 @@ export function openDecisionDialog(opts) {
     if (ev && ev.target === overlay) close();
   });
 
-  const title = discuss ? 'Обсудить решение' : 'Отклонить решение';
+  const title = muted ? muted.title : (discuss ? 'Обсудить решение' : 'Отклонить решение');
   const head = h('div', { class: 'dialog__head' },
     h('h2', { class: 'dialog__title', id: 'decdlg-title', tabindex: '-1' }, title),
     h('button', {
@@ -215,9 +296,12 @@ export function openDecisionDialog(opts) {
   const ta = h('textarea', {
     class: 'textarea decdlg__input', rows: 4,
     id: 'decdlg-text',
-    placeholder: discuss ? 'Что обсудить с руководителем? Можно надиктовать…'
-      : 'Можно сразу написать, что предложить вместо (необязательно)…',
-    'aria-label': discuss ? 'Что обсудить с руководителем' : 'Что предложить вместо решения',
+    placeholder: muted ? muted.placeholder
+      : (discuss ? 'Что обсудить с руководителем? Можно надиктовать…'
+        : 'Можно сразу написать, что предложить вместо (необязательно)…'),
+    'aria-label': muted
+      ? (outcome === 'dismiss' ? 'Почему решение неактуально' : 'Почему вернуть решение')
+      : (discuss ? 'Что обсудить с руководителем' : 'Что предложить вместо решения'),
     'data-keep': 'dec:' + String((o.decision && o.decision.id) || ''),
   });
 
@@ -232,11 +316,18 @@ export function openDecisionDialog(opts) {
     discuss
       ? h('div', { class: 'decdlg__note small muted' },
         'Решение останется за вами: руководитель ответит в ветке, и оно не закроется само.')
+      : null,
+    muted
+      ? h('div', { class: 'decdlg__note small muted' },
+        outcome === 'dismiss'
+          ? 'Решение останется в списке «Решения» серым — вернуть можно в любой момент. Карточка руководителю не уходит: это уборка списка.'
+          : 'Решение снова станет «предложено» — и опять будет ждать вашего слова.')
       : null);
 
   const submit = h('button', {
     type: 'button', class: 'btn btn--primary decdlg__submit', 'data-action': 'decision-' + outcome,
-  }, icon('send', { size: 12 }), meta.label);
+  }, icon(outcome === 'dismiss' ? 'circle-slash' : outcome === 'restore' ? 'history' : 'send', { size: 12 }),
+  meta.label);
 
   async function send() {
     const text = String(ta.value || '').trim();
@@ -252,7 +343,11 @@ export function openDecisionDialog(opts) {
       });
       toast(discuss
         ? 'Вопрос руководителю отправлен — решение остаётся за вами'
-        : 'Ответ отправлен — руководитель увидит его у решения', 'ok');
+        : outcome === 'dismiss'
+          ? 'Решение снято — в «Нужен ваш ответ» оно больше не вернётся'
+          : outcome === 'restore'
+            ? 'Решение возвращено в работу'
+            : 'Ответ отправлен — руководитель увидит его у решения', 'ok');
       close();
       if (typeof o.refresh === 'function') await o.refresh();
     } catch (err) {
@@ -283,4 +378,4 @@ export function openDecisionDialog(opts) {
   return { overlay, dialog, close };
 }
 
-export default { openDecisionDialog, postDecision, decisionActions, decisionStatusOf, decisionAnswerOf };
+export default { openDecisionDialog, postDecision, decisionActions, decisionMutedActions, decisionStatusOf, decisionAnswerOf, decisionNotice };

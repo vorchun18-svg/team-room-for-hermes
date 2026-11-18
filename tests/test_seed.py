@@ -253,37 +253,47 @@ class SeedSandboxTest(unittest.TestCase):
     # --- защита реальной БД -------------------------------------------------
     def test_real_db_untouched_by_build(self):
         after = assert_real_untouched(self.real_before)
+        if not self.real_before.get("exists"):
+            # Чистый раннер/новая машина: живой доски нет — сравнивать нечего.
+            self.skipTest("живой доски нет — сравнивать нечего")
         self.assertTrue(after["exists"])
         self.assertGreater(after["tasks_count"], 0)
         self.assertEqual(set(after), {"exists", "tasks_count", "ours", "our_comments",
-                                      "board_bytes", "board_mtime"})
-        # наш след не вырос: ни карточек, ни комментариев от нашего приложения
-        self.assertEqual(after["ours"], self.real_before["ours"])
-        self.assertEqual(after["our_comments"], self.real_before["our_comments"])
+                                      "board_bytes", "board_mtime", "db", "config"})
+        # содержимое живой доски не сравниваем (W20-I1 п.23): в ней законно
+        # работают пользователь и его приложение. Защита — конфиги и сторож записи.
+        self.assertEqual(after["config"], self.real_before["config"])
 
     def test_assert_real_untouched_detects_drift(self):
         live = snapshot_real_db()
-        # чужая запись Hermes (диспетчер, агент руководителя) — НЕ падение:
-        # файл вырос и карточек стало больше, но нашего следа не прибавилось.
+        live["config"] = {"config.yaml": "hash-1"}     # подделка для проверки сравнения
+        # чужая работа (пользователь в приложении, диспетчер, агенты) — НЕ падение:
+        # карточек стало больше, файл вырос, наш прежний след не изменился
         grown = dict(live, tasks_count=live["tasks_count"] + 3,
-                     board_bytes=live["board_bytes"] + 8192)
+                     board_bytes=live["board_bytes"] + 8192,
+                     ours=frozenset(live.get("ours") or ()),
+                     our_comments=int(live.get("our_comments") or 0))
         with umock.patch("tests.helpers.snapshot_real_db", return_value=grown):
             self.assertEqual(assert_real_untouched(live)["tasks_count"], grown["tasks_count"])
-        # файл доски исчез
+        # появились карточки «нашего» приложения — тоже не падение: их мог
+        # создать сам пользователь в живом приложении (W20-I1 п.23)
+        created = dict(grown, tasks_count=grown["tasks_count"] + 1,
+                       ours=grown["ours"] | {"t_0badc0de"},
+                       our_comments=grown["our_comments"] + 1)
+        with umock.patch("tests.helpers.snapshot_real_db", return_value=created):
+            self.assertEqual(assert_real_untouched(live)["our_comments"],
+                             created["our_comments"])
+        # файл доски исчез — падение (это уже не «легальное изменение»)
+        existed = dict(live, exists=True)        # до слепка доска была
         with umock.patch("tests.helpers.snapshot_real_db",
                          return_value={"exists": False, "tasks_count": 0, "ours": frozenset(),
-                                       "our_comments": 0, "board_bytes": 0, "board_mtime": 0}):
+                                       "our_comments": 0, "board_bytes": 0, "board_mtime": 0,
+                                       "config": live["config"]}):
             with self.assertRaises(AssertionError):
-                assert_real_untouched(live)
-        # наш код создал карточку в живой доске
-        created = dict(live, tasks_count=live["tasks_count"] + 1,
-                       ours=live["ours"] | {"t_0badc0de"})
-        with umock.patch("tests.helpers.snapshot_real_db", return_value=created):
-            with self.assertRaises(AssertionError):
-                assert_real_untouched(live)
-        # наш код написал комментарий в живую доску
-        commented = dict(live, our_comments=live["our_comments"] + 1)
-        with umock.patch("tests.helpers.snapshot_real_db", return_value=commented):
+                assert_real_untouched(existed)
+        # конфиг Hermes изменился — падение (его тесты только читают)
+        changed = dict(grown, config={"config.yaml": "hash-2"})
+        with umock.patch("tests.helpers.snapshot_real_db", return_value=changed):
             with self.assertRaises(AssertionError):
                 assert_real_untouched(live)
 

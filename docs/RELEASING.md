@@ -64,12 +64,18 @@
 6. **Дождаться workflow `Release`** (`.github/workflows/release.yml`). Он на теге `v*`:
 
    * сверяет тег с `VERSION`;
-   * гоняет тесты, собирает обезличенную копию с `--run-tests`;
+   * ставит в PATH тонкую замену CLI Hermes (`tools/ci_hermes_shim.py`) — на раннере нет
+     Hermes, а тесты в собранной копии создают доску песочницы;
+   * гоняет тесты и собирает копию **из чекаута без обезличивания** (`--no-sanitize`):
+     публичный репозиторий уже чист, таблица `tools/release_sanitize.json` — данные сборки
+     и в архив не попадает;
    * собирает `team-room-<version>.zip` и `team-room-<version>.tar.gz` (внутри одна папка
      `team-room-<version>/` с файлом `docs/RELEASE-TAG.txt`), кладёт рядом копии без версии
      — `team-room.zip` / `team-room.tar.gz` для ссылки «последний выпуск», считает
-     `SHA256SUMS.txt`;
-   * публикует их в GitHub Release через `softprops/action-gh-release`.
+     `SHA256SUMS.txt`; отдельным шагом проверяется, что оба имени на месте;
+   * публикует файлы в GitHub Release через `gh`. Если релиз по тегу уже существует
+     (повторный запуск, ручной `workflow_dispatch`), workflow **не падает**: файлы
+     догружаются и перезаписываются (`gh release upload --clobber`).
 
 7. **Проверить результат**: `https://github.com/vorchun18-svg/team-room-for-hermes/releases/latest`
    и прямые ссылки
@@ -125,7 +131,12 @@
 ## Что проверяет CI
 
 `.github/workflows/ci.yml` — на push в `main` и на pull request, матрица
-**Windows + Ubuntu × Python 3.11 / 3.13**, Node 22:
+**Windows + Ubuntu × Python 3.11 / 3.13**, Node 22. На раннере нет ни Hermes Desktop, ни его
+CLI, поэтому первым шагом проверок ставится тонкая замена `hermes`
+(`tools/ci_hermes_shim.py` + `ci_hermes_shim.cmd|sh`): она умеет ровно то, что нужно песочнице
+и тестам — доска `team`, карточки, комментарии, статусы. Всё, что требует настоящего движка
+(диспетчер, декомпозиция, запуск агентов), тесты честно пропускают через `tests/ci_marks.py`
+(`has_real_hermes_cli()` / `WHY_CI_SHIM`), а не выдают за проверенное. Порядок:
 
 1. `python -m unittest discover -s tests -p "test_*.py"`;
 2. `node --test tests/`;
@@ -134,7 +145,7 @@
 5. `python tools/build_release.py --no-git` и `python tools/release_scan.py <папка релиза>`.
 
 Секреты workflow не нужны: `permissions: contents: read` в CI и `contents: write` только в
-релизном (для загрузки файлов). Проверка YAML локально:
+релизном (для загрузки файлов). Проверка YAML локально (нужен PyYAML):
 
 ```bash
 python -c "import yaml,glob; [yaml.safe_load(open(f, encoding='utf-8')) for f in glob.glob('.github/workflows/*.yml')]; print('ok')"
@@ -142,3 +153,7 @@ python -c "import yaml,glob; [yaml.safe_load(open(f, encoding='utf-8')) for f in
 
 Тесты, которым нужен живой Hermes Desktop, GPU, сеть или Windows-плагин, сами себя
 пропускают при `TEAMROOM_CI=1` (см. `tests/ci_marks.py`) — на чистом раннере падений нет.
+
+Проверить то же самое локально, «как на раннере»: положить `hermes` из `tools/ci_hermes_shim.*`
+в отдельный каталог первым в `PATH`, задать пустой фиктивный `HERMES_HOME` и прогнать набор —
+падений быть не должно, только осознанные `skipped` с причиной.

@@ -21,12 +21,20 @@ import {
 } from './team-roadmap-model.js';
 import { setProfileDirectory, participantLabel, labelOf, shortJob } from '../participant-label.js';
 import { notesSummaryLine, notesOf, entriesOfItem } from '../agent-notes-ui.js';
+import { termHelp } from '../term-help.js';
 // Пакет F: модальный редактор «Особенности для этой комнаты» — только ссылка с карточки.
 import { notesLink } from '../notes-editor.js';
 // Модель участника (WAVE10): чип «модель: …» + «Изменить» → тот же редактор.
 import { agentModelLine, modelSent, openAgentModelEditor } from '../agent-model-ui.js';
+// W23-MG2 «Контроль моделей»: строка «Модель: … · последний запуск: … ✓/⚠» и
+// кнопки управления работой участника (остановить / продолжить / сменить модель).
+import {
+  guardLine, cardControls, stoppedLine, memberState, guardModeOf, guardModeLabel, MODEL_GUARD_CSS,
+} from './model-guard.js';
 
 const POLL_MS = 5000;
+// Запрос «в работе» — по этим статусам ищем живую ленту «Хода работы» (W20-FB).
+const ACTIVE_STATUSES = new Set(['queued', 'working', 'reviewing', 'synthesizing', 'needs_you']);
 const ROLE_OPTIONS = [
   { value: 'worker', label: 'исполнитель' },
   { value: 'critic', label: 'критик' },
@@ -36,6 +44,7 @@ const ROLE_OPTIONS = [
 export async function mount(el, ctx) {
   ensureCss('css/view-team.css');
   ensureCss('css/agent-notes.css');      // строка «Особые указания» (WAVE9 §9)
+  ensureCss(MODEL_GUARD_CSS);            // W23-MG2: строка модели и кнопки работы
 
   const roomId = String((ctx.route && ctx.route.roomId) || (ctx.room && ctx.room.id) || '');
   if (!roomId) {
@@ -60,6 +69,13 @@ export async function mount(el, ctx) {
     settingsSig: '',
     outsideSig: '',
     catalog: null,
+    // W20-FB: «Сейчас: <последнее действие>» в карточке участника — из ленты
+    // «Хода работы» активного запроса комнаты (профиль → {text, state, since}).
+    now: new Map(),
+    // W23-MG2: сверка моделей — `GET /api/rooms/{id}/model-check` (профиль → строка).
+    // Нет ответа — работаем на данных /team (model_settings/model_sent), без тревог.
+    checkById: new Map(),
+    checkBusy: false,
     overlay: null,
     notesOpen: new Set(),   // W14-I: какие карточки с раскрытыми «Особенностями» держать открытыми
   };
@@ -82,6 +98,13 @@ export async function mount(el, ctx) {
 
   const sumEl = h('span', { class: 'small muted team__summary' }, '');
   const updated = h('span', { class: 'small muted team__updated nowrap' }, '');
+  // W23-MG2: сколько карточек комнаты прямо сейчас расходятся с выбором модели.
+  // Число рядом с «Проверить сейчас» (в API §W23.4 это `guard.open`).
+  const guardChip = h('button', {
+    class: 'chip chip--warn mg-head-chip', type: 'button', hidden: true,
+    title: 'Карточки, которые собрались уйти не на ту модель — нажмите, чтобы сверить заново',
+    onclick: () => { reloadCheck().catch(() => {}); },
+  }, '');
   const addBtn = h('button', {
     class: 'btn btn--primary btn--sm', type: 'button',
     onclick: () => { openAddDialog().catch(() => {}); },
@@ -103,6 +126,64 @@ export async function mount(el, ctx) {
 
   /* --------------------------------------------------------- карточка */
 
+  /**
+   * Сверка модели по данным /team — если `/model-check` ещё не ответил (старый
+   * сервер или ошибка). Тревоги здесь нет: «не проверено» вместо «не совпадает»,
+   * кроме случая, когда сервер сам сказал «расходится» и это не «ждёт запуска».
+   */
+  function fallbackCheck(model) {
+    const settings = model.model_settings && typeof model.model_settings === 'object'
+      ? model.model_settings : null;
+    const sent = model.model_sent && typeof model.model_sent === 'object' ? model.model_sent : null;
+    const expected = settings && settings.model
+      ? { provider: settings.provider || '', model: settings.model }
+      : (model.agent_default && model.agent_default.model ? model.agent_default : null);
+    const ok = sent
+      ? !(sent.mismatch === true && sent.pending !== true)
+      : null;
+    return {
+      profile: model.profile,
+      expected,
+      last_run: sent && sent.model
+        ? { provider: sent.provider || '', model: sent.model, at: Number(sent.at) || 0 }
+        : null,
+      ok,
+      problem: null,
+      fallback: true,
+    };
+  }
+
+  /** Перечитать сверку моделей (`/api/rooms/{id}/model-check`), не трогая карточки. */
+  async function loadCheck() {
+    try {
+      const data = await api.get(`/api/rooms/${encodeURIComponent(roomId)}/model-check`, { signal: abort.signal });
+      const members = Array.isArray(data && data.members) ? data.members : [];
+      const next = new Map();
+      for (const item of members) {
+        if (!item || !item.profile) continue;
+        next.set(String(item.profile), item);
+      }
+      state.checkById = next;
+      state.guard = (data && data.guard) || null;
+      return true;
+    } catch {
+      // Старый сервер без сверки — карточки живут на данных /team, ничего не ломаем.
+      return false;
+    }
+  }
+
+  /** «Проверить сейчас»: одно чтение и перерисовка изменившихся карточек. */
+  async function reloadCheck() {
+    if (state.checkBusy) return;
+    state.checkBusy = true;
+    paintAll();
+    const ok = await loadCheck();
+    state.checkBusy = false;
+    paintAll();
+    toast(ok ? 'Сверил: на какую модель уйдут запуски' : 'Проверка сейчас недоступна — попробуйте ещё раз',
+      ok ? 'ok' : 'warn');
+  }
+
   function sigOf(model) {
     return JSON.stringify([
       model.name, model.role, model.pinned, model.state, model.description, model.model,
@@ -115,8 +196,16 @@ export async function mount(el, ctx) {
       // W14-I: число записей «Особенности для этой комнаты» — карточка обновится после правки
       (entriesOfItem(notesOf(state.room || {})[model.profile] || null).length),
       model.current && model.current.taskId, model.current && model.current.startedAt,
+      // «Сейчас: …» берётся из живой ленты — карточка обязана обновиться вместе с ней.
+      (state.now.get(model.profile) || {}).text || '',
+      (state.now.get(model.profile) || {}).state || '',
       model.last && model.last.taskId, model.last && model.last.finishedAt,
       model.counts.done, model.counts.blocked, model.counts.active,
+      // W23-MG2: сверка моделей и состояние «остановлено» меняют карточку.
+      JSON.stringify(state.checkById.get(model.profile) || null),
+      state.checkBusy ? 'checking' : '',
+      (model.current && model.current.status) || '',
+      (model.current && model.current.requestId) || '',
     ]);
   }
 
@@ -345,41 +434,68 @@ export async function mount(el, ctx) {
         mandatory),
       h('div', { class: 'tm-card__tools' }, cardMenu(model)));
 
-    // Одна строка «Сейчас: …» — обрезка в одну строку, полный текст в подсказке.
-    const nowLine = h('div', { class: 'tm-card__now' },
-      h('span', { class: 'tm-card__nowlabel' }, 'Сейчас:'),
-      model.current
+    // Одна строка «Сейчас: …» (W20-FB). Если по запросу идёт работа, здесь
+    // ПОСЛЕДНЕЕ ДЕЙСТВИЕ участника («читает договор», «ищет в сети»), а не
+    // обрезанное название задачи: название человек найдёт в карточке задачи,
+    // а «чем занят прямо сейчас» — только здесь. Нет ленты — прежняя строка.
+    const now = state.now.get(model.profile) || null;
+    const nowText = now
+      ? (now.state === 'waiting' ? 'ждёт вашего ответа' : String(now.text || '').trim())
+      : '';
+    const nowNode = nowText
+      ? h('a', {
+        class: 'tm-task tm-card__nowtext truncate',
+        href: now.request_id
+          ? `#/room/${encodeURIComponent(roomId)}/request/${encodeURIComponent(now.request_id)}`
+          : `#/room/${encodeURIComponent(roomId)}/composer`,
+        title: nowText + ' — открыть запрос, где идёт эта работа',
+      }, nowText)
+      : (model.current
         ? taskLink(model.current.taskId, model.current.title)
         : h('span', { class: 'tm-card__nowempty', title: model.stateKind === 'waiting' ? 'Ждёт ответа человека — работа продолжится после ответа' : 'Свободен: активной задачи нет' },
           model.stateKind === 'waiting' ? 'ждёт ответа человека' : 'свободен'));
+    const nowLine = h('div', { class: 'tm-card__now' },
+      h('span', { class: 'tm-card__nowlabel' }, 'Сейчас:'),
+      nowNode);
 
-    // Предупреждение о модели — ТОЛЬКО если последняя карточка участника ушла
-    // не на выбранную модель (P2, пункт 2). Текст человеческий, подробности по кнопке.
-    const sent = modelSent({ model_sent: model.model_sent });
-    let warn = null;
-    if (sent && sent.mismatch) {
-      const sentDetail = h('div', { class: 'tm-card__sentdetail', hidden: true },
-        h('span', { class: 'tm-card__sentsum' },
-          (sent.confirmed ? 'Последняя карточка ушла на: ' : 'В карточке записано: ') + sent.text),
-        h('button', {
-          class: 'tm-card__linkbtn', type: 'button',
-          title: 'Открыть модель, провайдера и мышление участника',
-          onclick: () => { openMemberModel(model.profile).catch(() => {}); },
-        }, 'Изменить модель'));
-      const more = h('button', {
-        class: 'tm-card__linkbtn', type: 'button', 'aria-expanded': 'false',
-        title: 'Какая модель была на самом деле',
-        onclick: () => {
-          const open = sentDetail.hidden;
-          sentDetail.hidden = !open;
-          more.setAttribute('aria-expanded', open ? 'true' : 'false');
-        },
-      }, 'Показать модель');
-      warn = h('div', { class: 'tm-card__warn' },
-        icon('warning', { size: 13 }),
-        h('span', { class: 'tm-card__warntext' }, 'Последний запуск шёл на другой модели — проверьте'),
-        more, sentDetail);
-    }
+    // W23-MG2 «Контроль моделей». Вместо тусклого «Последний запуск шёл на другой
+    // модели — проверьте» — понятная строка: на какую модель уйдёт следующий
+    // запуск, на какую ушёл прошлый и совпадает ли это. Расхождение исправляет
+    // сервер (сторож), поэтому строка не «тревога», а факт + кнопка сверки.
+    const check = state.checkById.get(model.profile) || fallbackCheck(model);
+    const guardRow = guardLine(check, {
+      catalog: state.catalog,
+      busy: state.checkBusy,
+      onCheck: () => { reloadCheck().catch(() => {}); },
+    });
+
+    // Управление работой участника — как в самом Hermes: «Остановить» рядом с
+    // индикатором «уже N мин», после остановки — «Продолжить», и «Сменить модель…».
+    const liveNow = state.now.get(model.profile) || null;
+    const reqId = (model.current && (model.current.requestId || model.current.request_id))
+      || (liveNow && liveNow.request_id) || '';
+    const workNode = {
+      id: String((model.current && (model.current.taskId || model.current.task_id)) || ''),
+      request_id: String(reqId || ''),
+      status: String((model.current && model.current.status) || (check && check.running ? 'running' : '')),
+      stopped: (check && check.stopped) || (model.current && model.current.stopped) || null,
+      title: String((model.current && model.current.title) || ''),
+      model_sent: model.model_sent || (check && check.last_run) || null,
+    };
+    const afterAction = () => { load({ silent: true }).catch(() => {}); };
+    const controls = cardControls(ctx, {
+      node: workNode,
+      taskId: workNode.id,
+      requestId: workNode.request_id,
+      profile: model.profile,
+      title: workNode.title,
+      catalog: state.catalog,
+      compact: true,
+      onChanged: afterAction,
+    });
+    const stoppedRow = stoppedLine(ctx, {
+      node: workNode, catalog: state.catalog, onChanged: afterAction,
+    });
 
     const chip = agentModelLine(state.room || ctx.room, model.profile, {
       profile: model.profile,
@@ -396,6 +512,7 @@ export async function mount(el, ctx) {
 
     // W19 B-29: модель сменили, но последний запуск был РАНЬШЕ смены (или в
     // очереди уже стоит карточка с верной моделью) — это не тревога, а ожидание.
+    const sent = modelSent({ model_sent: model.model_sent });
     const pendingNote = (sent && sent.pending)
       ? h('div', {
         class: 'tm-card__pending',
@@ -448,7 +565,10 @@ export async function mount(el, ctx) {
     // строка статуса нужна только когда есть работа или ожидание человека.
     (model.stateKind === 'idle' && !model.current) ? null : stateLine(model),
     nowLine,
-    warn,
+    // W23-MG2: кнопки управления работой — сразу под индикатором «уже N мин».
+    (controls && controls.childNodes && controls.childNodes.length) ? controls : null,
+    stoppedRow,
+    guardRow,
     pendingNote,
     h('div', { class: 'tm-card__meta' }, chip, notes),
     details);
@@ -457,7 +577,7 @@ export async function mount(el, ctx) {
   /* ------------------------------------------------------------- отрисовка */
 
   function buildHead() {
-    const box = sectionHeader('Команда', { count: 0, actions: [sumEl, updated, addBtn] });
+    const box = sectionHeader('Команда', { count: 0, actions: [guardChip, sumEl, updated, addBtn] });
     headHost.replaceChildren(box);
     headCountEl = box.querySelector('.section-header__count');
   }
@@ -476,6 +596,18 @@ export async function mount(el, ctx) {
     if (counts.waiting) parts.push(counts.waiting + ' ' + plural(counts.waiting, ['ждёт', 'ждут', 'ждут']) + ' человека');
     if (!counts.working && !counts.waiting && counts.total) parts.push('все свободны');
     sumEl.textContent = parts.join(' · ');
+    // W23-MG2: «Расхождений: 1 · проверить» — рядом с кнопкой сверки. Ноль не
+    // показываем: спокойный экран лучше пугающей нулевой плашки.
+    const api = state.guard || {};
+    const open = Number(api.open);
+    const diverging = Number.isFinite(open) && open >= 0
+      ? open
+      : Array.from(state.checkById.values()).filter((m) => memberState(m) === 'warn').length;
+    guardChip.hidden = !(diverging > 0);
+    if (diverging > 0) {
+      guardChip.textContent = 'Расхождений: ' + diverging + ' · проверить';
+      guardChip.setAttribute('aria-label', 'Расхождений с выбором модели: ' + diverging + '. Проверить модели участников');
+    }
     updated.textContent = state.updatedAt ? updatedLabel(state.updatedAt) : '';
   }
 
@@ -592,7 +724,9 @@ export async function mount(el, ctx) {
   function paintSettings(force = false) {
     const room = state.room || {};
     const sig = JSON.stringify([room.orchestrator, room.critic, room.max_rounds, room.context_files,
-      room.agent_notes || null, room.critic_mode || 'rounds', room.critic_round_cap || null]);
+      room.agent_notes || null, room.critic_mode || 'rounds', room.critic_round_cap || null,
+      // W23-MG2: режим контроля моделей — виден без открытия диалога комнаты.
+      guardModeOf(room)]);
     if (!force && sig === state.settingsSig) return;
     state.settingsSig = sig;
 
@@ -635,14 +769,23 @@ export async function mount(el, ctx) {
           : rounds + ' ' + plural(rounds, ['раунд', 'раунда', 'раундов']) + ' проверки '
             + (rounds === 1 ? '— быстро' : '— тщательнее')),
         // Пояснение простым языком (п. 7): что такое раунд — рядом с настройкой.
+        // W20-U1 (P7): «?» у слов «критик» и «раунд» — объяснения из словаря.
         h('p', { class: 'small muted tm-settings__note' },
-          'Критик — участник, который проверяет сводный ответ перед выдачей. Раунд — один цикл '
+          'Критик', termHelp('critic'),
+          ' — участник, который проверяет сводный ответ перед выдачей. Раунд', termHelp('round'),
+          ' — один цикл '
           + '«критик проверил → если нашёл замечания, исполнители доработали → снова проверили». '
           + (untilApproved
             ? 'Сейчас ответ выдаётся только после полного одобрения критика; если замечания '
               + 'повторяются или раундов станет больше ' + roundCap + ', цикл остановится и спросит вас.'
             : 'Один раунд — быстрее, два — тщательнее: у команды есть вторая попытка исправить '
               + 'замечания.')),
+        // W23-MG2: «Контроль моделей: строго» — видно сразу, без диалога комнаты.
+        row('Контроль моделей', h('span', { class: 'tm-fact__pair' },
+          h('span', { class: 'small' }, guardModeLabel(guardModeOf(room))),
+          h('span', { class: 'small muted' }, guardModeOf(room) === 'warn'
+            ? ' · расхождение показываем, работу не останавливаем'
+            : ' · запуск на чужую модель не пропустим'))),
         row('Файлы контекста', files.length
           ? h('span', { class: 'tm-filelist' }, files.map((p) => pathChip(p)))
           : h('span', { class: 'muted' }, 'не заданы')),
@@ -668,6 +811,56 @@ export async function mount(el, ctx) {
     paintOutside();
     paintSettings(forceSettings);
     paintError();
+  }
+
+  /**
+   * Живая лента «Хода работы» для строки «Сейчас: …» (W20-FB).
+   *
+   * Берём активные запросы комнаты (не больше двух) и читаем их `worklog`:
+   * оттуда — последнее действие каждого участника. Ничего не запускаем и не
+   * пишем: обычный GET, только чтение. Комната выключила «Ход работы» — не
+   * спрашиваем вовсе. Ошибки не мешают карточкам: строка просто останется
+   * прежней (название задачи).
+   * @param {object} team ответ `/api/rooms/{id}/team`
+   */
+  async function loadNow(team) {
+    state.now = new Map();
+    const members = Array.isArray(team && team.members) ? team.members : [];
+    const wl = state.room && state.room.worklog;
+    if (wl && wl.mode === 'off') return;
+    const busy = members.some((m) => m && (String(m.state || '') === 'working'
+      || String(m.state || '') === 'stuck' || (m.current && String(m.current.status || '') !== 'done')));
+    if (!busy) return;
+    try {
+      const feed = await api.get(`/api/rooms/${encodeURIComponent(roomId)}/requests?limit=12`, { signal: abort.signal });
+      const items = Array.isArray(feed && feed.items) ? feed.items : [];
+      const active = items.filter((r) => r && r.id && ACTIVE_STATUSES.has(String(r.status || ''))).slice(0, 2);
+      if (!active.length) return;
+      const found = new Map();
+      await Promise.all(active.map(async (r) => {
+        try {
+          const w = await api.get(`/api/requests/${encodeURIComponent(r.id)}/worklog?limit=1`, { signal: abort.signal });
+          for (const row of Array.isArray(w && w.live) ? w.live : []) {
+            const profile = String(row && row.profile || '');
+            if (!profile) continue;
+            const stateKind = String(row.state || 'working');
+            const prev = found.get(profile);
+            const better = !prev || (stateKind === 'working' && prev.state !== 'working');
+            if (!better) continue;
+            found.set(profile, {
+              text: String(row.last_action || ''),
+              state: stateKind,
+              since: Number(row.since) || 0,
+              request_id: String(r.id || ''),
+            });
+          }
+        } catch { /* один запрос без ленты не мешает остальным */ }
+      }));
+      state.now = found;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      state.now = new Map();
+    }
   }
 
   async function load({ silent = false } = {}) {
@@ -710,6 +903,10 @@ export async function mount(el, ctx) {
         } catch { state.catalog = null; }
       }
 
+      // Строка «Сейчас: …» — до отрисовки: карточки должны сразу показать действие.
+      await loadNow(team);
+      // W23-MG2: сверка моделей (читается отдельно; нет ответа — живём на /team).
+      await loadCheck();
       paintAll({ forceSettings: !silent });
     } catch (err) {
       if (disposed || (err && err.name === 'AbortError')) return;

@@ -60,7 +60,7 @@
     Только проверить компьютер и показать, чего не хватает.
 
 .EXAMPLE
-    powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Port 8899 -NoAutostart -Home D:\TeamRoom
+    powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Port 8899 -NoAutostart -Home C:\TeamRoom
 
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Uninstall
@@ -361,7 +361,7 @@ function Show-Missing($rows) {
         }
         elseif ($row.Kind -eq 'net') {
             Write-Host '   - Нет связи с github.com — скачать программу не получится.' -ForegroundColor Yellow
-            Write-Note 'Проверьте интернет или поставьте из папки: -SourceDir "D:\team-room"'
+            Write-Note 'Проверьте интернет или поставьте из папки: -SourceDir "C:\team-room"'
         }
         elseif ($row.Kind -eq 'hermes') {
             Write-Host '   - Hermes Desktop не найден — откроется только в браузере.' -ForegroundColor Yellow

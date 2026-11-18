@@ -1,4 +1,4 @@
-"""Экспорт «Дальше» в календарь (.ics, RFC 5545).
+"""Экспорт «От вас нужно» в календарь (.ics, RFC 5545).
 
 Публичный интерфейс:
     make_ics(items, room_title) -> str
@@ -211,7 +211,7 @@ def _load_state(cfg: Cfg, room_id: str) -> dict:
 
 
 def _load_backlog(cfg: Cfg, room_id: str) -> list:
-    """Элементы «Дальше» комнаты (ingest.load_state -> backlog)."""
+    """Элементы «От вас нужно» комнаты (ingest.load_state -> backlog)."""
     state = _load_state(cfg, room_id)
     items = state.get("backlog")
     if isinstance(items, dict):

@@ -239,7 +239,7 @@ test('панель не привязана ни к чему: показывае�
 const ANSWERS = [
   {
     id: 'q_2',
-    text: 'Добавляем ли в команду биз-финансиста (biz-cfo)?',
+    text: 'Добавляем ли в команду биз-финансиста (team-cfo)?',
     for: 'mikhail',
     answered: true,
     answer: 'Нет, никакого финансиста не добавляем.',
@@ -250,7 +250,7 @@ const ANSWERS = [
     can_remind: false,
     answer_changes_done: true,
     reaction: {
-      text: 'Принято: biz-cfo не добавляем, шаг по составу команды снят.',
+      text: 'Принято: team-cfo не добавляем, шаг по составу команды снят.',
       at: Math.floor(Date.now() / 1000) - 3500,
       status: 'applied',
       cards: ['t_643c9d89'],
@@ -329,7 +329,7 @@ test('ответ рядом с вопросом: «Вопрос — ваш от�
     assert.match(txt, /Вопрос — ваш ответ/, 'пара показана явно');
     assert.match(txt, /Нет, никакого финансиста не добавляем/, 'виден ответ');
     assert.match(txt, /учтено: работа пересмотрена/, 'виден статус ответа');
-    assert.match(txt, /Принято: biz-cfo не добавляем/, 'видна реакция руководителя');
+    assert.match(txt, /Принято: team-cfo не добавляем/, 'видна реакция руководителя');
     assert.equal(all(answered, 'req-q__card').length, 1, 'карточка из реакции');
     assert.match(txt, /ответ изменил уже сделанное/, 'видно, что работа пересматривается');
     assert.equal(all(answered, 'req-q__form').length, 0, 'отвеченный вопрос не просит ответа снова');
@@ -379,7 +379,9 @@ test('открытый вопрос: поле + отдельные «Отпра�
     const explain = all(row, 'req-q__explain')[0];
     assert.ok(explain, 'кнопка «Пояснить…»');
     assert.match(text(explain), /Пояснить/);
-    assert.match(String(explain.getAttribute('title') || ''), /Мне нужно пояснение/);
+    // W21-Q1 (B-44): в подсказке главное — «текст можно не писать».
+    assert.match(String(explain.getAttribute('title') || ''), /объяснит вопрос подробнее/);
+    assert.match(String(explain.getAttribute('title') || ''), /текст можно не писать/);
     const hints = all(host, 'req-q__common-hint');
     assert.equal(hints.length, 1, 'подсказка про пояснение — одна на блок, не ×N');
     assert.match(text(hints[0]), /Пояснить/);

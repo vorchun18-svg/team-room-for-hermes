@@ -60,7 +60,7 @@ from tests.helpers import Sandbox, SimAgents      # noqa: E402
 from tests import ci_marks                       # noqa: E402
 
 ROOM = "cafe"
-PLAN_OWNER = "biz-ops"
+PLAN_OWNER = "team-ops"
 
 #: каталог для теста: как отдаёт Hermes (только настроенные) + один «без ключа» для проверки
 CATALOG = {
@@ -309,26 +309,26 @@ class CatalogTests(_Base):
 # ---------------------------------------------------------------- проверка
 class ValidateTests(_Base):
     def test_unconfigured_provider_400(self):
-        status, body, _h = self.put("biz-cfo", {"provider": "openrouter", "model": "some/model"})
+        status, body, _h = self.put("team-cfo", {"provider": "openrouter", "model": "some/model"})
         self.assertEqual(status, 400, body)
         self.assertIn("не настроен", json.dumps(body, ensure_ascii=False))
 
     def test_model_not_in_catalog_400(self):
-        status, body, _h = self.put("biz-cfo", {"provider": "llamacpp", "model": "не-модель"})
+        status, body, _h = self.put("team-cfo", {"provider": "llamacpp", "model": "не-модель"})
         self.assertEqual(status, 400, body)
         self.assertIn("нет модели", json.dumps(body, ensure_ascii=False))
 
     def test_model_without_provider_400(self):
-        status, body, _h = self.put("biz-cfo", {"model": "qwen36"})
+        status, body, _h = self.put("team-cfo", {"model": "qwen36"})
         self.assertEqual(status, 400, body)
         self.assertIn("провайдера", json.dumps(body, ensure_ascii=False))
 
     def test_provider_without_model_400(self):
-        status, body, _h = self.put("biz-cfo", {"provider": "llamacpp"})
+        status, body, _h = self.put("team-cfo", {"provider": "llamacpp"})
         self.assertEqual(status, 400, body)
 
     def test_effort_outside_list_400(self):
-        status, body, _h = self.put("biz-cfo", {"provider": "llamacpp", "model": "qwen36",
+        status, body, _h = self.put("team-cfo", {"provider": "llamacpp", "model": "qwen36",
                                                 "reasoning": "hgih"})
         self.assertEqual(status, 400, body)
         self.assertIn("Уровень мышления", json.dumps(body, ensure_ascii=False))
@@ -340,49 +340,50 @@ class ValidateTests(_Base):
         self.assertIn("составе", json.dumps(body, ensure_ascii=False))
 
     def test_unknown_field_400(self):
-        status, body, _h = self.put("biz-cfo", {"provider": "llamacpp", "model": "qwen36",
+        status, body, _h = self.put("team-cfo", {"provider": "llamacpp", "model": "qwen36",
                                                 "temperature": 0.2})
         self.assertEqual(status, 400, body)
 
     def test_reasoning_only_is_allowed(self):
         """Уровень мышления независим от модели: можно поменять только его."""
-        status, body, _h = self.put("biz-cfo", {"reasoning": "none"})
+        status, body, _h = self.put("team-cfo", {"reasoning": "none"})
         self.assertEqual(status, 200, body)
-        self.assertEqual(self.room()["agent_models"]["biz-cfo"]["reasoning"], "none")
-        self.assertEqual(self.room()["agent_models"]["biz-cfo"]["provider"], "")
+        self.assertEqual(self.room()["agent_models"]["team-cfo"]["reasoning"], "none")
+        self.assertEqual(self.room()["agent_models"]["team-cfo"]["provider"], "")
 
 
 # ---------------------------------------------------------------- хранение и API комнаты
 class RoomApiTests(_Base):
+    @unittest.skipUnless(ci_marks.has_real_profiles(), ci_marks.WHY_NO_PROFILES)
     def test_put_roundtrip_and_member_settings(self):
-        body = self.set_model("biz-cfo")
-        self.assertEqual(body["member"]["profile"], "biz-cfo")
+        body = self.set_model("team-cfo")
+        self.assertEqual(body["member"]["profile"], "team-cfo")
         self.assertEqual(body["member"]["model_settings"]["provider"], "llamacpp")
         self.assertEqual(body["member"]["model_settings"]["source"], "room")
         default = body["member"]["agent_default"]
         self.assertTrue(default["provider"], "дефолт агента должен читаться из конфига профиля")
-        self.assertIn("biz-cfo", body["agent_models"])
+        self.assertIn("team-cfo", body["agent_models"])
 
         detail = self.room_of_api()
-        self.assertEqual(detail["agent_models"]["biz-cfo"]["model"], "qwen36")
-        member = next(m for m in detail["members"] if m["profile"] == "biz-cfo")
+        self.assertEqual(detail["agent_models"]["team-cfo"]["model"], "qwen36")
+        member = next(m for m in detail["members"] if m["profile"] == "team-cfo")
         self.assertEqual(member["model_settings"]["reasoning"], "high")
         self.assertEqual(member["model_settings"]["source"], "room")
         self.assertEqual(member["agent_default"],
-                         models_mod.agent_default(self.cfg, "biz-cfo"))
+                         models_mod.agent_default(self.cfg, "team-cfo"))
         self.assertNotEqual(member["agent_default"]["model"], "qwen36",
                             "дефолт агента — из конфига профиля, а не замена комнаты")
-        self.assertIn("biz-director", detail["agent_models_meta"], "руководитель тоже в карте")
-        self.assertEqual(detail["agent_models_meta"]["biz-director"]["model_settings"]["source"],
+        self.assertIn("team-director", detail["agent_models_meta"], "руководитель тоже в карте")
+        self.assertEqual(detail["agent_models_meta"]["team-director"]["model_settings"]["source"],
                          "agent")
 
     def test_reset_to_default(self):
         root_id = self.new_root("Сброс модели")
-        kids = self.sa.decompose(root_id, [{"title": "Смета", "assignee": "biz-cfo",
+        kids = self.sa.decompose(root_id, [{"title": "Смета", "assignee": "team-cfo",
                                             "status": "todo"}])
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         self.assertEqual(self.card(kids[0])["model_override"], "qwen36")
-        status, body, _h = self.put("biz-cfo", {})
+        status, body, _h = self.put("team-cfo", {})
         self.assertEqual(self.card(kids[0])["model_override"], None,
                          "после «Вернуть по умолчанию» пин с карточки снимается")
         self.assertEqual(self.card(kids[0])["reasoning_effort"], None)
@@ -390,19 +391,19 @@ class RoomApiTests(_Base):
         self.assertTrue(body["cleared"])
         self.assertEqual(self.room()["agent_models"], {})
         detail = self.room_of_api()
-        member = next(m for m in detail["members"] if m["profile"] == "biz-cfo")
+        member = next(m for m in detail["members"] if m["profile"] == "team-cfo")
         self.assertEqual(member["model_settings"]["source"], "agent")
         self.assertEqual(member["model_settings"]["provider"], member["agent_default"]["provider"])
 
     def test_model_null_clears(self):
-        self.set_model("biz-cfo")
-        status, body, _h = self.put("biz-cfo", {"provider": None, "model": None,
+        self.set_model("team-cfo")
+        status, body, _h = self.put("team-cfo", {"provider": None, "model": None,
                                                 "reasoning": None})
         self.assertEqual(status, 200, body)
         self.assertEqual(self.room()["agent_models"], {})
 
     def test_journal_has_model_changed(self):
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         path = Path(self.cfg.state_dir) / ROOM / "journal.jsonl"
         events = [json.loads(line) for line in path.read_text("utf-8").splitlines() if line.strip()]
         changed = [e for e in events if e.get("kind") == "model_changed"]
@@ -414,12 +415,12 @@ class RoomApiTests(_Base):
         try:
             status, body, _h = self.app.dispatch(
                 "PATCH", "/api/rooms/%s" % ROOM, {},
-                {"agent_models": {"biz-ops": {"provider": "llamacpp", "model": "gemma4",
+                {"agent_models": {"team-ops": {"provider": "llamacpp", "model": "gemma4",
                                               "reasoning": "low"}}})
         except ApiError as exc:
             self.fail("PATCH с моделями не должен падать: %s" % exc)
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["agent_models"]["biz-ops"]["model"], "gemma4")
+        self.assertEqual(body["agent_models"]["team-ops"]["model"], "gemma4")
 
         with self.assertRaises(ApiError) as ctx:
             self.app.dispatch("PATCH", "/api/rooms/%s" % ROOM, {},
@@ -429,43 +430,57 @@ class RoomApiTests(_Base):
 
     def test_create_room_with_models(self):
         payload = {"title": "Комната с моделями", "id": "models-room", "board": "team",
-                   "orchestrator": "biz-director",
-                   "members": [{"profile": "biz-lawyer", "role": "worker"}],
-                   "agent_models": {"biz-lawyer": {"provider": "llamacpp", "model": "ornith",
+                   "orchestrator": "team-director",
+                   "members": [{"profile": "team-lawyer", "role": "worker"}],
+                   "agent_models": {"team-lawyer": {"provider": "llamacpp", "model": "ornith",
                                                    "reasoning": "max"}}}
         status, body, _h = self.app.dispatch("POST", "/api/rooms", {}, payload)
         self.assertEqual(status, 201, body)
-        self.assertEqual(body["agent_models"]["biz-lawyer"]["reasoning"], "max")
+        self.assertEqual(body["agent_models"]["team-lawyer"]["reasoning"], "max")
         self.assertEqual(body["members"][0]["model_settings"]["model"], "ornith")
 
 
 # ---------------------------------------------------------------- карточки
 class CardTests(_Base):
     def test_new_request_card_gets_model_and_effort(self):
-        self.set_model("biz-director")
+        """W23 §2.2: корень запроса — БЕЗ переопределения; модель руководителя не копируется.
+
+        Раньше сюда писалась модель руководителя (при `triage` исполнителя ещё нет) — именно
+        так локальный исполнитель выполнил карточку на платном Claude. Теперь в корне пусто,
+        движок возьмёт модель профиля исполнителя, а выбор комнаты закрепит сторож.
+        """
+        self.set_model("team-director")
         status, body, _h = self.app.dispatch(
             "POST", "/api/rooms/%s/requests" % ROOM, {},
             {"text": "Посчитай экономику набора из шести моти и сроки запуска."})
         self.assertEqual(status, 201, body)
         root_id = body["root_id"]
         card = self.card(root_id)
-        self.assertEqual(card["model_override"], "qwen36", "модель корня запроса — у руководителя")
-        self.assertEqual(card["provider_override"], "llamacpp")
-        self.assertEqual(card["reasoning_effort"], "high", "effort ставится мостом")
+        self.assertFalse(card["model_override"], card)
+        self.assertFalse(card["provider_override"], card)
+        self.assertFalse(card["reasoning_effort"], "уровень мышления тоже только из комнаты")
         created = [argv for argv in self.shim.calls if "create" in argv]
-        self.assertTrue(any("--model=qwen36" in argv and "--provider=llamacpp" in argv
-                            for argv in created), created[-1] if created else "")
+        self.assertFalse(any(a.startswith("--model=") for a in (created[-1] if created else [])),
+                         created[-1] if created else "")
+        # а карточка исполнителю (критик/доработка) получает ровно выбор комнаты
+        self.set_model("team-cfo")
+        card_id = ew.create_child_card(self.cfg, self.room(), "team", root_id, "team-cfo",
+                                      "Смета", "Тело сметы", "task", idem_key="wave23-child")
+        child = self.card(card_id)
+        self.assertEqual((child["model_override"], child["provider_override"]),
+                         ("qwen36", "llamacpp"))
+        self.assertEqual(child["reasoning_effort"], "high", "effort ставится мостом")
 
     def test_guard_applies_to_children_idempotently(self):
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         root_id = self.new_root("Декомпозиция")
         kids = self.sa.decompose(root_id, [
-            {"title": "Смета", "assignee": "biz-cfo", "status": "todo"},
-            {"title": "Проверка", "assignee": "biz-ops", "status": "todo"},
+            {"title": "Смета", "assignee": "team-cfo", "status": "todo"},
+            {"title": "Проверка", "assignee": "team-ops", "status": "todo"},
         ])
         first = models_mod.apply_to_tree(self.cfg, ROOM, root_id)
         self.assertIn(kids[0], first["updated"])
-        self.assertNotIn(kids[1], first["updated"], "у biz-ops замены нет — не трогаем")
+        self.assertNotIn(kids[1], first["updated"], "у team-ops замены нет — не трогаем")
         card = self.card(kids[0])
         self.assertEqual((card["model_override"], card["provider_override"],
                           card["reasoning_effort"]), ("qwen36", "llamacpp", "high"))
@@ -475,11 +490,11 @@ class CardTests(_Base):
         self.assertGreaterEqual(second["skipped"], 1)
 
     def test_guard_skips_running_and_done(self):
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         root_id = self.new_root("Идущая работа")
         kids = self.sa.decompose(root_id, [
-            {"title": "Идёт", "assignee": "biz-cfo", "status": "running"},
-            {"title": "Готово", "assignee": "biz-cfo", "status": "done"},
+            {"title": "Идёт", "assignee": "team-cfo", "status": "running"},
+            {"title": "Готово", "assignee": "team-cfo", "status": "done"},
         ])
         res = models_mod.apply_to_tree(self.cfg, ROOM, root_id)
         self.assertEqual(res["updated"], [])
@@ -488,21 +503,21 @@ class CardTests(_Base):
 
     def test_watcher_calls_guard(self):
         """Сторож подключён в watcher: карточка ребёнка получает модель после тика."""
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         root_id = self.new_root("Тик наблюдателя")
-        kids = self.sa.decompose(root_id, [{"title": "Смета", "assignee": "biz-cfo",
+        kids = self.sa.decompose(root_id, [{"title": "Смета", "assignee": "team-cfo",
                                             "status": "todo"}])
         self.app.watcher.tick_once()
         self.assertEqual(self.card(kids[0])["model_override"], "qwen36")
 
     def test_put_counts_pending_running(self):
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         root_id = self.new_root("Считаем идущие")
-        kids = self.sa.decompose(root_id, [{"title": "Идёт", "assignee": "biz-cfo",
+        kids = self.sa.decompose(root_id, [{"title": "Идёт", "assignee": "team-cfo",
                                             "status": "running"},
-                                           {"title": "В очереди", "assignee": "biz-cfo",
+                                           {"title": "В очереди", "assignee": "team-cfo",
                                             "status": "todo"}])
-        status, body, _h = self.put("biz-cfo", {"provider": "ollama-cloud",
+        status, body, _h = self.put("team-cfo", {"provider": "ollama-cloud",
                                                 "model": "glm-5.3", "reasoning": "medium"})
         self.assertEqual(status, 200, body)
         self.assertGreaterEqual(body["applied"]["pending_running"], 1,
@@ -512,16 +527,16 @@ class CardTests(_Base):
         self.assertEqual(self.card(kids[1])["model_override"], "glm-5.3")
 
     def test_restart_running(self):
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         root_id = self.new_root("Перезапуск")
-        kids = self.sa.decompose(root_id, [{"title": "Идёт", "assignee": "biz-cfo",
+        kids = self.sa.decompose(root_id, [{"title": "Идёт", "assignee": "team-cfo",
                                             "status": "running"}])
-        status, body, _h = self.restart("biz-cfo")
+        status, body, _h = self.restart("team-cfo")
         self.assertEqual(status, 200, body)
         self.assertGreaterEqual(body["restarted"], 1, body)
         self.assertIn(kids[0], body["cards"])
         self.assertEqual(self.card(kids[0])["status"], "ready", "после reclaim карточка ждёт запуска")
-        again = self.restart("biz-cfo")
+        again = self.restart("team-cfo")
         self.assertEqual(again[1]["restarted"], 0, "повторный перезапуск никого не находит")
         self.assertTrue(any("reassign" in argv and "--reclaim" in argv for argv in self.shim.calls),
                         "перезапуск идёт штатным reassign --reclaim")
@@ -529,13 +544,18 @@ class CardTests(_Base):
     def test_restart_unknown_profile_is_400(self):
         status, body, _h = self.restart("coder")
         self.assertEqual(status, 400, body)
-        status, body, _h = self.restart("biz-marketing")
+        status, body, _h = self.restart("team-marketing")
         self.assertEqual(status, 200, body)
         self.assertEqual(body["restarted"], 0, "у этого участника идущих карточек нет")
 
     def test_plan_stream_request_uses_owner_model(self):
-        """Под-запрос направления получает модель своего владельца, а не руководителя."""
-        self.set_model("biz-director", "anthropic", "claude-sonnet-5-5", "medium")
+        """Под-запрос направления: в корень модель владельца не пишется, её даёт сторож.
+
+        W23 §2.2: под-запрос тоже создаётся в `triage` (исполнителя нет) — переопределения
+        нет; когда движок назначит исполнителя, сторож закрепит выбор комнаты его владельца,
+        а не модель руководителя (это и проверяем).
+        """
+        self.set_model("team-director", "anthropic", "claude-sonnet-5-5", "medium")
         self.set_model(PLAN_OWNER, "llamacpp", "gemma4", "low")
         room = self.room()
         stream = {"id": "s9", "title": "Направление с моделью владельца", "goal": "Проверить",
@@ -546,14 +566,20 @@ class CardTests(_Base):
         root_id = (res or {}).get("root_id")
         self.assertTrue(root_id, res)
         card = self.card(root_id)
-        self.assertEqual(card["model_override"], "gemma4")
-        self.assertEqual(card["provider_override"], "llamacpp")
-        self.assertEqual(card["reasoning_effort"], "low")
+        self.assertFalse(card["model_override"], "в triage модель не пишется")
+        # движок назначил исполнителя — сторож закрепляет выбор комнаты владельца
+        kids = self.sa.decompose(root_id, [{"title": "Шаг", "assignee": PLAN_OWNER,
+                                            "status": "todo"}])
+        models_mod.apply_to_tree(self.cfg, ROOM, root_id)
+        step = self.card(kids[0])
+        self.assertEqual(step["model_override"], "gemma4")
+        self.assertEqual(step["provider_override"], "llamacpp")
+        self.assertEqual(step["reasoning_effort"], "low")
 
     def test_tree_has_model_label(self):
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         root_id = self.new_root("Подпись модели")
-        kids = self.sa.decompose(root_id, [{"title": "Смета", "assignee": "biz-cfo",
+        kids = self.sa.decompose(root_id, [{"title": "Смета", "assignee": "team-cfo",
                                             "status": "todo"}])
         models_mod.apply_to_tree(self.cfg, ROOM, root_id)
         detail = self.app.call("engine_read", "request_detail",
@@ -570,23 +596,23 @@ class SafetyTests(_Base):
                          "нет профилей Hermes Desktop — на чистом раннере нечего сравнивать")
     def test_profile_files_untouched_by_any_flow(self):
         before = file_hashes()
-        self.set_model("biz-cfo")
-        self.set_model("biz-director", "anthropic", "claude-sonnet-5-5", "ultra")
-        self.put("biz-cfo", {})
+        self.set_model("team-cfo")
+        self.set_model("team-director", "anthropic", "claude-sonnet-5-5", "ultra")
+        self.put("team-cfo", {})
         self.assertGreaterEqual(_cfg_hash_names(before), 20, "ожидаем 20+ файлов профилей")
         self.assertEqual(file_hashes(), before, "файлы профилей меняться не должны")
 
     def test_bridge_does_not_touch_real_board(self):
         """Мост пишет только в песочную БД: слепок реальной доски не меняется."""
         before = self.sb.snapshot_real()
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         root_id = self.new_root("Мост и реальная доска")
-        self.sa.decompose(root_id, [{"title": "Смета", "assignee": "biz-cfo", "status": "todo"}])
+        self.sa.decompose(root_id, [{"title": "Смета", "assignee": "team-cfo", "status": "todo"}])
         models_mod.apply_to_tree(self.cfg, ROOM, root_id)
         self.sb.assert_real_untouched(before)
 
     def test_answers_have_no_keys(self):
-        _status, body, _h = self.put("biz-cfo", {"provider": "llamacpp", "model": "qwen36",
+        _status, body, _h = self.put("team-cfo", {"provider": "llamacpp", "model": "qwen36",
                                                  "reasoning": "high"})
         text = json.dumps(body, ensure_ascii=False)
         for marker in ("sk-", "ghp_", "Bearer ", "api_key"):
@@ -648,12 +674,12 @@ class ExactnessTests(_Base):
         for index, (provider, model) in enumerate(EXACT_PAIRS):
             with self.subTest(provider=provider, model=model):
                 # 1) участник комнаты: что сохранено и что показывает комната
-                status, body, _h = self.put("biz-cfo",
+                status, body, _h = self.put("team-cfo",
                                             {"provider": provider, "model": model,
                                              "reasoning": "high"})
                 self.assertEqual(status, 200, body)
-                self.assertEqual(body["agent_models"]["biz-cfo"]["provider"], provider)
-                self.assertEqual(body["agent_models"]["biz-cfo"]["model"], model)
+                self.assertEqual(body["agent_models"]["team-cfo"]["provider"], provider)
+                self.assertEqual(body["agent_models"]["team-cfo"]["model"], model)
                 self.assertEqual(body["applied"]["saved"]["provider"], provider)
                 self.assertEqual(body["applied"]["saved"]["model"], model)
                 self.assertEqual(body["applied"]["settings"]["provider"], provider)
@@ -662,21 +688,23 @@ class ExactnessTests(_Base):
                 self.assertEqual(body["member"]["model_settings"]["model"], model)
 
                 detail = self.room_of_api()
-                self.assertEqual(detail["agent_models"]["biz-cfo"]["model"], model)
-                meta = detail["agent_models_meta"]["biz-cfo"]["model_settings"]
+                self.assertEqual(detail["agent_models"]["team-cfo"]["model"], model)
+                meta = detail["agent_models_meta"]["team-cfo"]["model_settings"]
                 self.assertEqual((meta["provider"], meta["model"]), (provider, model),
                                  "agent_models_meta — то же, что сохранено")
-                member = next(m for m in detail["members"] if m["profile"] == "biz-cfo")
+                member = next(m for m in detail["members"] if m["profile"] == "team-cfo")
                 self.assertEqual((member["model_settings"]["provider"],
                                   member["model_settings"]["model"]), (provider, model))
 
-                # 2) руководитель: карточка нового запроса и флаги CLI
-                self.set_model("biz-director", provider, model, "high")
-                status, created, _h = self.app.dispatch(
-                    "POST", "/api/rooms/%s/requests" % ROOM, {},
-                    {"text": "Проверка точности модели %d." % index})
-                self.assertEqual(status, 201, created)
-                card = self.card(created["root_id"])
+                # 2) карточка исполнителю: флаги CLI = ровно выбор комнаты.
+                # W23 §2.2: корень запроса создаётся в `triage` и переопределения НЕ
+                # получает (исполнителя ещё нет) — точность проверяем на карточке с
+                # известным исполнителем, там же, где флаги действительно нужны.
+                root_id = self.new_root("Точность %d" % index)
+                card_id = ew.create_child_card(self.cfg, self.room(), "team", root_id,
+                                              "team-cfo", "Задача %d" % index, "Тело", "task",
+                                              idem_key="exact-%d" % index)
+                card = self.card(card_id)
                 self.assertEqual((card["provider_override"], card["model_override"]),
                                  (provider, model), "карточка получила не ту модель")
                 argv = self._created_flags()
@@ -691,11 +719,11 @@ class ExactnessTests(_Base):
         """Дерево сторожа, под-запрос направления и перезапуск — те же точные id."""
         for provider, model in TRICKY_PAIRS:
             with self.subTest(provider=provider, model=model):
-                self.set_model("biz-cfo", provider, model, "low")
+                self.set_model("team-cfo", provider, model, "low")
                 root_id = self.new_root("Точная модель %s" % model)
                 kids = self.sa.decompose(root_id, [
-                    {"title": "В очереди", "assignee": "biz-cfo", "status": "todo"},
-                    {"title": "Идёт", "assignee": "biz-cfo", "status": "running"},
+                    {"title": "В очереди", "assignee": "team-cfo", "status": "todo"},
+                    {"title": "Идёт", "assignee": "team-cfo", "status": "running"},
                 ])
                 res = models_mod.apply_to_tree(self.cfg, ROOM, root_id)
                 self.assertIn(kids[0], res["updated"], res)
@@ -703,19 +731,29 @@ class ExactnessTests(_Base):
                 self.assertEqual((card["provider_override"], card["model_override"],
                                   card["reasoning_effort"]), (provider, model, "low"))
 
-                self.set_model("biz-ops", provider, model, "medium")
+                self.set_model("team-ops", provider, model, "medium")
                 room = self.room()
                 stream = {"id": "s-" + model.replace("/", "_").replace(":", "_"),
                           "title": "Направление %s" % model, "goal": "Проверить",
-                          "owner": "biz-ops", "members": [], "depends_on": [], "due": None,
+                          "owner": "team-ops", "members": [], "depends_on": [], "due": None,
                           "status": "proposed", "created_by": "manager"}
                 plan = {"streams": [stream], "brief_root_id": root_id}
                 made = self.app.call("plan", "_create_request", ((self.cfg, room, stream, plan), {}))
                 sub = self.card((made or {}).get("root_id") or "")
+                # W23 §2.2: под-запрос направления тоже создаётся в `triage` — модель
+                # руководителя направления в него НЕ пишется; её закрепит сторож, когда
+                # движок назначит исполнителя (`apply_to_tree` ниже — ровно это).
                 self.assertEqual((sub["provider_override"], sub["model_override"]),
-                                 (provider, model), made)
+                                 (None, None), made)
+                made_id = str((made or {}).get("root_id") or "")
+                self.sa.decompose(made_id, [{"title": "Шаг", "assignee": "team-ops",
+                                             "status": "todo"}])
+                models_mod.apply_to_tree(self.cfg, ROOM, made_id)
+                step = [c for c in models_mod.tenant_cards(self.cfg, "team", "room:cafe").values()
+                        if c["assignee"] == "team-ops" and c["status"] == "todo"][-1]
+                self.assertEqual((step["provider"], step["model"]), (provider, model))
 
-                status, body, _h = self.restart("biz-cfo")
+                status, body, _h = self.restart("team-cfo")
                 self.assertEqual(status, 200, body)
                 self.assertIn(kids[1], body["cards"])
                 after = self.card(kids[1])
@@ -725,32 +763,32 @@ class ExactnessTests(_Base):
 
     def test_put_echo_after_clear_is_agent_default(self):
         """Ответ PUT после «по умолчанию»: applied.settings = настройки агента, saved пуст."""
-        self.set_model("biz-cfo", "anthropic", "claude-sonnet-5-5", "medium")
-        status, body, _h = self.put("biz-cfo", {})
+        self.set_model("team-cfo", "anthropic", "claude-sonnet-5-5", "medium")
+        status, body, _h = self.put("team-cfo", {})
         self.assertEqual(status, 200, body)
         self.assertTrue(body["cleared"])
         self.assertEqual(body["applied"]["saved"], {})
         self.assertTrue(body["applied"]["cleared"])
-        default = models_mod.agent_default(self.cfg, "biz-cfo")
+        default = models_mod.agent_default(self.cfg, "team-cfo")
         self.assertEqual(body["applied"]["settings"]["provider"], default["provider"])
         self.assertEqual(body["applied"]["settings"]["model"], default["model"])
         self.assertEqual(body["applied"]["settings"]["source"], "agent")
 
     def test_case_only_twins_are_not_collapsed(self):
         """`Model-A` и `model-a` — разные модели: регистр не «нормализуется»."""
-        status, body, _h = self.put("biz-cfo", {"provider": "custom:local", "model": "Model-A"})
+        status, body, _h = self.put("team-cfo", {"provider": "custom:local", "model": "Model-A"})
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["agent_models"]["biz-cfo"]["model"], "Model-A")
-        status, body, _h = self.put("biz-cfo", {"provider": "custom:local", "model": "model-a"})
+        self.assertEqual(body["agent_models"]["team-cfo"]["model"], "Model-A")
+        status, body, _h = self.put("team-cfo", {"provider": "custom:local", "model": "model-a"})
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["agent_models"]["biz-cfo"]["model"], "model-a")
+        self.assertEqual(body["agent_models"]["team-cfo"]["model"], "model-a")
 
-        status, body, _h = self.put("biz-cfo", {"provider": "custom:local", "model": "MODEL-A"})
+        status, body, _h = self.put("team-cfo", {"provider": "custom:local", "model": "MODEL-A"})
         self.assertEqual(status, 400, body)
         detail = json.dumps(body, ensure_ascii=False)
         self.assertIn("нет модели", detail)
         self.assertIn("suggestions", detail, "похожие id — только подсказка, не выбор")
-        self.assertEqual(self.room()["agent_models"]["biz-cfo"]["model"], "model-a",
+        self.assertEqual(self.room()["agent_models"]["team-cfo"]["model"], "model-a",
                          "неудачный PUT не должен менять сохранённое")
 
     def test_prefix_and_substring_are_not_guessed(self):
@@ -758,14 +796,14 @@ class ExactnessTests(_Base):
         for wrong in ("deepseek-v4-pro:081", "deepseek-v4-pro:08131", "v4-pro",
                       "deepseek-v4.1-flash:101"):
             with self.subTest(model=wrong):
-                status, body, _h = self.put("biz-cfo", {"provider": "ollama-cloud",
+                status, body, _h = self.put("team-cfo", {"provider": "ollama-cloud",
                                                         "model": wrong})
                 self.assertEqual(status, 400, body)
         self.assertEqual(self.room()["agent_models"], {})
 
     def test_model_of_another_provider_points_to_it(self):
         """Модель чужого провайдера → 400 с подсказкой, где она есть, и без записи."""
-        status, body, _h = self.put("biz-cfo", {"provider": "anthropic",
+        status, body, _h = self.put("team-cfo", {"provider": "anthropic",
                                                 "model": "deepseek-v4-pro"})
         self.assertEqual(status, 400, body)
         self.assertIn("ollama-cloud", json.dumps(body, ensure_ascii=False))
@@ -778,21 +816,21 @@ class ExactnessTests(_Base):
              "models": [{"id": "twin-model"}]}]}
         self.cfg.model_catalog_override = catalog
         models_mod.catalog(self.cfg, force=True)
-        status, body, _h = self.put("biz-cfo", {"provider": "OLLAMA-CLOUD",
+        status, body, _h = self.put("team-cfo", {"provider": "OLLAMA-CLOUD",
                                                 "model": "deepseek-v4-pro"})
         self.assertEqual(status, 400, body)
         self.assertIn("неоднозначно", json.dumps(body, ensure_ascii=False))
-        status, body, _h = self.put("biz-cfo", {"provider": "Ollama-Cloud",
+        status, body, _h = self.put("team-cfo", {"provider": "Ollama-Cloud",
                                                 "model": "twin-model"})
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["agent_models"]["biz-cfo"]["provider"], "Ollama-Cloud")
+        self.assertEqual(body["agent_models"]["team-cfo"]["provider"], "Ollama-Cloud")
 
     def test_reasoning_only_does_not_pin_agent_model(self):
         """Смена только «мышления» не закрепляет на карточке модель агента."""
         root_id = self.new_root("Только мышление")
-        kids = self.sa.decompose(root_id, [{"title": "В очереди", "assignee": "biz-cfo",
+        kids = self.sa.decompose(root_id, [{"title": "В очереди", "assignee": "team-cfo",
                                             "status": "todo"}])
-        status, body, _h = self.put("biz-cfo", {"reasoning": "low"})
+        status, body, _h = self.put("team-cfo", {"reasoning": "low"})
         self.assertEqual(status, 200, body)
         self.assertEqual(body["applied"]["settings"]["source"], "room")
         card = self.card(kids[0])
@@ -813,27 +851,30 @@ class PartialRegistryTests(_Base):
         path.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
 
     def test_provider_without_model_uses_agent_pair(self):
-        self._write_models({"biz-cfo": {"provider": "anthropic", "model": "",
+        self._write_models({"team-cfo": {"provider": "anthropic", "model": "",
                                        "reasoning": "", "updated_at": 1}})
         room = self.room()
         self.assertEqual(room["agent_models"], {}, "неполная пара не отдаётся наружу")
-        value = models_mod.effective(self.cfg, room, "biz-cfo")
-        default = models_mod.agent_default(self.cfg, "biz-cfo")
+        value = models_mod.effective(self.cfg, room, "team-cfo")
+        default = models_mod.agent_default(self.cfg, "team-cfo")
         self.assertEqual((value["provider"], value["model"]),
                          (default["provider"], default["model"]))
         self.assertEqual(value["source"], "agent")
-        args, settings = ew._model_args(self.cfg, room, "biz-cfo")
-        self.assertEqual(settings["provider"], default["provider"])
-        self.assertNotEqual(settings["provider"], "anthropic",
-                            "провайдер комнаты не должен тащить модель агента")
+        # W23 §2.1: неполная пара комнаты не даёт флагов, и модель агента в карточку НЕ
+        # переносится (её и так возьмёт движок из профиля); провайдер комнаты тем более
+        # не должен тащить модель агента.
+        args, settings = ew._model_args(self.cfg, room, "team-cfo")
+        self.assertEqual(args, [], "флагов быть не должно — карточка пойдёт на модель профиля")
+        self.assertFalse(settings.get("model"))
+        self.assertNotEqual(settings.get("provider"), "anthropic")
 
     def test_model_without_provider_uses_agent_pair(self):
-        self._write_models({"biz-cfo": {"provider": "", "model": "claude-sonnet-5-5",
+        self._write_models({"team-cfo": {"provider": "", "model": "claude-sonnet-5-5",
                                        "reasoning": "", "updated_at": 1}})
         room = self.room()
         self.assertEqual(room["agent_models"], {})
-        value = models_mod.effective(self.cfg, room, "biz-cfo")
-        default = models_mod.agent_default(self.cfg, "biz-cfo")
+        value = models_mod.effective(self.cfg, room, "team-cfo")
+        default = models_mod.agent_default(self.cfg, "team-cfo")
         self.assertEqual((value["provider"], value["model"]),
                          (default["provider"], default["model"]))
         self.assertNotEqual(value["model"], "claude-sonnet-5-5",
@@ -895,9 +936,9 @@ class DefaultsTest(unittest.TestCase):
             checked += 1
         self.assertGreaterEqual(checked, 5)
 
-        for name, expected in (("biz-cfo", ("ollama-cloud", "glm-5.3-flash", "ultra")),
-                               ("biz-director", ("ollama-cloud", "glm-5.3-flash", "ultra")),
-                               ("biz-critic", ("ollama-cloud", "glm-5.3-flash", "ultra"))):
+        for name, expected in (("team-cfo", ("ollama-cloud", "glm-5.3-flash", "ultra")),
+                               ("team-director", ("ollama-cloud", "glm-5.3-flash", "ultra")),
+                               ("team-critic", ("ollama-cloud", "glm-5.3-flash", "ultra"))):
             with self.subTest(profile=name):
                 value = models_mod.agent_default(self.cfg, name)
                 self.assertEqual((value["provider"], value["model"], value["reasoning"]),
@@ -1061,9 +1102,9 @@ class RealModelTests(_Base):
     # --- 1. причина: чужая карточка не видна дереву -----------------------
     def test_orchestrator_card_is_invisible_to_tree_pass(self):
         """Сторож по ДЕРЕВУ не видит карточку руководителя — ровно причина бага 1.0.1."""
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         root_id = self.new_root("Дерево запроса")
-        card_id = self._orchestrator_card("Смета от руководителя", "biz-cfo")
+        card_id = self._orchestrator_card("Смета от руководителя", "team-cfo")
 
         blind = models_mod.apply_to_tree(self.cfg, ROOM, root_id)
         self.assertNotIn(card_id, blind["updated"])
@@ -1078,24 +1119,25 @@ class RealModelTests(_Base):
 
     def test_watcher_pins_room_cards_by_tenant(self):
         """Тик сторожа закрепляет модель на карточке комнаты, созданной не приложением."""
-        self.set_model("biz-cfo")
-        card_id = self._orchestrator_card("Черновик сметы", "biz-cfo")
+        self.set_model("team-cfo")
+        card_id = self._orchestrator_card("Черновик сметы", "team-cfo")
         self.app.watcher.tick_once()
         card = self.card(card_id)
         self.assertEqual((card["model_override"], card["reasoning_effort"]), ("qwen36", "high"))
 
     def test_room_pass_is_idempotent(self):
-        self.set_model("biz-cfo")
-        self._orchestrator_card("Раз", "biz-cfo")
+        self.set_model("team-cfo")
+        self._orchestrator_card("Раз", "team-cfo")
         first = models_mod.apply_to_room(self.cfg, ROOM)
         second = models_mod.apply_to_room(self.cfg, ROOM)
         self.assertTrue(first["updated"])
         self.assertEqual(second["updated"], [], "повторный проход ничего не меняет")
 
     # --- 2. контракт: модель в теле запроса -------------------------------
+    @unittest.skipUnless(ci_marks.has_real_profiles(), ci_marks.WHY_NO_PROFILES)
     def test_request_body_lists_models_for_every_executor(self):
         """Бриф/тело запроса прямо говорит руководителю, с какими флагами создавать детей."""
-        self.set_model("biz-cfo", "ollama-cloud", "glm-5.3", "ultra")
+        self.set_model("team-cfo", "ollama-cloud", "glm-5.3", "ultra")
         status, body, _h = self.app.dispatch(
             "POST", "/api/rooms/%s/requests" % ROOM, {},
             {"text": "Посчитать экономику набора из шести моти."})
@@ -1103,10 +1145,10 @@ class RealModelTests(_Base):
         row = self.sb.one("SELECT body FROM tasks WHERE id = ?", (body["root_id"],))
         text = row["body"]
         self.assertIn("МОДЕЛИ ИСПОЛНИТЕЛЕЙ", text)
-        self.assertIn("- biz-cfo (исполнитель) — ollama-cloud · glm-5.3 · "
+        self.assertIn("- team-cfo (исполнитель) — ollama-cloud · glm-5.3 · "
                       "предельные → при создании карточки: "
                       "--model=glm-5.3 --provider=ollama-cloud", text)
-        self.assertIn("модель профиля: ", text)
+        self.assertIn("модель из настроек агента: ", text)
         self.assertIn("(в комнате не выбиралась) → флаги не нужны", text)
         self.assertIn("hermes kanban --board=team create", text)
         # служебный блок не должен всплывать в интерфейсе как текст Михаила
@@ -1114,7 +1156,7 @@ class RealModelTests(_Base):
         self.assertNotIn("МОДЕЛИ ИСПОЛНИТЕЛЕЙ", contract_mod.visible_text(text))
 
     def test_models_block_written_once(self):
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         room = self.room()
         block = models_mod.models_block(self.cfg, room)
         self.assertIn("МОДЕЛИ ИСПОЛНИТЕЛЕЙ", block)
@@ -1124,10 +1166,10 @@ class RealModelTests(_Base):
     # --- 3. пути создания карточки ---------------------------------------
     def test_child_card_gets_model_and_effort_at_creation(self):
         """Критик/доработка приложением: флаги в `create` + уровень мышления мостом."""
-        self.set_model("biz-cfo", "llamacpp", "gemma4", "max")
+        self.set_model("team-cfo", "llamacpp", "gemma4", "max")
         room = self.room()
         root_id = self.new_root("Критика ответа")
-        critic_like = ew.create_child_card(self.cfg, room, "team", root_id, "biz-cfo",
+        critic_like = ew.create_child_card(self.cfg, room, "team", root_id, "team-cfo",
                                            "Критика ответа (раунд 1)", "тело", "critic")
         card = self.card(critic_like)
         self.assertEqual((card["model_override"], card["provider_override"],
@@ -1141,7 +1183,7 @@ class RealModelTests(_Base):
         """`:` и `/` в id модели доходят до карточки ребёнка без подмены."""
         for provider, model in TRICKY_PAIRS:
             with self.subTest(provider=provider, model=model):
-                status, _body, _h = self.put("biz-cfo", {"provider": provider, "model": model,
+                status, _body, _h = self.put("team-cfo", {"provider": provider, "model": model,
                                                         "reasoning": ""})
                 self.assertEqual(status, 400, "в тестовом каталоге таких моделей нет")
         self.cfg.model_catalog_override = BIG_CATALOG
@@ -1149,12 +1191,12 @@ class RealModelTests(_Base):
             models_mod.catalog(self.cfg, force=True)
             for provider, model in TRICKY_PAIRS:
                 with self.subTest(provider=provider, model=model):
-                    status, body, _h = self.put("biz-cfo", {"provider": provider, "model": model,
+                    status, body, _h = self.put("team-cfo", {"provider": provider, "model": model,
                                                            "reasoning": "low"})
                     self.assertEqual(status, 200, body)
                     root_id = self.new_root("Точная модель ребёнка")
                     card_id = ew.create_child_card(self.cfg, self.room(), "team", root_id,
-                                                   "biz-cfo", "Доработка", "тело", "revision")
+                                                   "team-cfo", "Доработка", "тело", "revision")
                     card = self.card(card_id)
                     self.assertEqual((card["provider_override"], card["model_override"]),
                                      (provider, model))
@@ -1165,9 +1207,9 @@ class RealModelTests(_Base):
             models_mod.catalog(self.cfg, force=True)
 
     def test_restart_and_retry_keep_room_model(self):
-        self.set_model("biz-cfo", "llamacpp", "gemma4", "medium")
-        card_id = self._orchestrator_card("Идущая карточка", "biz-cfo", status="running")
-        status, body, _h = self.restart("biz-cfo")
+        self.set_model("team-cfo", "llamacpp", "gemma4", "medium")
+        card_id = self._orchestrator_card("Идущая карточка", "team-cfo", status="running")
+        status, body, _h = self.restart("team-cfo")
         self.assertEqual(status, 200, body)
         self.assertIn(card_id, body["cards"])
         card = self.card(card_id)
@@ -1182,11 +1224,11 @@ class RealModelTests(_Base):
     # --- 4. сверка факта и перехват --------------------------------------
     def test_verify_finds_wrong_model_and_returns_card(self):
         """Карточка уже поехала на модели профиля → останавливаем и возвращаем на выбор."""
-        self.set_model("biz-cfo")                       # llamacpp / qwen36 / high
-        card_id = self._orchestrator_card("Считает не на той", "biz-cfo", status="running")
+        self.set_model("team-cfo")                       # llamacpp / qwen36 / high
+        card_id = self._orchestrator_card("Считает не на той", "team-cfo", status="running")
         sid = "local-wrong-model-1"
-        self._make_session("biz-cfo", sid, "glm-5.3-flash", "ollama-cloud")
-        self._run_with_session(card_id, "biz-cfo", sid)
+        self._make_session("team-cfo", sid, "glm-5.3-flash", "ollama-cloud")
+        self._run_with_session(card_id, "team-cfo", sid)
 
         res = models_mod.verify_started(self.cfg, ROOM)
         self.assertEqual(res["checked"], 1, res)
@@ -1207,11 +1249,11 @@ class RealModelTests(_Base):
         self.assertTrue(any("остановлена и возвращена" in t for t in texts), texts)
 
     def test_verify_confirms_correct_model_and_touches_nothing(self):
-        self.set_model("biz-cfo")
-        card_id = self._orchestrator_card("Считает на своей", "biz-cfo", status="running")
+        self.set_model("team-cfo")
+        card_id = self._orchestrator_card("Считает на своей", "team-cfo", status="running")
         sid = "local-right-model-1"
-        self._make_session("biz-cfo", sid, "qwen36", "llamacpp")
-        self._run_with_session(card_id, "biz-cfo", sid)
+        self._make_session("team-cfo", sid, "qwen36", "llamacpp")
+        self._run_with_session(card_id, "team-cfo", sid)
         before = len(self.shim.calls)
         res = models_mod.verify_started(self.cfg, ROOM)
         self.assertEqual((res["checked"], res["confirmed"]), (1, 1), res)
@@ -1223,12 +1265,12 @@ class RealModelTests(_Base):
 
     def test_verify_stops_after_fixup_limit(self):
         """Защита от петли: не больше `FIXUP_MAX` перехватов на карточку."""
-        self.set_model("biz-cfo")
-        card_id = self._orchestrator_card("Упрямая карточка", "biz-cfo", status="running")
+        self.set_model("team-cfo")
+        card_id = self._orchestrator_card("Упрямая карточка", "team-cfo", status="running")
         for attempt in range(models_mod.FIXUP_MAX + 1):
             sid = "local-loop-%d" % attempt
-            self._make_session("biz-cfo", sid, "glm-5.3", "ollama-cloud")
-            self._run_with_session(card_id, "biz-cfo", sid)
+            self._make_session("team-cfo", sid, "glm-5.3", "ollama-cloud")
+            self._run_with_session(card_id, "team-cfo", sid)
             res = models_mod.verify_started(self.cfg, ROOM)
             self.assertEqual([m["id"] for m in res["mismatched"]], [card_id])
             if attempt < models_mod.FIXUP_MAX:
@@ -1237,22 +1279,22 @@ class RealModelTests(_Base):
                 self.assertEqual(res["fixed"], [], "дальше только предупреждение")
 
     def test_verify_skips_fresh_and_unselected(self):
-        self.set_model("biz-cfo")
-        card_id = self._orchestrator_card("Только что взяли", "biz-cfo", status="running")
+        self.set_model("team-cfo")
+        card_id = self._orchestrator_card("Только что взяли", "team-cfo", status="running")
         sid = "local-fresh-1"
-        self._make_session("biz-cfo", sid, "glm-5.3", "ollama-cloud")
-        self._run_with_session(card_id, "biz-cfo", sid, started_at=int(time.time()))
+        self._make_session("team-cfo", sid, "glm-5.3", "ollama-cloud")
+        self._run_with_session(card_id, "team-cfo", sid, started_at=int(time.time()))
         res = models_mod.verify_started(self.cfg, ROOM)
         self.assertEqual(res["mismatched"][0]["id"], card_id, "расхождение видно всегда")
         self.assertEqual(res["fixed"], [], "только что стартовавшую не снимаем")
 
     # --- 5. «ушло на» -----------------------------------------------------
     def test_sent_shows_actual_model_and_mismatch(self):
-        self.set_model("biz-cfo", "ollama-cloud", "glm-5.3", "ultra")
-        card_id = self._orchestrator_card("Куда ушло", "biz-cfo", status="running")
+        self.set_model("team-cfo", "ollama-cloud", "glm-5.3", "ultra")
+        card_id = self._orchestrator_card("Куда ушло", "team-cfo", status="running")
         sid = "local-sent-1"
-        self._make_session("biz-cfo", sid, "glm-5.3-flash", "ollama-cloud")
-        self._run_with_session(card_id, "biz-cfo", sid)
+        self._make_session("team-cfo", sid, "glm-5.3-flash", "ollama-cloud")
+        self._run_with_session(card_id, "team-cfo", sid)
         card = models_mod.card_map(self.cfg, self.room())[card_id]
         sent = models_mod.sent_of(self.cfg, self.room(), card, board="team")
         self.assertEqual(sent["text"], "ушло на: ollama-cloud · glm-5.3-flash")
@@ -1263,8 +1305,8 @@ class RealModelTests(_Base):
 
     def test_sent_without_run_falls_back_to_card(self):
         """Нет подтверждения из запуска — показываем запись карточки, без выдумок."""
-        self.set_model("biz-cfo")
-        card_id = self._orchestrator_card("Ещё не поехала", "biz-cfo")
+        self.set_model("team-cfo")
+        card_id = self._orchestrator_card("Ещё не поехала", "team-cfo")
         models_mod.apply_to_room(self.cfg, ROOM)
         card = models_mod.card_map(self.cfg, self.room())[card_id]
         sent = models_mod.sent_of(self.cfg, self.room(), card, board="team")
@@ -1273,13 +1315,13 @@ class RealModelTests(_Base):
         self.assertFalse(sent["mismatch"])
 
     def test_tree_node_has_model_sent(self):
-        self.set_model("biz-cfo")
+        self.set_model("team-cfo")
         root_id = self.new_root("Дерево с фактом")
-        kids = self.sa.decompose(root_id, [{"title": "Смета", "assignee": "biz-cfo",
+        kids = self.sa.decompose(root_id, [{"title": "Смета", "assignee": "team-cfo",
                                             "status": "running"}])
         sid = "local-tree-1"
-        self._make_session("biz-cfo", sid, "qwen36", "llamacpp")
-        self._run_with_session(kids[0], "biz-cfo", sid)
+        self._make_session("team-cfo", sid, "qwen36", "llamacpp")
+        self._run_with_session(kids[0], "team-cfo", sid)
         detail = self.app.call("engine_read", "request_detail",
                                ((self.cfg, "team", root_id, self.room()), {}))
         node = next(n for n in detail["tree"] if n["id"] == kids[0])
@@ -1288,40 +1330,40 @@ class RealModelTests(_Base):
         self.assertFalse(node["model_sent"]["mismatch"])
 
     def test_team_member_has_sent(self):
-        self.set_model("biz-cfo", "ollama-cloud", "glm-5.3", "high")
-        card_id = self._orchestrator_card("Для команды", "biz-cfo", status="running")
+        self.set_model("team-cfo", "ollama-cloud", "glm-5.3", "high")
+        card_id = self._orchestrator_card("Для команды", "team-cfo", status="running")
         sid = "local-team-1"
-        self._make_session("biz-cfo", sid, "glm-5.3-flash", "ollama-cloud")
+        self._make_session("team-cfo", sid, "glm-5.3-flash", "ollama-cloud")
         # W19 B-29: предупреждение — только если карточка ушла не туда ПОСЛЕ смены
         # модели. Запуск явно позже смены (started_at = сейчас), иначе это ожидание
         # «Новая модель применится со следующей задачи» (см. tests/test_team_fix.py).
-        self._run_with_session(card_id, "biz-cfo", sid, started_at=int(time.time()))
+        self._run_with_session(card_id, "team-cfo", sid, started_at=int(time.time()))
         status, body, _h = self.app.dispatch("GET", "/api/rooms/%s/team" % ROOM, {}, {})
         self.assertEqual(status, 200)
-        member = next(m for m in body["members"] if m["profile"] == "biz-cfo")
+        member = next(m for m in body["members"] if m["profile"] == "team-cfo")
         self.assertEqual(member["model_settings"]["model"], "glm-5.3")
         self.assertEqual(member["model_sent"]["text"], "ушло на: ollama-cloud · glm-5.3-flash")
         self.assertTrue(member["model_sent"]["mismatch"])
         self.assertFalse(member["model_sent"]["pending"])
 
     def test_sent_endpoint(self):
-        self.set_model("biz-cfo")
-        card_id = self._orchestrator_card("Эндпоинт", "biz-cfo", status="running")
+        self.set_model("team-cfo")
+        card_id = self._orchestrator_card("Эндпоинт", "team-cfo", status="running")
         sid = "local-ep-1"
-        self._make_session("biz-cfo", sid, "gemma4", "llamacpp")
-        self._run_with_session(card_id, "biz-cfo", sid)
+        self._make_session("team-cfo", sid, "gemma4", "llamacpp")
+        self._run_with_session(card_id, "team-cfo", sid)
         status, body, _h = self.app.dispatch("GET", "/api/rooms/%s/models/sent" % ROOM, {}, {})
         self.assertEqual(status, 200, body)
-        member = next(m for m in body["members"] if m["profile"] == "biz-cfo")
+        member = next(m for m in body["members"] if m["profile"] == "team-cfo")
         self.assertEqual(member["model_sent"]["text"], "ушло на: llamacpp · gemma4")
         self.assertIn(card_id, [c["id"] for c in body["cards"]])
 
     def test_check_endpoint_reports_without_fixing(self):
-        self.set_model("biz-cfo")
-        card_id = self._orchestrator_card("Проверка", "biz-cfo", status="running")
+        self.set_model("team-cfo")
+        card_id = self._orchestrator_card("Проверка", "team-cfo", status="running")
         sid = "local-check-1"
-        self._make_session("biz-cfo", sid, "glm-5.3", "ollama-cloud")
-        self._run_with_session(card_id, "biz-cfo", sid)
+        self._make_session("team-cfo", sid, "glm-5.3", "ollama-cloud")
+        self._run_with_session(card_id, "team-cfo", sid)
         status, body, _h = self.app.dispatch("POST", "/api/rooms/%s/models/check" % ROOM, {},
                                              {"fix": False})
         self.assertEqual(status, 200, body)
@@ -1330,8 +1372,8 @@ class RealModelTests(_Base):
         self.assertEqual(self.card(card_id)["status"], "running")
 
     def test_no_secrets_in_sent_payload(self):
-        self.set_model("biz-cfo")
-        self._orchestrator_card("Секреты", "biz-cfo", status="running")
+        self.set_model("team-cfo")
+        self._orchestrator_card("Секреты", "team-cfo", status="running")
         status, body, _h = self.app.dispatch("GET", "/api/rooms/%s/models/sent" % ROOM, {}, {})
         self.assertEqual(status, 200)
         text = json.dumps(body, ensure_ascii=False)

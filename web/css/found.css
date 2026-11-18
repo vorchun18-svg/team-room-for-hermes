@@ -1,0 +1,327 @@
+/* found.css — чипы-ссылки и блок «Найдено» (W26-D4).
+ *
+ * Один вид объекта-ссылки во всём интерфейсе: свод, карточки «Найдено», файлы,
+ * ход работы, справки. Правило Михаила 18.11: всё, что называет файл или адрес,
+ * должно нажиматься.
+ *
+ *   • файл  → имя (нажатие = открыть) · Открыть · Показать в папке · Копировать путь;
+ *   • адрес → имя (нажатие = перейти) · Копировать;
+ *   • нет файла → серая плашка «не найден» без ложных кнопок.
+ *
+ * Цвета — только токены (tokens.css): светлая и тёмная темы работают сами.
+ * Ничего не вылезает за колонку: чип переносит действия на узком экране.
+ */
+
+/* ── чип файла ──────────────────────────────────────────────────────────── */
+
+.md-file-chip,
+.md-url-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  padding: 1px 8px 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+  font-size: 0.94em;
+  line-height: 1.5;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.md-file-chip__name,
+.md-url-chip__name {
+  color: var(--foreground);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px dashed color-mix(in srgb, var(--foreground) 35%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.md-file-chip__name:hover,
+.md-file-chip__name:focus-visible,
+.md-url-chip__name:hover,
+.md-file-chip__act:hover,
+.md-url-chip__act:hover {
+  color: var(--accent, #0053fd);
+  border-bottom-color: currentColor;
+}
+
+.md-file-chip__acts,
+.md-url-chip__act {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.md-file-chip__act,
+.md-url-chip__act {
+  color: var(--muted-foreground);
+  font-size: 0.86em;
+  text-decoration: none;
+  border-bottom: 1px dotted transparent;
+  cursor: pointer;
+}
+
+.md-file-chip__act + .md-file-chip__act::before,
+.md-url-chip__act::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--muted-foreground);
+  opacity: 0.6;
+}
+
+/* нет файла — серая «не найден», кнопок нет (не тупик, а честный статус) */
+.md-file-chip--missing {
+  background: color-mix(in srgb, var(--muted) 25%, transparent);
+  border-style: dashed;
+}
+.md-file-chip--missing .md-file-chip__name {
+  color: var(--muted-foreground);
+  font-weight: 500;
+  border-bottom: none;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+}
+.md-file-chip__state {
+  color: var(--muted-foreground);
+  font-size: 0.84em;
+  font-style: italic;
+}
+
+/* ── блок «Найдено» ─────────────────────────────────────────────────────── */
+
+.found-block {
+  margin: 1.1em 0 1.4em;
+  padding: 12px 14px 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+}
+
+.found-block__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.found-block__title {
+  font-weight: 700;
+  font-size: 1.02em;
+}
+.found-block__count {
+  min-width: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+  color: var(--muted-foreground);
+  font-size: 0.82em;
+  text-align: center;
+}
+
+.found-block__query,
+.found-block__note,
+.found-block__places {
+  color: var(--muted-foreground);
+  font-size: 0.88em;
+  margin-bottom: 8px;
+}
+.found-block__places {
+  margin: 6px 0 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.found-block__honest {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  font-size: 0.94em;
+  border-left: 3px solid var(--border);
+}
+.found-block__honest--warn {
+  border-left-color: #c8871a;
+  background: color-mix(in srgb, #c8871a 12%, transparent);
+}
+.found-block__honest--empty {
+  border-left-color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--muted-foreground) 12%, transparent);
+}
+
+.found-block__group {
+  margin: 0 0 10px;
+}
+.found-block__group-title {
+  font-size: 0.9em;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  text-transform: none;
+  margin: 4px 0 6px;
+}
+.found-block__group-count {
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+/* ── карточка найденного ────────────────────────────────────────────────── */
+
+.found-card {
+  padding: 9px 11px;
+  margin: 0 0 8px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 10px;
+  background: var(--background, #fff);
+}
+.found-card--exact { border-left-color: var(--ok, #1b8f4b); }
+.found-card--mentions { border-left-color: var(--accent, #0053fd); }
+.found-card--adjacent { border-left-color: var(--border); }
+.found-card--wrong { border-left-color: #c8871a; opacity: 0.92; }
+
+.found-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.found-card__name {
+  font-weight: 650;
+  font-size: 1em;
+  color: var(--foreground);
+  text-decoration: none;
+}
+.md-file-chip__name--link {
+  cursor: pointer;
+  border-bottom: 1px dashed color-mix(in srgb, var(--foreground) 35%, transparent);
+}
+.found-card__name:hover,
+.found-card__name:focus-visible,
+.md-file-chip__name--link:hover {
+  color: var(--accent, #0053fd);
+  border-bottom-color: currentColor;
+}
+
+.found-card__badge {
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 0.78em;
+  line-height: 1.6;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.found-card__badge--exact {
+  color: var(--ok, #1b8f4b);
+  border-color: color-mix(in srgb, var(--ok, #1b8f4b) 45%, transparent);
+  background: color-mix(in srgb, var(--ok, #1b8f4b) 10%, transparent);
+}
+.found-card__badge--wrong {
+  color: #a06a12;
+  border-color: color-mix(in srgb, #c8871a 45%, transparent);
+}
+
+.found-card__type {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+
+.found-card__desc {
+  margin: 5px 0 0;
+  font-size: 0.94em;
+  line-height: 1.55;
+}
+
+.found-card__where {
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 0.84em;
+  word-break: break-all;
+}
+
+.found-card__comment {
+  margin-top: 4px;
+  font-size: 0.9em;
+  color: var(--muted-foreground);
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+}
+
+.found-card__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 6px;
+}
+.found-card__act {
+  color: var(--muted-foreground);
+  font-size: 0.88em;
+  text-decoration: none;
+  border-bottom: 1px dotted color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+}
+.found-card__act:hover,
+.found-card__act:focus-visible {
+  color: var(--accent, #0053fd);
+  border-bottom-color: currentColor;
+}
+
+/* ── уведомление о действии ─────────────────────────────────────────────── */
+
+.found-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translate(-50%, 12px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--foreground, #111);
+  color: var(--background, #fff);
+  font-size: 0.9em;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 4000;
+}
+.found-toast--on {
+  opacity: 0.95;
+  transform: translate(-50%, 0);
+}
+
+/* ── узкие экраны и печать ─────────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  .md-file-chip,
+  .md-url-chip {
+    display: inline;
+    white-space: normal;
+    border-radius: 8px;
+    padding: 0 4px;
+  }
+  .md-file-chip__acts,
+  .md-url-chip__act {
+    display: inline;
+  }
+  .md-file-chip__act {
+    display: none;               /* на узком экране — имя и «Открыть» в карточке */
+  }
+  .found-card__type {
+    display: none;
+  }
+}
+
+@media print {
+  .md-file-chip__acts,
+  .md-url-chip__act,
+  .found-card__acts,
+  .found-toast {
+    display: none;
+  }
+  .found-block,
+  .found-card {
+    break-inside: avoid;
+    background: transparent;
+  }
+}

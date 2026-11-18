@@ -17,10 +17,12 @@ import time
 from pathlib import Path
 
 try:  # пакетный и «плоский» импорт (python server/app.py)
+    from . import card_budget as budget
     from .config import room_vault_dir as _room_vault_dir
     from .config import state_md_path as _state_md_path
     from .config import vault_root_dir as _vault_root_dir
 except ImportError:  # pragma: no cover
+    import card_budget as budget  # type: ignore
     from config import room_vault_dir as _room_vault_dir  # type: ignore
     from config import state_md_path as _state_md_path  # type: ignore
     from config import vault_root_dir as _vault_root_dir  # type: ignore
@@ -215,10 +217,9 @@ def files_place_rule(room: dict, cfg, text: str = "") -> str:
     приложение только предупреждает и пишет в журнал комнаты.
     """
     project, mirror = files_places(room, cfg)
-    tail = ("В другие места (рабочие каталоги агентов, временные папки, чужие проекты, "
-            "корень диска) — только с прямого разрешения Михаила в этом запросе. "
-            "Приложение проверяет места сохранения: файл вне этих папок показывается "
-            "с предупреждением «Файл сохранён вне папки проекта» и попадает в журнал комнаты.")
+    tail = ("В другие места (рабочие каталоги агентов, временные папки, чужие проекты, корень "
+            "диска) — только с прямого разрешения Михаила в этом запросе; иначе файл помечается "
+            "«Файл сохранён вне папки проекта» и попадает в журнал комнаты.")
     if project and mirror:
         where = (f"итоговые файлы (отчёты, таблицы, документы, картинки) сохраняй в папку проекта "
                  f"комнаты — {project} (лучше в подпапку запроса вида «ГГГГ-ММ-ДД название») — "
@@ -238,25 +239,20 @@ def files_place_rule(room: dict, cfg, text: str = "") -> str:
 def leader_duty_rule() -> str:
     """Обязанность руководителя оценить работу и решить про «Особенности» (B-35).
 
-    Один абзац в «Правилах комнаты»: что сделать после каждого завершённого запроса,
-    где лимиты записей, что руководитель пишет сам и что нужно оставить отметку
-    (её приложение пишет в журнал комнаты). Без отметки приложение один раз напомнит.
+    Один абзац в «Правилах комнаты». W25-M2: сжат до сути (1020 → ~430 знаков) —
+    этот абзац уезжает в каждую карточку, а требование к агенту в нём одно:
+    оценить работу и оставить отметку `leader_review`.
     """
     return " ".join([
         LEADER_DUTY_OPEN,
-        "качество работы КАЖДОГО участника (исполнителей, критика и себя как руководителя) — "
-        "что получилось, где слабо, что учесть в следующий раз.",
-        "Реши, нужна ли запись в «Особенности» себе или кому-то из них: лимит — 24 записи и "
-        "8 000 знаков на участника, записи делаешь сам, без согласования с Михаилом; записи "
-        "Михаила не удаляешь и не переписываешь.",
-        "Нужна — добавь её (POST …/agents/<профиль>/notes/entries) и перечисли в отметке; не нужна — "
-        "ничего не пиши.",
-        "В любом случае оставь отметку в metadata своей карточки: "
+        "качество работы КАЖДОГО участника — что получилось, где слабо, что учесть дальше.",
+        "Запись в «Особенности» нужна — добавь сам, без согласования с Михаилом (лимит 24 записи "
+        "и 8 000 знаков; записи Михаила не удаляешь и не переписываешь).",
+        "Отметка обязательна в metadata: "
         '{"leader_review":{"outcome":"no_change","summary":"оценил, записей не нужно"}} или '
-        '{"leader_review":{"outcome":"note_added","profiles":["<профиль>"],'
-        '"added":[{"profile":"<профиль>","text":"<что записано>"}],"summary":"<одна строка: как оценил работу>"}}.',
-        "Отметку приложение запишет в журнал комнаты; без неё оно один раз напомнит тебе "
-        "комментарием в ветке — Михаилу при этом ничего не отправляется и вопросов ему не задаётся.",
+        '{"leader_review":{"outcome":"note_added","profiles":["<профиль>"],"summary":"<как оценил>"}}.',
+        "Отметку приложение пишет в журнал комнаты; без неё оно один раз напомнит тебе "
+        "комментарием в ветке (Михаилу ничего не отправляется).",
     ])
 
 
@@ -319,49 +315,214 @@ def critic_settings_line(room: dict) -> str:
         except (TypeError, ValueError):
             rounds = 1
         value = "максимум %d раунд(а) проверки" % rounds
-    return (f"Проверка критиком ({critic}) уже настроена в комнате: {value}. "
-            "Раунд — один цикл «критик проверил → доработали → снова проверили». "
-            "Не спрашивай Михаила, сколько раундов делать, и не добавляй такой вопрос "
-            "в open_questions — значение берётся из настроек комнаты.")
+    return (f"Проверка критиком ({critic}) настроена в комнате: {value}. Не спрашивай Михаила, "
+            "сколько раундов делать, и не добавляй такой вопрос в open_questions.")
 
 
-def build_contract_block(room: dict, slug: str, cfg) -> str:
-    """Огороженный блок КОМНАТА-КОНТРАКТ по ARCH §5 с реальными путями."""
+def approval_rule() -> str:
+    """«Упёрся в блокировку — не обходи» (W22-AP1 §3, контракт руководителя).
+
+    Hermes в карточке комнаты (``-q``) блокирует «опасные» команды сразу, окна
+    разрешения у участника нет. Обход запрещён: пользователь решает сам, а запрос
+    разрешения приложение находит само. W25-M2: сжато до 3 строк.
+    W26-D1: добавлена строка «скрипты — файлом и терминалом, `execute_code` недоступен»:
+    без неё агенты снова упирались в недоговорную блокировку.
+    """
+    return " ".join([
+        "Если Hermes заблокировал команду участника («BLOCKED …» в ответе инструмента), "
+        "это НЕ повод обходить запрет другой формулировкой, другим инструментом или «безопасным» "
+        "обходным путём.",
+        "Приложение само находит блокировку и спрашивает Михаила («разрешить один раз / всегда / "
+        "запретить»); тебе достаточно одной строки: какая команда понадобилась и зачем.",
+        "Поэтому скрипты пиши файлом и запускай терминалом (`write_file` + `python файл.py`): "
+        "`execute_code` в карточках комнаты недоступен — Hermes закрывает его в фоновой работе "
+        "до всяких разрешений.",
+    ])
+
+
+def svod_rule(room: dict | None = None) -> str:
+    """«Свод обновляет приложение» (W20-S1 §1.1, B-36; усилено в B-49).
+
+    Руководителю ЗАПРЕЩЕНО советовать Михаилу «переоткрыть/пере-завершить корень»:
+    такого способа нет, версию свода выпускает приложение. W25-M2: три повтора про
+    `metadata.svod` сведены в один (текст 1561 → ~560 знаков).
+    """
+    return " ".join([
+        "Свод команды обновляет ПРИЛОЖЕНИЕ, а не ты: после работы и после каждого сообщения "
+        "Михаила оно само ставит карточку обновления и выпускает версию — ждать нажатия не нужно.",
+        "После доработки свода ОБЯЗАТЕЛЬНО заполни metadata.svod = "
+        '{"note":"<что учтено>","changes":["<что изменилось>","…"]}: без него Михаил не увидит, '
+        "что изменилось и почему. Забыл — версия всё равно выйдет, но пустой правкой.",
+        "НИКОГДА не советуй Михаилу «переоткрыть», «пере-завершить» или «закрыть-открыть» корень "
+        "и не проси опубликовать свод вручную.",
+        "Решения в metadata.decisions — ДОПОЛНЕНИЕ к прежним (пропущенное остаётся в силе); "
+        "сверил весь список — поставь metadata.svod.decisions_full: true, а отозвать "
+        "конкретное решение можно через metadata.decisions_retracted.",
+    ])
+
+
+def summary_format_rule() -> str:
+    """«Как оформлять итог» — один короткий блок для любой карточки (W24-N1 §2.5).
+
+    Замечание Михаила 18.11: свод приходил «наскальной живописью» — сплошной
+    абзац, перечни «1) … 2) … 3) …» внутри строки, пути в тексте. Приложение
+    теперь нормализует текст само (`web/js/svod-format.js`), но писать структуру
+    всё равно дешевле, чем разбирать: этот блок объясняет ФОРМАТ ответа.
+
+    Умышленно короткий: он попадает в каждую карточку (руководителя, доработки,
+    направления), поэтому его вклад в тело не должен быть больше 900 знаков.
+    """
+    return " ".join([
+        "Как оформлять итог (это вид ответа, а не вёрстка):",
+        "первая строка — «Коротко: <одна мысль до 240 знаков>»;",
+        "дальше только нужные разделы заголовками «## Что сделано», «## Что нашли», "
+        "«## Чего не нашли», «## Что не проверено», «## Вопросы», «## Что дальше»;",
+        "перечни — списками, по одному пункту в строке (не «1) … 2) …» внутри абзаца);",
+        "числа и сроки — таблицей; пути и адреса — в обратных кавычках (`C:/папка/файл.md`): "
+        "приложение делает из них кнопки;",
+        # W26-D4: поиск — обязательная секция «Найдено» в машинном виде (подробности —
+        # в docs/AGENT-GUIDE.md и web/js/found.js); формат держим коротким ради бюджета карточки.
+        "поиск — обязателен раздел «## Найдено» с блоком ```найдено: название, тип, где, описание, "
+        "отношение (искомое|упоминает|смежное|не то);",
+        "абзацы по 2–4 предложения, между ними пустая строка;",
+        "не писать HTML и не повторять вопрос целиком.",
+    ])
+
+
+def _metadata_lines(slug: str = "") -> list[str]:
+    """Перечень полей `metadata` — один раз, в корневой карточке (W25-M2).
+
+    Раньше это был рассказ на 5 124 знака в КАЖДОЙ карточке: у руководителя он
+    нужен (он заполняет поля), у доработки — нет (там важны `changes`,
+    `version_reason` и `svod`). Поэтому описание сжато до «поле + форма + одна
+    ремарка»: смысл полей живёт в `docs/AGENT-GUIDE.md`, здесь — форма.
+    """
+    base = [
+        "metadata (все поля необязательны; перечень — только в корневой карточке):",
+        '  title:        "<короткое название запроса, 3–60 знаков, без «Так,…» и без markdown>"',
+        '  next_steps:   [{"text","owner"(профиль),"due"(YYYY-MM-DD),"from_question"?}]   # 3–7 шагов',
+        '  open_questions:[{"text","for":"mikhail|<профиль>"}]',
+        '  decisions:    [{"text","why","status":"proposed|accepted|rejected"}]   # решает Михаил',
+        '  decisions_retracted: ["d_…"]   # какие ВАШИ решения больше не действуют (иначе они '
+        '«воскресают» в паспорте комнаты)',
+        '  reaction:     {"question_id"|"decision_id","outcome":"read|applied|no_change",'
+        '"cards":["t_…"],"changes":N}   # исход ВАШЕЙ реакции на ответ',
+        '  leader_review:{"outcome":"no_change|note_added","profiles":[],"summary"}   # отметка «оценил работу»',
+        '  svod:         {"note","changes":[],"decisions_full":true|false}   # обязательно в доработке',
+        '  stage:        {"current":"<id фазы>","phases":[{"id","title","status","note"}]}',
+    ]
+    extra = [
+        '  phases_proposal: [{"title","description"}]   # 3–8 этапов: предложение, решает человек',
+        '  future_questions: ["…"]; artifacts: [{"path","title","kind"}]',
+    ]
+    return base, extra
+
+
+def _contract_core(room: dict, cfg) -> str:
+    """Ядро контракта (8–10 строк) для карточки доработки/свода (W25-M2).
+
+    Полный устав остаётся в корневой карточке запроса; здесь только то, что нужно
+    этой доработке, и указатель на корневую. Так тело версии свода не растёт с
+    номером версии (было 11 598–26 297 знаков).
+    """
+    project, mirror = files_places(room, cfg)
+    where = project or mirror or "папка проекта комнаты (спроси Михаила)"
+    return "\n".join(line for line in [
+        CONTRACT_OPEN,
+        f"Комната: {room_title(room)}. Это доработка свода; полный контракт и перечень полей "
+        f"metadata — в корневой карточке запроса (kanban_show), здесь только нужное.",
+        ROOM_RULES_OPEN + " тот же устав, что в корневой карточке (полный текст — там).",
+        f"Файлы — только в папку проекта комнаты: {where}.",
+        LEADER_DUTY_OPEN + " отметка metadata.leader_review обязательна (форма — в корневой карточке).",
+        "Свод команды обновляет ПРИЛОЖЕНИЕ; metadata.svod {note, changes} заполняй обязательно — "
+        "иначе Михаил не увидит, что изменилось.",
+        "В metadata обязательно: changes: [\"что изменилось\"] (3–7 пунктов), version_reason: "
+        "\"<почему версия>\", next_steps: [], open_questions: [], decisions: [].",
+        summary_format_rule(),
+        "Завершай карточку kanban_complete(summary=<новый цельный ответ в Markdown>, "
+        'metadata={"changes":["…"],"version_reason":"…","svod":{"note","changes":[]},'
+        '"next_steps":[],"open_questions":[],"decisions":[]}).',
+        "Отвечай по-русски; ОДИН связный текст; в подзадачи этот контракт не копировать.",
+        CONTRACT_CLOSE,
+    ] if line)
+
+
+def _fit_parts(parts: list, cap: int | None) -> str:
+    """Собрать блок из частей «приоритет, текст», ужимая самые необязательные (W25-M2).
+
+    0 — не выкидываем никогда (пути, правило файлов, перечень полей, формат итога,
+    финальная строка), 4 — самое необязательное. Когда тело упирается в потолок
+    из-за длинного текста Михаила, ужимается текст приложения, а не текст человека;
+    выкинутое перечислено одной строкой со ссылкой на полный устав — не молча.
+    """
+    total = sum(len(text) for _, text in parts if text)
+    dropped: list[int] = []
+    for prio in (4, 3, 2):
+        if cap is None or total <= cap:
+            break
+        for index, (owner, text) in enumerate(parts):
+            if owner == prio and text:
+                total -= len(text)
+                parts[index] = (owner, "")
+                dropped.append(prio)
+    out_parts = [text for _, text in parts if text]
+    if dropped:
+        note = ("(часть правил не вошла в карточку по бюджету — полный устав комнаты: "
+                "docs/AGENT-GUIDE.md)")
+        # приписка живёт ВНУТРИ блока контракта: иначе она попадёт в текст для человека
+        if out_parts and out_parts[-1] == CONTRACT_CLOSE:
+            out_parts.insert(len(out_parts) - 1, note)
+        else:
+            out_parts.append(note)
+    return "\n".join(out_parts)
+
+
+def build_contract_block(room: dict, slug: str, cfg, full: bool | None = None,
+                         cap: int | None = None) -> str:
+    """Огороженный блок КОМНАТА-КОНТРАКТ по ARCH §5 с реальными путями.
+
+    ``full`` — полный устав (по умолчанию для корневого запроса) или ядро (для
+    доработки/свода). W25-M2: устав — не данные карточки, его место в корне;
+    ``cap`` — сколько знаков контракту остаётся в бюджете карточки.
+    """
+    if full is None:
+        full = str(slug or "") not in ("revision", "svod")
+    if not full:
+        return _contract_core(room, cfg)
     state = state_path(room, cfg)
     spec = reportkit_spec(cfg)
     rep = reports_dir(room, slug, cfg)
     ctx = [state] + context_files(room)
-    return "\n".join([line for line in [
-        CONTRACT_OPEN,
-        critic_settings_line(room),
-        f"Комната: {room_title(room)}. Контекст проекта (читать первым): {', '.join(ctx)}.",
-        ROOM_RULES_OPEN,
-        files_place_rule(room, cfg),
-        leader_duty_rule(),
-        "Корневая карточка завершается kanban_complete(summary=<готовый ответ Михаилу в Markdown, "
-        "по-русски, ОДИН связный текст, а не пересказ отчётов подряд>, metadata={...}).",
-        "metadata (все поля необязательны, но заполняй, что знаешь):",
-        '  title:        "<короткое название запроса, 3–60 знаков, без «Так,…» и без markdown>"   # как запрос выглядит в списках и меню; полный текст Михаила не меняется',
-        '  next_steps:   [{"text","owner"(профиль),"due"(YYYY-MM-DD),"from_question"?}]   # 3–7 конкретных шагов; from_question — id вопроса вида q_…, из которого шаг',
-        '  open_questions:[{"text","for":"mikhail|<профиль>"}]               # что нужно решить Михаилу',
-        '  decisions:    [{"text","why","status":"proposed|accepted|rejected"}]   # предложенное решение Михаил принимает, отклоняет или обсуждает сам',
-        '  reaction:     {"question_id"|"decision_id","outcome":"read|applied|no_change","cards":["t_…"],"changes":N}   # W19-D2 (B-21): исход ВАШЕЙ реакции на ответ Михаила; приложение показывает «ответ отправлен → руководитель прочитал → учтено» и не угадывает исход по словам',
-        '  leader_review:{"outcome":"no_change|note_added","profiles":["<профиль>"],"added":[{"profile":"<профиль>","text":"<что записано>"}],"summary":"<одна строка>"}   # W19-B35: ОБЯЗАТЕЛЬНАЯ отметка «оценил работу участников»; записей не нужно — outcome:"no_change" и summary:"оценил, записей не нужно"',
-        ('  changes:      ["<что изменилось в своде по сравнению с предыдущей версией>", "…"]   # W17-S §3: 3–7 коротких пунктов; Михаил видит их как «Что изменилось»' if slug == "revision" else ''),
-        ('  version_reason: "<почему сделана эта версия: по замечанию Михаила / по вашим ответам на вопросы / по замечаниям критика>"  # W17-S §3: подпись версии' if slug == "revision" else ''),
-        '  stage:        {"current":"<id фазы>","phases":[{"id","title","status":"done|active|next|blocked","note"}]}',
-        '  future_questions:["…"]                                            # вопросы на будущее, отдельно от текущего ответа',
-        '  artifacts:    [{"path","title","kind"}]                           # файлы, созданные в ходе работы',
-        f'  report:       "<путь к report.json или report.html>"              # интерактивный отчёт, формат — {spec}',
-        f"Если нужны таблицы/графики/связи/схемы/картинки — сделай интерактивный отчёт: "
-        f"запиши JSON по {spec} в {_p(Path(rep) / 'report.json')}.",
-        "Перед финальным ответом ПЕРЕЧИТАЙ комментарии карточки (kanban_show): сообщения с меткой "
-        "`[Михаил · уточнение]` и `[Руководитель → …]` обязательны к учёту; если они меняют задачу — "
-        "скорректируй работу, а в ответе напиши блок «Учтено из уточнений» (что именно учтено и "
-        "как изменился результат).",
-        "Отвечай по-русски; один связный ответ; в подзадачи этот контракт не копировать.",
-        CONTRACT_CLOSE,
-    ] if line])
+    parts: list[tuple[int, str]] = [
+        (0, CONTRACT_OPEN),
+        (3, critic_settings_line(room)),
+        (0, f"Комната: {room_title(room)}. Контекст проекта (читать первым): {', '.join(ctx)}."),
+        (0, ROOM_RULES_OPEN),
+        (0, files_place_rule(room, cfg)),
+        (0, leader_duty_rule()),
+        (3, approval_rule()),
+        (2, svod_rule(room)),
+        (0, summary_format_rule()),
+        (0, "Корневая карточка завершается kanban_complete(summary=<готовый ответ Михаилу в Markdown, "
+            "по-русски, ОДИН связный текст, а не пересказ отчётов подряд>, metadata={...})."),
+        (0, "\n".join(_metadata_lines(slug)[0])),
+        (3, "\n".join(_metadata_lines(slug)[1])),
+        (0, f'  report:       "<путь к report.json или report.html>"   # формат — {spec}'),
+        (0, f"Если нужны таблицы/графики/связи/схемы/картинки — сделай интерактивный отчёт: "
+            f"запиши JSON по {spec} в {_p(Path(rep) / 'report.json')}."),
+        (4, "Перед финальным ответом ПЕРЕЧИТАЙ комментарии карточки (kanban_show): метки `[Михаил · уточнение]` "
+            "и `[Руководитель → …]` обязательны к учёту — меняют задачу, значит правь работу и напиши "
+            "блок «Учтено из уточнений»."),
+        (4, "Вопросы Михаилу — ТОЛЬКО `open_questions` в metadata или строкой `[Руководитель · вопрос] "
+            "<текст>` (решение — `[Руководитель · решение]`). Вопрос прозой Михаил не увидит."),
+        # W23 §2.2 (MG1): модель карточки задаёт приложение — руководителю её не выбирать.
+        (4, "Модель карточки задаёт ПРИЛОЖЕНИЕ, не ты: создавай карточки без `--model`/`--provider`. "
+            "Запущенное не на той модели приложение остановит и перезапустит — просто скажи об этом "
+            "в ответе, флагом карточку не правь."),
+        (0, "Отвечай по-русски; один связный ответ; в подзадачи этот контракт не копировать."),
+        (0, CONTRACT_CLOSE),
+    ]
+    return _fit_parts(parts, cap)
 
 
 def _join_blocks(*parts: str) -> str:
@@ -394,8 +555,12 @@ def build_request_body(room: dict, text: str, slug: str, cfg, attach=None, brief
     if brief:
         return build_brief_body(room, text, slug, cfg, attach)
     original = text if text is not None else ""
-    block = build_contract_block(room, slug, cfg)
-    return _join_blocks(original, "\n".join(_head_lines(room, attach)), block)
+    head = "\n".join(_head_lines(room, attach))
+    # W25-M2: бюджет тела руководителя — 6 000 знаков. Жёсткая часть — текст Михаила
+    # и служебная шапка; всё остальное — контракт, который ужимается, если текст длинный.
+    cap = budget.limit("leader") - len(original) - len(head) - 120
+    block = build_contract_block(room, slug, cfg, cap=cap)
+    return _join_blocks(original, head, block)
 
 
 # ---------------------------------------------------------------- бриф и карта
@@ -461,8 +626,11 @@ def build_brief_body(room, text=None, slug="brief", cfg=None, attach=None) -> st
     room = room if isinstance(room, dict) else {}
     cfg = cfg if cfg is not None else _CfgStub()
     original = text if isinstance(text, str) else ""
-    return _join_blocks(original, "\n".join(_head_lines(room, attach)),
-                        _brief_block(room, BRIEF_LEAD), build_contract_block(room, str(slug or "brief"), cfg))
+    head = "\n".join(_head_lines(room, attach))
+    brief = _brief_block(room, BRIEF_LEAD)
+    cap = budget.limit("leader") - len(original) - len(head) - len(brief) - 140
+    return _join_blocks(original, head, brief,
+                        build_contract_block(room, str(slug or "brief"), cfg, cap=cap))
 
 
 _STATUS_RU_PLAN = {
@@ -815,9 +983,14 @@ def _fmt_answer(answer_md: str) -> str:
 
 
 def build_critic_body(room: dict, request_text: str, answer_md: str, cfg) -> str:
-    """Тело карточки-критика: исходный запрос + ответ корня + контракт вердикта (§12.4)."""
+    """Тело карточки-критика: исходный запрос + ответ корня + контракт вердикта (§12.4).
+
+    W25-M2: бюджет критика — 8 000 знаков; версия свода входит выжимкой (полный текст
+    критик читает в карточке версии), иначе тело растёт вместе со сводом.
+    """
     orchestrator = room.get("orchestrator") or "директор"
     critic = room.get("critic") or "критик"
+    ver_doc = "Версия свода целиком — в карточке ответа (kanban_show)."
     contract_block = "\n".join([
         CRITIC_OPEN,
         f"Комната: {room_title(room)}. Ты — критик комнаты ({critic}); проверяешь ответ директора ({orchestrator}).",
@@ -831,7 +1004,11 @@ def build_critic_body(room: dict, request_text: str, answer_md: str, cfg) -> str
         "Отвечай по-русски; один связный ответ; в подзадачи этот контракт не копировать.",
         CRITIC_CLOSE,
     ])
-    return _join_blocks(request_text, _fmt_answer(answer_md), contract_block)
+    room_left = budget.limit("critic") - len(request_text or "") - len(contract_block) - 200
+    answer = budget.summarize(answer_md or "", max(1200, room_left))
+    if len(answer) < len(str(answer_md or "").strip()):
+        answer = _join_blocks(answer, ver_doc)
+    return _join_blocks(request_text, _fmt_answer(answer), contract_block)
 
 
 # ---------------------------------------------------------------- доработка
@@ -862,7 +1039,9 @@ def _fmt_issues(issues) -> str:
 DIGEST_ITEM_MAX = 700
 #: сколько пунктов каждого вида берём (самые новые), чтобы тело карточки не распухло
 DIGEST_ITEMS_MAX = 14
-DIGEST_TOTAL_MAX = 9000
+#: Потолок дайджеста (W25-M2): было 9 000 — столько дайджест не должен занимать
+#: в карточке с потолком 8 000. Дальше его ещё ужимает `card_budget.allowance`.
+DIGEST_TOTAL_MAX = 4000
 #: как читается статус ответа в дайджесте (ключи — `answers.STATE_RU`)
 DIGEST_ANSWER_RU = {"sent": "ждёт реакции руководителя", "received": "руководитель прочитал",
                     "applied": "учтено руководителем", "no_change": "руководитель решил не менять",
@@ -903,6 +1082,28 @@ def version_cutoff(detail: dict) -> tuple[int, int]:
         last = hist[-1]
         return _at_of(last), int(last.get("version") or len(hist) or 0)
     return _at_of(syn), int(syn.get("version") or 0)
+
+
+def accounted_at(detail: dict) -> int:
+    """До какого момента события УЖЕ учтены показанной версией свода (B-49).
+
+    Обычно это время выпуска версии. Но карточку обновления приложение ставит заранее,
+    и всё, что Михаил написал ПОКА она работала, в неё не попало: такие события должны
+    остаться «неучтёнными» (`synthesis.live.behind`), иначе они пропадут молча. Поэтому
+    у версии есть `posted_at` — момент, когда карточка ушла руководителю; он и служит
+    границей. Нет `posted_at` (старые записи, первая версия) — время выпуска, как раньше.
+    """
+    syn = detail.get("synthesis") if isinstance(detail, dict) else {}
+    syn = syn if isinstance(syn, dict) else {}
+    hist = [h for h in (syn.get("history") or []) if isinstance(h, dict)]
+    if not hist:
+        return _at_of(syn)
+    last = hist[-1]
+    try:
+        posted = int(last.get("posted_at") or 0)
+    except (TypeError, ValueError):
+        posted = 0
+    return posted or _at_of(last)
 
 
 def _digest_answers(detail: dict, record: dict, cutoff: int) -> list[dict]:
@@ -1026,7 +1227,11 @@ def revision_digest(detail: dict, room: dict | None = None, record: dict | None 
     detail = detail if isinstance(detail, dict) else {}
     try:
         cut_at, cut_version = version_cutoff(detail)
-        if cutoff is not None:
+        if cutoff is None:
+            # B-49: граница — момент, когда карточка версии ушла руководителю: события,
+            # пришедшие во время её работы, в неё не попали и должны попасть в следующую.
+            cut_at = accounted_at(detail) or cut_at
+        else:
             cut_at = int(cutoff or 0)
         if version is not None:
             cut_version = int(version or 0)
@@ -1073,31 +1278,56 @@ def revision_digest(detail: dict, room: dict | None = None, record: dict | None 
 
 
 def build_revision_body(room: dict, request_text: str, prev_answer_md: str, issues=None,
-                        user_note: str | None = None, cfg=None, digest=None) -> str:
-    """Тело карточки-доработки: запрос + предыдущий ответ + замечания + дайджест + контракт.
+                        user_note: str | None = None, cfg=None, digest=None,
+                        prev_card: str | None = None) -> str:
+    """Тело карточки-доработки: запрос + выжимка прошлой версии + замечания + дайджест + ядро.
 
-    `digest` (W17-S §2) — результат `revision_digest`: ответы Михаила, его уточнения,
-    решения и убранные шаги с момента выпуска текущей версии. Без него руководитель
-    видит только замечание и свод, а беседу ему приходится перечитывать самому.
+    Бюджет (W25-M2, R4 §4.3): тело ≤ 8 000 знаков. Прошлый свод больше НЕ вставляется
+    целиком (измерено 842–13 528 знаков — 78 % карточки в худшем случае): в тело идёт
+    детерминированная выжимка (``card_budget.summarize``) и ссылка на карточку версии,
+    где лежит полный текст. Сколько знаков отдать выжимке и дайджесту, решает
+    ``card_budget.allowance`` по фактическому размеру «жёсткой» части — поэтому тело
+    не растёт с номером версии.
+
+    `digest` (W17-S §2) — результат `revision_digest`; `prev_card` — id карточки
+    прошлой версии (для ссылки; без него ссылка на дерево запроса).
     """
     slug = "revision"
     if cfg is None:
         raise ValueError("build_revision_body: нужен cfg (пути контракта)")
+    contract_block = build_contract_block(room, slug, cfg)
+    digest_text = digest.get("text") if isinstance(digest, dict) else _as_text(digest)
+    digest_text = str(digest_text or "").strip()
+    version = digest.get("version") if isinstance(digest, dict) else 0
+    head = ("<<<ПОСЛЕ ВЕРСИИ %s (это уже произошло — учти ВСЁ)>>>" % version if version
+            else "<<<ПОСЛЕ ВЫПУСКА СВОДА (это уже произошло — учти ВСЁ)>>>")
+    issues_block = _fmt_issues(issues)
+    issues_text = _join_blocks("<<<ЗАМЕЧАНИЯ КРИТИКА>>>", issues_block,
+                               "<<<КОНЕЦ ЗАМЕЧАНИЙ>>>") if issues_block else ""
+    note_text = (_join_blocks("<<<ЗАМЕЧАНИЕ МИХАИЛА>>>", str(user_note).strip(),
+                              "<<<КОНЕЦ ЗАМЕЧАНИЯ>>>") if user_note else "")
+    link = ("Прошлая версия целиком — карточка `%s` (kanban_show)." % prev_card if prev_card
+            else "Прошлая версия целиком — в карточке версии (kanban_show по дереву запроса).")
+    fixed = sum(len(part) for part in (request_text or "", contract_block, issues_text,
+                                       note_text, head, link)) + 400
+    room_left = budget.allowance(slug, fixed)
+    prev_text = budget.summarize(prev_answer_md or "", room_left["prev"],
+                                 note="(выжимка; полностью — карточка прошлой версии)")
+    if digest_text:
+        digest_text = budget.summarize(digest_text, room_left["digest"],
+                                       note="(сокращено: целиком — в ветке запроса)")
     parts: list[str] = []
     parts.append(request_text or "")
-    parts.append(_join_blocks("<<<ПРЕДЫДУЩИЙ ОТВЕТ (дорабатывается)>>>", prev_answer_md or "", "<<<КОНЕЦ ПРЕДЫДУЩЕГО ОТВЕТА>>>"))
-    issues_block = _fmt_issues(issues)
-    if issues_block:
-        parts.append(_join_blocks("<<<ЗАМЕЧАНИЯ КРИТИКА>>>", issues_block, "<<<КОНЕЦ ЗАМЕЧАНИЙ>>>"))
-    if user_note:
-        parts.append(_join_blocks("<<<ЗАМЕЧАНИЕ МАКСИМА>>>", str(user_note).strip(), "<<<КОНЕЦ ЗАМЕЧАНИЯ>>>"))
-    digest_text = digest.get("text") if isinstance(digest, dict) else _as_text(digest)
-    if isinstance(digest_text, str) and digest_text.strip():
-        version = digest.get("version") if isinstance(digest, dict) else 0
-        head = ("<<<ПОСЛЕ ВЕРСИИ %s (это уже произошло — учти ВСЁ)>>>" % version if version
-                else "<<<ПОСЛЕ ВЫПУСКА СВОДА (это уже произошло — учти ВСЁ)>>>")
-        parts.append(head + digest_text.strip() + "\n<<<КОНЕЦ НОВОГО>>>")
-    if not issues_block and not user_note and not (isinstance(digest_text, str) and digest_text.strip()):
+    prev_block = _join_blocks("<<<ПРЕДЫДУЩИЙ ОТВЕТ (дорабатывается)>>>", prev_text, link,
+                              "<<<КОНЕЦ ПРЕДЫДУЩЕГО ОТВЕТА>>>")
+    parts.append(prev_block)
+    if issues_text:
+        parts.append(issues_text)
+    if note_text:
+        parts.append(note_text)
+    if digest_text:
+        parts.append(head + digest_text + "\n<<<КОНЕЦ НОВОГО>>>")
+    if not issues_block and not user_note and not digest_text:
         parts.append("Замечаний нет — перепроверь ответ и улучши слабые места.")
     parts.append("Это доработка того же запроса: выдай НОВЫЙ цельный ответ (по-русски, один связный "
                  "текст), а не пересказ прошлого и не список правок.")
@@ -1105,7 +1335,7 @@ def build_revision_body(room: dict, request_text: str, prev_answer_md: str, issu
                  "ИЗМЕНИЛОСЬ в своде по сравнению с предыдущей версией — Михаил видит этот список "
                  "под сводом; и укажи metadata.version_reason — одной строкой, почему сделана версия "
                  "(например «по замечанию Михаила про сроки» или «учтены ответы на вопросы»).")
-    parts.append(build_contract_block(room, slug, cfg))
+    parts.append(contract_block)
     return _join_blocks(*parts)
 
 

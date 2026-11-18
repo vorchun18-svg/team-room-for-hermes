@@ -30,6 +30,15 @@ import {
   renderStreams, projectModeHint, openStreamEditor, launchConfirm,
   streamsSummary, humanError, planBlockVisible, peopleIndex,
 } from './plan-streams.js';
+// W20-FC §1.7 (F-2): этапы предлагает руководитель — плашка решения и один
+// редактор на карту, «От вас нужно» и настройки комнаты.
+import {
+  createProposalBanner, createProposalWaiting, createProposeButton,
+  openPhasesEditor, proposalOf,
+} from './phases-editor.js';
+// W20-U2 §16 (P12): один блок «Что дальше» и одна карточка пустой карты —
+// расчёт вынесен в чистый модуль (tests/roadmap-next.test.mjs).
+import { nextBlock, emptyPlan, legendItems, stepsCountLabel } from './roadmap-next.js';
 
 const POLL_MS = 15000;
 /** Карта проекта: часто, пока что-то идёт; редко, когда всё спокойно. */
@@ -83,24 +92,55 @@ export async function mount(el, ctx) {
     emptySig: '',
     heroSig: '',
     stepsSig: '',
+    nextSig: '',
     detailSig: '',
     decisionsSig: '',
+    // W20-FC §1.7: плашка предложения этапов и «ждём ответа».
+    proposalSig: '',
+    proposeSent: false,
+    proposeRoot: '',
   };
   let disposed = false;
   let poller = null;
   let planTimer = null;
   const abort = new AbortController();
 
+  /**
+   * Комнату сохранили в настройках — этапы и предложение перечитываем сразу,
+   * не дожидаясь опроса (W20-FC §1.7: правки видны на карте сразу).
+   */
+  const onRoomSaved = (ev) => {
+    const detail = (ev && ev.detail) || {};
+    if (detail.room) state.room = Object.assign({}, state.room || {}, detail.room);
+    if (String(detail.id || '') !== roomId) return;
+    state.heroSig = '';
+    state.stepsSig = '';
+    state.nextSig = '';
+    state.detailSig = '';
+    state.emptySig = '';
+    state.proposalSig = '';
+    load({ silent: true });
+  };
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('teamroom:room-saved', onRoomSaved);
+  }
+
   /* --------------------------------------------------------------- каркас */
 
   const errorHost = h('div', { class: 'roadmap__error' });
   const planHost = h('div', { class: 'roadmap__plan-block' });
+  // Плашка «Руководитель предлагает этапы» — над «Где мы сейчас»: это решение
+  // человека, а не состояние проекта (W20 §1.7).
+  const proposalHost = h('div', { class: 'roadmap__proposal-block' });
   const heroHost = h('div', { class: 'roadmap__hero-block' });
   const stepsHost = h('div', { class: 'roadmap__steps-block' });
+  // W20-U2 §16 (P12): единственное место «что дальше» — ниже этапов, до панели
+  // деталей. Раньше блок был и фактом в «Где мы сейчас», и отдельной карточкой.
+  const nextHost = h('div', { class: 'roadmap__next-block' });
   const detailHost = h('div', { class: 'roadmap__detail-block' });
   const decisionsHost = h('div', { class: 'roadmap__decisions-block' });
   const root = h('div', { class: 'view__inner roadmap' },
-    errorHost, planHost, heroHost, stepsHost, detailHost, decisionsHost);
+    errorHost, planHost, proposalHost, heroHost, stepsHost, nextHost, detailHost, decisionsHost);
   el.appendChild(root);
 
   const requestHref = (rid) => `#/room/${encodeURIComponent(roomId)}/request/${encodeURIComponent(rid)}`;
@@ -220,6 +260,96 @@ export async function mount(el, ctx) {
     planHost.replaceChildren(projectModeHint(openRoomSettings));
   }
 
+  /* --------------------------------------- предложение этапов (W20 §1.7) */
+
+  /**
+   * Плашка «Руководитель предлагает этапы»: принять все, принять выбранные,
+   * изменить или отклонить. Показывается, пока предложение ждёт решения, и на
+   * карте с этапами, и на карте без них.
+   */
+  function paintProposal(force = false) {
+    const roadmap = state.roadmap || {};
+    const proposal = proposalOf(roadmap.phases_proposal);
+    const pending = Boolean(proposal && proposal.state === 'proposed');
+    const sig = JSON.stringify([pending ? proposal : null, state.proposeSent]);
+    if (!force && sig === state.proposalSig) return;
+    state.proposalSig = sig;
+    if (pending) {
+      proposalHost.replaceChildren(createProposalBanner({
+        proposal,
+        roomId,
+        api,
+        toast,
+        onEdit: () => { openPhases(); },
+        onDecided: (res) => { afterProposal(res); },
+      }));
+      return;
+    }
+    if (state.proposeSent) {
+      proposalHost.replaceChildren(createProposalWaiting({
+        rootId: state.proposeRoot,
+        onOpen: (rid) => navigate(requestHref(rid)),
+      }));
+      return;
+    }
+    proposalHost.replaceChildren();
+  }
+
+  /** После решения: комната и карта перечитываются — этапы видны сразу. */
+  async function afterProposal(res) {
+    if (res && res.room) state.room = Object.assign({}, state.room || {}, res.room);
+    state.proposalSig = '';
+    state.proposeSent = false;
+    state.heroSig = '';
+    state.stepsSig = '';
+    state.nextSig = '';
+    state.emptySig = '';
+    state.detailSig = '';
+    await load({ silent: true });
+  }
+
+  /**
+   * Редактор этапов — один на всё приложение (W20 §1.7): добавление,
+   * переименование, порядок стрелками, удаление, предложение руководителя.
+   * Сохраняется свойством комнаты, поэтому карта обновляется сразу.
+   */
+  async function openPhases() {
+    const roadmap = state.roadmap || {};
+    const saved = await openPhasesEditor({
+      api, roomId, toast,
+      phases: (Array.isArray(roadmap.phases) ? roadmap.phases : [])
+        .map((p) => ({ id: p.id, title: p.title })),
+      proposal: roadmap.phases_proposal,
+    });
+    if (!saved) return;
+    if (saved.room) state.room = Object.assign({}, state.room || {}, saved.room);
+    state.proposalSig = '';
+    state.proposeSent = false;
+    state.heroSig = '';
+    state.stepsSig = '';
+    state.nextSig = '';
+    state.emptySig = '';
+    state.detailSig = '';
+    await load({ silent: true });
+  }
+
+  /** «Предложить этапы»: с карточкой — на её страницу, иначе ждём здесь. */
+  function afterProposeSent(res) {
+    if (res && res.root_id) {
+      navigate(requestHref(res.root_id));
+      return;
+    }
+    state.proposeSent = Boolean(res && res.ok);
+    state.proposeRoot = '';
+    paintProposal(true);
+    load({ silent: true });
+  }
+
+  /** Кнопка «Предложить этапы» — одна на карту и на пустое состояние. */
+  function proposeButton() {
+    return createProposeButton({ api, roomId, toast, onSent: afterProposeSent });
+  }
+
   function planDelay() {
     const c = streamsSummary(state.plan);
     const active = c.active + c.proposed + c.queued;
@@ -245,9 +375,8 @@ export async function mount(el, ctx) {
       state.plan = plan;
       state.planAvailable = true;
       paintPlan(!silent);
-      // Карта этапов пуста, а части работы уже есть — текст пустого блока
-      // зависит от этого, поэтому обновляем его вместе с картой.
-      if (!state.roadmap || !(state.roadmap.phases || []).length) paintNoPhases(true);
+      // Карта этапов пуста — карточка «Что дальше» пересобирается вместе с данными.
+      if (!state.roadmap || !(state.roadmap.phases || []).length) paintNext(true);
     } catch (err) {
       if (disposed || (err && err.name === 'AbortError')) return;
       // Пока карты в комнате нет (или раздел ещё не подключён) — блока не показываем:
@@ -418,7 +547,6 @@ export async function mount(el, ctx) {
     const blockerNote = summary.blocked.length
       ? summary.blocked.map((p) => p.note).filter(Boolean).join(' ')
       : '';
-    const next = summary.upcoming || summary.nextAfter;
 
     const actions = h('div', { class: 'rm-hero__actions' },
       h('button', {
@@ -447,11 +575,7 @@ export async function mount(el, ctx) {
           h('div', { class: 'rm-fact' },
             h('span', { class: 'rm-fact__label' }, summary.blocked.length ? 'Блокирует' : 'Блокировки'),
             h('span', { class: 'rm-fact__value' }, blockerText),
-            blockerNote ? h('span', { class: 'rm-fact__note small muted' }, blockerNote) : null),
-          h('div', { class: 'rm-fact' },
-            h('span', { class: 'rm-fact__label' }, 'Что дальше'),
-            h('span', { class: 'rm-fact__value' }, next ? next.title : 'все этапы пройдены'),
-            next && next.note ? h('span', { class: 'rm-fact__note small muted' }, next.note) : null))),
+            blockerNote ? h('span', { class: 'rm-fact__note small muted' }, blockerNote) : null))),
       actions);
   }
 
@@ -471,26 +595,41 @@ export async function mount(el, ctx) {
     const btn = h('button', {
       class: 'rm-step__btn',
       type: 'button',
-      'aria-pressed': selected ? 'true' : 'false',
+      'data-phase': String(phase.id),
+      // W20-U2 §16: видно, что этап раскрывает панель ниже, а не редактор этапов.
+      'aria-expanded': selected ? 'true' : 'false',
       'aria-current': currentId === phase.id ? 'step' : undefined,
-      title: phase.title + ' — ' + meta.label,
+      title: phase.title + ' — ' + meta.label + '. Нажмите, чтобы увидеть, что в этом этапе.',
       onclick: () => selectPhase(phase.id),
     },
     // W17-R §4: статус виден значком и цветом, номер остаётся порядком этапа.
     h('span', { class: 'rm-step__marker', 'aria-hidden': 'true' }, icon(meta.icon, { size: 11 })),
     h('span', { class: 'rm-step__body' },
-      h('span', { class: 'rm-step__title' }, phase.title),
-      h('span', { class: 'rm-step__state small' }, meta.label)));
+      // Полное название в подсказке: на узком шаге подпись обрезается тремя строками.
+      h('span', { class: 'rm-step__title', title: phase.title }, phase.title),
+      h('span', { class: 'rm-step__state small' }, meta.label)),
+    h('span', { class: 'rm-step__chevron', 'aria-hidden': 'true' }, icon('chevron-right', { size: 12 })));
     return h('li', {
       class: ['rm-step', 'rm-step--' + meta.status, selected ? 'rm-step--selected' : '',
         currentId === phase.id ? 'rm-step--current' : ''],
+      dataset: { phase: String(phase.id) },
     }, btn);
+  }
+
+  /** Подпись статусов под полосой: цвет без слова ничего не значит (P12). */
+  function stepLegend() {
+    return h('div', { class: 'rm-legend', role: 'list', 'aria-label': 'Обозначения статусов этапов' },
+      legendItems().map((item) => h('span', { class: 'rm-legend__item rm-legend__item--' + item.status, role: 'listitem' },
+        h('span', { class: 'rm-legend__icon', 'aria-hidden': 'true' }, icon(item.icon, { size: 11 })),
+        item.label)));
   }
 
   function paintSteps(force = false) {
     const roadmap = state.roadmap || {};
     const summary = phaseSummary(roadmap);
-    const sig = JSON.stringify([roadmap.phases, state.selected, summary.current && summary.current.id]);
+    const pendingProposal = Boolean((proposalOf(roadmap.phases_proposal) || {}).state === 'proposed');
+    const sig = JSON.stringify([roadmap.phases, state.selected,
+      summary.current && summary.current.id, pendingProposal]);
     if (!force && sig === state.stepsSig) return;
     state.stepsSig = sig;
 
@@ -508,19 +647,31 @@ export async function mount(el, ctx) {
         h('div', { class: 'rm-steps__head-actions' },
           h('span', { class: 'rm-steps__note small muted' },
             'Этапы заданы для этой комнаты — их порядок и названия можно изменить.'),
+          // Пока предложение ждёт решения, вторую карточку не ставим (409):
+          // кнопку не показываем, решения есть на плашке выше.
+          pendingProposal ? null : proposeButton(),
           h('button', {
             class: 'btn btn--ghost btn--sm', type: 'button',
-            title: 'Открыть настройки комнаты на разделе «Этапы проекта»',
-            onclick: () => openRoomSettings('phases'),
-          }, icon('settings-gear', { size: 13 }), 'Изменить этапы'))),
+            title: 'Редактор этапов: добавить, переименовать, переставить, убрать',
+            onclick: () => { openPhases(); },
+          }, icon('edit', { size: 13 }), 'Изменить этапы'))),
       h('ol', { class: 'rm-steps', 'aria-label': 'Этапы комнаты' },
-        phases.map((phase, i) => stepNode(phase, i, currentId))));
+        phases.map((phase, i) => stepNode(phase, i, currentId))),
+      h('div', { class: 'rm-steps__foot' },
+        stepLegend(),
+        h('span', { class: 'rm-steps__hint small muted' },
+          'Нажмите на этап — ниже будет видно, что в нём и что дальше.')));
   }
 
   function selectPhase(id) {
     state.selected = id;
+    state.nextSig = '';
     paintSteps(true);
     paintDetail(true);
+    // На узком экране панель этапа уходит под полосу — подводим её к глазам.
+    if (detailHost.firstChild && typeof detailHost.scrollIntoView === 'function') {
+      try { detailHost.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch { /* ignore */ }
+    }
   }
 
   /* ---------------------------------------------------- панель деталей */
@@ -661,22 +812,24 @@ export async function mount(el, ctx) {
   }, 180));
 
   let decisionsBuilt = false;
+  let decisionsControls = null;
 
   /** Секция «Решения» строится один раз: контролы не пересобираются при поиске. */
   function buildDecisions() {
+    decisionsControls = h('div', { class: 'card__actions rm-decisions__controls' }, segmented({
+      options: STATUS_OPTIONS,
+      value: state.filter.status,
+      onchange: (value) => {
+        state.filter.status = value;
+        paintDecisions(true);
+      },
+    }), h('div', { class: 'search-field rm-decisions__search' }, icon('search'), searchInput));
     decisionsHost.replaceChildren(h('section', { class: 'card rm-decisions' },
       h('div', { class: 'card__head rm-decisions__head' },
         h('div', { class: 'rm-decisions__titles' },
           h('div', { class: 'card__title' }, 'Решения'),
           countsEl),
-        h('div', { class: 'card__actions rm-decisions__controls' }, segmented({
-          options: STATUS_OPTIONS,
-          value: state.filter.status,
-          onchange: (value) => {
-            state.filter.status = value;
-            paintDecisions(true);
-          },
-        }), h('div', { class: 'search-field rm-decisions__search' }, icon('search'), searchInput))),
+        decisionsControls),
       h('div', { class: 'card__body rm-decisions__body' }, groupsHost)));
     decisionsBuilt = true;
   }
@@ -693,6 +846,8 @@ export async function mount(el, ctx) {
     countsEl.textContent = all.length
       ? grouped.counts.accepted + ' принято · ' + grouped.counts.proposed + ' предложено'
       : 'пока пусто';
+    // W20-U2 §16: пустой список не показывает бесполезные фильтры и поиск.
+    if (decisionsControls) decisionsControls.classList.toggle('hidden', !all.length);
 
     if (!all.length) {
       groupsHost.replaceChildren(h('div', { class: 'rm-decisions__empty small muted' },
@@ -710,73 +865,134 @@ export async function mount(el, ctx) {
       h('div', { class: 'rm-group__items' }, group.items.map(decisionRow)))));
   }
 
-  /* ---------------------------------------------------------------- пусто */
+  /* ------------------------------------------------------- «Что дальше» */
 
-  /** Открытые шаги комнаты для блока «Что дальше» (по срокам, не больше пяти). */
-  function openSteps() {
-    const items = Array.isArray(state.backlog) ? state.backlog : [];
-    return items
-      .filter((i) => i && i.kind === 'next_step' && (i.status === 'open' || i.status === 'asked') && i.text)
-      .sort((a, b) => String(a.due || '9999-12-31').localeCompare(String(b.due || '9999-12-31')))
-      .slice(0, 5);
+  /** Строка шага: «открыт/спрашивали», текст, срок. */
+  function nextStepItem(item) {
+    return h('li', { class: 'rm-next__item', dataset: { key: String(item.id || '') } },
+      h('span', { class: 'chip chip--' + (item.status === 'asked' ? 'info' : 'outline') },
+        item.status === 'asked' ? 'спрашивали' : 'открыт'),
+      h('span', { class: 'rm-next__text', title: item.text }, item.text),
+      item.due ? h('span', { class: 'rm-next__due small muted tnum' }, item.due) : null);
   }
 
-  function nextStepsCard() {
-    const steps = openSteps();
-    if (!steps.length) return null;
-    return h('section', { class: 'card rm-next' },
-      h('div', { class: 'card__head' },
-        h('div', { class: 'card__title' }, 'Что дальше'),
-        h('div', { class: 'card__actions small muted' }, steps.length + ' открыто')),
-      h('div', { class: 'card__body' },
-        h('ul', { class: 'rm-next__list' }, steps.map((item) => h('li', { class: 'rm-next__item' },
-          h('span', { class: 'chip chip--' + (item.status === 'asked' ? 'info' : 'outline') },
-            item.status === 'asked' ? 'спрашивали' : 'открыт'),
-          h('span', { class: 'rm-next__text' }, item.text),
-          item.due ? h('span', { class: 'rm-next__due small muted tnum' }, item.due) : null)))));
+  /** Список шагов с подписью-разделителем (второго заголовка «Что дальше» нет). */
+  function nextStepsList(steps, subtitle) {
+    return h('div', { class: 'rm-next__steps' },
+      subtitle ? h('div', { class: 'rm-next__subtitle small muted' }, subtitle) : null,
+      h('ul', { class: 'rm-next__list' }, steps.map(nextStepItem)));
+  }
+
+  /** Действие пустой карты: редактор этапов, предложение руководителю или режим. */
+  function nextAction(key, label, primary = true) {
+    if (key === 'propose') return proposeButton();
+    if (key === 'mode') {
+      return h('button', {
+        class: 'btn btn--primary btn--sm', type: 'button',
+        onclick: () => openRoomSettings('project_mode'),
+      }, label);
+    }
+    return h('button', {
+      class: (primary ? 'btn btn--primary' : 'btn btn--secondary') + ' btn--sm', type: 'button',
+      title: 'Редактор этапов: добавить, переименовать, переставить, убрать',
+      onclick: () => { openPhases(); },
+    }, icon('edit', { size: 13 }), label);
   }
 
   /**
-   * Один понятный блок вместо заглушек (W17-R §4).
+   * Один блок «Что дальше» (W20-U2 §16, P12).
    *
-   * Проектный режим выключен → объясняем по-человечески и даём кнопку, которая
-   * открывает настройки ЭТОЙ комнаты на разделе «Проектный режим» (B-9).
-   * Режим включён, но этапов нет → то же самое, только про этапы.
+   * Заменяет и факт «Что дальше» в «Где мы сейчас», и вторую карточку «Что
+   * дальше» на пустой карте: следующий этап, его пояснение и ближайшие шаги
+   * живут в одном месте. Когда этапов нет — здесь же объяснение и действия,
+   * а не три отдельные заглушки.
    */
-  function projectModeCard() {
-    const room = state.room || {};
-    const modeOn = Boolean(room.project_mode);
-    const modeText = modeOn
-      ? 'Сейчас этапов нет. Полоса этапов появится, когда вы зададите их сами: '
-        + 'например «Идея», «Согласование», «Запуск». Команда будет отмечать, где мы стоим.'
-      : 'Проектный режим выключен — руководитель отвечает одним общим ответом, '
-        + 'без частей работы и без этапов. Включите, если одна задача — это целый проект: '
-        + 'он разделит её на части, у каждой будет свой исполнитель и свой ход работы.';
-    return h('section', { class: 'card rm-project-hint' },
+  function renderNext() {
+    const roadmap = state.roadmap || {};
+    const phases = Array.isArray(roadmap.phases) ? roadmap.phases : [];
+    const modeOn = Boolean((state.room || {}).project_mode);
+    const proposalPending = (proposalOf(roadmap.phases_proposal) || {}).state === 'proposed';
+    const plan = emptyPlan({ modeOn, proposalPending });
+    const block = nextBlock(roadmap, state.backlog, { limit: 4 });
+    const body = h('div', { class: 'card__body rm-next__body' });
+
+    if (!phases.length) {
+      // Пустая карта: одно объяснение + два действия (+ шаги, если они уже есть).
+      body.appendChild(h('p', { class: 'rm-next__text rm-next__text--lead' },
+        h('strong', { class: 'rm-next__state' }, plan.title + '. '), plan.text));
+      body.appendChild(h('div', { class: 'rm-next__actions' },
+        nextAction(plan.primary.key, plan.primary.label),
+        plan.secondary ? nextAction(plan.secondary.key, plan.secondary.label, false) : null));
+      if (plan.note) body.appendChild(h('p', { class: 'rm-next__note small muted' }, plan.note));
+      if (block.steps.length) body.appendChild(nextStepsList(block.steps, 'Шаги из запросов'));
+      return h('section', { class: 'card rm-next rm-next--empty' },
+        h('div', { class: 'card__head' },
+          h('div', { class: 'card__title' }, 'Что дальше'),
+          h('div', { class: 'card__actions small muted' }, block.steps.length
+            ? stepsCountLabel(block.steps.length) : 'этапов нет')),
+        body);
+    }
+
+    if (block.phase) {
+      const meta = stageMeta(block.phase.status);
+      body.appendChild(h('div', { class: 'rm-next__phase' },
+        h('span', { class: 'rm-next__phase-icon rm-tone--' + meta.tone, 'aria-hidden': 'true' },
+          icon(meta.icon, { size: 14 })),
+        h('div', { class: 'rm-next__phase-main' },
+          h('div', { class: 'rm-next__phase-title', title: block.phase.title }, block.phase.title),
+          h('div', { class: 'rm-next__phase-line small muted' }, meta.label,
+            block.note ? h('span', {}, ' · ' + block.note) : null)),
+        h('button', {
+          class: 'btn btn--ghost btn--sm', type: 'button',
+          title: 'Открыть этот этап в полосе этапов',
+          onclick: () => selectPhase(block.phase.id),
+        }, 'Открыть этап', icon('arrow-right', { size: 12 }))));
+    } else if (block.allDone) {
+      body.appendChild(h('p', { class: 'rm-next__text' },
+        'Все этапы пройдены — карта закрыта. Если появился новый этап, добавьте его в «Изменить этапы».'));
+    }
+
+    if (block.steps.length) {
+      body.appendChild(nextStepsList(block.steps, block.phase ? 'Ближайшие шаги' : ''));
+    } else if (!block.allDone) {
+      body.appendChild(h('p', { class: 'rm-next__text small muted' },
+        'Открытых шагов нет — ждём, когда появится следующий.'));
+    }
+
+    return h('section', { class: 'card rm-next' },
       h('div', { class: 'card__head' },
-        h('div', { class: 'card__title' }, modeOn ? 'Этапы проекта не заданы' : 'Проектный режим выключен')),
-      h('div', { class: 'card__body' },
-        h('p', { class: 'rm-project-hint__text' }, modeText),
-        h('div', { class: 'rm-project-hint__actions' },
-          h('button', {
-            class: 'btn btn--primary btn--sm', type: 'button',
-            onclick: () => openRoomSettings(modeOn ? 'phases' : 'project_mode'),
-          }, modeOn ? 'Добавить этапы' : 'Включить проектный режим')),
-        h('p', { class: 'rm-project-hint__note small muted' },
-          'Откроются настройки этой комнаты. Больше ничего не меняется.')));
+        h('div', { class: 'card__title' }, 'Что дальше'),
+        h('div', { class: 'card__actions small muted' }, stepsCountLabel(block.steps.length))),
+      body);
   }
 
-  /** Карта без этапов: «Что дальше», «Решения» и один блок про режим. */
-  function paintNoPhases(force = false) {
-    const sig = JSON.stringify([Boolean(state.room && state.room.project_mode),
-      openSteps().map((s) => String(s.id || s.text)), (state.roadmap && state.roadmap.decisions || []).length]);
+  function paintNext(force = false) {
+    const roadmap = state.roadmap || {};
+    const sig = JSON.stringify([
+      roadmap.phases, roadmap.current, state.selected, Boolean((state.room || {}).project_mode),
+      (proposalOf(roadmap.phases_proposal) || {}).state || '',
+      (state.backlog || []).filter((i) => i && i.kind === 'next_step'
+        && (i.status === 'open' || i.status === 'asked')).map((i) => [i.id, i.due, i.text]).slice(0, 8),
+    ]);
+    if (!force && sig === state.nextSig) return;
+    state.nextSig = sig;
+    nextHost.replaceChildren(renderNext());
+  }
+
+  /** Карта без этапов: тот же блок «Что дальше» и «Решения», без заглушек. */
+  function paintNextOnly(force = false) {
+    const proposalState = (proposalOf(state.roadmap && state.roadmap.phases_proposal) || {}).state || '';
+    const sig = JSON.stringify([Boolean(state.room && state.room.project_mode), proposalState,
+      (state.backlog || []).map((s) => String(s.id || s.text)), (state.roadmap && state.roadmap.decisions || []).length]);
     if (!force && sig === state.emptySig) return;
     state.emptySig = sig;
-    heroHost.replaceChildren(...[nextStepsCard(), projectModeCard()].filter(Boolean));
+    heroHost.replaceChildren();
     stepsHost.replaceChildren();
     detailHost.replaceChildren();
     state.stepsSig = '';
     state.detailSig = '';
+    paintProposal();
+    paintNext(true);
     paintDecisions(true);
   }
 
@@ -792,9 +1008,11 @@ export async function mount(el, ctx) {
   function paintAll({ force = false } = {}) {
     const roadmap = state.roadmap;
     paintError();
-    // W17-R §4: нет объявленных этапов — компактный экран без заглушек.
+    // W20 §1.7: предложение этапов видно и на карте без этапов — плашка выше.
+    paintProposal(force);
+    // W20-U2 §16: этапов нет — та же карточка «Что дальше» объясняет почему.
     if (!roadmap || !Array.isArray(roadmap.phases) || !roadmap.phases.length) {
-      paintNoPhases(true);
+      paintNextOnly(true);
       return;
     }
     const ids = (roadmap.phases || []).map((p) => p.id);
@@ -804,6 +1022,7 @@ export async function mount(el, ctx) {
     }
     paintHero(force);
     paintSteps(force);
+    paintNext(force);
     paintDetail(force);
     paintDecisions(force);
   }
@@ -827,6 +1046,7 @@ export async function mount(el, ctx) {
       heroHost.replaceChildren(skeleton(3));
       planHost.replaceChildren(skeleton(2));
       stepsHost.replaceChildren();
+      nextHost.replaceChildren(skeleton(2));
       detailHost.replaceChildren();
       decisionsHost.replaceChildren();
       errorHost.replaceChildren();
@@ -871,6 +1091,7 @@ export async function mount(el, ctx) {
         if (!state.roadmap) {
           heroHost.replaceChildren();
           stepsHost.replaceChildren();
+          nextHost.replaceChildren();
           detailHost.replaceChildren();
           decisionsHost.replaceChildren();
         }
@@ -918,6 +1139,9 @@ export async function mount(el, ctx) {
   return {
     unmount() {
       disposed = true;
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('teamroom:room-saved', onRoomSaved);
+      }
       abort.abort();
       clearTimeout(planTimer);
       if (poller && typeof poller.stop === 'function') poller.stop();

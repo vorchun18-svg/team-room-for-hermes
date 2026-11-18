@@ -4,7 +4,7 @@
 Что проверяется:
   * ``thread.get_thread`` — комментарии дерева запроса по времени, события
     («уточнение передано», «версия готова»), итоги карточек «Уточнение» как сообщения
-    команды; роли по-русски (никаких `biz-director` в подписях);
+    команды; роли по-русски (никаких `team-director` в подписях);
   * ``POST /api/requests/{rid}/messages`` — ровно ОДНА карточка «Уточнение от Михаила»
     на запрос, пакетирование вторым сообщением (``merged``), ветки done/failed;
   * сообщения НЕ рассылаются по дочерним карточкам исполнителей (Д1 отменяет рассылку);
@@ -192,9 +192,9 @@ class ThreadReadTests(_Base):
         rid = self.rid("done_modern")
         items = thread_mod.get_thread(self.cfg, rid, room=self.room())
         for item in items:
-            self.assertNotIn("biz-", item["author_label"], item)
-            self.assertNotIn("biz-", item["text"] if item["kind"] == "event" else "")
-        lead_items = [i for i in items if i["author"] == "biz-director"]
+            self.assertNotIn("team-", item["author_label"], item)
+            self.assertNotIn("team-", item["text"] if item["kind"] == "event" else "")
+        lead_items = [i for i in items if i["author"] == "team-director"]
         if lead_items:
             self.assertIn("руководитель комнаты", lead_items[0]["author_label"])
 
@@ -211,7 +211,7 @@ class ThreadReadTests(_Base):
     def test_children_comments_are_in_thread(self):
         rid = self.rid("working")
         child = self.sb.state("working")["child_ids"][0]
-        self.sa.comment(child, "biz-ops", "Проверил поставщика — берём второго")
+        self.sa.comment(child, "team-ops", "Проверил поставщика — берём второго")
         items = thread_mod.get_thread(self.cfg, rid, room=self.room())
         found = [i for i in items if i["task_id"] == child and "поставщика" in i["text"]]
         self.assertTrue(found, "комментарий дочерней карточки обязан попасть в ленту")
@@ -221,7 +221,7 @@ class ThreadReadTests(_Base):
     def test_versions_and_note_events(self):
         rid = self.rid("done_modern")
         # карточка «Уточнение» с итогом руководителя (как её создаёт движок)
-        note = self.sa.card(thread_mod.NOTE_TITLE, "biz-director", status="running",
+        note = self.sa.card(thread_mod.NOTE_TITLE, "team-director", status="running",
                             body="Запрос: %s «…»" % rid, tenant="room:cafe")
         self.sa.finish(note, "Принял; передал: юристу сроки, операциям упаковку. "
                              "Учтено из уточнений: сроки поставки.")
@@ -232,7 +232,7 @@ class ThreadReadTests(_Base):
         ack = [i for i in items if "Учтено из уточнений" in i["text"]]
         self.assertTrue(ack, "итог карточки «Уточнение» — сообщение команды")
         self.assertEqual(ack[0]["author_kind"], "agent")
-        self.assertEqual(ack[0]["author"], "biz-director")
+        self.assertEqual(ack[0]["author"], "team-director")
         self.assertIn("руководитель комнаты", ack[0]["author_label"])
         self.assertEqual(ack[0]["kind"], "comment")
 
@@ -252,14 +252,14 @@ class PostMessageTests(_Base):
         rid = self.rid("working")
         status, payload, _ = self.post(rid, "Сроки поставки сдвинулись на 10 дней")
         self.assertEqual(status, 201, payload)
-        self.assertEqual(payload["routed_to"], "biz-director")
+        self.assertEqual(payload["routed_to"], "team-director")
         self.assertFalse(payload["merged"])
         self.assertTrue(payload["message"]["text"].startswith(MAXIM_MARK))
         self.assertIn("10 дней", payload["message"]["text"])
         creates = self.shim.creates()
         self.assertEqual(len(creates), 1, self.shim.calls)
         argv = creates[0]
-        self.assertIn("--assignee=biz-director", argv)
+        self.assertIn("--assignee=team-director", argv)
         self.assertIn("--tenant=room:cafe", argv)
         self.assertNotIn("--parent", " ".join(argv), "карточка «Уточнение» НЕ дочерняя корня")
         self.assertTrue(any(a.startswith("--body-file=") for a in argv), argv)
@@ -282,8 +282,8 @@ class PostMessageTests(_Base):
         self.assertEqual(status, 201, first)
         self.shim.calls.clear()
         # движок создал карточку «Уточнение» — имитируем её появление в песочной БД
-        note = self.sa.card(thread_mod.NOTE_TITLE, "biz-director", status="todo",
-                            body="Запрос: %s «…»\n\nСООБЩЕНИЕ МАКСИМА: Первое уточнение" % rid,
+        note = self.sa.card(thread_mod.NOTE_TITLE, "team-director", status="todo",
+                            body="Запрос: %s «…»\n\nСООБЩЕНИЕ МИХАИЛА: Первое уточнение" % rid,
                             tenant="room:cafe")
         status, second, _ = self.post(rid, "Второе уточнение")
         self.assertEqual(status, 201, second)
@@ -300,7 +300,7 @@ class PostMessageTests(_Base):
         self.assertEqual(status, 201, payload)
         touched = set(self.shim.comment_targets()) & children
         self.assertEqual(touched, set(), "Д1: рассылки по карточкам исполнителей нет")
-        self.assertEqual(payload["routed_to"], "biz-director")
+        self.assertEqual(payload["routed_to"], "team-director")
 
     def test_done_request_also_goes_to_revision(self):
         rid = self.rid("done_modern")
@@ -378,7 +378,7 @@ class InjectionTests(_Base):
         """«Уточнение» другого запроса — не наша карточка, комментария к ней нет."""
         rid = self.rid("working")
         foreign_root = self.sb.state("done_modern")["root_id"]
-        foreign_note = self.sa.card(thread_mod.NOTE_TITLE, "biz-director", status="todo",
+        foreign_note = self.sa.card(thread_mod.NOTE_TITLE, "team-director", status="todo",
                                     body="Запрос: %s «чужой»" % foreign_root,
                                     tenant="room:cafe")
         status, payload, _ = self.post(rid, "Наше уточнение")
@@ -418,8 +418,8 @@ class ContractRuleTests(unittest.TestCase):
             reports_dir = ROOT / "data" / "reports"
             reportkit_dir = ROOT / "reportkit"
 
-        room = {"id": "cafe", "title": "Лето", "orchestrator": "biz-director",
-                "members": [{"profile": "biz-ops", "role": "worker"}]}
+        room = {"id": "cafe", "title": "Лето", "orchestrator": "team-director",
+                "members": [{"profile": "team-ops", "role": "worker"}]}
         block = contract.build_contract_block(room, "r-x", _Cfg())
         self.assertIn("ПЕРЕЧИТАЙ комментарии карточки", block)
         self.assertIn("[Михаил · уточнение]", block)

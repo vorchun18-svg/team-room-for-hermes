@@ -118,6 +118,9 @@
 .tm-dot { width: 7px; height: 7px; flex: none; border-radius: var(--radius-full); background: var(--ui-text-quaternary); }
 .tm-state--working .tm-dot { background: var(--ok); animation: tm-pulse 2s var(--ease) infinite; }
 .tm-state--waiting .tm-dot { background: var(--warn); }
+/* W23-MG2: «остановлено» — работа стоит по вашему решению, не ошибка. */
+.tm-state--paused .tm-dot { background: var(--warn); }
+.tm-state--paused .tm-state__label { color: var(--warn-ink); font-weight: 500; }
 .tm-state--working .tm-state__label { color: var(--ok-ink); font-weight: 500; }
 .tm-state--waiting .tm-state__label { color: var(--warn-ink); font-weight: 500; }
 .tm-state__label { white-space: nowrap; }

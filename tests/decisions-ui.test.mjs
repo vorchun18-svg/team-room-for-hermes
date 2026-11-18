@@ -21,7 +21,8 @@ import { dirname, join } from 'node:path';
 import { installFakeDom, uninstallFakeDom, FakeElement } from './fake-dom.mjs';
 import { createAside } from '../web/js/views/request-aside.js';
 import {
-  CHAIN_HINT, DECISION_ACTIONS, decisionActions, decisionAnswerOf, decisionPayload, decisionStatusOf,
+  CHAIN_HINT, DECISION_ACTIONS, decisionActions, decisionAnswerOf, decisionNotice,
+  decisionPayload, decisionStatusOf,
 } from '../web/js/views/decision-dialog.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -378,4 +379,40 @@ test('CSS: действия, цепочка и окно описаны; текс
     .filter((m) => !/avatar/.test(m[0]))
     .map((m) => Number(m[1]));
   assert.deepEqual(sizes.filter((v) => v < 11), [], 'читаемого текста мельче 11 px нет');
+});
+
+/* ───────────────────── W21-L1: строка «Решение учтено» (недоделка U4) ──── */
+
+test('decisionNotice: только конечный исход, время не выдумываем', () => {
+  const at = 1762900000;
+  assert.match(decisionNotice({ answer_state: 'applied', reaction: { status: 'applied', at } }),
+    /^Решение учтено · \d\d:\d\d$/);
+  assert.equal(decisionNotice({ answer_state: 'no_change', reaction: { status: 'no_change' } }),
+    'Решение учтено');
+  // пока ответ не учтён — строки нет
+  assert.equal(decisionNotice({ answer_state: 'sent' }), '');
+  assert.equal(decisionNotice({ answer_state: 'received', reaction: { status: 'received' } }), '');
+  assert.equal(decisionNotice({ answer_state: 'open' }), '');
+  assert.equal(decisionNotice({}), '');
+  // заглушка времени (как в фикстурах `at: 6`) в подпись не попадает
+  assert.equal(decisionNotice({ answer_state: 'applied', reaction: { status: 'applied', at: 6 } }),
+    'Решение учтено');
+});
+
+test('в решении видно «Решение учтено», подпись цепочки не дублируется', () => {
+  installStorage();
+  const s = makeStand();
+  try {
+    const row = byAttr(s.host, 'data-decision-id', 'd_3')[0];
+    const notices = byClass(row, 'req-decision__notice');
+    assert.equal(notices.length, 1, 'строка «Решение учтено» одна');
+    assert.match(text(notices[0]), /^Решение учтено/);
+    // цепочка ответа осталась отдельной подписью и не повторяет строку
+    assert.equal(text(byClass(row, 'req-decision__state')[0]), 'учтено: изменено 2 карточки');
+    // у решения, которое ещё ждёт слова, строки «учтено» нет
+    const open = byAttr(s.host, 'data-decision-id', 'd_1')[0];
+    assert.equal(byClass(open, 'req-decision__notice').length, 0);
+  } finally {
+    uninstallFakeDom();
+  }
 });

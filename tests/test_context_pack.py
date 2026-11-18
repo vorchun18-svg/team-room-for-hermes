@@ -82,9 +82,9 @@ def _room(**extra) -> dict:
         "title": "Лето",
         "board": "team",
         "tenant": "room:cafe",
-        "orchestrator": "biz-director",
+        "orchestrator": "team-director",
         "description": "Производство десертов: моти, наборы, доставка по Заозёрью",
-        "members": [{"profile": "biz-cfo", "role": "worker"}],
+        "members": [{"profile": "team-cfo", "role": "worker"}],
         "context_files": [r"C:\TeamRoom\Vault\Projects\Team\Decisions.md",
                           r"C:\TeamRoom\Vault\Projects\Лето\BRIEF.md"],
     }
@@ -308,7 +308,7 @@ class EngineIntegrationTest(unittest.TestCase):
                 path = flag.split("=", 1)[1]
                 captured["body"] = Path(path).read_text(encoding="utf-8")
                 title = args[1]
-                card_id = agents.card(title, "biz-director", body=captured["body"], tenant=tenant)
+                card_id = agents.card(title, "team-director", body=captured["body"], tenant=tenant)
                 return {"id": card_id}, 7
 
             original = engine_write._run_json

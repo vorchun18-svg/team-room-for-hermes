@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -24,6 +25,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from server import config as config_mod          # noqa: E402
 from server import engine_read as er             # noqa: E402
+from server import svod_live                     # noqa: E402
+from server.engine_db import MAX_NODES, like_prefix  # noqa: E402
 from tests.helpers import Sandbox, real_db_path, snapshot_real_db  # noqa: E402
 from tests.helpers import assert_real_untouched  # noqa: E402
 
@@ -45,15 +48,15 @@ AMI_PHASES = [
     {"id": "production", "title": "Производство"},
     {"id": "sales", "title": "Продажи"},
 ]
-AMI_MEMBERS = ("biz-lawyer", "biz-ops", "biz-marketing", "biz-strategy", "biz-cfo",
-               "biz-runner", "biz-critic")
+AMI_MEMBERS = ("team-lawyer", "team-ops", "team-marketing", "team-strategy", "team-cfo",
+               "team-runner", "team-critic")
 
 
 def cafe_room(phases: list | None = None) -> dict:
     """Комната Лето как её отдаёт API (этапы — данные комнаты, не константа)."""
-    return {"id": "cafe", "title": "Лето", "orchestrator": "biz-director",
-            "critic": "biz-critic",
-            "members": [{"profile": profile, "role": "critic" if profile == "biz-critic" else "worker"}
+    return {"id": "cafe", "title": "Лето", "orchestrator": "team-director",
+            "critic": "team-critic",
+            "members": [{"profile": profile, "role": "critic" if profile == "team-critic" else "worker"}
                         for profile in AMI_MEMBERS],
             "phases": AMI_PHASES if phases is None else phases}
 
@@ -134,13 +137,13 @@ class EngineReadSandboxTest(unittest.TestCase):
     def test_05_working_progress_and_tree(self):
         d = self.detail("working")
         self.assertEqual(d["progress"], {"done": 1, "total": 4, "percent": 25,
-                                         "running": ["biz-marketing", "biz-ops", "biz-strategy"]})
+                                         "running": ["team-marketing", "team-ops", "team-strategy"]})
         self.assertEqual(d["tree"][0]["id"], self.root("working"))
         self.assertEqual({n["role"] for n in d["tree"]}, {"root", "worker"})
         roles = {n["assignee"]: n for n in d["tree"] if n["role"] == "worker"}
-        self.assertEqual(roles["biz-ops"]["status"], "running")
-        self.assertEqual(roles["biz-lawyer"]["status"], "done")
-        self.assertTrue(roles["biz-lawyer"]["summary_md"].startswith("Срез 01-Legal"))
+        self.assertEqual(roles["team-ops"]["status"], "running")
+        self.assertEqual(roles["team-lawyer"]["status"], "done")
+        self.assertTrue(roles["team-lawyer"]["summary_md"].startswith("Срез 01-Legal"))
         self.assertIsNone(d["status_reason"])
 
     def test_06_reviewing_uses_critic_card(self):
@@ -155,7 +158,7 @@ class EngineReadSandboxTest(unittest.TestCase):
         self.assertEqual(critic[0]["status"], "running")
         self.assertEqual(critic[0]["round"], 1)
         self.assertEqual(d["synthesis"]["state"], "ready")  # ответ уже есть, критик его проверяет
-        self.assertEqual(d["progress"]["running"], ["biz-critic"])
+        self.assertEqual(d["progress"]["running"], ["team-critic"])
 
     def test_07_needs_you_question_from_child(self):
         d = self.detail("needs_you")
@@ -169,7 +172,7 @@ class EngineReadSandboxTest(unittest.TestCase):
         self.assertIn("Какой канал", q["text"])
         blocked = [n for n in d["tree"] if n["status"] == "blocked"]
         self.assertEqual(len(blocked), 1)
-        self.assertEqual(blocked[0]["assignee"], "biz-runner")
+        self.assertEqual(blocked[0]["assignee"], "team-runner")
         self.assertIn("Остановился", blocked[0]["summary_md"])
         # вопрос лежит в metadata карточки-ребёнка, а не только в ответе корня
         self.assertTrue(blocked[0]["needs_human"] is False)
@@ -273,46 +276,46 @@ class EngineReadSandboxTest(unittest.TestCase):
         self.assertTrue(er.is_decomposed(self.cfg, BOARD, self.root("working")))
         self.assertFalse(er.is_decomposed(self.cfg, BOARD, self.root("queued")))
         self.assertEqual(er.root_assignee_status(self.cfg, BOARD, self.root("working")),
-                         {"assignee": "biz-director", "status": "todo", "running": False})
+                         {"assignee": "team-director", "status": "todo", "running": False})
         self.assertEqual(er.root_assignee_status(self.cfg, BOARD, self.root("reviewing"))["status"], "done")
 
     def test_14_team_state(self):
-        members = [{"profile": "biz-ops", "title": "Операции", "role": "worker"},
-                   {"profile": "biz-lawyer", "role": "worker"},
-                   {"profile": "biz-critic", "role": "critic", "pinned": True},
-                   {"profile": "biz-nobody", "role": "observer"}]
+        members = [{"profile": "team-ops", "title": "Операции", "role": "worker"},
+                   {"profile": "team-lawyer", "role": "worker"},
+                   {"profile": "team-critic", "role": "critic", "pinned": True},
+                   {"profile": "team-nobody", "role": "observer"}]
         team = {m["profile"]: m for m in er.team_state(self.cfg, BOARD, members, tenant="room:cafe")}
         self.assertEqual(set(team), {m["profile"] for m in members})
-        ops = team["biz-ops"]
+        ops = team["team-ops"]
         self.assertEqual(ops["state"], "working")
         self.assertEqual(ops["current"]["task_id"], er.team_state(
-            self.cfg, BOARD, [{"profile": "biz-ops"}], tenant="room:cafe")[0]["current"]["task_id"])
+            self.cfg, BOARD, [{"profile": "team-ops"}], tenant="room:cafe")[0]["current"]["task_id"])
         self.assertIn("Срез 03-Ops", ops["current"]["title"])
         self.assertIsInstance(ops["current"]["since"], int)
         self.assertGreaterEqual(ops["load"], 1)
         self.assertEqual(ops["counts"]["active"], 1)
-        lawyer = team["biz-lawyer"]
+        lawyer = team["team-lawyer"]
         self.assertEqual(lawyer["state"], "idle")
         self.assertIsNotNone(lawyer["last"])
         self.assertTrue(lawyer["last"]["summary"])
         self.assertGreater(lawyer["counts"]["done"], 0)
-        self.assertEqual(team["biz-critic"]["role"], "critic")
-        self.assertTrue(team["biz-critic"]["pinned"])
-        runner = er.team_state(self.cfg, BOARD, [{"profile": "biz-runner"}], tenant="room:cafe")[0]
+        self.assertEqual(team["team-critic"]["role"], "critic")
+        self.assertTrue(team["team-critic"]["pinned"])
+        runner = er.team_state(self.cfg, BOARD, [{"profile": "team-runner"}], tenant="room:cafe")[0]
         self.assertEqual(runner["state"], "waiting")
         self.assertEqual(er.team_state(self.cfg, BOARD, [], tenant="room:cafe"), [])
 
     def test_15_outside_room_warning(self):
-        room = {"members": [{"profile": "biz-lawyer"}, {"profile": "biz-ops"},
-                            {"profile": "biz-marketing"}, {"profile": "biz-strategy"}],
-                "orchestrator": "biz-director", "critic": "biz-critic"}
+        room = {"members": [{"profile": "team-lawyer"}, {"profile": "team-ops"},
+                            {"profile": "team-marketing"}, {"profile": "team-strategy"}],
+                "orchestrator": "team-director", "critic": "team-critic"}
         d = self.detail("done_modern", room=room)
         outside = [n for n in d["tree"] if n["outside_room"]]
-        self.assertEqual({n["assignee"] for n in outside}, {"biz-cfo"})
+        self.assertEqual({n["assignee"] for n in outside}, {"team-cfo"})
         codes = [w["code"] for w in d["warnings"]]
         self.assertIn("outside_room", codes)
         warning = [w for w in d["warnings"] if w["code"] == "outside_room"][0]
-        self.assertIn("biz-cfo", warning["message"])
+        self.assertIn("team-cfo", warning["message"])
         self.assertTrue(all(not n["outside_room"] for n in self.detail("done_modern")["tree"]))
 
     def test_16b_accepts_room_id_and_profile_strings(self):
@@ -320,8 +323,8 @@ class EngineReadSandboxTest(unittest.TestCase):
                               extra_cards=self.extra("done_modern"))
         self.assertEqual(d["status"], "done")
         self.assertIsInstance(d["warnings"], list)
-        team = er.team_state(self.cfg, BOARD, ["biz-ops", "biz-lawyer"], tenant="room:cafe")
-        self.assertEqual([m["profile"] for m in team], ["biz-ops", "biz-lawyer"])
+        team = er.team_state(self.cfg, BOARD, ["team-ops", "team-lawyer"], tenant="room:cafe")
+        self.assertEqual([m["profile"] for m in team], ["team-ops", "team-lawyer"])
         self.assertEqual(team[0]["role"], "worker")
         self.assertEqual(team[0]["state"], "working")
 
@@ -361,7 +364,7 @@ class EngineReadSandboxTest(unittest.TestCase):
                      lambda: er.list_candidates(self.cfg, "nope", set()),
                      lambda: er.task_events(self.cfg, "nope", "t_x"),
                      lambda: er.is_decomposed(self.cfg, "nope", "t_x"),
-                     lambda: er.team_state(self.cfg, "nope", [{"profile": "biz-ops"}])):
+                     lambda: er.team_state(self.cfg, "nope", [{"profile": "team-ops"}])):
             with self.subTest(call=call):
                 with self.assertRaises(er.EngineError) as ctx:
                     call()
@@ -382,7 +385,7 @@ class EngineReadSandboxTest(unittest.TestCase):
         er.list_roots(self.cfg, BOARD)
         er.list_candidates(self.cfg, BOARD, set())
         er.needs_human(self.cfg, BOARD, [self.root(s) for s in STATES])
-        er.team_state(self.cfg, BOARD, [{"profile": "biz-ops"}], tenant="room:cafe")
+        er.team_state(self.cfg, BOARD, [{"profile": "team-ops"}], tenant="room:cafe")
         after = (db.stat().st_size, db.stat().st_mtime_ns, self._counts())
         self.assertEqual(before, after)
 
@@ -444,9 +447,9 @@ class EngineReadSchemaDriftTest(unittest.TestCase):
                         VALUES ('t_00000001', 'decomposed', '{"child_ids": []}', 100);
                 """)
             con.execute("INSERT INTO tasks (id, title, body, assignee, status, created_at, started_at, "
-                        "completed_at) VALUES ('t_00000001', 'Дрейф схемы', 'Текст', 'biz-director', 'done', 10, 20, 30)")
+                        "completed_at) VALUES ('t_00000001', 'Дрейф схемы', 'Текст', 'team-director', 'done', 10, 20, 30)")
             con.execute("INSERT INTO task_runs (task_id, profile, status, outcome, started_at, ended_at, summary, "
-                        "metadata) VALUES ('t_00000001', 'biz-director', 'done', 'completed', 20, 30, "
+                        "metadata) VALUES ('t_00000001', 'team-director', 'done', 'completed', 20, 30, "
                         "'Ответ есть', '{\"next_steps\": [\"Шаг\"]}')")
             con.commit()
         finally:
@@ -491,6 +494,254 @@ class EngineReadSchemaDriftTest(unittest.TestCase):
         self.assertIn("Нет файла БД", h["engine"]["error"])
         with self.assertRaises(er.EngineError):
             er.request_detail(cfg, "empty", "t_00000001")
+
+
+class TreeDepthTest(unittest.TestCase):
+    """B-49b: карточки обновления свода не выпадают из дерева из-за цепочки и глубины 6.
+
+    Доска собирается руками в песочнице (вымышленный запрос «Меню на осень», кафе «Лето»):
+    корень, цепочка карточек обновления «ребёнок предыдущей» (так ставила прежняя сборка,
+    ключ `svod-<rid>-…`) и линейная цепочка рабочих карточек. Проверяем:
+
+    * все карточки обновления видны и дают версии свода — независимо от глубины;
+    * новая схема (ребёнок корня) держит дерево плоским;
+    * карточка обновления в хвосте длинной цепочки подтягивается по ключу идемпотентности;
+    * шаблон ключа не цепляет чужие запросы (в id есть `_`, а `_` в LIKE — любой символ);
+    * защита от цикла и состояние «обновляется» видят самую глубокую карточку;
+    * чтение большого дерева осталось быстрым.
+    """
+
+    BOARD = "team"
+    ROOT = "t_1000aaaa"
+    T0 = 1_760_000_000
+    SCHEMA = """
+        CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, body TEXT, assignee TEXT,
+            status TEXT, priority INTEGER DEFAULT 0, created_at INTEGER, started_at INTEGER,
+            completed_at INTEGER, created_by TEXT, idempotency_key TEXT, tenant TEXT,
+            consecutive_failures INTEGER DEFAULT 0, last_failure_error TEXT, max_retries INTEGER,
+            workspace_kind TEXT, workspace_path TEXT, block_kind TEXT);
+        CREATE TABLE task_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT, profile TEXT,
+            status TEXT, outcome TEXT, started_at INTEGER, ended_at INTEGER, summary TEXT,
+            metadata TEXT, error TEXT);
+        CREATE TABLE task_comments (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT, author TEXT,
+            body TEXT, created_at INTEGER);
+        CREATE TABLE task_events (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT, run_id INTEGER,
+            kind TEXT, payload TEXT, created_at INTEGER);
+        CREATE TABLE task_links (parent_id TEXT, child_id TEXT, PRIMARY KEY (parent_id, child_id));
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="teamroom-depth-", dir=str(Path(tempfile.gettempdir()))))
+        self.addCleanup(lambda: shutil.rmtree(self.tmp, ignore_errors=True))
+        self.db = self.tmp / "kanban_home" / "kanban" / "boards" / self.BOARD / "kanban.db"
+        self.db.parent.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(str(self.db))
+        try:
+            con.executescript(self.SCHEMA)
+            con.commit()
+        finally:
+            con.close()
+        self.cfg = config_mod.Cfg(hermes_home=self.tmp / "hermes",
+                                  kanban_home=self.tmp / "kanban_home",
+                                  data_dir=self.tmp / "data", vault_dir=self.tmp / "vault",
+                                  sandbox=True)
+        self.room = {"id": "cafe-leto", "title": "Кафе «Лето»", "board": self.BOARD,
+                     "orchestrator": "lead-anna", "critic": "critic-lev", "auto_svod": True}
+
+    # ---------------------------------------------------------------- helpers
+    def _card(self, tid: str, title: str, created: int, *, status: str = "done", idem=None,
+              text=None, assignee: str = "lead-anna", tenant: str = "room:cafe-leto"):
+        con = sqlite3.connect(str(self.db))
+        try:
+            con.execute("INSERT INTO tasks (id, title, body, assignee, status, created_at, "
+                        "started_at, completed_at, tenant, idempotency_key) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        (tid, title, "Вымышленное тело карточки", assignee, status, created,
+                         created + 5, created + 60, tenant, idem))
+            if text is not None:
+                con.execute("INSERT INTO task_runs (task_id, profile, status, outcome, started_at, "
+                            "ended_at, summary, metadata) VALUES (?,?,?,?,?,?,?,?)",
+                            (tid, assignee, "done", "completed", created + 5, created + 60,
+                             text, "{}"))
+            con.commit()
+        finally:
+            con.close()
+
+    def _link(self, parent: str, child: str):
+        con = sqlite3.connect(str(self.db))
+        try:
+            con.execute("INSERT INTO task_links (parent_id, child_id) VALUES (?,?)", (parent, child))
+            con.commit()
+        finally:
+            con.close()
+
+    def _comment(self, tid: str, author: str, text: str, at: int):
+        con = sqlite3.connect(str(self.db))
+        try:
+            con.execute("INSERT INTO task_comments (task_id, author, body, created_at) VALUES (?,?,?,?)",
+                        (tid, author, text, at))
+            con.commit()
+        finally:
+            con.close()
+
+    def _root_card(self):
+        self._card(self.ROOT, "Меню на осень", self.T0, text="Версия 1: меню на осень собрано.")
+
+    def _old_chain(self, count: int = 8, last_status: str = "done") -> list:
+        """Цепочка карточек обновления «ребёнок предыдущей» — как ставила прежняя сборка."""
+        prev, ids = self.ROOT, []
+        for i in range(1, count + 1):
+            tid = "t_sv%02d00" % i
+            status = last_status if i == count else "done"
+            self._card(tid, "Обновление свода (авто)" if status != "done" else "Обновление свода",
+                       self.T0 + 600 * i, status=status,
+                       idem="svod-%s-h%d" % (self.ROOT, i),
+                       text="Версия %d: меню на осень обновлено." % (i + 1) if status == "done" else None)
+            self._link(prev, tid)
+            prev, ids = tid, ids + [tid]
+        return ids
+
+    def _detail(self):
+        return er.request_detail(self.cfg, self.BOARD, self.ROOT)
+
+    # ------------------------------------------------------------------ тесты
+    def test_40_old_chain_gives_all_versions(self):
+        self._root_card()
+        ids = self._old_chain(8)              # глубина 8 — за прежними 6 уровнями
+        d = self._detail()
+        history = d["synthesis"]["history"]
+        got = [h["task_id"] for h in history]
+        self.assertEqual([i for i in ids if i not in got], [],
+                         "карточки обновления в глубине цепочки выпали из истории версий")
+        self.assertEqual(d["synthesis"]["version"], 9, "1 начальная версия + 8 обновлений")
+        self.assertEqual(len([h for h in history if h.get("auto")]), 8)
+        self.assertEqual(d["synthesis"]["source_task"], ids[-1], "показан последний свод")
+        self.assertEqual(d["synthesis"]["text_md"], "Версия 9: меню на осень обновлено.")
+
+    def test_41_new_scheme_keeps_the_tree_flat(self):
+        self._root_card()
+        ids = []
+        for i in range(8):                    # новая схема: каждая карточка — ребёнок корня
+            tid = "t_sv%02d00" % (i + 1)
+            self._card(tid, "Обновление свода (авто)", self.T0 + 600 * (i + 1),
+                       idem="svod-%s-h%d" % (self.ROOT, i + 1),
+                       text="Версия %d: меню на осень обновлено." % (i + 2))
+            self._link(self.ROOT, tid)
+            ids.append(tid)
+        d = self._detail()
+        by_id = {n["id"]: n for n in d["tree"]}
+        for tid in ids:
+            self.assertIn(tid, by_id)
+            self.assertEqual(by_id[tid]["parent_ids"], [self.ROOT], "родитель — корень, а не прежняя карточка")
+        self.assertEqual(d["synthesis"]["version"], 9)
+
+    def test_42_twelve_levels_and_the_tail_update_card(self):
+        self._root_card()
+        prev, work = self.ROOT, []
+        for i in range(1, 21):                # линейная цепочка рабочих карточек
+            tid = "t_w%02d00" % i
+            self._card(tid, "Закупки, шаг %d" % i, self.T0 + 60 * i, assignee="worker-marina",
+                       text="Шаг %d готов." % i)
+            self._link(prev, tid)
+            prev, work = tid, work + [tid]
+        tail = "t_sv9000"
+        self._card(tail, "Обновление свода (авто)", self.T0 + 3000,
+                   idem="svod-%s-h9" % self.ROOT, text="Версия 2: меню обновлено.")
+        self._link(prev, tail)                # на 21-м уровне — глубже любого лимита
+        d = self._detail()
+        ids = {n["id"] for n in d["tree"]}
+        self.assertIn(work[11], ids, "12-й уровень обязан быть в дереве")
+        self.assertNotIn(work[12], ids,
+                         "глубже MAX_DEPTH карточки команды не читаются — документированный предел")
+        self.assertIn(tail, ids, "карточка обновления в хвосте цепочки обязана быть видна")
+        self.assertEqual(d["synthesis"]["history"][-1]["task_id"], tail)
+        self.assertEqual(d["synthesis"]["version"], 2)
+
+    def test_43_wide_request_stays_complete(self):
+        self._root_card()
+        ids = []
+        for i in range(20):                   # 20 рабочих карточек прямо под корнем
+            tid = "t_w%02d00" % (i + 1)
+            self._card(tid, "Работа %d" % (i + 1), self.T0 + 30 * (i + 1), assignee="worker-petr",
+                       text="Готово: %d" % (i + 1))
+            self._link(self.ROOT, tid)
+            ids.append(tid)
+        d = self._detail()
+        got = {n["id"] for n in d["tree"]}
+        self.assertEqual([i for i in ids if i not in got], [], "широкий запрос виден целиком")
+        self.assertLessEqual(len(got), MAX_NODES)
+
+    def test_44_svod_prefix_does_not_touch_another_request(self):
+        self._root_card()
+        self._old_chain(2)
+        # чужой запрос отличается только символом на месте «_»: без экранирования LIKE совпадёт
+        self._card("t_9000bbbb", "Меню на зиму", self.T0 + 3000, text="Версия 1: зима.")
+        self._card("t_sv7700", "Обновление свода (авто)", self.T0 + 3100,
+                   idem="svod-tX1000aaaa-h1", text="Версия 2: зима обновлена.")
+        self._link("t_9000bbbb", "t_sv7700")
+        d = self._detail()
+        ids = {n["id"] for n in d["tree"]}
+        self.assertNotIn("t_sv7700", ids, "карточка обновления ЧУЖОГО запроса попала в дерево")
+        self.assertNotIn("t_9000bbbb", ids)
+        self.assertEqual(like_prefix("svod-t_1000-"), "svod-t\\_1000-%")
+
+    def test_45_guards_see_the_deepest_card(self):
+        self._root_card()
+        ids = self._old_chain(7)
+        last = "t_sv0800"
+        self._card(last, "Обновление свода (авто)", self.T0 + 4200, status="running",
+                   idem="svod-%s-h8" % self.ROOT)          # идёт прямо сейчас
+        self._link(ids[-1], last)
+        # неучтённое событие: без него плану нечего решать (`fresh`) — B-50 убрал
+        # ложные события от самих карточек обновления
+        self._comment(self.ROOT, "mikhail", "Ещё добавьте сезонный суп.", self.T0 + 4250)
+        d = self._detail()
+        now = self.T0 + 4300
+        rec = {"root_id": self.ROOT, "svod_event_key": "", "svod_launched_at": 0}
+        cards = svod_live.open_update_cards(d, rec, now=now)
+        self.assertEqual([c["id"] for c in cards], [last],
+                         "идущая карточка в глубине цепочки не видна — свод не покажет «Обновляется…»")
+        live = svod_live.compute(d, self.room, rec, now=now)
+        self.assertEqual(live["state"], "updating")
+        self.assertEqual(live["behind"]["cards"], 0,
+                         "B-50: завершённые карточки обновления — версии, а не события")
+        self.assertEqual(svod_live.plan(d, self.room, rec, now=now)["reason"], "updating")
+
+    def test_46_loop_guard_counts_the_deepest_card(self):
+        self._root_card()
+        ids = self._old_chain(7)
+        self._comment(self.ROOT, "mikhail", "Ещё добавьте сезонный суп.", self.T0 + 4500)
+        d = self._detail()
+        rec = {"root_id": self.ROOT, "svod_event_key": "", "svod_launched_at": 0,
+               "extra_cards": [{"id": ids[-1], "kind": "revision", "round": 1, "at": self.T0 + 4200,
+                                "svod": True, "auto": True}]}
+        # набор событий считается уже с записью реестра (карточка свода событием не считается)
+        key = svod_live.event_key(svod_live.events(d, self.room, rec, None, 0))
+        self.assertTrue(key, "событие после версии не найдено — тест ничего не проверяет")
+        rec["extra_cards"][0]["event_key"] = "svod-%s-%s" % (self.ROOT, key)
+        self.assertEqual(svod_live.event_key(svod_live.events(d, self.room, rec, None, 0)), key,
+                         "ключ набора не должен зависеть от записи о самой карточке")
+        tries = svod_live.update_tries(d, rec, key)
+        self.assertEqual(tries["count"], 1, "успешная карточка из глубины не посчитана — зацикливание")
+        self.assertEqual(tries["cards"], [ids[-1]])
+        res = svod_live.plan(d, self.room, rec, now=self.T0 + 4 * 3600)
+        self.assertEqual((res["action"], res["reason"]), ("none", "loop_guard"))
+
+    def test_47_read_time_does_not_grow(self):
+        self._root_card()
+        self._old_chain(8)
+        for i in range(60):                   # плюс широкая часть: 60 рабочих карточек
+            tid = "t_x%02d00" % (i + 1)
+            self._card(tid, "Работа %d" % (i + 1), self.T0 + 10 * (i + 1), assignee="worker-petr",
+                       text="Готово: %d" % (i + 1))
+            self._link(self.ROOT, tid)
+        times = []
+        for _ in range(10):
+            t0 = time.perf_counter()
+            self._detail()
+            times.append((time.perf_counter() - t0) * 1000)
+        median = sorted(times)[len(times) // 2]
+        self.assertLess(median, 250, "чтение дерева на 70 карточках: медиана %.1f мс" % median)
 
 
 class EngineReadRealBoardTest(unittest.TestCase):

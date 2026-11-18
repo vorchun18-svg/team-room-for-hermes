@@ -59,15 +59,15 @@ class TestSeed(RoomsBase):
         cafe = items["cafe"]
         self.assertEqual(cafe["board"], "team")
         self.assertEqual(cafe["tenant"], "room:cafe")
-        self.assertEqual(cafe["orchestrator"], "biz-director")
-        self.assertEqual(cafe["critic"], "biz-critic")
+        self.assertEqual(cafe["orchestrator"], "team-director")
+        self.assertEqual(cafe["critic"], "team-critic")
         self.assertTrue(cafe["critic_pass"])
         self.assertTrue(cafe["seeded"])
         self.assertEqual(cafe["max_rounds"], 1)
         self.assertEqual(len(cafe["members"]), 7)
         self.assertEqual({m["profile"] for m in cafe["members"]},
-                         {"biz-lawyer", "biz-ops", "biz-strategy", "biz-marketing",
-                          "biz-cfo", "biz-runner", "biz-critic"})
+                         {"team-lawyer", "team-ops", "team-strategy", "team-marketing",
+                          "team-cfo", "team-runner", "team-critic"})
         self.assertTrue(all(m["note"] for m in cafe["members"]))
         self.assertTrue(all(isinstance(p, str) and Path(p).is_absolute() for p in cafe["context_files"]))
         self.assertTrue(all(Path(p).is_file() for p in cafe["context_files"]))
@@ -105,8 +105,8 @@ class TestCreateValidation(RoomsBase):
         rooms.seed_defaults(self.cfg)
 
     def test_create_room_defaults_and_slug(self):
-        room = rooms.create_room(self.cfg, {"title": "Лето", "orchestrator": "biz-director",
-                                            "members": [{"profile": "biz-lawyer", "note": "Юрист"}]})
+        room = rooms.create_room(self.cfg, {"title": "Лето", "orchestrator": "team-director",
+                                            "members": [{"profile": "team-lawyer", "note": "Юрист"}]})
         self.assertEqual(room["id"], "leto")
         self.assertEqual(room["board"], "team")
         self.assertEqual(room["tenant"], "room:leto")
@@ -194,9 +194,9 @@ class TestUpdateAndMembers(RoomsBase):
         self.assertEqual(ctx.exception.code, "not_found")
 
     def test_remove_member_works_but_protects_room_lead(self):
-        res = rooms.remove_member(self.cfg, "cafe", "biz-ops")
-        self.assertNotIn("biz-ops", [m["profile"] for m in res["members"]])
-        for profile in ("biz-director", "biz-critic"):
+        res = rooms.remove_member(self.cfg, "cafe", "team-ops")
+        self.assertNotIn("team-ops", [m["profile"] for m in res["members"]])
+        for profile in ("team-director", "team-critic"):
             with self.assertRaises(rooms.RoomsError) as ctx:
                 rooms.remove_member(self.cfg, "cafe", profile)
             self.assertEqual(ctx.exception.code, "conflict")

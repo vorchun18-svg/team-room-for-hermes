@@ -39,7 +39,7 @@
     "total": 6,
     "percent": 100
   },
-  "assignee": "biz-director",
+  "assignee": "team-director",
   "needs_you": true,
   "preview": "Собери картину по проекту «Лето»: что готово, что мешает, где мы по этапам и 5 шагов на две недели. Срок — до пятницы.",
   "archived": false,
@@ -52,7 +52,7 @@
     "state": "ready",
     "version": 2,
     "text_md": "## Где мы сейчас\n\nПодготовительная фаза закрыта: стратегия, юридические гайды, проверка в Роспатенте, бренд-пак и исследование упаковки готовы. Продаж пока нет — проект держат три решения: канал исходящих, ИП и подача в Роспатент.\n\n| Этап | Статус | Что мешает |\n|---|---|---|\n| Идея | готово | — |\n| Легализация | в работе | Заявление на ИП подано 27.10, свидетельство о регистрации ещё не пришло |\n| Бренд / Роспатент | ждёт решения | класс 30 (4 400 ₽) или 30+43 (8 800 ₽); подать до 10.11.2026 |\n| Упаковка | в работе | у 3 поставщиков MOQ 100, у остальных 500 — котировки от 27.10 |\n| Производство | не начато | помещение есть, но не сертифицировано СЭС |\n| Продажи | не начато | 0 разговоров D19 |\n\n**Что сделать за две недели**\n\n1. Выбрать канал TG/WA (V1-бот / V2 QR / V3 вручную) и запустить поле D19 — Михаил, 1–2 минуты, 0 ₽.\n2. Подать заявление на ИП по чек-листу: ОКВЭД 10.71, не 56.10 — Михаил, около часа.\n3. Запросить свидетельство о регистрации и заключение о размещении в СЭС — Марина, 0 ₽.\n4. Подать в Роспатент по классу из Q1 не позже 10.11.2026, только после свидетельства ИП — Антон.\n5. Разослать 4 запроса котировок по городскому шорт-листу с ориентиром MOQ 100 — Илья, 0 ₽.\n\nПравки версии 2: срок подачи в Роспатент, MOQ по котировкам и формулировка про помещение. Без первых двух шагов остальное не двигается. Это проект ответа, а не рабочий план.",
-    "author": "biz-director",
+    "author": "team-director",
     "at": 1793164725,
     "source_task": "t_1000a006",
     "legacy": false,
@@ -61,7 +61,7 @@
         "version": 1,
         "kind": "initial",
         "task_id": "t_a1b2c3d4",
-        "author": "biz-director",
+        "author": "team-director",
         "at": 1793164590,
         "verdict": "revise",
         "note": "Первый свод: без срока Роспатент и с неверным MOQ; отправлен критику."
@@ -70,7 +70,7 @@
         "version": 2,
         "kind": "revision",
         "task_id": "t_1000a006",
-        "author": "biz-director",
+        "author": "team-director",
         "at": 1793164725,
         "verdict": null,
         "note": "Учтены три замечания критика (раунд 1)."
@@ -95,21 +95,21 @@
     {
       "id": "ns_3",
       "text": "Подать в Роспатент по классу из Q1 не позже 10.11.2026, после свидетельства ИП",
-      "owner": "biz-ops",
+      "owner": "team-ops",
       "due": "2026-11-10",
       "state": "asked"
     },
     {
       "id": "ns_4",
       "text": "Разослать 4 запроса котировок по городскому шорт-листу с ориентиром MOQ 100",
-      "owner": "biz-ops",
+      "owner": "team-ops",
       "due": "2026-11-03",
       "state": "open"
     },
     {
       "id": "ns_5",
       "text": "Свести «Лист решений Михаила»: Роспатент, канал, kill-критерии",
-      "owner": "biz-director",
+      "owner": "team-director",
       "due": "2026-11-02",
       "state": "open"
     }
@@ -126,7 +126,7 @@
     {
       "id": "q_2",
       "text": "Кто пишет поставщикам упаковки: Илья или Вера?",
-      "for": "biz-director",
+      "for": "team-director",
       "answered": true,
       "answer": "Пишет Илья, Вера готовит спеку SKU.",
       "answered_at": 1793164900
@@ -206,50 +206,338 @@
   ],
   "artifacts": [
     {
-      "path": "D:/Проекты/Vault/Projects/Team/00-Director/Tasks/svod-leto-2026-10-28.md",
-      "title": "Сводный ответ по «Лету»",
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/11-Итог-дня.md",
+      "title": "11-Итог-дня",
       "kind": "md",
-      "exists": false,
-      "size": null,
-      "state": "missing",
+      "exists": true,
+      "size": 5320,
+      "state": "ok",
       "outside_project": false,
-      "reason": null
+      "reason": null,
+      "mtime": 1793165100,
+      "group": "final",
+      "folder": "",
+      "newer_than_svod": true,
+      "from_card": false
     },
     {
-      "path": "D:/Проекты/Комната/data/reports/cafe/r-20261028-0210-a1b2/report.json",
-      "title": "Юнит-экономика набора «Лето 6»",
+      "path": "C:/Work/Rooms/demo/2026-11-06 Письмо поставщику — ответ/Письмо поставщику — ответ.docx",
+      "title": "Письмо поставщику — ответ (сохранено вне папки проекта)",
+      "kind": "docx",
+      "exists": true,
+      "size": 18432,
+      "state": "outside",
+      "outside_project": true,
+      "reason": "Файл сохранён вне папки проекта",
+      "mtime": 1793164400,
+      "group": "final",
+      "folder": "",
+      "newer_than_svod": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/07-Итог-ред2.md",
+      "title": "07-Итог-ред2",
+      "kind": "md",
+      "exists": true,
+      "size": 8412,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793162600,
+      "group": "final",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/12-Почему-свод-остался-на-пятой-редакции-и-что-делать-с-расхождениями-в-смете.md",
+      "title": "12-Почему-свод-остался-на-пятой-редакции-и-что-делать-с-расхождениями-в-смете",
+      "kind": "md",
+      "exists": true,
+      "size": 2140,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793164800,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": true,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/10-Критика-ред2.md",
+      "title": "10-Критика-ред2",
+      "kind": "md",
+      "exists": true,
+      "size": 3310,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793162400,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/09-Проверка-цифр.md",
+      "title": "09-Проверка-цифр",
+      "kind": "md",
+      "exists": true,
+      "size": 2890,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793162200,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/08-Расхождения-смет.md",
+      "title": "08-Расхождения-смет",
+      "kind": "md",
+      "exists": true,
+      "size": 1980,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793162050,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/06-Список-уточнений.md",
+      "title": "06-Список-уточнений",
+      "kind": "md",
+      "exists": true,
+      "size": 1120,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793161900,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/05-Проект-ответа-поставщику-с-таблицей-котировок-упаковки-и-расчётом-доставки-до-склада-кафе-Лето.md",
+      "title": "05-Проект-ответа-поставщику-с-таблицей-котировок-упаковки-и-расчётом-доставки-до-склада-кафе-Лето",
+      "kind": "md",
+      "exists": true,
+      "size": 6740,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793161700,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/04-Черновик-ответа.md",
+      "title": "04-Черновик-ответа",
+      "kind": "md",
+      "exists": true,
+      "size": 5980,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793161500,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/03-Выписка-кафе-Лето.md",
+      "title": "03-Выписка-кафе-Лето",
+      "kind": "md",
+      "exists": true,
+      "size": 2440,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793161300,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "kind": "folder",
+      "title": "_ред2-копии",
+      "folder": "_ред2-копии",
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/_ред2-копии",
+      "exists": true,
+      "size": null,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793161000,
+      "group": "material",
+      "newer_than_svod": false,
+      "count": 2,
+      "items": [
+        {
+          "path": "C:/Проекты/Лето/2026-10-27 Свод по дорожной карте — ответ/_ред2-копии/07-Итог-ред2-копия.md",
+          "title": "07-Итог-ред2-копия",
+          "kind": "md",
+          "exists": true,
+          "size": 8380,
+          "state": "ok",
+          "outside_project": false,
+          "reason": null,
+          "mtime": 1793161000,
+          "group": "final",
+          "folder": "_ред2-копии",
+          "newer_than_svod": false,
+          "from_card": false
+        },
+        {
+          "path": "C:/Проекты/Лето/2026-10-27 Свод по дорожной карте — ответ/_ред2-копии/09-Проверка-цифр-копия.md",
+          "title": "09-Проверка-цифр-копия",
+          "kind": "md",
+          "exists": true,
+          "size": 2870,
+          "state": "ok",
+          "outside_project": false,
+          "reason": null,
+          "mtime": 1793160900,
+          "group": "material",
+          "folder": "_ред2-копии",
+          "newer_than_svod": false,
+          "from_card": false
+        }
+      ]
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/02-План-проверки.md",
+      "title": "02-План-проверки",
+      "kind": "md",
+      "exists": true,
+      "size": 1650,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793160900,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/01-Смета-расчёта.md",
+      "title": "01-Смета-расчёта",
+      "kind": "md",
+      "exists": true,
+      "size": 4100,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793160700,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/_состояние.json",
+      "title": "_состояние",
       "kind": "json",
-      "exists": false,
-      "size": null,
-      "state": "missing",
+      "exists": true,
+      "size": 512,
+      "state": "ok",
       "outside_project": false,
-      "reason": null
+      "reason": null,
+      "mtime": 1793160600,
+      "group": "service",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
     },
     {
-      "path": "D:/Проекты/Vault/Projects/Business areas/Лето/03-Ops/packaging-quotes.xlsx",
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/_оглавление.html",
+      "title": "_оглавление",
+      "kind": "html",
+      "exists": true,
+      "size": 940,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793160550,
+      "group": "service",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Лето — упаковка/2026-10-27 Свод по дорожной карте — ответ/00-Бриф-запроса.md",
+      "title": "00-Бриф-запроса",
+      "kind": "md",
+      "exists": true,
+      "size": 3760,
+      "state": "ok",
+      "outside_project": false,
+      "reason": null,
+      "mtime": 1793160500,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false,
+      "from_card": false
+    },
+    {
+      "path": "C:/Проекты/Vault/Projects/Business areas/Лето/03-Ops/packaging-quotes.xlsx",
       "title": "Котировки упаковки (черновик)",
       "kind": "xlsx",
       "exists": false,
       "size": null,
       "state": "missing",
       "outside_project": false,
-      "reason": null
+      "reason": null,
+      "mtime": null,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false
     },
     {
-      "path": "C:/Work/Rooms/demo/2026-11-06 Письмо Лебедев — ответ/Письмо Лебедев — ответ.docx",
-      "title": "Письмо Лебедев — ответ (сохранено вне папки проекта)",
-      "kind": "docx",
-      "exists": true,
-      "size": 18432,
-      "state": "outside",
-      "outside_project": true,
-      "reason": "Файл сохранён вне папки проекта"
+      "path": "C:/Проекты/Vault/Projects/Team/00-Director/Tasks/svod-leto-2026-10-28.md",
+      "title": "Сводный ответ по «Лету»",
+      "kind": "md",
+      "exists": false,
+      "size": null,
+      "state": "missing",
+      "outside_project": false,
+      "reason": null,
+      "mtime": null,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false
+    },
+    {
+      "path": "C:/Проекты/Комната/data/reports/cafe/r-20261028-0210-a1b2/report.json",
+      "title": "Юнит-экономика набора «Лето 6»",
+      "kind": "json",
+      "exists": false,
+      "size": null,
+      "state": "missing",
+      "outside_project": false,
+      "reason": null,
+      "mtime": null,
+      "group": "material",
+      "folder": "",
+      "newer_than_svod": false
     }
   ],
   "report": {
     "available": true,
     "kind": "spec",
-    "path": "D:/Проекты/Комната/data/reports/cafe/r-20261028-0210-a1b2/report.json",
+    "path": "C:/Проекты/Комната/data/reports/cafe/r-20261028-0210-a1b2/report.json",
     "title": "Юнит-экономика набора «Лето 6»"
   },
   "tree": [
@@ -257,14 +545,14 @@
       "id": "t_a1b2c3d4",
       "parent_ids": [],
       "title": "Дорожная карта проекта: где мы сейчас и что дальше",
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "role": "root",
       "status": "done",
       "started_at": 1793164230,
       "finished_at": 1793164590,
       "summary_md": "## Где мы сейчас\n\nПодготовительная фаза закрыта: стратегия, юридические гайды, проверка в Роспатенте, бренд-пак и исследование упаковки готовы. Продаж пока нет — проект держат три решения: канал исходящих, ИП и подача в Роспатент.\n\n| Этап | Статус | Что мешает |\n|---|---|---|\n| Идея | готово | — |\n| Легализация | в работе | факт ИП не подтверждён, 4 вопроса в СЭС |\n| Бренд / Роспатент | ждёт решения | go/no-go по классам 30 или 30+43 |\n| Упаковка | в работе | нет котировок, MOQ не подтверждены |\n| Производство | не начато | нет тестовой партии |\n| Продажи | не начато | 0 разговоров D19 |\n\n**Что сделать за две недели**\n\n1. Выбрать канал TG/WA (V1-бот / V2 QR / V3 вручную) и запустить поле D19 — Михаил, 1–2 минуты, 0 ₽.\n2. Подать заявление на ИП по чек-листу: ОКВЭД 10.71, не 56.10 — Михаил, около часа.\n3. Запросить свидетельство о регистрации и заключение о размещении в СЭС — Марина, 0 ₽.\n4. Разослать 4 запроса котировок упаковки по городскому шорт-листу — Илья, 0 ₽.\n5. Свести лист решений (Роспатент, канал, kill-критерии) одним документом — Илья → Глеб.\n\nБез первых двух шагов остальное не двигается: производство и продажи стоят на ИНН и канале. Это проект ответа, а не рабочий план.",
       "metadata": {
-        "artifacts_doc": "D:/Проекты/Vault/Projects/Team/00-Director/Tasks/svod-leto-2026-10-28.md",
+        "artifacts_doc": "C:/Проекты/Vault/Projects/Team/00-Director/Tasks/svod-leto-2026-10-28.md",
         "spend": "0 ₽",
         "version": 1
       },
@@ -275,7 +563,7 @@
           "at": 1793164260
         },
         {
-          "author": "biz-director",
+          "author": "team-director",
           "text": "## Где мы сейчас\n\nПодготовительная фаза закрыта: стратегия, юридические гайды, проверка в Роспатенте, бренд-пак и исследование упаковки готовы. Продаж пока нет — проект держат три решения: канал исходящих, ИП и подача в Роспатент.\n\n| Этап | Статус | Что мешает |\n|---|---|---|\n| Идея | готово | — |\n| Легализация | в работе | факт ИП не подтверждён, 4 вопроса в СЭС |\n| Бренд / Роспатент | ждёт решения | go/no-go по классам 30 или 30+43 |\n| Упаковка | в работе | нет котировок, MOQ не подтверждены |\n| Производство | не начато | нет тестовой партии |\n| Продажи | не начато | 0 разговоров D19 |\n\n**Что сделать за две недели**\n\n1. Выбрать канал TG/WA (V1-бот / V2 QR / V3 вручную) и запустить поле D19 — Михаил, 1–2 минуты, 0 ₽.\n2. Подать заявление на ИП по чек-листу: ОКВЭД 10.71, не 56.10 — Михаил, около часа.\n3. Запросить свидетельство о регистрации и заключение о размещении в СЭС — Марина, 0 ₽.\n4. Разослать 4 запроса котировок упаковки по городскому шорт-листу — Илья, 0 ₽.\n5. Свести лист решений (Роспатент, канал, kill-критерии) одним документом — Илья → Глеб.\n\nБез первых двух шагов остальное не двигается: производство и продажи стоят на ИНН и канале. Это проект ответа, а не рабочий план.",
           "at": 1793164590
         }
@@ -283,7 +571,7 @@
       "runs": [
         {
           "id": 71,
-          "profile": "biz-director",
+          "profile": "team-director",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793164230,
@@ -301,7 +589,7 @@
         "t_a1b2c3d4"
       ],
       "title": "Юр-блок: ИП, ОКВЭД и СЭС",
-      "assignee": "biz-lawyer",
+      "assignee": "team-lawyer",
       "role": "worker",
       "status": "done",
       "started_at": 1793164250,
@@ -309,12 +597,12 @@
       "summary_md": "Проверила ИП: ОКВЭД 10.71 подходит, 56.10 добавлять нельзя. Чек-лист на 12 шагов и 4 запроса в СЭС готовы. Факт регистрации не подтверждён — нет свидетельства.",
       "metadata": {
         "artifacts": [
-          "D:/Проекты/Vault/Projects/Business areas/Лето/01-Legal/ИП-CHECKLIST.md"
+          "C:/Проекты/Vault/Projects/Business areas/Лето/01-Legal/ИП-CHECKLIST.md"
         ]
       },
       "comments": [
         {
-          "author": "biz-lawyer",
+          "author": "team-lawyer",
           "text": "Чек-лист обновлён, вопросы к СЭС сведены в один файл.",
           "at": 1793164415
         }
@@ -322,7 +610,7 @@
       "runs": [
         {
           "id": 72,
-          "profile": "biz-lawyer",
+          "profile": "team-lawyer",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793164250,
@@ -340,7 +628,7 @@
         "t_a1b2c3d4"
       ],
       "title": "Производство и упаковка: поставщики городе",
-      "assignee": "biz-ops",
+      "assignee": "team-ops",
       "role": "worker",
       "status": "done",
       "started_at": 1793164255,
@@ -348,12 +636,12 @@
       "summary_md": "10 поставщиков упаковки в Заозёрье, старт-вариант 1,6–24 ₽ за упаковку (оценка). Котировки не отправлены: нет канала связи и решения, кому писать. MOQ тиража 100 не подтверждены.",
       "metadata": {
         "artifacts": [
-          "D:/Проекты/Vault/Projects/Business areas/Лето/03-Ops/packaging-suppliers.md"
+          "C:/Проекты/Vault/Projects/Business areas/Лето/03-Ops/packaging-suppliers.md"
         ]
       },
       "comments": [
         {
-          "author": "biz-ops",
+          "author": "team-ops",
           "text": "Добавила два поставщика из Itajaí, цены ниже на 8%.",
           "at": 1793164465
         }
@@ -361,7 +649,7 @@
       "runs": [
         {
           "id": 73,
-          "profile": "biz-ops",
+          "profile": "team-ops",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793164255,
@@ -380,7 +668,7 @@
         "t_a1b2c3d4"
       ],
       "title": "Бренд и товарный знак: статус и риски",
-      "assignee": "biz-strategy",
+      "assignee": "team-strategy",
       "role": "worker",
       "status": "done",
       "started_at": 1793164260,
@@ -388,14 +676,14 @@
       "summary_md": "«Лето» утверждён 24.09. Проверка в Роспатенте: по классам 30/43/35 от 08.10. Подачи нет: ждёт go/no-go Михаила, класс 30 — 4 400 ₽, 30+43 — 8 800 ₽ со скидкой для ИП. Риск R5: чужая подача.",
       "metadata": {
         "artifacts": [
-          "D:/Проекты/Vault/Projects/Business areas/Лето/05-Strategy/brand-screening-2026-10-08.md"
+          "C:/Проекты/Vault/Projects/Business areas/Лето/05-Strategy/brand-screening-2026-10-08.md"
         ]
       },
       "comments": [],
       "runs": [
         {
           "id": 74,
-          "profile": "biz-strategy",
+          "profile": "team-strategy",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793164260,
@@ -414,7 +702,7 @@
         "t_a1b2c3d4"
       ],
       "title": "Каналы: где продавать первые наборы",
-      "assignee": "biz-marketing",
+      "assignee": "team-marketing",
       "role": "worker",
       "status": "done",
       "started_at": 1793164265,
@@ -422,12 +710,12 @@
       "summary_md": "Сравнила Едок, Развоз, Telegram-каналы и B2B-кофейни: первые 100 наборов выгоднее через Telegram и две кофейни в Centro. Комиссия «Едок» 23% съедает маржу набора. Нужен канал исходящих — блокер 32 дня.",
       "metadata": {
         "artifacts": [
-          "D:/Проекты/Vault/Projects/Business areas/Лето/03-Ops/prodazhi-kanaly.md"
+          "C:/Проекты/Vault/Projects/Business areas/Лето/03-Ops/prodazhi-kanaly.md"
         ]
       },
       "comments": [
         {
-          "author": "biz-marketing",
+          "author": "team-marketing",
           "text": "Добавила расчёт по 3 сценариям, файл в 03-Ops.",
           "at": 1793164405
         }
@@ -435,7 +723,7 @@
       "runs": [
         {
           "id": 75,
-          "profile": "biz-marketing",
+          "profile": "team-marketing",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793164265,
@@ -453,12 +741,12 @@
         "t_a1b2c3d4"
       ],
       "title": "Критик: проверка свода (раунд 1)",
-      "assignee": "biz-critic",
+      "assignee": "team-critic",
       "role": "critic",
       "status": "done",
       "started_at": 1793164600,
       "finished_at": 1793164650,
-      "summary_md": "Вердикт: доработать. Проверены цифры (48 карточек, 0 продаж) и ссылки на артефакты. Три замечания: срок подачи в Роспатент, MOQ по котировкам, противоречие про помещение.",
+      "summary_md": "Вердикт: доработать. Проверены цифры (48 карточек, 0 продаж) и ссылки на файлы. Три замечания: срок подачи в Роспатент, MOQ по котировкам, противоречие про помещение.",
       "metadata": {
         "verdict": "revise",
         "issues": [
@@ -481,12 +769,12 @@
       },
       "comments": [
         {
-          "author": "biz-critic",
+          "author": "team-critic",
           "text": "Срок Роспатент обязателен: без него шаг невыполним.",
           "at": 1793164640
         },
         {
-          "author": "biz-critic",
+          "author": "team-critic",
           "text": "MOQ 100 есть в котировках от 27.10 — поправьте.",
           "at": 1793164645
         }
@@ -494,7 +782,7 @@
       "runs": [
         {
           "id": 76,
-          "profile": "biz-critic",
+          "profile": "team-critic",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793164600,
@@ -513,7 +801,7 @@
         "t_1000a005"
       ],
       "title": "Доработка свода по замечаниям критика",
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "role": "revision",
       "status": "done",
       "started_at": 1793164660,
@@ -528,7 +816,7 @@
       "runs": [
         {
           "id": 77,
-          "profile": "biz-director",
+          "profile": "team-director",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793164660,
@@ -560,84 +848,84 @@
       "at": 1793164250,
       "kind": "claimed",
       "task_id": "t_1000a001",
-      "actor": "biz-lawyer",
+      "actor": "team-lawyer",
       "text": "Антон взяла юридический срез"
     },
     {
       "at": 1793164400,
       "kind": "completed",
       "task_id": "t_1000a003",
-      "actor": "biz-strategy",
+      "actor": "team-strategy",
       "text": "Илья закрыл бренд и знак"
     },
     {
       "at": 1793164410,
       "kind": "completed",
       "task_id": "t_1000a004",
-      "actor": "biz-marketing",
+      "actor": "team-marketing",
       "text": "Марина закрыла каналы"
     },
     {
       "at": 1793164430,
       "kind": "completed",
       "task_id": "t_1000a001",
-      "actor": "biz-lawyer",
+      "actor": "team-lawyer",
       "text": "Антон закрыла юр-срез"
     },
     {
       "at": 1793164480,
       "kind": "completed",
       "task_id": "t_1000a002",
-      "actor": "biz-ops",
+      "actor": "team-ops",
       "text": "Сергей закрыл упаковку и поставщиков"
     },
     {
       "at": 1793164500,
       "kind": "claimed",
       "task_id": "t_1000a005",
-      "actor": "biz-critic",
+      "actor": "team-critic",
       "text": "Критик взял свод на проверку"
     },
     {
       "at": 1793164545,
       "kind": "commented",
       "task_id": "t_1000a005",
-      "actor": "biz-critic",
+      "actor": "team-critic",
       "text": "Вердикт: принять с одной правкой"
     },
     {
       "at": 1793164590,
       "kind": "completed",
       "task_id": "t_a1b2c3d4",
-      "actor": "biz-director",
+      "actor": "team-director",
       "text": "Сводный ответ готов (версия 1), отправлен критику"
     },
     {
       "at": 1793164600,
       "kind": "claimed",
       "task_id": "t_1000a005",
-      "actor": "biz-critic",
+      "actor": "team-critic",
       "text": "Критик взял свод на проверку (раунд 1)"
     },
     {
       "at": 1793164650,
       "kind": "completed",
       "task_id": "t_1000a005",
-      "actor": "biz-critic",
+      "actor": "team-critic",
       "text": "Вердикт: доработать — 3 замечания"
     },
     {
       "at": 1793164660,
       "kind": "created",
       "task_id": "t_1000a006",
-      "actor": "biz-director",
+      "actor": "team-director",
       "text": "Создана доработка по замечаниям критика"
     },
     {
       "at": 1793164725,
       "kind": "completed",
       "task_id": "t_1000a006",
-      "actor": "biz-director",
+      "actor": "team-director",
       "text": "Версия 2 свода готова"
     }
   ],
@@ -667,7 +955,7 @@
       "id": "c2",
       "at": 1793164250,
       "author_kind": "agent",
-      "author": "biz-director",
+      "author": "team-director",
       "author_label": "Глеб · руководитель комнаты",
       "text": "Принял; передал Антону — юр-блок (ИП, СЭС), Илье — бренд и Роспатент, Марине — каналы, Сергею — упаковку и поставщиков. Свод и критику соберу сам.",
       "task_id": "t_a1b2c3d4",
@@ -677,7 +965,7 @@
       "id": "c3",
       "at": 1793164430,
       "author_kind": "agent",
-      "author": "biz-lawyer",
+      "author": "team-lawyer",
       "author_label": "Антон · исполнитель",
       "text": "Заявление на ИП подано 27.10 по ОКВЭД 10.71; свидетельство о регистрации ждём, по СЭС открыты 4 вопроса. Подача в Роспатент после свидетельство.",
       "task_id": "t_1000a001",
@@ -687,7 +975,7 @@
       "id": "c4",
       "at": 1793164480,
       "author_kind": "agent",
-      "author": "biz-ops",
+      "author": "team-ops",
       "author_label": "Сергей · исполнитель",
       "text": "У трёх поставщиков MOQ 100 и цена 42–48 ₽ за короб, остальные просят 500. Образцы у A и B.",
       "task_id": "t_1000a002",
@@ -727,7 +1015,7 @@
       "id": "c6",
       "at": 1793164730,
       "author_kind": "agent",
-      "author": "biz-director",
+      "author": "team-director",
       "author_label": "Глеб · руководитель комнаты",
       "text": "Принял: добавил риск СЭС в свод и в шаги. Передал: Антону — проверить сроки лицензии, Вере — пересчитать себестоимость с учётом простоя.",
       "task_id": "t_a1b2c3d4",

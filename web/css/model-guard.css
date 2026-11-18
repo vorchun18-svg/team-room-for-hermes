@@ -1,0 +1,280 @@
+/*
+ * model-guard.css — «Контроль моделей» (волна 23, MG2).
+ *
+ * Где живёт: строка модели в карточке участника, кнопки управления работой
+ * (карточка участника и дерево работ), лента событий контроля на странице
+ * запроса, поле режима в диалоге комнаты, строка «Остановлено вами…».
+ *
+ * Всё на токенах темы — светлая и тёмная получаются сами, без отдельных
+ * правил. Длинные имена моделей (`deepseek-v4.1-flash:1017`) переносятся,
+ * а не обрезаются: у строки всегда есть подсказка с полным значением.
+ * Кнопки не ниже 32 px и переносятся на вторую строку в узком месте.
+ */
+
+/* ─────────────────────────────────────── строка «Модель: … · запуск: …» */
+
+/* Чип в шапке «Команды»: сколько карточек собрались уйти не на ту модель. */
+.mg-head-chip {
+  min-height: 32px;
+  padding-inline: 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.mg-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  min-width: 0;
+  margin: 2px 0 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-editor);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ui-text-secondary);
+}
+
+.mg-line--ok { border-left-color: var(--ok); }
+/* «ждёт запуска»: модель сменили позже последнего запуска — не тревога. */
+.mg-line--pending { border-left-color: var(--accent-strong, var(--accent)); }
+.mg-line--warn { border-left-color: var(--warn); background: var(--warn-soft); }
+.mg-line--unknown { border-left-color: var(--border); }
+
+.mg-line__label {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--ui-text-secondary);
+}
+
+.mg-line__model {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--ui-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.mg-line__sep { flex: 0 0 auto; color: var(--ui-text-tertiary); }
+
+.mg-line__run {
+  flex: 1 1 120px;
+  min-width: 0;
+  color: var(--ui-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.mg-line__cost { flex: 0 0 auto; color: var(--ui-text-secondary); }
+
+.mg-line__mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mg-line__mark--ok { color: var(--ok-ink); }
+.mg-line__mark--warn { color: var(--warn-ink); }
+.mg-line__mark--unknown,
+.mg-line__mark--pending,
+.mg-line__mark--new { color: var(--ui-text-tertiary); font-weight: 500; }
+
+.mg-line__check {
+  flex: 0 0 auto;
+  min-height: 32px;
+  margin-left: auto;
+}
+
+/* ─────────────────────────────────────────── кнопки управления работой */
+
+.mg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mg-actions[hidden] { display: none; }
+
+.mg-actions__btn {
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.mg-actions--compact .mg-actions__btn {
+  min-height: 30px;
+  padding-inline: 8px;
+}
+
+/* «Остановлено вами в 10:41 · модель: …» + «Продолжить» */
+.mg-stopped {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+  margin: 2px 0 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--ui-yellow);
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mg-stopped__text {
+  flex: 1 1 160px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mg-stopped__btn { flex: 0 0 auto; min-height: 32px; }
+
+/* ─────────────────────────────────────── лента событий на странице запроса */
+
+.mg-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.mg-feed__head { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+
+.mg-feed__title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.mg-feed__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ui-text-primary);
+}
+
+.mg-feed__chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+
+.mg-feed__lead { margin: 0; max-width: 74ch; }
+
+.mg-feed__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mg-feed__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-editor);
+}
+
+.mg-feed__item--stopped { border-left: 3px solid var(--warn); }
+.mg-feed__item--fixed { border-left: 3px solid var(--ok); }
+.mg-feed__item--unknown { border-left: 3px solid var(--border); }
+
+.mg-feed__icon {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-xs);
+  background: var(--ui-bg-subtle, var(--ui-bg-editor));
+  color: var(--ui-text-secondary);
+}
+
+.mg-feed__icon--warn { background: var(--warn-soft); color: var(--warn-ink); }
+.mg-feed__icon--ok { background: var(--ok-soft); color: var(--ok-ink); }
+
+.mg-feed__body { flex: 1 1 auto; min-width: 0; }
+
+.mg-feed__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ui-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.mg-feed__meta {
+  margin: 2px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 2px;
+  overflow-wrap: anywhere;
+}
+
+/* ─────────────────────────────────────────── режим в диалоге комнаты */
+
+.mg-mode__options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  min-width: 0;
+}
+
+.mg-mode__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.mg-mode__option:hover { border-color: var(--border); }
+
+.mg-mode__option:has(input:checked) {
+  border-color: var(--accent-strong, var(--accent));
+  background: var(--ui-bg-elevated, var(--ui-bg-editor));
+}
+
+.mg-mode__option input { flex: 0 0 auto; margin-top: 2px; }
+
+.mg-mode__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.mg-mode__label { font-weight: 600; font-size: 13px; }
+
+.mg-mode__hint { overflow-wrap: anywhere; }
+
+/* ─────────────────────────────────────────────────────────── узкое место */
+
+@container (max-width: 620px) {
+  .mg-line { font-size: 11.5px; }
+  .mg-line__check { margin-left: 0; }
+  .mg-feed { padding: 10px 12px; }
+}
+
+@media (max-width: 720px) {
+  .mg-line,
+  .mg-stopped,
+  .mg-feed__item { padding-inline: 8px; }
+  .mg-actions { gap: 4px; }
+  .mg-feed__title { font-size: 13px; }
+}

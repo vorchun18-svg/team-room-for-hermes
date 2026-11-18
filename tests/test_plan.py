@@ -555,18 +555,18 @@ class StreamBodyTests(PlanBase):
         self.assertIn("в тело каждой карточки перенеси суть", body)
 
     def test_owner_label_is_russian_not_profile_id(self):
-        room = self.make_room(title="Подписи", orchestrator="biz-director",
-                              members=[{"profile": "biz-ops", "note": "Операции: поставки и упаковка"},
-                                       {"profile": "biz-cfo", "role": "worker", "note": ""}])
-        result = plan.validate_plan(room, [mkstream("Рецептура", owner="biz-ops"),
-                                           mkstream("Смета", owner="biz-cfo"),
-                                           mkstream("Свод", owner="biz-director")])
+        room = self.make_room(title="Подписи", orchestrator="team-director",
+                              members=[{"profile": "team-ops", "note": "Операции: поставки и упаковка"},
+                                       {"profile": "team-cfo", "role": "worker", "note": ""}])
+        result = plan.validate_plan(room, [mkstream("Рецептура", owner="team-ops"),
+                                           mkstream("Смета", owner="team-cfo"),
+                                           mkstream("Свод", owner="team-director")])
         labels = {s["title"]: (s["owner"], s["owner_label"]) for s in result["streams"]}
-        self.assertEqual(labels["Рецептура"], ("biz-ops", "Операции"))
-        self.assertEqual(labels["Смета"], ("biz-cfo", "Экономика"))
+        self.assertEqual(labels["Рецептура"], ("team-ops", "Операции"))
+        self.assertEqual(labels["Смета"], ("team-cfo", "Экономика"))
         self.assertEqual(labels["Свод"][1], "руководитель комнаты")
         for _owner, label in labels.values():
-            self.assertNotIn("biz-", label)
+            self.assertNotIn("team-", label)
         self.ingest([mkstream("Рецептура")])
         stored = plan.load(self.cfg, self.room["id"])
         plan.fill_labels(stored, self.room)

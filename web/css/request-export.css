@@ -1,0 +1,194 @@
+/**
+ * request-export.css — кнопки экспорта свода и печать «как документ»
+ * (W20-U3, пункт 17 / P13).
+ *
+ * Три выхода одного блока «Свод»: В Obsidian, скачать HTML, печать/PDF.
+ * Первые два — файлы, третий — печать браузера со стилем `@media print`: свод
+ * становится документом (без колонки «От вас нужно», без ленты, без кнопок и меню),
+ * а всё оформление остаётся прежним. Никаких новых зависимостей.
+ *
+ * Печать: A4, поля 16 мм, колонтитулы браузера человек отключает сам; ссылки в
+ * тексте остаются читаемыми (адрес не печатается — он технический).
+ */
+
+/* ── группа кнопок экспорта ─────────────────────────────────────────────── */
+.req-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+.req-export__btn {
+  /* Кнопки одной высоты с «Копировать» и «Доработать свод». */
+  white-space: nowrap;
+}
+.req-export__btn .codicon { font-size: 13px; }
+.req-export__sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border-soft);
+}
+/* Подсказка «куда сохранится» — мелкая строка рядом, не в подписи кнопки. */
+.req-export__note {
+  flex-basis: 100%;
+  margin-top: 4px;
+  font-size: var(--text-sm);
+  color: var(--ui-text-quaternary);
+  overflow-wrap: anywhere;
+}
+
+/* Узкое окно: кнопки экспорта переносятся, но подписи остаются читаемыми
+   (три значка без слов человек не разгадает). Группа занимает свою строку. */
+@media (max-width: 900px) {
+  .req-export { flex-basis: 100%; gap: var(--space-1); }
+  .req-export__btn { padding-left: 8px; padding-right: 8px; }
+  .req-export__sep { display: none; }
+}
+@media (max-width: 640px) {
+  .req-export__btn { font-size: var(--text-sm); }
+}
+
+/* ── печать ─────────────────────────────────────────────────────────────── */
+@media print {
+  /* Только документ: служебные и живые блоки не печатаем. */
+  .req__aside,
+  .req-thread,
+  .req-worklog,
+  .req-menu,
+  .req__headactions,
+  .req__crumb,
+  .req-export,
+  .req-export__note,
+  .req-answer__foot,
+  .req-answer__live-btn,
+  .req-answer__live-note,
+  .req-answer__vcap .btn,
+  .req-answer__stale .btn,
+  .req-pipe__summary .btn,
+  .req-tree,
+  .req-dev,
+  .req-timeline,
+  .req-plan,
+  .sidebar,
+  .topbar,
+  .toasts,
+  .dialog-backdrop,
+  .btn,
+  .banner__action {
+    display: none !important;
+  }
+
+  /* Печатаем на светлом фоне, даже если включена тёмная тема. */
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  body {
+    font-size: 11.5pt;
+    line-height: 1.5;
+  }
+  .view {
+    overflow: visible !important;
+    height: auto !important;
+    padding: 0 !important;
+  }
+  .req,
+  .req__main {
+    display: block !important;
+    gap: 0 !important;
+    max-width: none !important;
+  }
+  .card,
+  .req-answer {
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    break-inside: auto;
+  }
+  .req-answer__body {
+    max-width: none !important;
+  }
+
+  /* Заголовок документа: название запроса целиком, статус строкой. */
+  .req__title {
+    font-size: 18pt;
+    line-height: 1.25;
+    margin: 0 0 4pt;
+  }
+  .req__meta {
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 6pt;
+    margin-bottom: 10pt;
+  }
+  .req-answer__title {
+    font-size: 14pt;
+    margin: 12pt 0 6pt;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 3pt;
+  }
+  .req-answer__ver,
+  .req-answer__vcap,
+  .req-answer__live-text,
+  .req-answer__hint {
+    font-size: 9.5pt;
+    color: #555 !important;
+  }
+
+  /* Разделы свода не рвутся между страницами посередине абзаца-заголовка. */
+  .markdown h1,
+  .markdown h2,
+  .markdown h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  .markdown table {
+    break-inside: auto;
+    width: 100%;
+  }
+  .markdown tr,
+  .markdown td,
+  .markdown th {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .markdown img {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+  .markdown pre,
+  .markdown code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .markdown a {
+    color: inherit !important;
+    text-decoration: none !important;
+  }
+  /* Ссылки не печатаем адресом: он технический и ломает строку. */
+  .markdown a[href]::after {
+    content: '';
+  }
+  .markdown blockquote {
+    border-left: 2pt solid #ccc;
+    margin: 6pt 0;
+    padding-left: 8pt;
+    color: #444;
+  }
+
+  /* Служебные «пустые» блоки и подсказки в печати не нужны. */
+  .req-answer__notice,
+  .req-answer__changes-head .btn,
+  .req-side__hint,
+  .req-q__common-hint {
+    display: none !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 16mm 14mm;
+  }
+}

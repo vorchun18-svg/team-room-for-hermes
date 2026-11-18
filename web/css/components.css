@@ -79,11 +79,34 @@
 /* Строка сетки ограничена высотой окна: без minmax(0, 1fr) длинная вьюха
    растягивала ряд (и сайдбар) до 1700+ px, низ страницы обрезался навсегда. */
 .app { display: grid; grid-template-columns: var(--sidebar-width) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100dvh; overflow: hidden; }
-.app__main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--background); }
+/* W21-R1: раскладка вьюх считается по ДОСТУПНОЙ ширине вида, а не по ширине
+   ОКНА: меню (развёрнутое или полосой значков) больше не «съедает» центр
+   незаметно для @media. Контейнер — колонка содержимого (она же ширина #view). */
+.app__main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--background);
+  container-type: inline-size; container-name: view; }
 .view {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  /* W25-L1: верхнее поле вида — переменной: липкая панель свода поднимается
+     на его высоту, иначе между панелью и краем прокрутки видно уезжающий текст. */
+  --view-pad-top: var(--space-6);
   padding: var(--space-6) var(--space-6) var(--space-12);
+  /* W25-L1 (R5 §7.6): липкая панель свода (40 px) не должна закрывать якорь
+     блока при переходе по ссылке/подсветке. */
+  scroll-padding-top: calc(var(--req-bar-h) + var(--space-2));
 }
+/* W25-L1 (R5 §7.1): поля вида — 24 px при виде ≥ 900, 16 при 700–899,
+   12 при < 700. Было всегда 24: при виде 403–683 это 12 % ширины в никуда. */
+.app[data-layout="s"] .view { --view-pad-top: var(--space-4); padding: var(--space-4) var(--space-4) var(--space-10); }
+.app[data-layout="xs"] .view { --view-pad-top: var(--space-3); padding: var(--space-3) var(--space-3) var(--space-8); }
+/* W25-L1 (R5 §7.1): при виде < 700 шапка ужимается — этап и переключатель охвата
+   уходят (на узком охват не выбирается: экран и так показывает один запрос),
+   у кнопок «папка» и «настройки комнаты» остаются значки с подсказкой.
+   Замер до правки: группа действий 408 px в строке 396 px при окне 420. */
+.app[data-layout="xs"] .topbar__meta { display: none; }
+.app[data-layout="xs"] .pd-btn__label,
+.app[data-layout="xs"] .room-settings__label { display: none; }
+.app[data-layout="xs"] .pd-btn,
+.app[data-layout="xs"] .room-settings { padding: 0; width: var(--control-md); justify-content: center; }
 .view__inner { width: 100%; max-width: var(--content-max); margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-5); }
 
 /* ── Сайдбар ─────────────────────────────────────────────────────────────── */
@@ -209,7 +232,7 @@
 .sidebar__scrim { display: none; }
 
 /* ── Шапка и вкладки ─────────────────────────────────────────────────────── */
-/* Три зоны: (гамбургер) крошки | мета (этап, «вся комната», команда) | действия.
+/* Три зоны: (гамбургер) крошки | мета (этап словами, охват) | действия.
    Правила, без которых шапка «налезает»: у каждой зоны min-width: 0, кроме
    правой группы (она не сжимается), крошки режутся многоточием с title. */
 .topbar { flex: none; display: flex; flex-direction: column; background: var(--background); border-bottom: 1px solid var(--border); min-width: 0; }
@@ -224,9 +247,18 @@
 .topbar__title { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; flex: 1 1 auto; }
 .topbar__name { font-size: var(--text-md); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .topbar__sub { font-size: var(--text-sm); color: var(--muted-foreground); white-space: nowrap; }
-.topbar__phase { flex: none; max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.topbar__team { display: flex; align-items: center; padding-right: var(--space-1); flex: none; }
-.topbar__team .avatar + .avatar { margin-left: -6px; }
+.topbar__phase { flex: 0 1 auto; max-width: 28ch; overflow: hidden; white-space: nowrap; }
+.topbar__phase .term-help--chip { margin-left: 4px; }
+/* W20-U1: команда из шапки ушла на вкладку «Команда» — правило оставлено
+   пустым на случай старых сборок (аватары больше не рисуются). */
+.topbar__team { display: none; }
+/* Группы значков: инструменты (поиск, палитра, настройки) и комната (папка,
+   настройки комнаты) — разделены тонкой чертой, чтобы не читались как пять
+   разных кнопок (аудит 06.11: «5 кнопок разного стиля — назначение неясно»). */
+.topbar__group { display: flex; align-items: center; gap: 2px; flex: none; }
+.topbar__group--tools { padding-left: 2px; }
+.topbar__divider { width: 1px; height: 18px; background: var(--border); flex: none; }
+.topbar__tool { flex: none; }
 /* Кнопка поиска: поле-кнопка, которое не схлопывается в ноль. */
 .topbar__search { flex: none; min-width: 0; white-space: nowrap; }
 .topbar__search .topbar__search-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -250,7 +282,7 @@
 }
 
 
-/* Чип фильтра «Только этот запрос ✕»: кнопка, клик снимает фильтр. */
+/* Чип фильтра «Этот запрос ✕»: кнопка, клик снимает фильтр. */
 .scope-chip {
   cursor: pointer; border: 1px solid var(--border); background: var(--info-soft);
   color: var(--info-ink); font: inherit; font-size: var(--text-sm); font-weight: 500;
@@ -259,6 +291,49 @@
 .scope-chip:focus-visible { box-shadow: var(--focus-ring); }
 .scope-chip__x { margin-left: 2px; font-size: 11px; line-height: 1; opacity: 0.75; }
 .scope-chip:hover .scope-chip__x { opacity: 1; }
+
+/* ── Переключатель охвата «Вся комната / Этот запрос» (W20-U1, P8) ────────── */
+/* Одна рамка на два сегмента: видно и текущее состояние, и куда переключиться.
+   Высота 24 px, кегль 12–13: в шапке это второстепенный орган управления. */
+.scope-switch {
+  display: inline-flex; align-items: stretch; flex: none; min-width: 0;
+  border: 1px solid var(--border); border-radius: var(--radius-full);
+  background: var(--ui-bg-elevated, var(--card)); overflow: hidden;
+}
+.scope-switch__seg {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 var(--space-3);
+  color: var(--ui-text-tertiary); font-size: var(--text-sm); line-height: 1;
+  text-decoration: none; white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.scope-switch__seg + .scope-switch__seg { border-left: 1px solid var(--border); }
+.scope-switch__seg:hover { background: var(--ui-row-hover-background); color: var(--foreground); }
+.scope-switch__seg:focus-visible { box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+.scope-switch__seg--active {
+  background: var(--ui-bg-quaternary); color: var(--foreground); font-weight: 600;
+}
+@media (max-width: 900px) {
+  .scope-switch__seg { padding: 0 var(--space-2); }
+}
+@media (max-width: 560px) {
+  /* На узком экране два сегмента не влезают в строку с крошками — показываем
+     только состояние (переключатель живёт на вкладках и в крошках). */
+  .scope-switch__seg:not(.scope-switch__seg--active) { display: none; }
+}
+
+/* ── Подсказка «?» у нетривиального слова (W20-U1, P7) ───────────────────── */
+.term-help {
+  display: inline-grid; place-items: center; width: 17px; height: 17px; padding: 0;
+  margin-left: 4px; border: 1px solid var(--ui-stroke-secondary); border-radius: var(--radius-full);
+  background: var(--ui-bg-quaternary); color: var(--ui-text-secondary);
+  font: inherit; font-size: var(--text-2xs); font-weight: 700; line-height: 1; cursor: help;
+  vertical-align: baseline;
+}
+.term-help:hover { color: var(--foreground); border-color: var(--ui-text-secondary); background: var(--ui-bg-quinary); }
+.term-help:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.term-help__text p { margin: 0 0 var(--space-2); }
+.term-help__text p:last-child { margin-bottom: 0; }
+.term-help__hint { font-size: var(--text-base); }
 
 .tabs {
   display: flex; align-items: stretch; gap: var(--space-1); height: var(--tabbar-height); min-width: 0;
@@ -384,7 +459,8 @@
   border: 1px solid color-mix(in srgb, hsl(var(--h) 58% 46%) 22%, transparent);
   font-size: var(--text-sm); font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase;
 }
-.avatar--sm { width: 20px; height: 20px; font-size: 9px; }
+/* W25-L1 (R5 §9 п. 12): мельче 11 px текста нет — инициалы в аватаре тоже 11. */
+.avatar--sm { width: 20px; height: 20px; font-size: var(--text-2xs); }
 .avatar--lg { width: 30px; height: 30px; font-size: var(--text-sm); }
 .avatar--stacked { box-shadow: 0 0 0 2px var(--background); }
 :root[data-theme='dark'] .avatar {
@@ -610,7 +686,7 @@
 .chip { height: 22px; font-size: var(--text-xs); }
 .nav-item { min-height: 32px; }
 .menu__item { min-height: 30px; }
-.avatar--sm { font-size: 10px; }
+.avatar--sm { font-size: var(--text-2xs); }
 .recent__body { line-height: var(--leading-normal); }
 
 /* Тема хозяина. Пока плагин Hermes передаёт свою тему, наш переключатель скрыт:
@@ -671,6 +747,11 @@
   .brand { align-items: center; }
   .topbar__row { padding: var(--space-1) var(--space-4); row-gap: var(--space-1); }
   .tabs { padding: 0 var(--space-4); }
+  /* W21-R2: на «пол-экрана» (683 px = половина 1366) шесть вкладок комнаты
+     влезали в строку только наполовину — крайняя («Журнал») была обрезана.
+     Отступы вкладок уже, текст и цели нажатия целы, прокрутка не нужна. */
+  .tabs { gap: 2px; }
+  .tab { padding: 0 var(--space-1); }
   .view { padding: var(--space-4) var(--space-4) var(--space-10); }
   /* Мета (этап, «вся комната», команда) — второй строкой шапки, во всю ширину. */
   .topbar__meta { order: 9; flex: 1 1 100%; min-height: 26px; overflow: hidden; }
@@ -720,5 +801,13 @@
     background: var(--popover); border-top: 1px solid var(--border);
   }
   .dialog__foot .btn { flex: 1 1 auto; min-height: 36px; justify-content: center; }
+}
+
+/* W21-R2: совсем узкое окно (< 660 px) — вкладки комнаты переносятся на вторую
+   строку, а не уезжают за край: прокрутка без видимого ползунка оставляла
+   «Журнал» недоступным мышью. Высота шапки растёт на одну строку, вид сдвигается
+   на те же 10 px; горизонтальной прокрутки по-прежнему нет. */
+@media (max-width: 660px) {
+  .tabs { flex-wrap: wrap; height: auto; min-height: var(--tabbar-height); align-content: center; }
 }
 

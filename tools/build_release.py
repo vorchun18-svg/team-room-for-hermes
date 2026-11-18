@@ -110,11 +110,31 @@ COPY_TOOLS = (
     "seed_content.py",
     # мост к hermes_cli: без него не применяются модель и мышление карточки
     "kb_bridge.py",
+    # мост генерации названий запросов (server/titles.py запускает его как скрипт)
+    "title_bridge.py",
+    # поддержка тестов: заготовки «хода работы» и сброс моделей комнаты
+    "worklog_fixture_db.py",
+    "reset_room_models.py",
+    # заглушка hermes для CI (.github/workflows/ci.yml)
+    "ci_hermes_shim.py",
+    "ci_hermes_shim.cmd",
+    "ci_hermes_shim.sh",
     # сам сборщик и сканер — чтобы релиз можно было пересобрать
     "build_release.py",
     "release_scan.py",
+    # W23-REV3: их запускают e2e_ui (сценарий S11) и tests/test_layout_split.py —
+    # без них в копии релиза сценарий и тест не работают
+    "e2e_project.py",
+    "probe_layout_split.py",
     # проверка переносимости на «чистой машине» (без наших путей и Vault)
     "portability_check.py",
+    # W21-REV2: файлы, на которые ссылаются тесты и серверный код, должны ехать в
+    # релизе — иначе собранный пакет падает на импорте (tests/test_layout_split.py,
+    # tests/questions-ui.test.mjs). `probe_*.py` сознательно НЕ копируем: это
+    # разовые замеры разработчика, а не часть продукта.
+    "cdp.py",
+    "e2e_questions.py",
+    "window_spy.py",
 )
 
 COPY_DOCS = (
@@ -147,7 +167,8 @@ SHOT_MAX_WIDTH = 1280
 IGNORE_PARTS = {"__pycache__", ".git", "node_modules", ".pytest_cache", "data", ".mypy_cache"}
 
 #: отладочные страницы-макеты интерфейса в релиз не идут
-COPY_SKIP_GLOBS: tuple[str, ...] = ()
+#: таблица обезличивания — данные сборки, а не поставка: в публичный архив не идёт
+COPY_SKIP_GLOBS: tuple[str, ...] = ("release_sanitize.json", "tools/release_sanitize.json")
 
 #: файлы установки, которых может ещё не быть (их пишет установщик)
 OPTIONAL_DOCS = ("INSTALL.md",)
@@ -1060,9 +1081,13 @@ def build(args) -> int:
         print("  ! config.py: %s" % p)
     print("  config.py: дефолты через TEAMROOM_HOME/%USERPROFILE%")
 
-    report = sanitize_tree(pkg, table)
-    print("  обезличено: %d замен в %d файлах, переименовано %d файлов"
-          % (report["total"], report["files_touched"], report["renamed"]))
+    report = sanitize_tree(pkg, table) if not getattr(args, "no_sanitize", False) else {
+        "total": 0, "files_touched": 0, "renamed": 0, "counts": {}}
+    if getattr(args, "no_sanitize", False):
+        print("  обезличивание отключено (--no-sanitize): архив собирается ровно из чекаута")
+    else:
+        print("  обезличено: %d замен в %d файлах, переименовано %d файлов"
+              % (report["total"], report["files_touched"], report["renamed"]))
     scaled = scale_fixture_money(pkg)
     if scaled:
         print("  суммы в отчётах пересчитаны в рубли (×%d): %s" % (MONEY_SCALE, ", ".join(scaled)))
@@ -1185,6 +1210,9 @@ def main(argv=None) -> int:
     parser.add_argument("--no-git", action="store_true", help="не делать git init/коммит/тег")
     parser.add_argument("--no-archive", action="store_true",
                         help="не собирать team-room-<version>.zip и .tar.gz")
+    parser.add_argument("--no-sanitize", action="store_true",
+                        help="не применять таблицу обезличивания: архив собирается из чекаута "
+                             "как есть (публичный репозиторий уже чист)")
     parser.add_argument("--out-dir", default=None,
                         help="куда положить архивы (по умолчанию .../cache/scratch/release)")
     parser.add_argument("--allow-missing-install", action="store_true",

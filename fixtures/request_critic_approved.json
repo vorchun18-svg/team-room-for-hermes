@@ -23,7 +23,7 @@
     "total": 4,
     "percent": 100
   },
-  "assignee": "biz-director",
+  "assignee": "team-director",
   "needs_you": false,
   "preview": "Собери шорт-лист поставщиков упаковки в Заозёрье под тираж 100 наборов, проверь MOQ и сроки.",
   "archived": false,
@@ -36,7 +36,7 @@
     "state": "ready",
     "version": 1,
     "text_md": "## Ответ\n\nШорт-лист упаковки под тираж 100 наборов собран: три поставщика в Заозёрье подтвердили MOQ 100 и срок 12–15 дней.\n\n| Поставщик | Город | Цена за набор | MOQ | Срок |\n|---|---|---|---|---|\n| Короб-Мастер | Заозёрье | 48 ₽ | 100 | 12 дней |\n| Тара-Юг | Сосновка | 52 ₽ | 100 | 15 дней |\n| Пак-Сервис | Ольховка | 43,5 ₽ | 500 | 10 дней |\n\n**Вывод:** под первые 100 наборов выгоднее Короб-Мастер — MOQ 100 и печать входит в цену. Пак-Сервис дешевле на объёме от 500, вернуться к нему на третьем тираже.\n\n## Дальше\n\n1. Запросить у Короб-Мастер образец с печатью и договор — Илья, до 01.11.\n2. Проверить, что материал коробки пищевой (сертификат Роспотребнадзора) — Марина, до 03.11.\n3. Заложить 48 ₽ в юнит-экономику набора — Глеб, до 02.11.\n\nКритик проверил: цифры совпадают с котировками, ссылок на непроверенные источники нет. Это проект ответа.",
-    "author": "biz-director",
+    "author": "team-director",
     "at": 1793170430,
     "source_task": "t_c4d2e118",
     "legacy": false,
@@ -45,7 +45,7 @@
         "version": 1,
         "kind": "initial",
         "task_id": "t_c4d2e118",
-        "author": "biz-director",
+        "author": "team-director",
         "at": 1793170430,
         "verdict": "approve",
         "note": "Критик принял версию 1 без замечаний."
@@ -56,21 +56,21 @@
     {
       "id": "ns_1",
       "text": "Запросить у Короб-Мастер образец с печатью и проект договора",
-      "owner": "biz-ops",
+      "owner": "team-ops",
       "due": "2026-11-01",
       "state": "open"
     },
     {
       "id": "ns_2",
       "text": "Проверить сертификат Роспотребнадзора на пищевой картон",
-      "owner": "biz-lawyer",
+      "owner": "team-lawyer",
       "due": "2026-11-03",
       "state": "open"
     },
     {
       "id": "ns_3",
       "text": "Заложить 48 ₽ за набор в юнит-экономику",
-      "owner": "biz-cfo",
+      "owner": "team-cfo",
       "due": "2026-11-02",
       "state": "open"
     }
@@ -132,7 +132,7 @@
   ],
   "artifacts": [
     {
-      "path": "D:/Проекты/Vault/Projects/Business areas/Лето/Упаковка/шорт-лист-2026-10-28.md",
+      "path": "C:/Проекты/Vault/Projects/Business areas/Лето/Упаковка/шорт-лист-2026-10-28.md",
       "title": "Шорт-лист поставщиков упаковки",
       "kind": "md",
       "exists": false,
@@ -150,7 +150,7 @@
       "id": "t_c4d2e118",
       "parent_ids": [],
       "title": "Поставщики упаковки: шорт-лист и MOQ",
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "role": "root",
       "status": "done",
       "started_at": 1793170130,
@@ -163,7 +163,7 @@
       "runs": [
         {
           "id": 80,
-          "profile": "biz-director",
+          "profile": "team-director",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793170130,
@@ -181,7 +181,7 @@
         "t_c4d2e118"
       ],
       "title": "Собрать котировки упаковки городе",
-      "assignee": "biz-ops",
+      "assignee": "team-ops",
       "role": "worker",
       "status": "done",
       "started_at": 1793170150,
@@ -192,7 +192,7 @@
       "runs": [
         {
           "id": 81,
-          "profile": "biz-ops",
+          "profile": "team-ops",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793170150,
@@ -211,7 +211,7 @@
         "t_c4d2e118"
       ],
       "title": "Пищевой картон: требования Роспотребнадзора",
-      "assignee": "biz-lawyer",
+      "assignee": "team-lawyer",
       "role": "worker",
       "status": "done",
       "started_at": 1793170160,
@@ -222,7 +222,7 @@
       "runs": [
         {
           "id": 82,
-          "profile": "biz-lawyer",
+          "profile": "team-lawyer",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793170160,
@@ -240,7 +240,7 @@
         "t_c4d2e118"
       ],
       "title": "Цена набора в юнит-экономике",
-      "assignee": "biz-cfo",
+      "assignee": "team-cfo",
       "role": "worker",
       "status": "done",
       "started_at": 1793170170,
@@ -251,7 +251,7 @@
       "runs": [
         {
           "id": 83,
-          "profile": "biz-cfo",
+          "profile": "team-cfo",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793170170,
@@ -270,7 +270,7 @@
         "t_c4d2e118"
       ],
       "title": "Критик: проверка шорт-листа (раунд 1)",
-      "assignee": "biz-critic",
+      "assignee": "team-critic",
       "role": "critic",
       "status": "done",
       "started_at": 1793170320,
@@ -282,7 +282,7 @@
       },
       "comments": [
         {
-          "author": "biz-critic",
+          "author": "team-critic",
           "text": "Проверила цены и MOQ по трём поставщикам — сходится.",
           "at": 1793170400
         }
@@ -290,7 +290,7 @@
       "runs": [
         {
           "id": 84,
-          "profile": "biz-critic",
+          "profile": "team-critic",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793170320,
@@ -322,42 +322,42 @@
       "at": 1793170300,
       "kind": "completed",
       "task_id": "t_c4d2e11a",
-      "actor": "biz-ops",
+      "actor": "team-ops",
       "text": "Котировки собраны"
     },
     {
       "at": 1793170300,
       "kind": "completed",
       "task_id": "t_c4d2e11b",
-      "actor": "biz-lawyer",
+      "actor": "team-lawyer",
       "text": "Требования к картону описаны"
     },
     {
       "at": 1793170300,
       "kind": "completed",
       "task_id": "t_c4d2e11c",
-      "actor": "biz-cfo",
+      "actor": "team-cfo",
       "text": "Себестоимость посчитана"
     },
     {
       "at": 1793170430,
       "kind": "completed",
       "task_id": "t_c4d2e118",
-      "actor": "biz-director",
+      "actor": "team-director",
       "text": "Свод готов (версия 1)"
     },
     {
       "at": 1793170440,
       "kind": "claimed",
       "task_id": "t_c4d2e119",
-      "actor": "biz-critic",
+      "actor": "team-critic",
       "text": "Критик взял свод на проверку"
     },
     {
       "at": 1793170510,
       "kind": "completed",
       "task_id": "t_c4d2e119",
-      "actor": "biz-critic",
+      "actor": "team-critic",
       "text": "Вердикт: принять"
     }
   ],
@@ -377,7 +377,7 @@
       "id": "c2",
       "at": 1793161040,
       "author_kind": "agent",
-      "author": "biz-director",
+      "author": "team-director",
       "author_label": "Глеб · руководитель комнаты",
       "text": "Принял; передал Сергею — шорт-лист и котировки, Вере — сверку с юнит-экономикой, Марине — дизайн и печать.",
       "task_id": "t_c4d2e118",
@@ -387,7 +387,7 @@
       "id": "c3",
       "at": 1793161200,
       "author_kind": "agent",
-      "author": "biz-ops",
+      "author": "team-ops",
       "author_label": "Сергей · исполнитель",
       "text": "В шорт-листе 10 поставщиков; Короб-Мастер даёт 48 ₽ за набор при MOQ 100, у остальных MOQ 500.",
       "task_id": "t_c4d2e118",
@@ -397,7 +397,7 @@
       "id": "c4",
       "at": 1793161500,
       "author_kind": "agent",
-      "author": "biz-critic",
+      "author": "team-critic",
       "author_label": "Ольга · критик",
       "text": "Проверила свод: цены сверены с котировками, MOQ указан верно. Замечаний нет, можно отдавать Михаилу.",
       "task_id": "t_c4d2e118",

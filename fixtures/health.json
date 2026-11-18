@@ -36,13 +36,13 @@
     "updated_at": 1793171850
   },
   "data": {
-    "dir": "D:/Проекты/Комната/data",
+    "dir": "C:/Проекты/Комната/data",
     "writable": true,
     "rooms": 2,
     "requests": 7
   },
   "vault": {
-    "dir": "D:/Проекты/Vault",
+    "dir": "C:/Проекты/Vault",
     "ok": true
   },
   "watcher": {

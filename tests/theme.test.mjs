@@ -205,7 +205,7 @@ test('бейджи-счётчики 11 px, подписи 12 px, основно�
   assert.match(COMPONENTS, /\.btn--sm, \.table th \{ font-size: var\(--text-xs\); \}/);
   assert.match(COMPONENTS, /\.topbar__sub, \.card__sub, \.field__hint, \.field__error, \.page-hint,/);
 
-  // Аватар — одна буква, не текст: 10 px допустимо.
-  assert.match(COMPONENTS, /\.avatar--sm \{ font-size: 10px; \}/);
+  // W25-L1 (R5 §9 п. 12): мельче 11 px в интерфейсе нет — инициалы тоже 11.
+  assert.match(COMPONENTS, /\.avatar--sm \{ font-size: var\(--text-2xs\); \}/);
 });
 

@@ -23,7 +23,7 @@
       "room": "cafe",
       "request_id": "t_9f3c2a10",
       "task_id": "t_9f3c2a13",
-      "actor": "biz-ops",
+      "actor": "team-ops",
       "text": "Упаковка: разосланы 10 запросов котировок",
       "detail": {
         "status": "working"
@@ -36,7 +36,7 @@
       "room": "cafe",
       "request_id": "t_9f3c2a10",
       "task_id": "t_9f3c2a10",
-      "actor": "biz-director",
+      "actor": "team-director",
       "text": "Запрос по упаковке разложен на 4 карточки",
       "detail": {
         "status": "working"
@@ -49,7 +49,7 @@
       "room": "cafe",
       "request_id": "t_7d21b8c4",
       "task_id": "t_7d21b8c8",
-      "actor": "biz-critic",
+      "actor": "team-critic",
       "text": "Критик проверяет юридический свод",
       "detail": {
         "status": "reviewing"
@@ -62,7 +62,7 @@
       "room": "cafe",
       "request_id": "t_a1b2c3d4",
       "task_id": "t_a1b2c3d4",
-      "actor": "biz-director",
+      "actor": "team-director",
       "text": "В «Дальше» добавлено 5 шагов",
       "detail": {
         "count": 5
@@ -75,7 +75,7 @@
       "room": "cafe",
       "request_id": "t_a1b2c3d4",
       "task_id": "t_a1b2c3d4",
-      "actor": "biz-director",
+      "actor": "team-director",
       "text": "Добавлен отчёт «Юнит-экономика набора Лето 6»",
       "detail": {
         "key": "unit-economics"
@@ -88,7 +88,7 @@
       "room": "cafe",
       "request_id": "t_a1b2c3d4",
       "task_id": "t_a1b2c3d4",
-      "actor": "biz-director",
+      "actor": "team-director",
       "text": "Ответ по дорожной карте готов: 5 шагов, 2 вопроса",
       "detail": {
         "steps": 5,
@@ -102,7 +102,7 @@
       "room": "cafe",
       "request_id": "t_5c8e4a02",
       "task_id": "t_5c8e4a03",
-      "actor": "biz-marketing",
+      "actor": "team-marketing",
       "text": "Вопрос Михаилу: класс Роспатент 30 или 30+43",
       "detail": {
         "question_id": "q_1"
@@ -115,7 +115,7 @@
       "room": "cafe",
       "request_id": "t_5c8e4a02",
       "task_id": "t_5c8e4a02",
-      "actor": "biz-lawyer",
+      "actor": "team-lawyer",
       "text": "Предложено подавать в Роспатент в классах 30 и 43",
       "detail": {
         "decision_id": "d_1"
@@ -128,7 +128,7 @@
       "room": "cafe",
       "request_id": "t_605613e0",
       "task_id": "t_605613e0",
-      "actor": "biz-director",
+      "actor": "team-director",
       "text": "Карточка t_605613e0: свод по «Лету» (legacy-формат)",
       "detail": {
         "legacy": true
@@ -142,9 +142,9 @@
       "request_id": null,
       "task_id": null,
       "actor": "mikhail",
-      "text": "В комнату добавлен критик biz-critic",
+      "text": "В комнату добавлен критик team-critic",
       "detail": {
-        "profile": "biz-critic"
+        "profile": "team-critic"
       }
     },
     {

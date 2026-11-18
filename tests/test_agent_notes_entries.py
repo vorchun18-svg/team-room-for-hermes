@@ -78,7 +78,7 @@ class _Base(unittest.TestCase):
     def room(self) -> dict:
         return self.app.call("rooms", "get_room", ((self.cfg, ROOM), {}))
 
-    def entries(self, profile: str = "biz-lawyer") -> list:
+    def entries(self, profile: str = "team-lawyer") -> list:
         return notes_mod.entries_of(notes_mod.notes_of(self.room()).get(profile) or {})
 
     def add(self, profile: str, text: str, **kwargs):
@@ -90,15 +90,15 @@ class _Base(unittest.TestCase):
         except ApiError as exc:
             return exc.status, exc.payload(), {}
 
-    def notes_path(self, profile: str = "biz-lawyer") -> str:
+    def notes_path(self, profile: str = "team-lawyer") -> str:
         return "/api/rooms/%s/agents/%s/notes" % (ROOM, profile)
 
 
 class EntriesTests(_Base):
     def test_add_entry_structure_and_journal(self):
-        res = self.add("biz-lawyer", "Проверяй договор по закону X",
+        res = self.add("team-lawyer", "Проверяй договор по закону X",
                        source="leader", origin="задача t_1", why="ошибался в аренде",
-                       actor="biz-director")
+                       actor="team-director")
         entry = res["entry"]
         for key in ("id", "text", "source", "origin", "created_at", "used_count", "pinned"):
             self.assertIn(key, entry)
@@ -111,7 +111,7 @@ class EntriesTests(_Base):
         self.assertTrue(events, "добавление должно попасть в журнал")
         first = events[0]
         self.assertEqual(first["action"], "add")
-        self.assertEqual(first["profile"], "biz-lawyer")
+        self.assertEqual(first["profile"], "team-lawyer")
         self.assertIn("закону X", first["text"])
         self.assertIn("аренде", first["why"])
         self.assertIn("t_1", first["origin"])
@@ -123,9 +123,9 @@ class EntriesTests(_Base):
         self.assertTrue(notes_mod.get(self.cfg, ROOM, lead)["entries"])
 
     def test_duplicate_is_not_duplicated(self):
-        self.add("biz-lawyer", "Отвечай коротко и цифрами")
+        self.add("team-lawyer", "Отвечай коротко и цифрами")
         before = len(self.entries())
-        res = self.add("biz-lawyer", "  отвечай КОРОТКО и цифрами ")
+        res = self.add("team-lawyer", "  отвечай КОРОТКО и цифрами ")
         self.assertTrue(res.get("duplicate"))
         self.assertEqual(len(self.entries()), before)
 
@@ -135,23 +135,23 @@ class EntriesTests(_Base):
         self.assertEqual(ctx.exception.code, "bad_request")
 
     def test_pinned_manual_entry_cannot_be_removed_by_leader(self):
-        res = self.add("biz-lawyer", "Ручная запись Михаила", source="user")
+        res = self.add("team-lawyer", "Ручная запись Михаила", source="user")
         entry_id = res["entry"]["id"]
         self.assertTrue(res["entry"]["pinned"])
         with self.assertRaises(notes_mod.NotesError) as ctx:
-            notes_mod.remove_entry(self.cfg, ROOM, "biz-lawyer", entry_id,
-                                   actor="biz-director")
+            notes_mod.remove_entry(self.cfg, ROOM, "team-lawyer", entry_id,
+                                   actor="team-director")
         self.assertEqual(ctx.exception.code, "conflict")
         self.assertEqual(len(self.entries()), 1, "запись Михаила осталась")
         # сам Михаил (интерфейс) убирает её с force=True
-        notes_mod.remove_entry(self.cfg, ROOM, "biz-lawyer", entry_id, actor="Михаил", force=True)
+        notes_mod.remove_entry(self.cfg, ROOM, "team-lawyer", entry_id, actor="Михаил", force=True)
         self.assertEqual(self.entries(), [])
 
     def test_used_count(self):
-        self.add("biz-lawyer", "Держи в курсе по срокам")
-        notes_mod.touch_used(self.cfg, ROOM, "biz-lawyer")
+        self.add("team-lawyer", "Держи в курсе по срокам")
+        notes_mod.touch_used(self.cfg, ROOM, "team-lawyer")
         self.assertEqual(self.entries()[0]["used_count"], 1)
-        notes_mod.touch_used(self.cfg, ROOM, "biz-lawyer")
+        notes_mod.touch_used(self.cfg, ROOM, "team-lawyer")
         self.assertEqual(self.entries()[0]["used_count"], 2)
 
 
@@ -162,22 +162,22 @@ class LimitsTests(_Base):
                     "source": source, "created_at": int(time.time()), "used_count": 0,
                     "pinned": False} for i in range(count)]
         self.app.call("rooms", "update_room",
-                      ((self.cfg, ROOM, {"agent_notes": {"biz-lawyer": {"entries": entries}}}), {}))
+                      ((self.cfg, ROOM, {"agent_notes": {"team-lawyer": {"entries": entries}}}), {}))
         return entries
 
     def test_review_runs_after_every_five_entries(self):
         for index in range(5):
-            self.add("biz-lawyer", "правило номер %d" % index)
+            self.add("team-lawyer", "правило номер %d" % index)
         # пятое добавление запускает переоценку: пять разных записей остаются, но
         # отметка «проверено» снимает порог (иначе переоценка шла бы на каждой записи)
-        review = ((self.room().get("agent_notes") or {}).get("biz-lawyer") or {}).get("review") or {}
+        review = ((self.room().get("agent_notes") or {}).get("team-lawyer") or {}).get("review") or {}
         self.assertFalse(review.get("due"))
         self.assertEqual(review.get("count_at_review"), 5)
         self.assertEqual(len(self.entries()), 5)
 
     def test_entries_limit_is_enforced(self):
         for index in range(notes_mod.MAX_ENTRIES + 1):
-            self.add("biz-lawyer", "правило номер %d" % index, origin="проверка лимита")
+            self.add("team-lawyer", "правило номер %d" % index, origin="проверка лимита")
         self.assertLessEqual(len(self.entries()), notes_mod.MAX_ENTRIES,
                              "записей больше лимита быть не должно")
         actions = [e["action"] for e in notes_mod.journal(self.cfg, ROOM)]
@@ -197,13 +197,13 @@ class LimitsTests(_Base):
              "created_at": old, "used_count": 0, "pinned": True},
         ]
         self.app.call("rooms", "update_room",
-                      ((self.cfg, ROOM, {"agent_notes": {"biz-lawyer": {"entries": entries}}}), {}))
-        preview = notes_mod.review(self.cfg, ROOM, "biz-lawyer", apply=False)
+                      ((self.cfg, ROOM, {"agent_notes": {"team-lawyer": {"entries": entries}}}), {}))
+        preview = notes_mod.review(self.cfg, ROOM, "team-lawyer", apply=False)
         self.assertEqual(preview["before"], 4)
         self.assertEqual(len(preview["merges"]), 1)
         self.assertEqual(len(preview["drops"]), 1)
 
-        res = notes_mod.review(self.cfg, ROOM, "biz-lawyer", actor="Михаил", source="user",
+        res = notes_mod.review(self.cfg, ROOM, "team-lawyer", actor="Михаил", source="user",
                                why="сократить перед стартом")
         self.assertTrue(res["applied"])
         texts = [one["text"] for one in self.entries()]
@@ -218,14 +218,14 @@ class LimitsTests(_Base):
             self.assertIn(action, actions)
 
     def test_review_keeps_everything_when_nothing_to_do(self):
-        self.add("biz-lawyer", "Единственное правило")
-        res = notes_mod.review(self.cfg, ROOM, "biz-lawyer")
+        self.add("team-lawyer", "Единственное правило")
+        res = notes_mod.review(self.cfg, ROOM, "team-lawyer")
         self.assertFalse(res["applied"])
         self.assertEqual(len(self.entries()), 1)
 
     def test_render_block_stays_within_limit(self):
         for index in range(12):
-            self.add("biz-lawyer", ("длинное правило %d " % index) * 20)
+            self.add("team-lawyer", ("длинное правило %d " % index) * 20)
         block = notes_mod.render_block(self.cfg, self.room(), 3000)
         self.assertLessEqual(len(block), 3000)
         self.assertIn("Особые указания участникам этой комнаты", block)
@@ -233,7 +233,7 @@ class LimitsTests(_Base):
 
 class JournalRollbackTests(_Base):
     def test_rollback_add_removes_entry(self):
-        res = self.add("biz-lawyer", "Правило, которое передумали писать")
+        res = self.add("team-lawyer", "Правило, которое передумали писать")
         event = notes_mod.journal(self.cfg, ROOM)[0]
         self.assertEqual(event["action"], "add")
         back = notes_mod.rollback(self.cfg, ROOM, event["id"], actor="Михаил")
@@ -245,9 +245,9 @@ class JournalRollbackTests(_Base):
         self.assertTrue(res["entry"]["id"])
 
     def test_rollback_remove_restores_entry(self):
-        res = self.add("biz-lawyer", "Правило, которое убрали по ошибке")
+        res = self.add("team-lawyer", "Правило, которое убрали по ошибке")
         entry_id = res["entry"]["id"]
-        notes_mod.remove_entry(self.cfg, ROOM, "biz-lawyer", entry_id, why="передумали")
+        notes_mod.remove_entry(self.cfg, ROOM, "team-lawyer", entry_id, why="передумали")
         self.assertEqual(self.entries(), [])
         event = notes_mod.journal(self.cfg, ROOM)[0]
         self.assertEqual(event["action"], "remove")
@@ -255,7 +255,7 @@ class JournalRollbackTests(_Base):
         self.assertEqual([one["id"] for one in self.entries()], [entry_id])
 
     def test_rollback_twice_is_conflict(self):
-        self.add("biz-lawyer", "Правило")
+        self.add("team-lawyer", "Правило")
         event = notes_mod.journal(self.cfg, ROOM)[0]
         notes_mod.rollback(self.cfg, ROOM, event["id"], actor="Михаил")
         with self.assertRaises(notes_mod.NotesError) as ctx:
@@ -263,9 +263,9 @@ class JournalRollbackTests(_Base):
         self.assertEqual(ctx.exception.code, "conflict")
 
     def test_rollback_keeps_pinned_added_after(self):
-        self.add("biz-lawyer", "Первое правило", source="leader")
+        self.add("team-lawyer", "Первое правило", source="leader")
         first = notes_mod.journal(self.cfg, ROOM)[0]
-        self.add("biz-lawyer", "Ручная запись Михаила", source="user")
+        self.add("team-lawyer", "Ручная запись Михаила", source="user")
         notes_mod.rollback(self.cfg, ROOM, first["id"], actor="Михаил")
         texts = [one["text"] for one in self.entries()]
         self.assertIn("Ручная запись Михаила", texts, "закреплённое не теряется при откате")
@@ -273,7 +273,7 @@ class JournalRollbackTests(_Base):
 
     def test_journal_masks_secrets(self):
         secret = "password=" + "Hunter2" + "SuperSecret"
-        self.add("biz-lawyer", "Ключ: " + secret)
+        self.add("team-lawyer", "Ключ: " + secret)
         event = notes_mod.journal(self.cfg, ROOM)[0]
         self.assertNotIn("Hunter2SuperSecret", event["text"])
         self.assertIn("[скрыто]", event["text"])
@@ -281,7 +281,7 @@ class JournalRollbackTests(_Base):
 
 class ApiTests(_Base):
     def test_get_returns_entries_and_limits(self):
-        self.add("biz-lawyer", "Отвечай цифрами")
+        self.add("team-lawyer", "Отвечай цифрами")
         status, body, _h = self.dispatch("GET", self.notes_path())
         self.assertEqual(status, 200, body)
         self.assertEqual(len(body["entries"]), 1)
@@ -339,18 +339,18 @@ class ApiTests(_Base):
         self.assertEqual(body["entries"], [])
 
     def test_room_summary(self):
-        self.add("biz-lawyer", "Отвечай цифрами")
+        self.add("team-lawyer", "Отвечай цифрами")
         status, body, _h = self.dispatch("GET", "/api/rooms/%s/notes" % ROOM)
         self.assertEqual(status, 200, body)
         self.assertGreaterEqual(body["count"], 1)
         people = {row["profile"] for row in body["participants"]}
-        self.assertIn("biz-lawyer", people)
+        self.assertIn("team-lawyer", people)
 
 
 class DeliveryTests(_Base):
     def test_context_block_and_vault_show_entries(self):
-        self.add("biz-lawyer", "Всегда проверяй по закону X", source="user")
-        self.add("biz-lawyer", "Не согласовывай сроки без меня", source="leader",
+        self.add("team-lawyer", "Всегда проверяй по закону X", source="user")
+        self.add("team-lawyer", "Не согласовывай сроки без меня", source="leader",
                  origin="комментарий Михаила 05.11")
         block = context_pack.build_context_block(self.cfg, self.room(), "Проверь договор")
         self.assertIn("Всегда проверяй по закону X", block)

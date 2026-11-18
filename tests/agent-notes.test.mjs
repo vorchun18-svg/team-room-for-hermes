@@ -47,16 +47,16 @@ function installDom() {
 const ROOM = {
   id: 'cafe',
   title: 'Лето',
-  orchestrator: 'biz-director',
-  critic: 'biz-critic',
+  orchestrator: 'team-director',
+  critic: 'team-critic',
   members: [
-    { profile: 'biz-lawyer', role: 'worker' },
-    { profile: 'biz-cfo', role: 'worker' },
+    { profile: 'team-lawyer', role: 'worker' },
+    { profile: 'team-cfo', role: 'worker' },
   ],
   agent_notes: {
-    'biz-lawyer': { text: 'Всегда проверяй по закону X', updated_at: 1700000000 },
-    'biz-ghost': { text: 'указание убранного участника' },
-    'biz-cfo': { text: '   ' },
+    'team-lawyer': { text: 'Всегда проверяй по закону X', updated_at: 1700000000 },
+    'team-ghost': { text: 'указание убранного участника' },
+    'team-cfo': { text: '   ' },
   },
 };
 
@@ -76,22 +76,22 @@ function walk(node, pred, out = []) {
 
 test('notesOf: строки и объекты, пустое не считается', () => {
   const notes = notesOf(ROOM);
-  assert.deepEqual(Object.keys(notes).sort(), ['biz-ghost', 'biz-lawyer']);
-  assert.equal(notes['biz-lawyer'].text, 'Всегда проверяй по закону X');
-  assert.equal(notes['biz-lawyer'].updated_at, 1700000000);
+  assert.deepEqual(Object.keys(notes).sort(), ['team-ghost', 'team-lawyer']);
+  assert.equal(notes['team-lawyer'].text, 'Всегда проверяй по закону X');
+  assert.equal(notes['team-lawyer'].updated_at, 1700000000);
   assert.deepEqual(notesOf(null), {});
   assert.deepEqual(notesOf({ agent_notes: 'мусор' }), {});
 });
 
 test('participantsOf: руководитель, критик, исполнители без дублей', () => {
   const people = participantsOf(ROOM).map((p) => p.profile + ':' + p.role);
-  assert.deepEqual(people, ['biz-director:orchestrator', 'biz-critic:critic',
-    'biz-lawyer:worker', 'biz-cfo:worker']);
+  assert.deepEqual(people, ['team-director:orchestrator', 'team-critic:critic',
+    'team-lawyer:worker', 'team-cfo:worker']);
   const dup = participantsOf({
-    orchestrator: 'biz-director', critic: null,
-    members: [{ profile: 'biz-director', role: 'worker' }],
+    orchestrator: 'team-director', critic: null,
+    members: [{ profile: 'team-director', role: 'worker' }],
   }).map((p) => p.profile);
-  assert.deepEqual(dup, ['biz-director']);
+  assert.deepEqual(dup, ['team-director']);
 });
 
 /* ─────────────────────────────────────────────────────── монтирование */
@@ -104,7 +104,7 @@ test('поле у каждого участника: подписи, счётч�
   const rows = host.find('div').parentNode;   // просто убеждаемся, что дерево собрано
   assert.ok(rows);
   const text = host.textContent;
-  for (const profile of ['biz-director', 'biz-critic', 'biz-lawyer', 'biz-cfo']) {
+  for (const profile of ['team-director', 'team-critic', 'team-lawyer', 'team-cfo']) {
     assert.ok(text.includes(profile), 'нет участника ' + profile);
   }
   assert.ok(text.includes('Особые указания для этой комнаты'), 'нет подписи раскрытия');
@@ -112,11 +112,11 @@ test('поле у каждого участника: подписи, счётч�
   assert.ok(text.includes('из 8000'), 'нет счётчика «N из 8000»');
 
   // индикатор «есть указания» — только у участника с текстом
-  assert.equal(ui.has('biz-lawyer'), true);
-  assert.equal(ui.has('biz-cfo'), false);
-  assert.equal(ui.counterFor('biz-lawyer'), String('Всегда проверяй по закону X'.length) + ' из ' + MAX_TEXT);
-  assert.equal(ui.counterFor('biz-cfo'), '0 из ' + MAX_TEXT);
-  assert.deepEqual(ui.value(), { 'biz-lawyer': 'Всегда проверяй по закону X' });
+  assert.equal(ui.has('team-lawyer'), true);
+  assert.equal(ui.has('team-cfo'), false);
+  assert.equal(ui.counterFor('team-lawyer'), String('Всегда проверяй по закону X'.length) + ' из ' + MAX_TEXT);
+  assert.equal(ui.counterFor('team-cfo'), '0 из ' + MAX_TEXT);
+  assert.deepEqual(ui.value(), { 'team-lawyer': 'Всегда проверяй по закону X' });
 });
 
 test('ввод текста: value(), onChange, счётчик и переполнение', async () => {
@@ -128,38 +128,38 @@ test('ввод текста: value(), onChange, счётчик и перепол
     onChange: (profile, text) => seen.push([profile, text]),
   });
 
-  assert.equal(ui.setText('biz-cfo', 'Отвечай коротко и только цифрами'), true);
-  assert.deepEqual(seen.pop(), ['biz-cfo', 'Отвечай коротко и только цифрами']);
-  assert.equal(ui.counterFor('biz-cfo'), 'Отвечай коротко и только цифрами'.length + ' из ' + MAX_TEXT);
-  assert.equal(ui.has('biz-cfo'), true);
+  assert.equal(ui.setText('team-cfo', 'Отвечай коротко и только цифрами'), true);
+  assert.deepEqual(seen.pop(), ['team-cfo', 'Отвечай коротко и только цифрами']);
+  assert.equal(ui.counterFor('team-cfo'), 'Отвечай коротко и только цифрами'.length + ' из ' + MAX_TEXT);
+  assert.equal(ui.has('team-cfo'), true);
 
   // значение обрезается до 8000 при сохранении, поле — без жёсткого лимита
-  ui.setText('biz-cfo', 'я'.repeat(MAX_TEXT + 50));
-  assert.equal(ui.value()['biz-cfo'].length, MAX_TEXT);
+  ui.setText('team-cfo', 'я'.repeat(MAX_TEXT + 50));
+  assert.equal(ui.value()['team-cfo'].length, MAX_TEXT);
   assert.match(host.textContent, /Длиннее 8000 знаков не сохранится/);
 });
 
 test('состав изменился — поле следует (refresh), пример вставляется в раскрытое', async () => {
   installDom();
   const host = new FakeElement('div');
-  let people = [{ profile: 'biz-lawyer', role: 'worker' }];
+  let people = [{ profile: 'team-lawyer', role: 'worker' }];
   const ui = await mountAgentNotes(host, ctx, {
     room: ROOM,
     participants: () => people,
   });
-  assert.equal(ui.setText('biz-lawyer', 'Коротко'), true);
+  assert.equal(ui.setText('team-lawyer', 'Коротко'), true);
 
   people = [
-    { profile: 'biz-lawyer', role: 'worker' },
-    { profile: 'biz-cfo', role: 'worker' },
+    { profile: 'team-lawyer', role: 'worker' },
+    { profile: 'team-cfo', role: 'worker' },
   ];
   ui.refresh();
-  assert.equal(ui.setText('biz-cfo', 'Цифрами'), true);
-  assert.deepEqual(Object.keys(ui.value()).sort(), ['biz-cfo', 'biz-lawyer']);
+  assert.equal(ui.setText('team-cfo', 'Цифрами'), true);
+  assert.deepEqual(Object.keys(ui.value()).sort(), ['team-cfo', 'team-lawyer']);
 
-  people = [{ profile: 'biz-cfo', role: 'worker' }];
+  people = [{ profile: 'team-cfo', role: 'worker' }];
   ui.refresh();
-  assert.deepEqual(ui.value(), { 'biz-cfo': 'Цифрами' },
+  assert.deepEqual(ui.value(), { 'team-cfo': 'Цифрами' },
     'указания выведенного из состава участника в комнату не уходят');
 
   // первый пример вставляется в поле первого участника
@@ -167,7 +167,7 @@ test('состав изменился — поле следует (refresh), п�
     && String(n.className).includes('agent-notes__example'))[0];
   assert.ok(example, 'нет кнопки-примера');
   example.dispatch('click', { type: 'click', target: example });
-  assert.match(ui.textFor('biz-cfo'), /Отвечай коротко и только цифрами/);
+  assert.match(ui.textFor('team-cfo'), /Отвечай коротко и только цифрами/);
 });
 
 test('микрофон: поле не отключено и справа оставлено 40px', async () => {
@@ -187,7 +187,7 @@ test('микрофон: поле не отключено и справа ост�
 
 test('строка «Команда»: «не заданы», иначе «есть у N» + «Показать»', () => {
   installDom();
-  const empty = notesSummaryLine({ id: 'cafe', orchestrator: 'biz-director', members: [] });
+  const empty = notesSummaryLine({ id: 'cafe', orchestrator: 'team-director', members: [] });
   assert.match(empty.textContent, /Особые указания/);
   assert.match(empty.textContent, /не заданы/);
 

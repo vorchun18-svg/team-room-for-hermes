@@ -8,15 +8,15 @@
     "tz": "Europe/Moscow"
   },
   "paths": {
-    "data": "D:/Проекты/Комната/data",
-    "vault": "D:/Проекты/Vault",
-    "project_dir": "D:/Проекты/Комната",
-    "reports": "D:/Проекты/Комната/data/reports"
+    "data": "C:/Проекты/Комната/data",
+    "vault": "C:/Проекты/Vault",
+    "project_dir": "C:/Проекты/Комната",
+    "reports": "C:/Проекты/Комната/data/reports"
   },
   "allowed_roots": [
-    "D:/Проекты/Комната/data",
-    "D:/Проекты/Vault",
-    "D:/Проекты"
+    "C:/Проекты/Комната/data",
+    "C:/Проекты/Vault",
+    "C:/Проекты"
   ],
   "limits": {
     "request_text_max": 1000000,

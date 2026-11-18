@@ -1,12 +1,12 @@
 /**
  * shell-inbox.js — сколько дел ждёт решения человека в каждой комнате.
  *
- * Один источник правды для трёх мест: бейдж вкладки «Дальше», число у комнаты
+ * Один источник правды для трёх мест: бейдж вкладки «От вас нужно», число у комнаты
  * в сайдбаре и счётчик в заголовке окна. Считаем «дела», а не запросы:
  * вопросы + заблокированные задачи + предложенные решения — ровно те строки,
  * которые человек видит в блоке «Ждут вашего решения».
  *
- * Числа кладёт сюда вкладка «Дальше», когда сама всё посчитала (setInboxCounts),
+ * Числа кладёт сюда вкладка «От вас нужно», когда сама всё посчитала (setInboxCounts),
  * а если её не открывали — фоновый опрос догружает то же самое по API.
  * При обрыве связи остаётся последнее известное число, а не ноль (D19).
  */
@@ -63,23 +63,26 @@ export function inboxTotal(roomId) {
 
 /**
  * Что показывать у комнаты: число дел и подпись с существительным.
- * Пока счёт не готов — число запросов (другое существительное, чтобы не
- * выдавать запросы за дела). При обрыве связи — null: «—», а не ноль (D19).
+ *
+ * W26-D7: считаем только ДЕЛА, которые человек видит и может решить
+ * (вопросы + блокировки + решения + разрешения — их кладёт вкладка «От вас
+ * нужно» или фоновый опрос). Раньше при отсутствии этих чисел подставлялся
+ * `counts.needs_you` сервера — а он считает запросы и включает реакции
+ * руководителя, из-за чего меню показывало «20» там, где ждёт решения один
+ * пункт. Теперь неизвестное число так и показывается: «—» (D19), без вранья.
  * @param {object|null} room нормализованная комната из /api/rooms
  * @returns {{n: number|null, text: string}}
  */
 export function waitingFor(room) {
   const cases = inboxTotal(room && room.id);
   if (cases !== null) return { n: cases, text: countText(cases, COUNT_FORMS.case) };
-  if (rooms.get('error')) return { n: null, text: 'нет данных' };
-  const n = Number((room && room.counts && room.counts.needs_you) || 0);
-  return { n, text: countText(n, COUNT_FORMS.request) };
+  return { n: null, text: rooms.get('error') ? 'нет данных' : 'считаю' };
 }
 
 /**
- * Положить посчитанные числа (вызывает вкладка «Дальше» после своей отрисовки).
+ * Положить посчитанные числа (вызывает вкладка «От вас нужно» после своей отрисовки).
  * @param {string} roomId
- * @param {{questions?:number, blocked?:number, decisions?:number}} parts
+ * @param {{questions?:number, blocked?:number, decisions?:number, approvals?:number}} parts
  */
 export function setInboxCounts(roomId, parts = {}) {
   const id = String(roomId === null || roomId === undefined ? '' : roomId);
@@ -87,12 +90,34 @@ export function setInboxCounts(roomId, parts = {}) {
   const questions = Math.max(0, Number(parts.questions) || 0);
   const blocked = Math.max(0, Number(parts.blocked) || 0);
   const decisions = Math.max(0, Number(parts.decisions) || 0);
-  const total = questions + blocked + decisions;
+  // W22-AP2: запрос разрешения агенту — тоже дело, ждущее человека.
+  const approvals = Math.max(0, Number(parts.approvals) || 0);
+  const total = questions + blocked + decisions + approvals;
   const prev = cache.get(id);
   if (prev && prev.total === total && prev.questions === questions
-    && prev.blocked === blocked && prev.decisions === decisions) return;
-  cache.set(id, { questions, blocked, decisions, total, at: Date.now(), source: 'view' });
+    && prev.blocked === blocked && prev.decisions === decisions
+    && prev.approvals === approvals) return;
+  cache.set(id, { questions, blocked, decisions, approvals, total, at: Date.now(), source: 'view' });
   emit();
+}
+
+/** Сколько ждущих разрешений у запросов (по `detail.approvals`), без дублей. */
+function countApprovals(details) {
+  const seen = new Set();
+  let n = 0;
+  for (const detail of Array.isArray(details) ? details : []) {
+    const list = detail && Array.isArray(detail.approvals) ? detail.approvals : [];
+    for (const a of list) {
+      if (!a) continue;
+      const state = String(a.state || 'pending');
+      if (state !== 'pending') continue;
+      const id = String(a.id || '');
+      if (id && seen.has(id)) continue;
+      if (id) seen.add(id);
+      n += 1;
+    }
+  }
+  return n;
 }
 
 /** Сколько заблокированных карточек в деталях запросов (уникальных по id). */
@@ -118,6 +143,7 @@ async function loadRoom(roomId) {
   const decisions = backlog.filter((i) => i && i.kind === 'decision' && i.status === 'open').length;
 
   let blocked = 0;
+  let approvals = 0;
   try {
     const feed = itemsOf(await api.get('/api/rooms/' + enc(roomId) + '/requests?limit=50'));
     const waiting = feed
@@ -130,9 +156,11 @@ async function loadRoom(roomId) {
       } catch { /* одна карточка не должна обнулять счёт */ }
     }
     blocked = countBlocked(details);
+    // W22-AP2: ждущие разрешения считаются из тех же деталей.
+    approvals = countApprovals(details);
   } catch { /* нет списка запросов — считаем без блокировок */ }
 
-  setInboxCounts(roomId, { questions, blocked, decisions });
+  setInboxCounts(roomId, { questions, blocked, decisions, approvals });
 }
 
 /**

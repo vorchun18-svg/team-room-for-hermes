@@ -39,10 +39,10 @@ from server.http_util import ApiError             # noqa: E402
 from tests.helpers import Sandbox, SimAgents      # noqa: E402
 
 ROOM = "cafe"
-LEAD = "biz-director"
-CRITIC = "biz-critic"
-WORKER = "biz-cfo"
-PINNED_WORKER = "biz-lawyer"
+LEAD = "team-director"
+CRITIC = "team-critic"
+WORKER = "team-cfo"
+PINNED_WORKER = "team-lawyer"
 
 CATALOG = {
     "providers": [

@@ -319,6 +319,46 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(len(calls), first, "повторный поиск не должен запускать проверки")
         stt_worker.reset_lookup()
 
+    def test_stale_cached_interpreter_is_researched(self):
+        """Hermes обновился и пересоздал venv: закешированный путь исчез — ищем заново (было [WinError 2])."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            old = Path(tmp) / "old" / "python.exe"
+            new = Path(tmp) / "new" / "python.exe"
+            for item in (old, new):
+                item.parent.mkdir(parents=True)
+                item.write_text("x")
+            try:
+                found = stt_worker.find_python(candidates=None, probe=lambda p: p == str(old), refresh=True)
+                self.assertIsNone(found if found != str(old) else None)   # поиск по реальным каталогам
+                # подменяем кеш напрямую: «нашли» old, потом old удалили
+                with stt_worker._LOOKUP_LOCK:
+                    stt_worker._LOOKUP_DONE, stt_worker._LOOKUP_RESULT = True, str(old)
+                self.assertEqual(stt_worker.find_python(), str(old))
+                old.unlink()
+                with mock.patch.object(stt_worker, "python_candidates", return_value=[str(new)]), \
+                        mock.patch.object(stt_worker, "has_faster_whisper", return_value=True):
+                    self.assertEqual(stt_worker.find_python(), str(new))
+            finally:
+                stt_worker.reset_lookup()
+
+    def test_spawn_retries_with_fresh_interpreter(self):
+        """FileNotFoundError при запуске воркера → один повторный поиск и запуск найденным."""
+        client = stt._WorkerClient()
+        launched = []
+
+        def fake_popen(cmd, **_kw):
+            launched.append(cmd[0])
+            if cmd[0] == "dead.exe":
+                raise FileNotFoundError(2, "нет файла")
+            raise RuntimeError("stop-after-launch")
+
+        with mock.patch.object(stt_worker, "find_python", side_effect=lambda **kw: "live.exe" if kw.get("refresh") else "dead.exe"), \
+                mock.patch.object(stt.proc, "popen", side_effect=fake_popen):
+            with self.assertRaises(RuntimeError):
+                client._spawn()
+        self.assertEqual(launched, ["dead.exe", "live.exe"])
+
     def test_candidates_start_with_current_interpreter(self):
         candidates = stt_worker.python_candidates()
         self.assertEqual(candidates[0], sys.executable)

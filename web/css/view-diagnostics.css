@@ -83,8 +83,27 @@
   font-size: var(--text-xs); color: var(--muted-foreground);
 }
 .diag-item__details li { overflow-wrap: anywhere; }
+.diag-item__more { display: flex; flex-direction: column; gap: 2px; }
+.diag-item__more-summary {
+  width: fit-content; cursor: pointer; list-style: none;
+  font-size: var(--text-sm); color: var(--link);
+}
+.diag-item__more-summary::-webkit-details-marker { display: none; }
+.diag-item__more-summary:hover { text-decoration: underline; }
 .diag-item__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: 2px; }
 .diag-item__actions .btn { text-decoration: none; }
+
+/* ── Группы пунктов (W20-U2 §15) ─────────────────────────────────────────── */
+
+.diag-group { display: flex; flex-direction: column; gap: var(--space-2); }
+.diag-group__head { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+.diag-group__title {
+  margin: 0; font-size: var(--text-sm); font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--ui-text-tertiary);
+}
+.diag-group__count { font-variant-numeric: tabular-nums; }
+.diag-group__hint { margin: 0; max-width: 78ch; }
+.diag-group__items { display: flex; flex-direction: column; gap: var(--space-2); }
 
 /* Цвет статуса: полоска слева, иконка и её подложка. */
 .diag-item--ok { border-left-color: color-mix(in srgb, var(--ok) 70%, transparent); }

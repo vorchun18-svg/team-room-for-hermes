@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import time as _time
 
@@ -28,8 +29,16 @@ EXPLAIN_MARK = "[Михаил · просит пояснить по вопрос
 REACTION_MARK = "[Руководитель · реакция на ответ"
 REMIND_MARK = "[Михаил · напоминание]"
 
-#: статусы ответа по контракту (W14-D §2; W19-D2 §2 — понятная цепочка)
-STATES = ("open", "waiting_explanation", "sent", "received", "applied", "no_change")
+#: W21-Q1 (B-44): стандартная просьба, когда «Пояснить» нажали БЕЗ текста.
+#: Раньше пустое поле блокировало кнопку, а вопрос бывает просто непонятен —
+#: писать нечего. Формулировка одна на сервер, ветку и демо-мок.
+DEFAULT_EXPLAIN_TEXT = ("Поясни вопрос подробнее: зачем он, какие варианты ответа "
+                        "и их последствия — простыми словами")
+
+#: статусы ответа по контракту (W14-D §2; W19-D2 §2 — понятная цепочка;
+#: W20-D1 §1.2 — «руководитель ответил текстом» вместо вечного «прочитал»)
+STATES = ("open", "waiting_explanation", "sent", "received", "applied", "no_change",
+          "replied_text", "dismissed")
 STATE_RU = {
     "open": "ждёт вашего ответа",
     "waiting_explanation": "ждёт вашего решения после пояснения",
@@ -38,6 +47,10 @@ STATE_RU = {
     "received": "руководитель прочитал",
     "applied": "учтено: работа изменена",
     "no_change": "учтено: менять ничего не нужно",
+    # W20-D1 §1.2 (B-41): реакция ЕСТЬ, но записана не по формату — не врём «реакции нет».
+    "replied_text": "руководитель ответил текстом — посмотрите в ленте",
+    # W20-D1 §1.2 (B-38): «Это не вопрос» — элемент больше не ждёт ответа.
+    "dismissed": "это не вопрос",
 }
 #: «Что значит» — одна подсказка на каждое состояние (B-21: не угадывать по словам).
 STATE_HINT = {
@@ -51,6 +64,10 @@ STATE_HINT = {
     "applied": "Руководитель учёл ответ: работа пересмотрена, карточки изменены. "
                "Их список — рядом с реакцией.",
     "no_change": "Руководитель учёл ответ и решил, что менять в работе ничего не нужно.",
+    "replied_text": "Руководитель ответил в ленте, но не по формату реакции (без метки и исхода). "
+                    "Ответ есть — прочитайте его сообщение в диалоге.",
+    "dismissed": "Вы отметили, что это не вопрос: элемент убран из «Нужен ваш ответ» "
+                 "и не считается в счётчиках.",
 }
 #: короткая расшифровка цепочки — для подсказки у блока («что значит»)
 CHAIN_HINT = ("Цепочка ответа: «ответ отправлен» → «руководитель прочитал» → «учтено» "
@@ -150,8 +167,13 @@ def answer_comment(question_id, question_text, text) -> str:
 
 
 def explanation_comment(question_id, question_text, text) -> str:
-    """Встречный вопрос: просьба пояснить, а не ответ."""
-    return "%s %s «%s»] %s" % (EXPLAIN_MARK, question_id, short(question_text, 120), norm(text))
+    """Встречный вопрос: просьба пояснить, а не ответ.
+
+    W21-Q1 (B-44): текста может не быть — тогда в ветку идёт стандартная просьба
+    ``DEFAULT_EXPLAIN_TEXT`` (кнопка «Пояснить» работает и с пустым полем).
+    """
+    body = norm(text) or DEFAULT_EXPLAIN_TEXT
+    return "%s %s «%s»] %s" % (EXPLAIN_MARK, question_id, short(question_text, 120), body)
 
 
 #: метка одной карточки «накопленные ответы» (W17-B §3, B6)
@@ -192,6 +214,218 @@ def remind_text(question_id, question_text, ago_min: int = 0) -> str:
     return ("%s Жду реакции на ответ к вопросу %s «%s»%s. Ответь коротко в ветке: "
             "«%s %s] Принято: …» (или «Ничего менять не нужно», «Работа пересмотрена: карточки …»)."
             % (REMIND_MARK, question_id, short(question_text, 120), wait, REACTION_MARK, question_id))
+
+
+# ------------------------------------------- вопросы руководителя из комментариев ---
+#
+# W20-D1 §1.2 (B-38): руководитель задаёт вопросы в диалоге, а не в metadata. Раньше
+# такой текст оставался прозой и в «Нужен ваш ответ» ничего не появлялось. Теперь:
+#
+# * строки ``[Руководитель · вопрос] текст`` и ``[Руководитель · решение] текст``
+#   в комментарии руководителя регистрируются как открытые вопросы/решения
+#   (``source="comment"``);
+# * страховка — нумерованные/маркированные пункты под заголовками «Что решить»,
+#   «Что нужно решить», «Нужен ваш ответ», «Вопросы к вам/тебе» в комментарии
+#   руководителя предлагаются кандидатами (``source="candidate"``, кнопка
+#   «Это не вопрос» → ``question_dismiss`` → ``answer_state="dismissed"``).
+
+LEAD_QUESTION_MARK = "[Руководитель · вопрос]"
+LEAD_DECISION_MARK = "[Руководитель · решение]"
+#: старые/смешанные написания меток, которые тоже считаем вопросом руководителя
+_LEAD_QUESTION_ALIASES = (LEAD_QUESTION_MARK, "[Руководитель · вопросы]",
+                          "[Руководитель · вопрос к Михаилу]")
+_LEAD_DECISION_ALIASES = (LEAD_DECISION_MARK, "[Руководитель · решения]",
+                          "[Руководитель · предложение]")
+
+#: заголовки, под которыми руководитель перечисляет вопросы (сравнение — по началу строки)
+QUESTION_HEADINGS = ("что решить", "что нужно решить", "что решаешь", "что решить тебе",
+                     "что решить вам", "нужен ваш ответ", "нужен твой ответ",
+                     "вопросы к вам", "вопросы к тебе", "вопросы")
+#: сколько пунктов из одного комментария берём максимум
+MAX_COMMENT_ITEMS = 20
+#: маркер пункта списка: «1)», «1.», «-», «•», «–», «*»
+_LIST_ITEM = re.compile(r"^\s*(?:\d{1,2}[).]|[-–—•*·])\s*(?P<text>.+)$")
+_HEADING_LINE = re.compile(r"^\s*(?:\*\*|__)?\s*(?P<head>[^:.\n]{3,80})\s*(?:\*\*|__)?\s*:?\s*$")
+
+
+def lead_comment_kind(text) -> str:
+    """Вид записи руководителя по метке: ``question`` / ``decision`` / ``""``."""
+    value = norm_start(text)
+    if not value:
+        return ""
+    for mark in _LEAD_QUESTION_ALIASES:
+        if value.startswith(mark):
+            return "question"
+    for mark in _LEAD_DECISION_ALIASES:
+        if value.startswith(mark):
+            return "decision"
+    return ""
+
+
+def norm_start(text) -> str:
+    """Начало строки без ведущих пробелов (метка стоит в начале комментария)."""
+    return str(text or "").lstrip()
+
+
+def mark_text_of(text) -> str:
+    """Текст метки без маркера: ``[Руководитель · вопрос] Что…`` → ``Что…``."""
+    value = norm_start(text)
+    if "]" in value and value.startswith("["):
+        return norm(value.split("]", 1)[1])
+    return norm(value)
+
+
+def comment_item_id(text, comment_id, index: int = 0, prefix: str = "cq") -> str:
+    """Стабильный id элемента из комментария: ``cq_<8hex>`` (не меняется между чтениями)."""
+    seed = "%s|%s|%s" % (str(comment_id or ""), norm(text), int(index or 0))
+    return "%s_%s" % (prefix, hashlib.sha1(seed.encode("utf-8")).hexdigest()[:8])
+
+
+def _heading_matches(line: str) -> bool:
+    """Строка — заголовок списка вопросов («Что решить тебе:», «**Нужен ваш ответ**»)."""
+    match = _HEADING_LINE.match(norm(line))
+    if not match:
+        return False
+    head = match.group("head").strip().lower()
+    head = head.strip("*_ ").rstrip(":.").strip()
+    if not head or len(head) > 60:
+        return False
+    return any(head.startswith(prefix) for prefix in QUESTION_HEADINGS)
+
+
+def candidates_from_comment(text, comment_id, at: int = 0) -> list:
+    """Пункты под заголовком «Что решить…» → кандидаты в вопросы (``source="candidate"``).
+
+    Ничего не угадываем: берём только нумерованные/маркированные пункты, идущие
+    НЕПОСРЕДСТВЕННО под заголовком. Пустая строка, новый заголовок или обычная проза
+    список заканчивают. Пункты длиннее 400 знаков отбрасываются (это уже абзац).
+    """
+    out: list = []
+    inside = False
+    started = False
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            # пустая строка ПОСЛЕ пунктов список заканчивает; пустая строка между
+            # заголовком и первым пунктом — обычное дело, её пропускаем
+            if inside and started:
+                inside = False
+            continue
+        if _heading_matches(stripped):
+            inside, started = True, False
+            continue
+        if not inside:
+            continue
+        match = _LIST_ITEM.match(stripped)
+        if not match:
+            inside = False                  # проза после списка — список закончился
+            continue
+        item = norm(match.group("text"))
+        if not item or len(item) > 400:
+            continue
+        out.append({"text": item})
+        started = True
+        if len(out) >= MAX_COMMENT_ITEMS:
+            break
+    return out
+
+
+def questions_from_thread(items, lead=None, dismissed=None) -> list:
+    """Вопросы и решения руководителя из ленты: ``source=comment|candidate``.
+
+    Возвращает элементы того же вида, что ``open_questions`` (``id``, ``text``,
+    ``for``, ``source``, ``comment_id``, ``at``, ``kind``), плюс ``dismissed`` —
+    если пользователь нажал «Это не вопрос» (реестр ответов, запись ``dismissed``).
+
+    Кто имеет право «задавать вопрос» (W21-L1, решение оркестратора):
+
+    * **кандидаты из свободного текста** (пункты под «Что решить…») — ТОЛЬКО
+      сообщения руководителя комнаты (``lead`` = ``room["orchestrator"]``).
+      У комнаты нет руководителя — кандидатов нет вовсе: список «что решить»
+      исполнителя или критика адресован не Михаилу, и угадывать нечего;
+    * **явная метка** ``[Руководитель · вопрос] …`` — от любого агента: её ставят
+      осознанно, двусмысленности нет (руководитель мог писать из другой карточки);
+    * ``[Руководитель · решение] …`` — по-прежнему от руководителя комнаты
+      (в комнате без руководителя — от любого агента: там нет «своего»).
+
+    Дубли по нормальному тексту схлопываются.
+    """
+    leads = _lead_names(lead)
+    dismissed = dismissed if isinstance(dismissed, dict) else {}
+    out: list = []
+    seen: set = set()
+    for item in items or []:
+        if not isinstance(item, dict) or item.get("author_kind") != "agent":
+            continue
+        # Разбор идёт по СЫРОМУ тексту: переводы строк — часть структуры списка
+        # (norm() схлопнул бы их и список «Что решить» перестал бы быть списком).
+        raw = str(item.get("text") or "")
+        if not raw.strip():
+            continue
+        at = int(item.get("at") or 0)
+        comment_id = str(item.get("id") or "")
+        kind = lead_comment_kind(raw)
+        found: list = []
+        if kind:
+            if kind == "decision" and not _from_leader(item, leads):
+                continue                    # решения — только от руководителя
+            body = mark_text_of(raw)
+            if body:
+                found.append({"text": body, "kind": kind, "source": "comment"})
+        else:
+            # Свободный текст: только руководитель комнаты и только если он известен.
+            if not leads or not _from_leader(item, leads):
+                continue
+            for candidate in candidates_from_comment(raw, comment_id, at):
+                found.append({"text": candidate["text"], "kind": "question",
+                              "source": "candidate"})
+        for index, entry in enumerate(found):
+            key = text_key(entry["text"])
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            qid = comment_item_id(entry["text"], comment_id, index,
+                                  "cq" if entry["kind"] == "question" else "cd")
+            record = dismissed.get(qid) if isinstance(dismissed, dict) else None
+            out.append({"id": qid, "text": entry["text"], "for": "mikhail",
+                        "answered": False, "answer": None, "answered_at": None,
+                        "kind": entry["kind"], "source": entry["source"],
+                        "comment_id": comment_id, "at": at or None,
+                        "dismissed": bool(isinstance(record, dict)
+                                          and (record.get("dismissed") or
+                                               str(record.get("status") or "") == "dismissed")),
+                        "task_id": item.get("task_id")})
+    return out
+
+
+def mark_asks(items, questions) -> None:
+    """Проставить ``asks:[id]`` сообщениям руководителя с зарегистрированными вопросами.
+
+    W20-D1 §1.2 (B-38): в ленте видно «ждёт ваших ответов: N → справа». Связь —
+    по ``comment_id`` вопроса; сообщение без вопросов поля не получает (обратная
+    совместимость: старые клиенты ничего не теряют).
+    """
+    by_comment: dict = {}
+    for question in questions or []:
+        if not isinstance(question, dict):
+            continue
+        if str(question.get("kind") or "question") != "question":
+            continue
+        if question.get("dismissed"):
+            continue
+        comment_id = str(question.get("comment_id") or "")
+        if not comment_id:
+            continue
+        by_comment.setdefault(comment_id, []).append(str(question.get("id") or ""))
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        asked = by_comment.get(str(item.get("id") or "")) or []
+        asked = [qid for qid in asked if qid]
+        if asked:
+            item["asks"] = asked
+        elif "asks" in item:
+            item.pop("asks", None)
 
 
 # ------------------------------------------------------------- разбор из ленты ---
@@ -435,7 +669,87 @@ def reactions_from_thread(items, questions=None, answers=None, lead=None) -> dic
                     "source": "thread", "author": item.get("author") or "",
                     "author_label": item.get("author_label") or "",
                     "implicit": implicit, "task_id": item.get("task_id")}
+    # W20-D1 §1.2 (B-41): реакция ЕСТЬ, но записана не по формату. Раньше вопрос навсегда
+    # оставался «ответ отправлен / реакции нет» (боевой q_8c82dd07: руководитель ответил
+    # «Принято: на письмо от 02.10 отдельно не отвечаем…», исход не распознан).
+    # «Мягкое» состояние честнее: «руководитель ответил текстом — посмотрите в ленте».
+    for qid in list(rec_of):
+        question = known.get(qid) or {}
+        if str(question.get("id") or "") != qid or qid in out:
+            continue
+        reply = _text_reply_after(items, rec_of.get(qid), leads,
+                                  stems(question.get("text")), qid)
+        if not reply:
+            continue
+        out[qid] = {"text": reply.get("text") or "", "at": int(reply.get("at") or 0),
+                    "status": "replied_text", "label": STATE_RU["replied_text"],
+                    "outcome": None, "guessed": True, "cards": [], "changes": None,
+                    "source": "thread", "author": reply.get("author") or "",
+                    "author_label": reply.get("author_label") or "",
+                    "implicit": True, "unparsed": True, "task_id": reply.get("task_id")}
     return out
+
+
+#: с каких слов начинается короткая реакция руководителя (даже без метки и исхода)
+_REPLY_OPENERS = ("принято", "принял", "принимаю", "учтено", "учёл", "учел", "согласен",
+                  "понял", "понятно", "работа пересмотрена", "работа пересмотр",
+                  "ничего менять", "изменения", "сделано", "готово", "ок,", "ок.")
+#: служебные метки — это НЕ текстовая реакция на ответ (собираются на вызов:
+#: часть меток объявлена ниже по файлу — на импорте их ещё нет)
+_NOT_A_REPLY = ("[Руководитель → ",)
+
+
+def _not_a_reply_marks() -> tuple:
+    """Служебные метки, которые не считаются текстовой реакцией на ответ."""
+    return tuple(_NOT_A_REPLY) + (ANSWER_MARK, EXPLAIN_MARK, REACTION_MARK, REMIND_MARK,
+                                  DIGEST_MARK, LEAD_QUESTION_MARK, LEAD_DECISION_MARK,
+                                  DECISION_MARK, DECISION_REACTION_MARK, STEP_AGREE_MARK,
+                                  STEP_DROP_MARK, STEP_COMMENT_MARK, STEP_MOVE_MARK,
+                                  STEP_REACTION_MARK)
+
+
+def _looks_like_reply(text, qid: str, words: set) -> bool:
+    """Похоже ли сообщение руководителя на ответ по существу вопроса.
+
+    Три дороги (в порядке надёжности): (1) назван id вопроса — самый точный признак;
+    (2) начинается со слова реакции («Принято…», «Учтено…»); (3) перекрывает текст
+    вопроса двумя значимыми основами. Служебные метки реакцией не считаются.
+    """
+    if not text:
+        return False
+    for mark in _not_a_reply_marks():
+        if text.startswith(mark):
+            return False
+    if qid and qid in text:
+        return True
+    low = text.lower()
+    if any(low.startswith(opener) for opener in _REPLY_OPENERS):
+        return True
+    if words:
+        return len(stems(text) & words) >= 2
+    return False
+
+
+def _text_reply_after(items, record, leads: set, words: set, qid: str = "") -> dict | None:
+    """Последнее сообщение руководителя ПОСЛЕ ответа, похожее на ответ по делу (B-41)."""
+    answered_at = int((record or {}).get("at") or 0) if isinstance(record, dict) else 0
+    if not norm((record or {}).get("text")):
+        return None                      # реакции без ответа быть не может
+    qid = str(qid or (record or {}).get("question_id") or "")
+    found = None
+    for item in items or []:
+        if not _from_leader(item, leads):
+            continue
+        text = norm(item.get("text"))
+        if not text:
+            continue
+        at = int(item.get("at") or 0)
+        if answered_at and at < answered_at:
+            continue
+        if not _looks_like_reply(text, qid, words):
+            continue
+        found = item
+    return dict(found) if found else None
 
 
 def reactions_from_tree(nodes) -> dict:
@@ -555,14 +869,18 @@ def state_of(record: dict | None, reaction: dict | None = None) -> str:
     """
     record = record if isinstance(record, dict) else {}
     text = norm(record.get("text"))
+    # W20-D1 (B-38): «Это не вопрос» — элемент не ждёт ответа и не считается в счётчиках.
+    if record.get("dismissed") or str(record.get("status") or "") == "dismissed":
+        return "dismissed"
     if not text:
         return "open"
     if record.get("answered") is False or str(record.get("status") or "") == "waiting_explanation":
         return "waiting_explanation"
-    if isinstance(reaction, dict) and reaction.get("status") in ("received", "applied", "no_change"):
+    if isinstance(reaction, dict) and reaction.get("status") in ("received", "applied", "no_change",
+                                                                "replied_text"):
         return str(reaction["status"])
     stored = str(record.get("status") or "")
-    if stored in ("received", "applied", "no_change"):
+    if stored in ("received", "applied", "no_change", "replied_text"):
         return stored
     return "sent"
 
@@ -587,7 +905,7 @@ def apply_question(question: dict, record, reaction=None, now: int | None = None
     text = norm(record.get("text"))
     at = int(record.get("at") or 0) or None
     state = state_of(record, reaction)
-    answered = bool(text) and state not in ("waiting_explanation", "open")
+    answered = bool(text) and state not in ("waiting_explanation", "open", "dismissed")
     question["answered"] = answered
     question["answer"] = text or None
     question["answered_at"] = at if answered else None
@@ -602,6 +920,13 @@ def apply_question(question: dict, record, reaction=None, now: int | None = None
     question["reaction"] = dict(reaction) if isinstance(reaction, dict) else None
     question["reminded_at"] = int(record.get("reminded_at") or 0) or None
     question["leader_pending"] = state == "sent"
+    # W20-D1 §1.2 (B-38, B-41): «это не вопрос» и «ответил текстом» — состояния, а не
+    # повод считать элемент ждущим ответа. `needs_answer` — единственный признак для
+    # «Нужен ваш ответ» и счётчиков (фронт не пересчитывает по-своему).
+    question["dismissed"] = state == "dismissed"
+    question["is_question"] = not question["dismissed"]
+    question["answered_text_only"] = state == "replied_text"
+    question["needs_answer"] = bool(not answered and state not in ("dismissed", "replied_text"))
     # «за разумное время» реакции нет — подсвечиваем, что пора напомнить
     waited = max(0, int(now or _time.time()) - at) if (state == "sent" and at) else 0
     question["reaction_waited_s"] = waited if state == "sent" else None
@@ -956,22 +1281,41 @@ def steps_to_cancel(steps, question, answer_text) -> list:
 
 DECISION_MARK = "[Михаил · решение"
 DECISION_REACTION_MARK = "[Руководитель · реакция на решение"
-DECISION_ACTIONS = ("accept", "reject", "discuss")
-DECISION_ACTION_RU = {"accept": "Принять", "reject": "Отклонить", "discuss": "Обсудить"}
+#: W20-D1 §1.2 (B-37): «Снять — неактуально» и «Вернуть» рядом с принять/отклонить/обсудить.
+DECISION_ACTIONS = ("accept", "reject", "discuss", "dismiss", "restore")
+DECISION_ACTION_RU = {"accept": "Принять", "reject": "Отклонить", "discuss": "Обсудить",
+                      "dismiss": "Снять — неактуально", "restore": "Вернуть"}
 DECISION_ACTION_HINT = {
     "accept": "Согласиться с предложенным решением — руководитель увидит это сразу",
     "reject": "Отклонить решение: можно сразу написать, что предложить вместо",
     "discuss": "Написать или надиктовать, что обсудить — решение останется за вами",
+    "dismiss": "Убрать устаревшее или не ваше решение: уйдёт из «Нужен ваш ответ», "
+               "в списке «Решения» останется серым — можно вернуть",
+    "restore": "Вернуть снятое решение в работу: снова «предложено»",
 }
 DECISION_STATUS_RU = {"proposed": "предложено", "accepted": "принято вами",
-                      "rejected": "отклонено вами", "discuss": "обсуждаем с руководителем"}
+                      "rejected": "отклонено вами", "discuss": "обсуждаем с руководителем",
+                      # W20-D1 §1.2 (B-37): снятое и устаревшее — не ждут ответа
+                      "dismissed": "снято — не актуально", "superseded": "устарело"}
 DECISION_STATUS_HINT = {
     "proposed": "Руководитель предлагает так; решение за вами — «Принять», «Отклонить» "
                 "или «Обсудить».",
     "accepted": "Вы приняли решение. Руководитель получил ваш ответ и учтёт его в работе.",
     "rejected": "Вы отклонили решение. Руководитель получил ответ и предложит другой вариант.",
     "discuss": "Вы просите обсудить: решение остаётся за вами, пока руководитель не ответит.",
+    "dismissed": "Вы сняли решение как неактуальное: оно не ждёт ответа и не считается "
+                 "в счётчиках. Вернуть можно в любой момент.",
+    "superseded": "Решение больше не действует: руководитель его отозвал или в новой версии "
+                  "свода его нет. В работу оно не идёт.",
 }
+#: статусы, которые НЕ ждут слова владельца и не попадают в «Нужен ваш ответ»
+DECISION_CLOSED = ("accepted", "rejected", "dismissed", "superseded")
+#: статусы, которые показываются серым (снято/устарело)
+DECISION_MUTED = ("dismissed", "superseded")
+_SILENT_STATUSES = DECISION_MUTED
+DECISION_STATUSES = tuple(DECISION_STATUS_RU)
+_STATE_OF_DECISION_STATUS = {"accept": "accepted", "reject": "rejected", "discuss": "discuss",
+                            "dismiss": "dismissed", "restore": "proposed"}
 _STATUS_OF_ACTION = {"accept": "accepted", "reject": "rejected", "discuss": "discuss"}
 _ACTION_OF_STATUS = {"accepted": "accept", "rejected": "reject", "discuss": "discuss"}
 
@@ -1092,18 +1436,26 @@ def decision_record_for(decision, records) -> dict | None:
 
 
 def apply_decision(decision: dict, record=None, reaction=None, now: int | None = None) -> dict:
-    """Наложить на решение действие Михаила и реакцию руководителя (B-20, B-21).
+    """Наложить на решение действие Михаила и реакцию руководителя (B-20, B-21, B-37).
 
     * ``status`` — ``proposed`` (ждёт слова), ``accepted``/``rejected`` (решено
-      Михаилом), ``discuss`` (обсуждаем: решение всё ещё за ним);
+      Михаилом), ``discuss`` (обсуждаем: решение всё ещё за ним), ``dismissed``
+      («Снять — неактуально», B-37) и ``superseded`` («устарело»: руководитель отозвал
+      решение или его нет в новой версии свода);
+    * ``open`` — ждёт ли решение слова владельца (``dismissed``/``superseded`` — нет);
     * ``answer_state``/``answer_label``/``answer_hint`` — цепочка ответа
       («ответ отправлен → руководитель прочитал → учтено»);
     * ``leader_pending``, ``can_remind``, ``reaction`` — то же, что у вопросов.
+
+    История действий (``record["history"]``) важна: «снял → вернул» оставляет снятие
+    в журнале, а решает ПОСЛЕДНЕЕ действие пользователя.
     """
     d = dict(decision) if isinstance(decision, dict) else {}
     rec = record if isinstance(record, dict) else {}
     moment = int(now or _time.time())
     status = str(d.get("status") or "proposed")
+    if status not in DECISION_STATUSES:
+        status = "proposed"
     if not rec and (d.get("answer_text") or d.get("answered_at")):
         # Запись ответа потеряна (старый формат/фикстура), но ответ виден в самом
         # решении — читаем его оттуда, не приписывая ответ руководителю.
@@ -1111,12 +1463,34 @@ def apply_decision(decision: dict, record=None, reaction=None, now: int | None =
                "text": norm(d.get("answer_text")), "at": int(d.get("answered_at") or 0) or None,
                "status": "sent",
                "action": _ACTION_OF_STATUS.get(status) if status in ("accepted", "rejected", "discuss") else None}
-    action = str(rec.get("action") or "").strip() or _ACTION_OF_STATUS.get(str(rec.get("outcome") or ""), "")
-    if action in _STATUS_OF_ACTION:
+    history = [item for item in (rec.get("history") or []) if isinstance(item, dict)]
+    action = str(rec.get("action") or "").strip() \
+        or _ACTION_OF_STATUS.get(str(rec.get("outcome") or ""), "")
+    if history:
+        action = str((history[-1] or {}).get("action") or action)
+    elif action:
+        history = [{"action": action, "at": int(rec.get("at") or 0) or None, "text": None}]
+    previous = status
+    dismissed_at = None
+    if action == "dismiss":
+        status, dismissed_at = "dismissed", int(rec.get("at") or 0) or None
+        for item in history:
+            if str(item.get("action")) == "dismiss":
+                dismissed_at = int(item.get("at") or 0) or dismissed_at
+    elif action == "restore":
+        # вернули в работу: снова «предложено» (или «обсуждаем», если так и было)
+        status = "discuss" if previous == "discuss" else "proposed"
+    elif action in _STATUS_OF_ACTION:
         status = _STATUS_OF_ACTION[action]
+    superseded = d.get("superseded") if isinstance(d.get("superseded"), dict) else None
+    if superseded:
+        # W20-D1 §1.2 (B-37): отзыв руководителем / отсутствие в новой версии свода
+        # сильнее любого прежнего действия пользователя.
+        previous, status = status, "superseded"
     reaction = dict(reaction) if isinstance(reaction, dict) else None
     state = state_of(rec, reaction)
-    if state == "open" and reaction and str(reaction.get("status")) in ("received", "applied", "no_change"):
+    if state == "open" and reaction and str(reaction.get("status")) in ("received", "applied",
+                                                                        "no_change", "replied_text"):
         # реакция есть, запись ответа потеряна — цепочка всё равно видна
         state = str(reaction["status"])
     at = int(rec.get("at") or 0) or None
@@ -1124,47 +1498,301 @@ def apply_decision(decision: dict, record=None, reaction=None, now: int | None =
     cards = (reaction or {}).get("cards") or []
     changes = (reaction or {}).get("changes")
     waited = max(0, moment - at) if (state == "sent" and at) else 0
+    muted = status in DECISION_MUTED
+    if muted:
+        state, texts, at = status, None, None
     d.update({
         "status": status,
         "status_label": (DECISION_STATUS_RU.get(status, DECISION_STATUS_RU["proposed"])
-                         if action or status not in ("accepted", "rejected")
+                         if action or muted or status not in ("accepted", "rejected")
                          else "принято руководителем" if status == "accepted" else "отклонено руководителем"),
-        "status_hint": ("Руководитель отметил это решение сам; вашего ответа здесь не требовалось."
-                        if (not action and status in ("accepted", "rejected"))
-                        else DECISION_STATUS_HINT.get(status, DECISION_STATUS_HINT["proposed"])),
-        "status_source": "user" if action else "leader",
+        "status_hint": (DECISION_STATUS_HINT.get(status, DECISION_STATUS_HINT["proposed"])
+                        if muted or action or not status in ("accepted", "rejected")
+                        else "Руководитель отметил это решение сам; вашего ответа здесь не требовалось."),
+        "status_source": "leader" if (superseded or (not action and status in ("accepted", "rejected"))) else "user",
+        "status_muted": bool(muted),
+        "previous_status": previous if previous != status else None,
         "open": status in ("proposed", "discuss"),
+        "needs_answer": status in ("proposed", "discuss"),
         "answered": bool(rec),
+        "dismissed": status == "dismissed",
+        "dismissed_at": dismissed_at if status == "dismissed" else None,
+        "superseded": bool(superseded),
+        "superseded_by": (superseded or {}).get("by") if superseded else None,
+        "superseded_at": (int((superseded or {}).get("at") or 0) or None) if superseded else None,
+        "superseded_why": (superseded or {}).get("why") if superseded else None,
         "answer_action": action or None,
         "answer_action_label": DECISION_ACTION_RU.get(action) if action else None,
         "answer_text": texts,
         "answered_at": at,
         "answer_state": state,
-        "answer_label": state_label(state, cards, changes) if (rec or reaction) else None,
+        "answer_label": (state_label(state, cards, changes) if (rec or reaction) else None),
         "answer_hint": state_hint(state) if (rec or reaction) else None,
         "reaction": reaction,
         "leader_pending": state == "sent",
         "can_remind": state == "sent",
         "reaction_waited_s": waited if state == "sent" else None,
         "reaction_overdue": bool(state == "sent" and waited >= REACTION_WAIT_S),
-        "can_accept": True, "can_reject": True, "can_discuss": True,
+        "can_accept": status in ("proposed", "discuss"),
+        "can_reject": status in ("proposed", "discuss"),
+        "can_discuss": status in ("proposed", "discuss"),
+        # W20-D1 (B-37): «Снять — неактуально» есть у всего, что ещё не устарело, и
+        # «Вернуть» — у снятого. Кнопки живут отдельно от трёх основных действий,
+        # чтобы старые клиенты не получили незнакомый элемент в списке действий.
+        "can_dismiss": status in ("proposed", "discuss", "accepted", "rejected"),
+        "can_restore": status == "dismissed",
         "actions": [{"action": key, "label": DECISION_ACTION_RU[key], "hint": DECISION_ACTION_HINT[key],
-                     "current": key == action} for key in DECISION_ACTIONS],
+                     "current": key == action} for key in ("accept", "reject", "discuss")],
+        "muted_actions": [
+            {"action": key, "label": DECISION_ACTION_RU[key], "hint": DECISION_ACTION_HINT[key],
+             "available": bool(d.get("can_" + key))}
+            for key in ("dismiss", "restore")
+        ],
     })
     return d
 
 
 def decision_summary(decisions) -> dict:
-    """Сколько решений ждут слова Михаила и сколько уже решено (для подписей)."""
-    open_count = closed = 0
+    """Сколько решений ждут слова Михаила и сколько уже решено (для подписей).
+
+    W20-D1 (B-37): снятые (``dismissed``) и устаревшие (``superseded``) считаются
+    закрытыми и не попадают в «Нужен ваш ответ»; их число отдаём отдельно, чтобы
+    блок «Решения» мог сказать «2 снято, 1 устарело».
+    """
+    open_count = closed = dismissed = superseded = 0
     for item in decisions or []:
         if not isinstance(item, dict):
             continue
-        if str(item.get("status") or "proposed") in ("proposed", "discuss"):
+        status = str(item.get("status") or "proposed")
+        if status in ("proposed", "discuss"):
             open_count += 1
-        else:
-            closed += 1
-    return {"total": open_count + closed, "open": open_count, "closed": closed}
+            continue
+        closed += 1
+        if status == "dismissed":
+            dismissed += 1
+        elif status == "superseded":
+            superseded += 1
+    return {"total": open_count + closed, "open": open_count, "closed": closed,
+            "dismissed": dismissed, "superseded": superseded,
+            "muted": dismissed + superseded}
+
+
+# ------------------------------------- версии свода: автоматическое «устарело» ---
+#
+# W20-D1 §1.2 (B-37 п.2): решение перестаёт действовать в двух случаях — руководитель
+# отозвал его (``metadata.decisions_retracted:[d_…]`` в ЛЮБОЙ своей карточке) или его
+# нет в новой версии свода. Данные не переписываются: «устарело» — наложение при чтении.
+#
+# W21-S5 (B-50): «решения нет в новой версии» действует ТОЛЬКО если руководитель прямо
+# заявил, что перечислил полный список — ``metadata.svod.decisions_full = true``.
+# Без флага список решений карточки — дополнение (он пишет только новое/открытое), а не
+# сведение: иначе одно новое решение гасило все прежние (на боевых данных 12.11 два
+# принятых решения посерели именно так). Явный отзыв работает как раньше.
+
+
+def _truthy_flag(value) -> bool:
+    """Флаг из metadata: ``true``/``1``/``"да"`` — да; пусто и ``false`` — нет."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    return text in ("true", "1", "yes", "да", "истина", "on")
+
+
+def _decision_ids_of(raw) -> list:
+    """Список решений из metadata/канона → id (строка/словарь/список)."""
+    out: list = []
+    if isinstance(raw, dict):
+        raw = [raw]
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, str):
+            value = item.strip()
+            if value:
+                out.append(value)
+            continue
+        if isinstance(item, dict) and item.get("id"):
+            out.append(str(item["id"]).strip())
+    return out
+
+
+def _card_decisions(canon) -> list:
+    """Решения карточки в порядке свода: ``[{id, text, why, status}]``."""
+    out: list = []
+    for index, item in enumerate((canon or {}).get("decisions") or [], start=1):
+        if isinstance(item, str):
+            item = {"text": item}
+        if not isinstance(item, dict) or not str(item.get("text") or "").strip():
+            continue
+        out.append({"id": str(item.get("id") or "d_%d" % index).strip(),
+                    "text": norm(item.get("text")),
+                    "why": item.get("why"),
+                    "status": str(item.get("status") or "proposed")})
+    return out
+
+
+def decision_versions(nodes, canons=None) -> list:
+    """Версии свода с решениями: ``[{version, at, id, decisions, retracted, full}]``.
+
+    ``nodes`` — дерево запроса (у каждой карточки ``metadata``), ``canons`` — список
+    ``(node, canon)`` из чтения. Версия берётся из ``metadata.svod.version``, если
+    руководитель её указал; иначе — порядковый номер карточки с решениями. Карточки
+    без решений и без отзывов в историю не попадают (это не новая версия свода).
+
+    ``full`` (W21-S5, B-50) — руководитель заявил ``metadata.svod.decisions_full=true``,
+    то есть перечислил ПОЛНЫЙ список решений. Только такая версия может объявить
+    прежние решения устаревшими; без флага список — дополнение.
+    """
+    by_node = {}
+    for pair in canons or []:
+        if isinstance(pair, (list, tuple)) and len(pair) == 2 and isinstance(pair[1], dict):
+            node = pair[0] if isinstance(pair[0], dict) else {}
+            by_node[str(node.get("id") or "")] = pair[1]
+    out: list = []
+    seen_nodes = set()
+    cards = [node for node in nodes or [] if isinstance(node, dict)]
+    cards.sort(key=lambda node: int(node.get("ended_at") or node.get("at") or 0))
+    for node in cards:
+        node_id = str(node.get("id") or "")
+        canon = by_node.get(node_id)
+        if canon is None:
+            canon = node.get("canon") if isinstance(node.get("canon"), dict) else {}
+        meta = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+        extra = meta.get("extra") if isinstance(meta.get("extra"), dict) else {}
+        decisions = _card_decisions(canon)
+        retracted = _decision_ids_of(meta.get("decisions_retracted")) \
+            or _decision_ids_of(extra.get("decisions_retracted"))
+        if not decisions and not retracted:
+            continue
+        svod = meta.get("svod") if isinstance(meta.get("svod"), dict) else {}
+        # Список строк в `metadata.decisions` — заметки исполнителя («вырезано по ответу…»),
+        # а не сведение решений. Новой версией он не считается: иначе все прежние решения
+        # объявлялись бы «нет в новой версии» и серели (найдено на боевых данных 11.11).
+        raw_meta = meta.get("decisions") if isinstance(meta.get("decisions"), list) else []
+        notes_only = bool(raw_meta) and not any(isinstance(item, dict) for item in raw_meta)
+        if notes_only and not retracted and not svod:
+            continue
+        if node_id and node_id in seen_nodes:
+            continue
+        seen_nodes.add(node_id)
+        try:
+            version = int(svod.get("version")) if svod.get("version") is not None else None
+        except (TypeError, ValueError):
+            version = None
+        out.append({"version": version, "at": int(node.get("ended_at") or node.get("at") or 0),
+                    "id": node_id, "decisions": decisions, "retracted": retracted,
+                    "full": _truthy_flag(svod.get("decisions_full"))})
+    out.sort(key=lambda item: (int(item.get("at") or 0), int(item.get("version") or 0)))
+    for index, item in enumerate(out, start=1):
+        if item.get("version") is None:
+            item["version"] = index
+    return out
+
+
+def superseded_decisions(versions) -> dict:
+    """``{d_id: {by, at, why}}`` — отозванные и исчезнувшие из новой версии решения.
+
+    Правила (W21-S5, B-50 уточнил первое):
+    * явный отзыв действует с указанной версии (``why="retracted"``) — как раньше;
+    * решение, которое было в версии N и отсутствует в версии M > N, устаревает с
+      версии M (``why="absent"``) ТОЛЬКО если версия M заявила полный список
+      (``full``, то есть ``metadata.svod.decisions_full=true``). Без флага список
+      решений карточки — дополнение: одно новое решение не гасит прежние;
+    * решение, снова появившееся в более поздней версии, перестаёт быть «исчезнувшим»
+      (последнее слово руководителя сильнее прежней отметки); явный отзыв так не
+      снимается.
+
+    Более позднее сведение (отзыв) сильнее раннего «исчезло».
+    """
+    out: dict = {}
+    seen: dict = {}
+    for item in sorted(versions or [], key=lambda v: int(v.get("version") or 0)):
+        version = int(item.get("version") or 0)
+        entries = [entry for entry in item.get("decisions") or [] if entry.get("id")]
+        present = {entry["id"] for entry in entries}
+        for did in item.get("retracted") or []:
+            out[did] = {"by": version, "at": int(item.get("at") or 0), "why": "retracted"}
+        # «Решения нет в новой версии» считаем только по версии, которая СОДЕРЖИТ список
+        # решений И заявила его полным: карточка с одним новым решением (или с одним
+        # отзывом) не объявляет все прежние решения устаревшими.
+        if entries and item.get("full"):
+            for did, first in list(seen.items()):
+                if did not in present and first < version and did not in out:
+                    out[did] = {"by": version, "at": int(item.get("at") or 0), "why": "absent"}
+        for did in present:
+            seen.setdefault(did, version)
+            if (out.get(did) or {}).get("why") == "absent":
+                out.pop(did, None)        # решение вернулось в свод — оно снова действует
+    return out
+
+
+def carried_decisions(versions, live_ids=None) -> list:
+    """Решения прежних версий, которые действующая версия не повторила (W21-S5, B-50).
+
+    Список решений карточки без ``decisions_full`` — ДОПОЛНЕНИЕ, а не сведение: то, что
+    руководитель не перечислил снова, продолжает действовать (в карточке он обычно пишет
+    только новое или открытое). Возвращает такие решения элементами ``decisions[]``,
+    чтобы они не пропали из блока «Решения»; помеченные «устарело» сюда не попадают.
+    """
+    marks = superseded_decisions(versions)
+    live = {str(item) for item in (live_ids or [])}
+    known: dict = {}
+    for item in sorted(versions or [], key=lambda v: int(v.get("version") or 0)):
+        for entry in item.get("decisions") or []:
+            did = str(entry.get("id") or "")
+            if not did or did in known:
+                continue
+            known[did] = {"id": did, "text": entry.get("text") or "", "why": entry.get("why"),
+                          "status": str(entry.get("status") or "proposed"),
+                          "at": int(item.get("at") or 0), "source_request": None,
+                          "carried": True, "from_version": int(item.get("version") or 0)}
+    return [entry for did, entry in known.items() if did not in live and did not in marks]
+
+
+def retired_decisions(versions, live_ids=None) -> list:
+    """Устаревшие решения как элементы ``decisions[]`` (для блока «Решения»).
+
+    Возвращает только те, которых НЕТ в действующем списке: иначе решение задвоится.
+    Элемент несёт ``status="superseded"``, ``superseded_by`` и исходный текст, чтобы
+    владелец видел, что именно устарело.
+    """
+    live = {str(item) for item in (live_ids or [])}
+    marks = superseded_decisions(versions)
+    known: dict = {}
+    for item in versions or []:
+        for entry in item.get("decisions") or []:
+            if entry.get("id") and entry["id"] not in known:
+                known[entry["id"]] = entry
+    out = []
+    for did, info in marks.items():
+        if did in live or did not in known:
+            continue
+        entry = known[did]
+        out.append({"id": did, "text": entry.get("text") or "", "why": entry.get("why"),
+                    "status": "superseded", "superseded": dict(info),
+                    "at": info.get("at"), "source_request": None})
+    return out
+
+
+def apply_superseded(decisions, versions) -> list:
+    """Пометить действующие решения «устарело» по истории версий (B-37, наложение).
+
+    Ничего не переписывает: добавляет ``superseded``/``status``. Решения, которых нет
+    в новой версии свода, попадают в список отдельными элементами (см.
+    :func:`retired_decisions`) — здесь только отметки для тех, что ещё в списке.
+    """
+    marks = superseded_decisions(versions)
+    out = []
+    for item in decisions or []:
+        if not isinstance(item, dict):
+            continue
+        entry = dict(item)
+        info = marks.get(str(entry.get("id") or ""))
+        if info:
+            entry["superseded"] = dict(info)
+            entry["status"] = "superseded"
+        out.append(entry)
+    return out
 
 
 # --------------------------------------------------- статус вопросов (W17-B §7) ---
@@ -1276,20 +1904,33 @@ def dedupe_questions(questions) -> list:
 
 
 def question_state(record: dict | None) -> dict:
-    """Статус вопроса для «Дальше» и счётчиков: ``{state, answered, label, at, answer}``."""
+    """Статус вопроса для «От вас нужно» и счётчиков: ``{state, answered, label, at, answer}``."""
     record = record if isinstance(record, dict) else {}
     state = state_of(record)
+    if state == "dismissed":
+        # W20-D1 (B-38): «Это не вопрос» — элемент уходит из списков и счётчиков.
+        return {"state": state, "answered": False, "label": STATE_RU["dismissed"],
+                "at": int(record.get("at") or 0) or None, "answer": None}
     if state == "waiting_explanation":
         return {"state": state, "answered": False, "label": "ждёт пояснения",
                 "at": int(record.get("at") or 0) or None, "answer": None}
     if state == "open":
         return {"state": "open", "answered": False, "label": STATE_RU["open"], "at": None, "answer": None}
+    if state == "replied_text":
+        # B-41: «руководитель ответил текстом — посмотрите в ленте». Ответ есть, цепочку
+        # не выдумываем: вопрос не ждёт владельца, но и «учтено» не подписываем.
+        return {"state": state, "answered": True, "label": STATE_RU["replied_text"],
+                "at": int(record.get("at") or 0) or None, "answer": norm(record.get("text")) or None}
     return {"state": state, "answered": True, "label": "отвечен",
             "at": int(record.get("at") or 0) or None, "answer": norm(record.get("text")) or None}
 
 
 def _records_index(records) -> tuple:
-    """Реестр ответов комнаты → (по (root, q_id), по тексту вопроса)."""
+    """Реестр ответов комнаты → (по (root, q_id), по тексту вопроса).
+
+    W20-D1 (B-38): запись «это не вопрос» хранится без текста ответа, но по id должна
+    находиться — иначе снятый вопрос снова окажется в «От вас нужно» и в счётчиках.
+    """
     by_id: dict = {}
     by_text: dict = {}
     for record in records or []:
@@ -1300,13 +1941,34 @@ def _records_index(records) -> tuple:
             continue
         root = str(record.get("root_id") or "")
         for qid, entry in stored.items():
-            if not isinstance(entry, dict) or not norm(entry.get("text")):
+            if not isinstance(entry, dict):
                 continue
             by_id[(root, str(qid))] = entry
+            text = norm(entry.get("text"))
+            if not text:
+                continue
             key = text_key(entry.get("question_text"))
             if len(key) >= 12:
                 by_text.setdefault(key, entry)
     return by_id, by_text
+
+
+def _scoped_decision(records, root: str, did: str) -> dict | None:
+    """Запись решения ИМЕННО этого запроса (id решения считается по тексту, поэтому
+    у двух запросов с одинаковым решением бывает один и тот же ``d_…``).
+    """
+    if not root:
+        return None
+    for record in records or []:
+        if not isinstance(record, dict) or str(record.get("root_id") or "") != root:
+            continue
+        stored = record.get("answers")
+        if not isinstance(stored, dict):
+            continue
+        for key, value in stored.items():
+            if isinstance(value, dict) and _local_decision_id(key) == did:
+                return value
+    return None
 
 
 def backlog_overlay(view: dict, records) -> dict:
@@ -1331,10 +1993,12 @@ def backlog_overlay(view: dict, records) -> dict:
         item = dict(raw)
         kind = str(item.get("kind") or "")
         if kind == "decision":
-            # W19-D2 (B-20): принятое/отклонённое решение сразу уходит из «Дальше»
+            # W19-D2 (B-20): принятое/отклонённое решение сразу уходит из «От вас нужно»
             # и из счётчиков — по данным реестра ответов, без перезаписи данных.
+            # W20-D1 (B-37): снятое и устаревшее — тоже (статус `dismissed`).
             did = _local_decision_id(str(item.get("id") or "").partition(":")[2] or item.get("id"))
-            entry = decisions.get(did)
+            root_id = str(item.get("id") or "").partition(":")[0]
+            entry = _scoped_decision(records, root_id, did) or decisions.get(did)
             if isinstance(entry, dict):
                 view_item = apply_decision(item, entry, None)
                 item["decision_status"] = view_item["status"]
@@ -1343,9 +2007,19 @@ def backlog_overlay(view: dict, records) -> dict:
                 item["answer_label"] = view_item["answer_label"]
                 item["answer_text"] = view_item["answer_text"]
                 item["answered_at"] = view_item["answered_at"]
+                item["needs_answer"] = view_item.get("needs_answer")
                 if str(item.get("status") or "open") not in ("asked", "dismissed"):
-                    item["status"] = ("done" if view_item["status"] == "accepted" else
-                                      "dismissed" if view_item["status"] == "rejected" else "open")
+                    if view_item["status"] in ("dismissed", "superseded"):
+                        item["status"] = "dismissed"
+                    elif view_item["status"] == "accepted":
+                        item["status"] = "done"
+                    elif view_item["status"] == "rejected":
+                        item["status"] = "dismissed"
+                    else:
+                        item["status"] = "open"
+            elif item.get("status") not in ("asked", "dismissed") \
+                    and str(item.get("decision_status") or "") in ("dismissed", "superseded"):
+                item["status"] = "dismissed"
             out.append(item)
             continue
         if kind in ("open_question", "future_question"):
@@ -1357,15 +2031,20 @@ def backlog_overlay(view: dict, records) -> dict:
             state = question_state(entry)
             item["answer_state"] = state["state"]
             item["state_label"] = state["label"]
+            item["needs_answer"] = state["state"] not in ("dismissed", "replied_text") \
+                and not state["answered"]
             current = str(item.get("status") or "open")
             if current in ("dismissed", "asked"):
                 pass                     # действие пользователя сильнее: «убрал»/«уточняю»
+            elif state["state"] == "dismissed":
+                # W20-D1 (B-38): «Это не вопрос» — убираем из «От вас нужно» и счётчиков
+                item["status"] = "dismissed"
             elif state["answered"]:
                 item["status"] = "done"
                 item["answered_at"] = state["at"]
                 item["answer"] = state["answer"]
             else:
-                # просьба пояснить и «нет ответа» — вопрос ОСТАЁТСЯ в «Дальше»
+                # просьба пояснить и «нет ответа» — вопрос ОСТАЁТСЯ в «От вас нужно»
                 item["status"] = "open"
             key = text_key(item.get("text"))
             if key and key in merged:
@@ -1416,26 +2095,33 @@ def backlog_overlay(view: dict, records) -> dict:
 def summary(questions, steps) -> dict:
     """Сводка для интерфейса: сколько ответов, ждут реакции, ждут пояснения, конфликты."""
     states = {}
-    pending = waiting = 0
+    pending = waiting = dismissed = replied_text = 0
     for question in questions or []:
         if not isinstance(question, dict):
             continue
         state = str(question.get("answer_state") or "open")
-        if state == "open":
-            continue
+        if state in ("open", "dismissed"):
+            continue                # «Это не вопрос» (W20-D1, B-38) — не ответ и не счётчик
         states[state] = states.get(state, 0) + 1
         pending += 1 if state == "sent" else 0
         waiting += 1 if state == "waiting_explanation" else 0
+        replied_text += 1 if state == "replied_text" else 0
     conflicts = [step.get("id") for step in steps or []
                  if isinstance(step, dict) and step.get("conflicts_with_answer")]
     cancelled = [step.get("id") for step in steps or []
                  if isinstance(step, dict) and step.get("cancelled_by_answer")]
     return {"answers": sum(states.values()), "states": states, "pending": pending,
             "waiting_explanation": waiting, "conflicts": conflicts, "cancelled": cancelled,
+            "dismissed": dismissed, "replied_text": replied_text,
             # W17-B §3: кнопка «Отправить руководителю накопленные ответы» — есть что
             # отправлять и это осмысленно (ответы без реакции). Пусто — кнопку не показываем.
+            # W21-Q1 (B-45): `can_resend` оставлен как есть (совместимость и старые
+            # клиенты); ВИДИМОСТЬ кнопки решает клиент по `synthesis.live.auto`.
+            # `resend_hint` — спокойная подпись вместо «N ответа без реакции».
             "can_resend": pending > 0, "resend_pending": pending,
-            "resend_label": "Отправить руководителю накопленные ответы"}
+            "resend_label": "Отправить руководителю накопленные ответы",
+            "resend_hint": "Ответы переданы руководителю — он учтёт их в ближайшем обновлении свода",
+            "resend_hint_soon": "Ответы переданы руководителю — он учтёт их в ближайшее время"}
 
 
 __all__ = ["ANSWER_MARK", "EXPLAIN_MARK", "REACTION_MARK", "REMIND_MARK", "STATES", "STATE_RU",
@@ -1462,6 +2148,14 @@ __all__ = ["ANSWER_MARK", "EXPLAIN_MARK", "REACTION_MARK", "REMIND_MARK", "STATE
            "decision_id_of", "decision_kind_of", "decision_action_of", "decision_comment",
            "decision_reaction_comment", "decision_reactions_from_thread", "decision_index",
            "decision_record_for", "apply_decision", "decision_summary",
+           # W20-D1 (B-37): снятое/устаревшее решение, отзыв и версии свода
+           "DECISION_STATUSES", "DECISION_CLOSED", "DECISION_MUTED",
+           "decision_versions", "superseded_decisions", "retired_decisions", "apply_superseded",
+           "carried_decisions",
+           # W20-D1 (B-38, B-41): вопросы руководителя из комментариев и «ответил текстом»
+           "LEAD_QUESTION_MARK", "LEAD_DECISION_MARK", "QUESTION_HEADINGS", "MAX_COMMENT_ITEMS",
+           "lead_comment_kind", "mark_text_of", "comment_item_id", "candidates_from_comment",
+           "questions_from_thread", "mark_asks",
            # W17-B §7 (B7): статус вопроса из реестра, близнецы, служебные вопросы
            "is_service_question", "text_key", "record_for", "dedupe_questions",
            "question_state", "backlog_overlay"]

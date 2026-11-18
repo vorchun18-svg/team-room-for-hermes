@@ -15,7 +15,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { installFakeDom, uninstallFakeDom, FakeElement } from './fake-dom.mjs';
-import { renderTree } from '../web/js/views/request-parts-tree.js';
+import { renderTree as renderTreeRaw } from '../web/js/views/request-parts-tree.js';
 import {
   attemptCount, failureStamp, failureSignature,
   retrySignature, retryPhase, retryKey, RETRY_TTL_MS, RETRY_SENT_TEXT,
@@ -112,11 +112,24 @@ function mount() {
 
 /* ───────────────────────────────────────────────────────────────— данные стенда */
 
+/**
+ * У-1 (волна 21): «Дерево работ» — сворачиваемый блок, у готового/упавшего
+ * запроса он СВЁРНУТ по умолчанию, а строки строятся только при раскрытии.
+ * Тесты ниже проверяют поведение узлов, поэтому сначала открывают блок —
+ * тем же кликом, что делает человек (общий компонент заголовка).
+ */
+function renderTree(detail, ctx, opts) {
+  const card = renderTreeRaw(detail, ctx, opts);
+  const toggle = card.querySelector ? card.querySelector('.sec__toggle') : null;
+  if (toggle) toggle.dispatch('click');
+  return card;
+}
+
 const RID_ERR = 't_tree0err';
 const RID_OK = 't_tree0ok';
 
 function failedRun(id, startedAt, error) {
-  return { id, profile: 'biz-cfo', status: 'failed', outcome: 'failed',
+  return { id, profile: 'team-cfo', status: 'failed', outcome: 'failed',
            started_at: startedAt, ended_at: startedAt + 60, error };
 }
 
@@ -127,7 +140,7 @@ function errorDetail(rid, over = {}) {
   ];
   const message = over.message
     || "Процесс воркера завершился с кодом 1: KeyError('cost_packaging') — в таблице "
-     + 'поставщика C:\\TeamRoom\\Agents\\default\\2026-11-06 Письмо Лебедев — ответ\\custo.xlsx '
+     + 'поставщика C:\\TeamRoom\\Agents\\default\\2026-11-06 Письмо поставщику — ответ\\custo.xlsx '
      + 'нет колонки с ценой короба, поэтому расчёт маржи по каналам остановлен.';
   return {
     id: rid,
@@ -137,16 +150,16 @@ function errorDetail(rid, over = {}) {
     progress: { done: 1, total: 2 },
     tree: [
       { id: 't_root', parent_ids: [], title: 'Юнит-экономика', role: 'root', status: 'blocked',
-        assignee: 'biz-director', started_at: 1793159930, runs: [], comments: [], error: null },
+        assignee: 'team-director', started_at: 1793159930, runs: [], comments: [], error: null },
       { id: 't_err', parent_ids: ['t_root'], title: 'Посчитать маржу по каналам', role: 'worker',
-        status: 'blocked', assignee: 'biz-cfo', started_at: 1793160510, runs,
+        status: 'blocked', assignee: 'team-cfo', started_at: 1793160510, runs,
         comments: [], needs_human: false, outside_room: false,
         error: { code: 'worker_crashed', message } },
       { id: 't_ok', parent_ids: ['t_root'], title: 'Собрать себестоимость', role: 'worker',
-        status: 'done', assignee: 'biz-ops', started_at: 1793159960, finished_at: 1793160500,
-        runs: [{ id: 5, profile: 'biz-ops', status: 'done', outcome: 'completed',
+        status: 'done', assignee: 'team-ops', started_at: 1793159960, finished_at: 1793160500,
+        runs: [{ id: 5, profile: 'team-ops', status: 'done', outcome: 'completed',
                  started_at: 1793159960, ended_at: 1793160500, error: null }],
-        comments: [{ author: 'biz-ops', text: 'Себестоимость готова', at: 1793160500 }],
+        comments: [{ author: 'team-ops', text: 'Себестоимость готова', at: 1793160500 }],
         needs_human: false, error: null, outside_room: false },
     ],
     warnings: [{ code: 'card_failed', message: 'Карточка расчёта упала дважды', detail: { task_id: 't_err' } }],
@@ -158,7 +171,7 @@ function ctxStub() {
   const toasts = [];
   return {
     toasts,
-    room: { id: 'cafe', members: [], orchestrator: 'biz-director', critic: '' },
+    room: { id: 'cafe', members: [], orchestrator: 'team-director', critic: '' },
     toast(msg, kind) { toasts.push({ msg, kind }); },
     api: { get: async () => ({ id: 'cafe', members: [] }), post: async () => ({ ok: true }) },
   };

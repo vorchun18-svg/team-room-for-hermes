@@ -3,10 +3,10 @@
  *
  * Верх страницы: шапка, этапы, предупреждения, крупный ответ с версиями,
  * проверка критика, встроенный отчёт, дерево работ, артефакты, хронология.
- * Справа — «Дальше»: шаги, вопросы к Михаилу, решения, будущие вопросы, фаза.
+ * Справа — «От вас нужно»: шаги, вопросы к Михаилу, решения, будущие вопросы, фаза.
  *
  * Файл — каркас (данные, опрос, действия, сборка страницы); шапка и меню — в
- * request-header.js, ответ и версии — в request-answer.js, колонка «Дальше» —
+ * request-header.js, ответ и версии — в request-answer.js, колонка «От вас нужно» —
  * в request-aside.js, общие помощники — в request-util.js.
  *
  * Блоки (2)(3)(5)(7)(8)(9)(10) приходят из соседних модулей
@@ -27,9 +27,20 @@ import { ensureProfileDirectory } from '../participant-label.js';
 import { createHeader } from './request-header.js';
 import { createAnswer } from './request-answer.js';
 import { createAside } from './request-aside.js';
+import { createApprovals } from './approvals.js';
+// W26-D2: один стор запроса — «одно действие — везде» (основной блок, колонка, лист).
+import { requestStoreFor } from './request-store.js';
 import { mountThread } from './request-thread.js';
+import { mountWorklog } from './request-worklog.js';
+import { createSection, sectionDefaults } from './section-collapse.js';
 import { isBrief, buildPlanCard } from './plan-req.js';
 import { briefCrumbItems, requestTitle } from '../scope.js';
+// W25-L1 (R5 §7.6): липкая панель действий свода — одна строка 40 px вверху.
+import { buildSvodBar } from '../shell-svod-bar.js';
+// W25-L2 (R5 §7.4): «Фокус» — свой режим внутри страницы; (R5 §7.9) плотность.
+import { installFocusMode, buildFocusBar } from '../focus-mode.js';
+import { installDensity } from '../density.js';
+import { isTypingTarget } from '../hotkeys.js';
 
 const FINAL = new Set(['done', 'failed']);
 // WAVE17-P4: опрос реже, чем раньше (было 2 с): 304 по ETag дешёвый, но и он
@@ -50,6 +61,8 @@ const signatureOf = stateSignature;
 
 export async function mount(el, ctx) {
   await ensureCss('css/view-request.css');
+  // W25-L2: поведение блоков, плотность и «Фокус» (R5 §7.2, §7.4, §7.9).
+  await ensureCss('css/view-blocks.css');
   // Стили диалога нужны до первой отрисовки: иначе лента и поле ввода
   // появляются без своих размеров и прыгают при подключении стилей.
   await ensureCss('css/view-thread.css');
@@ -73,7 +86,8 @@ export async function mount(el, ctx) {
   let reportEmbed = null;
   let partsCheckedAt = 0;
   let backlog = null; // Map<item_id, BacklogItem> | null
-  let threadCtl = null; // { focus() } — блок «Диалог по запросу»
+  let threadCtl = null; // { update, focus, destroy } — блок «Диалог по запросу» (монтируется один раз)
+  let worklogCtl = null; // { update, destroy } — блок «Ход работы» (тоже монтируется один раз)
   let room = null; // деталь комнаты: project_dir, title (для кнопки папки и крошки)
   let plan = null; // карта проекта комнаты (GET /api/rooms/{r}/plan)
   let planError = null;
@@ -84,6 +98,27 @@ export async function mount(el, ctx) {
   const state = { version: null, askOpen: false, pipeOpen: false };
   const keepValues = new Map(); // data-keep → введённый текст
   const listeners = [];
+
+  /* ── W25-L2: режим вида, «Фокус», плотность (R5 §7.4, §7.7, §7.9) ─────────
+   *
+   * Всё это ЧИТАЕТ контракт L1 (`data-layout`, `data-density`, `data-focus` на
+   * `#app`) и ничего в оболочке не переписывает. Режим нужен здесь, потому что
+   * умолчания блоков зависят от ширины вида (R5 §7.2), а ширина меняется без
+   * перезагрузки: блоки пересчитываются по событию `teamroom:layout`.
+   */
+  const appEl = (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('app') : null;
+  /** Текущий режим вида: единственный источник — `data-layout` (layout-mode.js). */
+  function layoutMode() {
+    const live = (typeof document !== 'undefined' && document.getElementById) ? document.getElementById('app') : null;
+    return String((live && live.dataset && live.dataset.layout) || 'm');
+  }
+  const focus = installFocusMode({
+    app: appEl,
+    route: { name: 'request', roomId: roomId, id: rid },
+  });
+  const density = installDensity({ app: appEl });
+  /** Блоки этой страницы: `key → api createSection` (пересчёт умолчаний). */
+  const sections = new Map();
   // WAVE17-P4: обновление, отложенное на время набора текста или диктовки.
   let pendingRender = false;
   let deferTimer = null;
@@ -156,6 +191,33 @@ export async function mount(el, ctx) {
     }
   }
 
+  /**
+   * `[` / `]` — предыдущий / следующий запрос в комнате (R5 §7.8).
+   *
+   * Список берём из данных комнаты (`GET /api/rooms/{id}` → `requests`), которые
+   * страница и так загружает ради папки проекта: отдельного запроса клавиша не
+   * делает. Порядок — как в комнате (свежие сверху); на границе списка не
+   * перескакиваем: «предыдущий» с первого и «следующий» с последнего ничего не
+   * делают, чтобы не уводить человека в неожиданный запрос.
+   *
+   * @param {number} delta −1 предыдущий, +1 следующий
+   * @returns {boolean} был ли переход
+   */
+  function stepRequest(delta) {
+    const list = Array.isArray(room && room.requests) ? room.requests : [];
+    const ids = list.map((r) => String((r && (r.id || r.root_id)) || '')).filter(Boolean);
+    if (!ids.length) return false;
+    const i = ids.indexOf(String(rid));
+    if (i < 0) return false;
+    const next = ids[i + (Number(delta) < 0 ? -1 : 1)];
+    if (!next || next === rid) return false;
+    if (typeof ctx.navigate === 'function') {
+      ctx.navigate(`#/room/${encodeURIComponent(roomId)}/request/${encodeURIComponent(next)}`);
+      return true;
+    }
+    return false;
+  }
+
   /** «Запустить всё»: очередь направлений, дальше их ведёт сервер. */
   async function launchAll() {
     if (launching || !roomId) return;
@@ -198,6 +260,9 @@ export async function mount(el, ctx) {
     lastSig = sig;
     const prev = detail;
     detail = res;
+    // W26-D2: сервер — единственный источник истины; стор получает ту же деталь,
+    // что и страница (без лишнего события: страница и так перерисовывается).
+    try { store.setDetail(res, { source: 'page', quiet: true, force: false }); } catch { /* старый ответ */ }
     error = null;
     if (!roomId && detail.room) roomId = String(detail.room);
 
@@ -287,12 +352,20 @@ export async function mount(el, ctx) {
     await runAction('decompose', {}, { toast: 'Разбор запущен — это может занять пару минут' });
   }
 
-  /* ── блоки страницы: шапка и меню, ответ, колонка «Дальше» ───────────── */
+  /* ── блоки страницы: шапка и меню, ответ, колонка «От вас нужно» ───────────── */
 
   // Общий контекст для модулей request-header/answer/aside: изменяемые
   // detail / roomId / backlog читаются через геттеры, остальное — стабильные ссылки.
+  // W26-D2: стор создаётся ДО мест, которые его показывают: и основной блок, и
+  // правая колонка получают один и тот же объект (`R.store`).
+  const store = requestStoreFor(rid, {
+    api: ctx && ctx.api,
+    roomId,
+    detail,
+    refresh: (o) => refresh(o),
+  });
   const R = {
-    ctx, rid, root, state, keepValues,
+    ctx, rid, root, state, keepValues, store,
     get roomId() { return roomId; },
     get detail() { return detail; },
     get backlog() { return backlog; },
@@ -305,22 +378,69 @@ export async function mount(el, ctx) {
     },
   };
   const header = createHeader(R);
-  const { buildAnswer } = createAnswer(R);
+  const answer = createAnswer(R);
+  const { buildAnswer } = answer;
   const { buildAside } = createAside(R);
+  // W22-AP2: «Разрешения агентам» — блок под ответом руководителя.
+  const approvalsUI = createApprovals(R);
 
   /* ── сборка страницы ──────────────────────────────────────── */
 
+  /**
+   * «Запрос» вверху страницы: сворачивается тем же общим компонентом (У-1),
+   * что «Диалог», «Дерево работ» и «Артефакты» — одна стрелка, одно поведение.
+   * По умолчанию свёрнут (как было); в заголовке — первая строка запроса.
+   */
   function askBlock() {
     if (!detail.text) return null;
-    const det = h('details', { class: 'req-ask', open: state.askOpen || null });
-    det.addEventListener('toggle', () => { state.askOpen = det.open; });
-    det.append(
-      h('summary', null,
-        icon('chevron-right', { size: 12, className: 'req-ask__chev' }),
-        h('span', { class: 'req-ask__label' }, 'Запрос'),
-        h('span', { class: 'req-ask__preview', title: firstLine(detail.text) }, firstLine(detail.text))),
-      h('div', { class: 'req-ask__text' }, detail.text));
-    return det;
+    const defaults = sectionDefaults(detail, { layout: layoutMode() });
+    const sec = createSection({
+      key: 'ask',
+      requestId: rid,
+      title: 'Запрос',
+      titleClass: 'req-ask__label',
+      defaultOpen: defaults.ask,
+      card: false,
+      className: 'req-ask',
+      content: () => h('div', { class: 'req-ask__text' }, detail.text),
+    });
+    sections.set('ask', sec);
+    // Превью первой строки — как было: в заголовке, справа от подписи.
+    sec.extra.appendChild(h('span', { class: 'req-ask__preview', title: firstLine(detail.text) }, firstLine(detail.text)));
+    return sec.element;
+  }
+
+  /**
+   * W25-L2: пересчитать умолчания блоков под текущую ширину вида (R5 §7.2, §7.7).
+   *
+   * Что делает: берёт режим из `data-layout` (единственный источник, L1), считает
+   * умолчания одной функцией `sectionDefaults` и применяет их к блокам, где
+   * человек ещё не выбирал сам. Плюс переставляет «Диалог» в лист снизу на
+   * узком виде (`data-sheet`).
+   *
+   * «Состояние переживает смену ширины» (R5 §9 п. 18) — именно потому, что
+   * `applyDefault` уважает явный выбор и ничего в него не пишет.
+   *
+   * @returns {{mode: string, changed: number}}
+   */
+  function applyLayout() {
+    const mode = layoutMode();
+    const s = synthesisOf(detail || {});
+    const defaults = sectionDefaults(detail, { layout: mode, version: latestVersion(s) });
+    let changed = 0;
+    for (const [key, sec] of sections) {
+      if (defaults[key] === undefined) continue;
+      const before = sec.isOpen();
+      const after = sec.applyDefault(defaults[key]);
+      if (before !== after) changed += 1;
+    }
+    // «Диалог по запросу» на узком виде открывается листом снизу (R5 §7.2).
+    const threadEl = (root.querySelector ? root.querySelector('.req-thread') : null);
+    if (threadEl) {
+      if (mode === 'm' || mode === 's' || mode === 'xs') threadEl.setAttribute('data-sheet', '1');
+      else threadEl.removeAttribute('data-sheet');
+    }
+    return { mode, changed };
   }
 
   /**
@@ -343,7 +463,7 @@ export async function mount(el, ctx) {
     det.append(
       h('summary', { class: 'req-pipe__summary' },
         icon('chevron-right', { size: 12, className: 'req-pipe__chev' }),
-        h('span', { class: 'req-pipe__title' }, 'Ход работы'),
+        h('span', { class: 'req-pipe__title' }, 'Этапы'),
         total ? h('span', { class: 'req-pipe__count tnum' }, fromCount(done, total, ['этап', 'этапа', 'этапов'])) : null),
       h('div', { class: 'req-pipe__body' }, card),
     );
@@ -421,6 +541,29 @@ export async function mount(el, ctx) {
     const crumbs = briefCrumbsBlock();
     if (crumbs) page.append(crumbs);
     page.append(header.buildHeader());
+    // W25-L1 (R5 §7.6): одна строка действий свода, липнет к верху прокрутки.
+    // W25.5: здесь же единственное место управления — переключатель версий и
+    // пометка «актуально» (в карточке их больше нет). Кнопки панели нажимают
+    // кнопки карточки свода (одна реализация действия), меню «Ещё ▾» — тот же
+    // `exportGroup`, что и внизу карточки (волна 24).
+    // Пока свода нет — панели нет: пустая строка не нужна.
+    const svodBar = buildSvodBar({
+      ctx,
+      rid,
+      getDetail: () => detail,
+      root: page,
+      getVersion: () => Number(state.version) || 0,
+      onVersion: (n) => answer.setVersion(n),
+      onRefresh: () => answer.refreshSvod(),
+    });
+    if (svodBar) page.append(svodBar);
+    // W25-L2 (R5 §7.4): тонкая строка «Фокуса» — видна только при `data-focus="on"`.
+    const focusBar = buildFocusBar({
+      total: (Array.isArray(detail.open_questions) ? detail.open_questions : [])
+        .filter((q) => q && !q.answered && !q.dismissed).length,
+      onExit: () => { focus.off(); },
+    });
+    if (focusBar) page.append(focusBar);
 
     const pipeline = pipelineBlock();
     if (pipeline) page.append(pipeline);
@@ -435,18 +578,25 @@ export async function mount(el, ctx) {
     const planCard = planBlock();
     if (planCard) main.append(planCard);
     main.append(buildAnswer());
+    // W22-AP2: «Разрешения агентам» — сразу под ответом: участник упёрся в
+    // запрет Hermes, и без решения человека работа стоит.
+    const approvals = approvalsUI.buildRequestBlock();
+    if (approvals) main.append(approvals);
+    // W23-MG2: «Контроль моделей» — что сторож остановил или исправил по этой
+    // карточке. Ставим сразу после разрешений: оба блока про вмешательство
+    // приложения в работу команды, и оба видны до диалога.
+    const guardFeed = safePart('renderModelGuard', parts?.renderModelGuard, detail, ctx);
+    if (guardFeed) main.append(guardFeed);
 
     // Диалог по запросу — прямо под ответом: уточнить, пока команда работает,
-    // или спросить после ответа. Монтируется каждый раз заново (данные новые),
-    // набранное и фокус переживают перерисовку внутри самого блока.
-    const threadHost = h('div', { class: 'req-thread' });
-    main.append(threadHost);
-    threadCtl = mountThread(threadHost, ctx, {
-      roomId,
-      rid,
-      detail,
-      onSent: () => refresh({ force: true, quiet: true }),
-    });
+    // или спросить после ответа. W20-C1 (B-40): блок монтируется ОДИН раз (см.
+    // ensureThread) и дальше только обновляет данные; здесь остаётся его место
+    // на странице — с меткой «не пересобирать», чтобы правка страницы не
+    // разлучала живое поле с живой кнопкой.
+    main.append(h('div', { class: 'req-thread', 'data-keep-tree': '' }));
+    // W20-FB: «Ход работы» — кто что делает прямо сейчас. Своё место-узел,
+    // чтобы лента жила отдельно от перерисовок страницы (как диалог выше).
+    main.append(h('div', { class: 'req-worklog', 'data-keep-tree': '' }));
 
    
     const critic = safePart('renderCritic', parts?.renderCritic, detail, ctx);
@@ -463,6 +613,54 @@ export async function mount(el, ctx) {
    
     page.append(h('div', { class: 'req__grid' }, main, buildAside()));
     return page;
+  }
+
+  /**
+   * Диалог по запросу: монтируется ОДИН раз за визит страницы, дальше только
+   * обновляется (`update`) — W20-C1, B-40.
+   *
+   * Почему не пересобирать: живая кнопка «Отправить» и поле с набранным текстом
+   * обязаны принадлежать одной сборке. Раньше блок собирался на каждый render, а
+   * точечная правка страницы оставляла часть узлов от старой сборки — кнопка
+   * новой сборки читала своё (не вставленное) поле и отвечала «Напишите сообщение».
+   *
+   * Место на странице помечено `data-keep-tree` (live-patch его не трогает),
+   * поэтому узел переносится между перерисовками как есть.
+   */
+  function ensureThread() {
+    const slot = root.querySelector ? root.querySelector('.req-thread') : null;
+    if (!slot) return;
+    if (!threadCtl) {
+      threadCtl = mountThread(slot, ctx, {
+        roomId,
+        rid,
+        detail,
+        onSent: () => refresh({ force: true, quiet: true }),
+      });
+      return;
+    }
+    const el = threadCtl.element;
+    if (el && el.parentNode !== slot) slot.appendChild(el);
+    if (typeof threadCtl.update === 'function') threadCtl.update(detail);
+  }
+
+  /**
+   * Блок «Ход работы» (W20-FB): монтируется один раз за визит страницы, дальше
+   * получает новые данные через `update(detail)` — статус запроса решает, как
+   * часто опрашивать сервер (3 с в работе, 30 с после) и когда свернуть блок.
+   * Место помечено `data-keep-tree`, поэтому live-patch его не заменяет: лента,
+   * её прокрутка и раскрытые записи переживают перерисовку страницы.
+   */
+  function ensureWorklog() {
+    const slot = root.querySelector ? root.querySelector('.req-worklog') : null;
+    if (!slot) return;
+    if (!worklogCtl) {
+      worklogCtl = mountWorklog(slot, ctx, { roomId, rid, detail });
+      return;
+    }
+    const el = worklogCtl.element;
+    if (el && el.parentNode !== slot) slot.appendChild(el);
+    if (typeof worklogCtl.update === 'function') worklogCtl.update(detail);
   }
 
   /**
@@ -489,6 +687,9 @@ export async function mount(el, ctx) {
     const snap = captureSnapshot(root, document);
     const next = buildPage();
     applyLivePatch(root, next, { doc: document, draftKeys: keepValues, snapshot: snap });
+    // Диалог: один раз смонтировать, дальше только данные (W20-C1, B-40).
+    ensureThread();
+    ensureWorklog();
     pendingRender = false;
     deferredSince = 0;
     if (deferTimer) { clearTimeout(deferTimer); deferTimer = null; }
@@ -531,17 +732,98 @@ export async function mount(el, ctx) {
 
   poller = (typeof ctx.api.poll === 'function' ? ctx.api.poll : apiPoll)(tick, POLL_ACTIVE, { pauseHidden: true, immediate: false });
 
-  const onKey = (e) => { if (e.key === 'Escape' && header.isMenuOpen()) header.closeMenu(); };
-  document.addEventListener('keydown', onKey);
-  listeners.push(() => document.removeEventListener('keydown', onKey));
+  /* ── W25-L2: клавиши страницы (R5 §7.8) ─────────────────────────────────
+   *
+   * Здесь только те, что принадлежат СТРАНИЦЕ ЗАПРОСА: «Фокус», `Esc`, `[`/`]`,
+   * `A`. J/K, Ctrl+Enter, `?`, `V` и палитра уже стоят общим обработчиком
+   * (`hotkeys.js`, app.js) — второй обработчик их бы дублировал.
+   * Правило R5 §7.8 соблюдается в одном месте: если курсор в поле ввода, одиночные
+   * клавиши молчат (`isTypingTarget`), а Ctrl/⌘-сочетания работают всегда, кроме
+   * Ctrl+Shift+F, который в поле тоже полезен (увести лишнее с глаз).
+   */
+  const onPageKey = (ev) => {
+    if (!ev || ev.defaultPrevented || ev.isComposing) return;
+    const key = String(ev.key || '');
+    const mod = ev.ctrlKey || ev.metaKey;
+    // Ctrl/⌘ + Shift + F — вход и выход из «Фокуса» (R5 §7.4).
+    if (mod && ev.shiftKey && (key === 'F' || key === 'f' || key === 'А' || key === 'а')) {
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+      focus.toggle();
+      return;
+    }
+    if (mod || ev.altKey) return;
+    if (isTypingTarget(ev.target)) return;
+
+    if (key === 'Escape' || key === 'Esc') {
+      // Сначала — открытое меню «Действия» (поведение L1 сохраняем).
+      if (header.isMenuOpen()) {
+        header.closeMenu();
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        return;
+      }
+      // Порядок как у человека: сначала лист диалога, потом «Фокус».
+      const sheet = (root.querySelector ? root.querySelector('.req-thread[data-sheet="1"][data-open="1"]') : null);
+      if (sheet) {
+        const ctl = sections.get('thread');
+        if (ctl) ctl.collapse();
+        else { const btn = sheet.querySelector ? sheet.querySelector('.sec__toggle') : null; if (btn && btn.click) btn.click(); }
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        return;
+      }
+      if (focus.isOn()) {
+        focus.off();
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+      }
+      return;
+    }
+    if (key === '[' || key === 'х' || key === 'Х') { stepRequest(-1); return; }
+    if (key === ']' || key === 'ъ' || key === 'Ъ') { stepRequest(1); return; }
+    // `A` — «Ответить»: открыть первый неотвеченный вопрос и поставить курсор.
+    if (key === 'a' || key === 'A' || key === 'ф' || key === 'Ф') {
+      const bar = (root.querySelector ? root.querySelector('.req-pinbar') : null);
+      if (bar && bar.click) { if (typeof ev.preventDefault === 'function') ev.preventDefault(); bar.click(); return; }
+      const field = (typeof document !== 'undefined' && document.querySelector)
+        ? document.querySelector('#questions .req-q__input')
+        : null;
+      if (field && typeof field.focus === 'function') {
+        if (typeof ev.preventDefault === 'function') ev.preventDefault();
+        try { field.focus({ preventScroll: false }); } catch { field.focus(); }
+      }
+    }
+  };
+  document.addEventListener('keydown', onPageKey);
+  listeners.push(() => document.removeEventListener('keydown', onPageKey));
+
+  /* Смена ширины вида: пересчитать умолчания блоков (R5 §7.2, §7.7, §9 п. 18).
+     Событие рассылает `layout-mode.js` — наш код только слушает. */
+  const onLayout = () => {
+    if (disposed) return;
+    applyLayout();
+  };
+  window.addEventListener('teamroom:layout', onLayout);
+  listeners.push(() => window.removeEventListener('teamroom:layout', onLayout));
+  applyLayout();
 
   return {
     unmount() {
       disposed = true;
+      try { store.destroy(); } catch { /* стор уже забыт */ }
       if (poller) poller.stop();
       if (deferTimer) { clearTimeout(deferTimer); deferTimer = null; }
       pendingRender = false;
       header.closeMenu();
+      if (threadCtl && typeof threadCtl.destroy === 'function') {
+        try { threadCtl.destroy(); } catch { /* узел уже убран */ }
+      }
+      threadCtl = null;
+      if (worklogCtl && typeof worklogCtl.destroy === 'function') {
+        try { worklogCtl.destroy(); } catch { /* узел уже убран */ }
+      }
+      worklogCtl = null;
+      // «Фокус» не переносится на другие экраны (R5 §7.4: состояние на маршрут).
+      try { focus.destroy(); } catch { /* страница уже без #app */ }
+      try { density.destroy(); } catch { /* плотность живёт в атрибуте */ }
+      sections.clear();
       for (const off of listeners) { try { off(); } catch { /* ignore */ } }
       listeners.length = 0;
     },

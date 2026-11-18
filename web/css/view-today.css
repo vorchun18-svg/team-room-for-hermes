@@ -1,0 +1,357 @@
+/* view-today.css — экран «Сегодня» (W24-N3).
+ *
+ * Задача вида: спокойный утренний свод. Слева — то, что ждёт человека, справа —
+ * сроки, изменения, дежурства. Правила:
+ *   • раскладка по ширине ВИДА (`@container view`), не окна: на половине экрана
+ *     (900–1000 px) центр не сжимается, а колонки складываются в одну;
+ *   • типографика — шкала токенов, базовый текст 14 px, строка 1.55;
+ *   • цвета — только токены, светлая и тёмная темы одинаково читаемы;
+ *   • ничего не обрезается: длинные названия переносятся, `min-width: 0` у
+ *     колонок (иначе grid не даёт содержимому ужиматься и появляется прокрутка).
+ */
+
+.today {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  container-type: inline-size;   /* свои замеры у самого вида */
+  container-name: today;
+  padding-bottom: var(--space-8);
+}
+
+/* ── Шапка ──────────────────────────────────────────────────────────────── */
+.today__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.today__headline { min-width: 0; }
+.today__title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  font-weight: 600;
+  color: var(--ui-text-primary);
+}
+.today__lead {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--ui-text-secondary);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.today__day { color: var(--ui-text-secondary); }
+/* «обновлено 01:45» — служебная строка: тише даты, тем же кеглем шкалы. */
+.today__stamp, .today__sep { color: var(--ui-text-tertiary); font-size: var(--text-xs); }
+.today__headright { min-width: 0; }
+.today__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+.today__chips[data-empty] { display: none; }
+.today__chip {
+  font-variant-numeric: tabular-nums;
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--ui-text-secondary);
+  font-size: var(--text-xs);
+  padding: 2px var(--space-2);
+}
+.today__chip.chip--warn { border-color: color-mix(in srgb, var(--warn) 45%, transparent); color: var(--warn-ink); }
+.today__chip.chip--danger { border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--danger-ink); }
+.today__chip.chip--info { border-color: color-mix(in srgb, var(--info) 45%, transparent); color: var(--info-ink); }
+.today__chip.chip--ok { border-color: color-mix(in srgb, var(--ok) 45%, transparent); color: var(--ok-ink); }
+
+/* ── Сетка: одна колонка по умолчанию, две — только на широком виде ─────── */
+.today__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+.today__col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+@container view (min-width: 1100px) {
+  .today__grid { grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); }
+}
+/* Половина экрана (900–1000 px): одна колонка — так же, как на узком окне.
+   Правило явное, чтобы поведение не зависело от порядка блоков выше. */
+@container view (max-width: 1099px) {
+  .today__grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── Секции: общий компонент W21, здесь только ритм и заголовок ─────────── */
+.today-sec { padding: 0; }
+.today-sec .sec__head { margin: 0; }
+.today-sec .sec__toggle {
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+}
+.today-sec .sec__title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.today-sec .sec__body { padding: 0 var(--space-4) var(--space-4); }
+.today-sec .sec__body[hidden] { display: none; }
+.today-sec--needs_you .sec__title { color: var(--ui-text-primary); }
+
+/* ── Здоровье: строка-плашка, раскрывается в список ─────────────────────── */
+.today-sec--health { display: none; }
+.today-sec--health[data-state] { display: block; }
+.today-sec--health[data-state="warn"] {
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  background: var(--warn-soft);
+  border-radius: var(--radius-lg);
+}
+.today-sec--health[data-state="fail"] {
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, transparent);
+  background: var(--danger-soft);
+  border-radius: var(--radius-lg);
+}
+.today-sec--health .sec__title { font-size: var(--text-sm); }
+.today-sec--health .sec__toggle { padding: var(--space-2) var(--space-4); }
+.today-health__line {
+  color: var(--ui-text-secondary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.today-sec--fail .today-health__line { color: var(--danger-ink); }
+.today-sec--warn .today-health__line { color: var(--warn-ink); }
+.today-health__hint { color: inherit; opacity: .9; }
+.today-health__row {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-soft);
+}
+.today-health__row:first-child { border-top: 0; }
+.today-health__mark { color: var(--warn); padding-top: 2px; }
+.today-health__row--fail .today-health__mark { color: var(--danger); }
+.today-health__text { min-width: 0; }
+.today-health__title { font-weight: 600; font-size: var(--text-sm); }
+
+/* ── Карточки «Ждёт вас» ────────────────────────────────────────────────── */
+.today-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  min-width: 0;
+}
+.today-card + .today-card { margin-top: var(--space-2); }
+.today-card--clickable { cursor: pointer; }
+.today-card--clickable:hover { border-color: var(--border); }
+.today-card--urgent {
+  border-left: 3px solid var(--danger);
+  text-decoration: none;
+  color: inherit;
+}
+.today-card--urgent:hover { border-color: color-mix(in srgb, var(--danger) 60%, var(--border)); }
+.today-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.today-card__room {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--ui-text-secondary);
+  text-transform: none;
+  letter-spacing: .01em;
+}
+.today-card__ago { margin-left: auto; font-size: var(--text-2xs); color: var(--ui-text-tertiary); }
+.today-card__text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--ui-text-primary);
+}
+.today-card__foot {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  color: var(--ui-text-tertiary);
+}
+.today-card__link { color: var(--ui-text-secondary); text-decoration: none; }
+.today-card__link:hover { text-decoration: underline; }
+.today-card__link--plain { color: var(--ui-text-tertiary); }
+.today-card__rec {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--ui-text-secondary);
+}
+.today__kind { font-size: var(--text-2xs); }
+.today__urgent { font-size: var(--text-2xs); }
+.today__more { margin-top: var(--space-3); align-self: flex-start; }
+
+/* ── Строки (сроки, «идёт сейчас») ──────────────────────────────────────── */
+.today-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: start;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-soft);
+}
+.today-row:first-child { border-top: 0; }
+.today-row__mark { color: var(--ui-text-tertiary); padding-top: 2px; }
+.today-row__mark--live { color: var(--ok); }
+.today-row__main { min-width: 0; }
+.today-row__text {
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.today-row__link { color: inherit; text-decoration: none; }
+.today-row__link:hover { text-decoration: underline; }
+.today-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: 2px;
+  font-size: var(--text-2xs);
+}
+.today-row__dot { opacity: .6; }
+.today-row__owner { white-space: nowrap; }
+.today-row__date { white-space: nowrap; }
+.today-row__room { color: var(--ui-text-secondary); text-decoration: none; }
+.today-row__room:hover { text-decoration: underline; }
+.today-row__when {
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+  padding-top: 2px;
+  color: var(--ui-text-tertiary);
+}
+.today-row__when--danger { color: var(--danger-ink); }
+.today-row__when--warn { color: var(--warn-ink); }
+.today-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-soft);
+}
+
+/* ── «Что изменилось» ───────────────────────────────────────────────────── */
+.today-changed__count {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--ui-text-primary);
+}
+.today-changed__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  min-width: 0;
+}
+.today-changed__tag { font-size: var(--text-2xs); flex: 0 0 auto; }
+.today-changed__text { min-width: 0; font-size: var(--text-sm); overflow-wrap: anywhere; }
+.today-changed__link { color: inherit; text-decoration: none; }
+.today-changed__link:hover { text-decoration: underline; }
+.today-changed__ago { margin-left: auto; white-space: nowrap; }
+
+/* ── Дежурства ──────────────────────────────────────────────────────────── */
+.today-duty {
+  border-top: 1px solid var(--border-soft);
+  padding: var(--space-2) 0;
+}
+.today-duty:first-child { border-top: 0; }
+.today-duty__summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-3);
+  align-items: baseline;
+  cursor: pointer;
+  list-style: none;
+}
+.today-duty__summary::-webkit-details-marker { display: none; }
+.today-duty__name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.today-duty__icon { color: var(--ui-text-tertiary); }
+.today-duty--ok .today-duty__icon { color: var(--ok); }
+.today-duty--warn .today-duty__icon { color: var(--warn); }
+.today-duty--fail .today-duty__icon { color: var(--danger); }
+.today-duty__title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.today-duty__schedule { grid-column: 1; font-size: var(--text-2xs); }
+.today-duty__run { grid-row: 1; grid-column: 2; white-space: nowrap; color: var(--ui-text-tertiary); }
+.today-duty__run.is-fail { color: var(--danger-ink); }
+.today-duty__body { padding: var(--space-2) 0 0 var(--space-5); }
+.today-duty__problem {
+  display: flex;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--danger-ink);
+  overflow-wrap: anywhere;
+}
+.today-duty__excerpt { margin: 0 0 var(--space-1); line-height: 1.5; overflow-wrap: anywhere; }
+.today-duty__meta { margin: 0; }
+
+/* ── Пустые состояния ───────────────────────────────────────────────────── */
+.today-empty { margin: 0; padding: var(--space-2) 0; }
+.today-quiet {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+}
+.today-quiet__title { font-weight: 600; font-size: var(--text-sm); }
+
+/* ── Мелочи ─────────────────────────────────────────────────────────────── */
+.today__foot { margin: 0; }
+.today .tiny { font-size: var(--text-2xs); }
+
+/* Узкий вид: карточки дышат меньше, «срок» уходит под текст. */
+@container view (max-width: 640px) {
+  .today__title { font-size: var(--text-xl); }
+  .today__head { align-items: flex-start; }
+  .today__chips { justify-content: flex-start; }
+  .today-card { padding: var(--space-3); }
+  .today-row { grid-template-columns: 16px minmax(0, 1fr); }
+  .today-row__when { grid-column: 2; padding-top: 0; }
+  .today-duty__summary { grid-template-columns: minmax(0, 1fr); }
+  .today-duty__run { grid-row: auto; grid-column: 1; }
+}
+
+/* Печать: плашки здоровья и карточки — без фонов, чтобы читалось на бумаге. */
+@media print {
+  .today-sec--health { break-inside: avoid; }
+  .today-card, .today-quiet { background: transparent; }
+  .today__foot { display: none; }
+}

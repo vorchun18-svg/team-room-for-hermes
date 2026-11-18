@@ -1,0 +1,197 @@
+/* ============================================================================
+   shell-rail.css — «полоса значков» левого меню (волна 21, пакет R1).
+
+   Зачем: при окне 900…1279 px постоянное меню 208–248 px съедало место у
+   центральной части («адаптивен только центр»). Теперь на этих ширинах меню
+   само сворачивается в полосу 60 px со значками: подписи — подсказкой и при
+   наведении/фокусе, панель раскрывается ПОВЕРХ содержимого (не сдвигая его).
+
+   Состояние ставит web/js/shell-rail.js классом `is-rail` на `.app`:
+     auto  → < 1280 px полоса, иначе обычное меню;
+     wide  → закреплено развёрнутым;
+     rail  → закреплено полосой;
+     < 900 px → выдвижной ящик (components.css), полоса не применяется.
+
+   Ширины — только токены tokens.css (--sidebar-rail, --sidebar-width).
+   ========================================================================== */
+
+/* ============================================================================
+   W26-D7: шеврон на правом краю панели.
+
+   Жалоба 18.11: «функция есть, но человек её не видит» — кнопка сворачивания
+   жила в нижнем ряду крошечным значком 15 px. Теперь на правом краю панели,
+   у верха, стоит шеврон 24 px: он виден всегда (и в развёрнутом меню, и в
+   полосе значков), подсказка называет клавишу, Ctrl+B делает то же самое.
+
+   Полоса значков при наведении раскрывается ПОВЕРХ содержимого — шеврон едет
+   вместе с правым краем (он позиционирован от `right`), поэтому цель нажатия
+   не «убегает» от курсора. */
+.app .sidebar { position: relative; }
+/* Подпись марки не залезает под шеврон. */
+.brand { padding-right: 36px; }
+.brand__name, .brand__sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.rail-fold {
+  position: absolute; top: 10px; right: 6px; z-index: 2;
+  display: grid; place-items: center;
+  width: 24px; height: 24px; padding: 0;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--ui-stroke-quaternary);
+  background: var(--ui-bg-quaternary);
+  color: var(--ui-text-secondary); cursor: pointer;
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+.rail-fold:hover { color: var(--foreground); background: var(--ui-row-hover-background); border-color: var(--border-strong); }
+.rail-fold:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 1px; }
+.rail-fold .codicon { font-size: 14px; }
+/* Свёрнуто: шеврон — самый верх полосы, по центру (в 60 px рядом с маркой его
+   не поставить, а поверх значка он мешал бы нажимать). Марка и значки уезжают
+   вниз на его высоту — ничего не наезжает друг на друга. */
+.app.is-rail .rail-fold { top: 4px; right: auto; left: 50%; margin-left: -12px; }
+.app.is-rail .brand { padding-top: calc(var(--space-1) + 30px); }
+/* Свёрнуто, но панель раскрыта наведением/фокусом — шеврон у правого края,
+   на своём привычном месте (как в развёрнутом меню). */
+.app.is-rail .sidebar:hover .rail-fold,
+.app.is-rail .sidebar:focus-within .rail-fold { left: auto; right: 6px; margin-left: 0; top: 10px; }
+.app.is-rail .sidebar:hover .brand,
+.app.is-rail .sidebar:focus-within .brand { padding-top: var(--space-1); }
+/* «Тихая» полоса (Esc, сразу после сворачивания) не раскрывается — шеврон
+   остаётся сверху по центру, чтобы нажатие не уезжало из-под курсора. */
+.app.is-rail .sidebar.rail--quiet .rail-fold { left: 50%; right: auto; margin-left: -12px; top: 4px; }
+.app.is-rail .sidebar.rail--quiet .brand { padding-top: calc(var(--space-1) + 30px); }
+.app[data-shell-mode='drawer'] #rail-toggle { display: none; }
+
+/* Полоса живёт лишь там, где меню постоянное: на ящик (< 900 px) не влияет. */
+@media (min-width: 900px) {
+  .app.is-rail { grid-template-columns: var(--sidebar-rail) minmax(0, 1fr); }
+  /* Панель вынута из потока — колонку 1 занимает пустая полоса, содержимое
+     обязано встать во вторую (иначе авторазмещение кладёт его в 60 px). */
+  .app.is-rail .app__main { grid-column: 2; grid-row: 1; }
+
+  /* Панель вынута из потока: колонка сетки остаётся 60 px, раскрытие её не
+     двигает (иначе центр «прыгал» бы при каждом наведении). */
+  .app.is-rail .sidebar {
+    position: fixed; inset: 0 auto 0 0; z-index: var(--z-sidebar);
+    width: var(--sidebar-rail);
+    padding: var(--space-2) var(--space-1);
+    overflow: hidden auto; scrollbar-width: none;
+    transition: width var(--dur-base) var(--ease), box-shadow var(--dur-base) var(--ease);
+  }
+  .app.is-rail .sidebar::-webkit-scrollbar { width: 0; }
+  .app.is-rail .sidebar:hover,
+  .app.is-rail .sidebar:focus-within {
+    width: var(--sidebar-width);
+    box-shadow: var(--shadow-nous);
+    overflow-y: auto;
+  }
+
+  /* Свёрнуто: только значки. */
+  /* Сверху место под шеврон (W26-D7), иначе он лёг бы на марку. */
+  .app.is-rail .brand { justify-content: center; padding: calc(var(--space-1) + 30px) 0 var(--space-3); }
+  .app.is-rail .brand__text,
+  .app.is-rail .sidebar__label,
+  .app.is-rail .nav-item__text,
+  .app.is-rail #sidebar-recent,
+  .app.is-rail .demo-badge__text,
+  .app.is-rail .viewmode-toggle [data-viewmode-label],
+  .app.is-rail .engine { display: none; }
+
+  /* W26-D7: числа-бейджи остаются в полосе значков — маленькой плашкой в углу
+     значка (как в привычных редакторах). Счётчик комнаты и «Сегодня» видны,
+     не раскрывая меню; подписи по-прежнему живут в title. */
+  .app.is-rail .nav-item { position: relative; }
+  .app.is-rail .nav-item__badges {
+    position: absolute; top: 0; right: 4px; gap: 0;
+    pointer-events: none;
+  }
+  .app.is-rail .nav-item__badges .count-pill {
+    min-width: 15px; height: 15px; padding: 0 3px; font-size: 10px; line-height: 1;
+    border: 1px solid var(--sidebar);
+  }
+  .app.is-rail .nav-item__badges .count-pill__dot { display: none; }
+  /* Неизвестное число — не кричим жёлтым, но и не прячем. */
+  .app.is-rail .nav-item__badges .count-pill--pending { opacity: .75; }
+  /* Панель раскрыта наведением: плашки возвращаются в строку рядом с подписью. */
+  .app.is-rail .sidebar:hover .nav-item__badges,
+  .app.is-rail .sidebar:focus-within .nav-item__badges { position: static; right: auto; }
+
+  /* Переключатель «простой/подробный вид» в полосе — только глаз-значок:
+     подпись «подробно» иначе обрезалась бы краем панели. */
+  .app.is-rail .sidebar__tools .viewmode-toggle { width: 32px; padding: 0; justify-content: center; }
+
+  .app.is-rail .demo-badge { justify-content: center; padding: 6px 0; margin: 0 0 var(--space-2); }
+  .app.is-rail .nav-item { justify-content: center; padding: var(--space-1) 0; min-height: 36px; }
+  .app.is-rail .sidebar__scroll { align-items: stretch; }
+  .app.is-rail .sidebar__foot { padding-top: var(--space-1); }
+  /* Кнопки подвала стоят на одном месте и в свёрнутом, и в раскрытом виде
+     (левый край = (60 − 32) / 2 = 14 px): иначе наведение сдвигает цель и
+     нажатие попадает мимо. Столбик, а не строка: подпись «подробно» в 60 px
+     обрезалась бы краем панели. */
+  .app.is-rail .sidebar__tools {
+    flex-direction: column; align-items: flex-start; gap: 2px;
+    padding: var(--space-1) 0 0 calc((var(--sidebar-rail) - 32px) / 2);
+  }
+  /* Цель нажатия ≥ 32 px: палец и мышь попадают в значок 16 px. */
+  .app.is-rail .sidebar__tools .btn { width: 32px; height: 32px; justify-content: center; }
+  .app.is-rail .sidebar__tools .spacer { display: none; }
+
+  /* Раскрытие по наведению/фокусу: подписи возвращаются. */
+  .app.is-rail .sidebar:hover .brand,
+  .app.is-rail .sidebar:focus-within .brand { justify-content: flex-start; padding: var(--space-1) var(--space-2) var(--space-3); }
+  .app.is-rail .sidebar:hover .brand__text,
+  .app.is-rail .sidebar:focus-within .brand__text,
+  .app.is-rail .sidebar:hover .sidebar__label,
+  .app.is-rail .sidebar:focus-within .sidebar__label,
+  .app.is-rail .sidebar:hover .engine,
+  .app.is-rail .sidebar:focus-within .engine { display: flex; }
+  .app.is-rail .sidebar:hover .nav-item__text,
+  .app.is-rail .sidebar:focus-within .nav-item__text { display: block; }
+  .app.is-rail .sidebar:hover .nav-item__badges,
+  .app.is-rail .sidebar:focus-within .nav-item__badges { display: flex; }
+  .app.is-rail .sidebar:hover #sidebar-recent,
+  .app.is-rail .sidebar:focus-within #sidebar-recent { display: block; }
+  .app.is-rail .sidebar:hover .sidebar__close,
+  .app.is-rail .sidebar:focus-within .sidebar__close { display: none; }
+  .app.is-rail .sidebar:hover .nav-item,
+  .app.is-rail .sidebar:focus-within .nav-item { justify-content: flex-start; padding: var(--space-1) var(--space-2); }
+  /* Подвал НЕ перестраивается при раскрытии: кнопки должны оставаться под
+     курсором, иначе наведение сдвигает цель и нажатие «сворачивает не то».
+     Переключатель вида в полосе — всегда значок 32 px. */
+  .app.is-rail .sidebar:hover .demo-badge,
+  .app.is-rail .sidebar:focus-within .demo-badge { justify-content: flex-start; padding: 8px 10px; margin: 0 8px 8px; }
+  .app.is-rail .sidebar:hover .demo-badge__text,
+  .app.is-rail .sidebar:focus-within .demo-badge__text { display: inline; }
+}
+
+/* Кнопка «свернуть/развернуть меню» — шеврон на краю панели (W26-D7): в полосе
+   он показывает «развернуть» и подсвечен акцентом. */
+.rail-fold[aria-pressed='true'] { color: var(--accent-strong); border-color: color-mix(in srgb, var(--accent-strong) 40%, transparent); }
+
+/* W21-R2: в выдвижном ящике (< 900 px) полосы значков нет — кнопка режима
+   была бы мёртвой (режим всё равно «ящик»). Прячем, чтобы не предлагать
+   нажатие без последствий. */
+.app[data-shell-mode='drawer'] #rail-toggle { display: none; }
+
+/* W21-R2: Esc в полосе значков — панель складывается, пока курсор не уйдёт с
+   меню или фокус не придёт снова (класс ставит shell-rail.js). Без этого панель
+   раскрывалась по фокусу и висела поверх содержимого: с клавиатуры не выйти. */
+@media (min-width: 900px) {
+  .app.is-rail .sidebar.rail--quiet {
+    width: var(--sidebar-rail);
+    box-shadow: none;
+    overflow-x: hidden;
+  }
+  .app.is-rail .sidebar.rail--quiet .brand { justify-content: center; padding: calc(var(--space-1) + 30px) 0 var(--space-3); }
+  .app.is-rail .sidebar.rail--quiet .brand__text,
+  .app.is-rail .sidebar.rail--quiet .sidebar__label,
+  .app.is-rail .sidebar.rail--quiet .nav-item__text,
+  .app.is-rail .sidebar.rail--quiet #sidebar-recent,
+  .app.is-rail .sidebar.rail--quiet .demo-badge__text,
+  .app.is-rail .sidebar.rail--quiet .viewmode-toggle [data-viewmode-label],
+  .app.is-rail .sidebar.rail--quiet .engine { display: none; }
+  .app.is-rail .sidebar.rail--quiet .nav-item { justify-content: center; padding: var(--space-1) 0; }
+  .app.is-rail .sidebar.rail--quiet .demo-badge {
+    justify-content: center; padding: 6px 0; margin: 0 0 var(--space-2);
+  }
+}

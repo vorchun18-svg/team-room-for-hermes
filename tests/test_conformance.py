@@ -77,8 +77,8 @@ class ConformanceSemanticsTest(unittest.TestCase):
             self.assertIsInstance(item["tags"], list)
             self.assertIsInstance(item["available"], bool)
         kinds = {item["profile"]: item["kind"] for item in payload["items"]}
-        self.assertEqual(kinds.get("biz-director"), "director")
-        self.assertEqual(kinds.get("biz-critic"), "critic")
+        self.assertEqual(kinds.get("team-director"), "director")
+        self.assertEqual(kinds.get("team-critic"), "critic")
 
     def test_03_done_with_open_question_keeps_done_and_flags_needs_you(self):
         rid = self.live.root_of("done_modern")
@@ -96,7 +96,7 @@ class ConformanceSemanticsTest(unittest.TestCase):
         rid = self.live.root_of("queued")
         summary = self.get("/api/requests/" + rid)
         self.assertEqual(summary["status"], "queued")
-        self.assertEqual(summary["assignee"], "biz-director")   # ведёт директор комнаты
+        self.assertEqual(summary["assignee"], "team-director")   # ведёт директор комнаты
         self.assertIsNone(summary["started_at"])                # работу ещё не начинали
         self.assertEqual(summary["critic"]["state"], "waiting")  # критик включён, карточки нет
         self.assertFalse(summary["needs_you"])

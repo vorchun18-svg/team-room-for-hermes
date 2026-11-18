@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from server import config, project_dir, safety  # noqa: E402
+from tests import ci_marks                       # noqa: E402
 
 B = chr(92)                      # обратная косая черта, без экранирования в литералах
 HERMES_HOME = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "hermes"
@@ -96,6 +97,7 @@ class TestReject(Base):
         self.check("C:" + B, "весь диск")
         self.check("C:/", "весь диск")
 
+    @unittest.skipUnless(ci_marks.has_hermes_machine(), ci_marks.WHY_NO_HERMES_MACHINE)
     def test_hermes_home_anything_inside(self):
         for path in (str(HERMES_HOME), str(HERMES_HOME / "projects" / "мой"),
                      str(HERMES_HOME / "cache" / "scratch" / "x")):

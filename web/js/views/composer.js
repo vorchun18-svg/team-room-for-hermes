@@ -2,6 +2,12 @@
  * views/composer.js — вкладка «Запрос»: поле под диктовку, тонкая панель
  * действий, строка «кто работает» и идеи. Лента и кандидаты — в composer-feed.js.
  *
+ * Проверка критиком — ОДИН селектор (W20-U4, P10): «Без критика / 1 раунд —
+ * быстро / 2 раунда / До полного одобрения». Он же решает, уйдёт ли запрос с
+ * критиком: значения переводятся в прежние поля API (`critic`, `critic_mode`,
+ * `max_rounds`) функцией criticPayload(). «Отправить» на пустом поле неактивна и
+ * объясняет почему; аватары команды подсказывают «имя — роль».
+ *
  * Данные: POST /api/rooms/{id}/requests, GET /api/rooms/{id}, GET /api/rooms/{id}/backlog.
  * Живое обновление ленты — общий таймер здесь (3 с при активных, иначе 15 с).
  */
@@ -13,8 +19,61 @@ import {
   lsGet, lsSet,
 } from '../ui.js';
 import { createMic } from '../dictation.js';
+import { participantLabel, ensureProfileDirectory, profileEntry, memberOf } from '../participant-label.js';
 import { createFeed } from './composer-feed.js';
 import { BRIEF_LABEL, BRIEF_HINT, briefDefaultOn, briefPayload } from './plan-req.js';
+
+/**
+ * Проверка критиком — ОДИН список (P10): раньше рядом стояли переключатель
+ * «С критиком» и отдельный селектор раундов, который появлялся/исчезал. Человек
+ * видел два управления об одном и не понимал, что выключит ответ из проверки.
+ * Теперь один селектор: «Без критика / 1 раунд — быстро / 2 раунда / До полного
+ * одобрения». Значения селектора остаются совместимыми с API запроса
+ * (`critic`, `critic_mode`, `max_rounds`).
+ */
+export const CRITIC_CHOICES = [
+  { value: 'off', label: 'Без критика', hint: 'Ответ уйдёт без проверки критиком' },
+  { value: '1', label: '1 раунд — быстро', hint: 'Один круг: критик проверил — доработали — отдали вам' },
+  { value: '2', label: '2 раунда', hint: 'Два круга проверки: тщательнее, но дольше' },
+  { value: 'until_approved', label: 'До полного одобрения', hint: 'Критик проверяет, пока не скажет «принято»' },
+];
+
+/** Пояснение к селектору: одно слово «раунд» и один смысл. */
+export const CRITIC_HINT = 'Раунд — один цикл «критик проверил → доработали → проверили снова»';
+
+/**
+ * Что показать в селекторе для этой комнаты: её же настройки, но с явным «Без
+ * критика». Критик не настроен или проверка в комнате выключена → «Без критика».
+ * @param {object|null} room
+ * @returns {'off'|'1'|'2'|'until_approved'}
+ */
+export function criticChoiceOf(room) {
+  const r = room && typeof room === 'object' ? room : {};
+  if (!r.critic || r.critic_pass !== true) return 'off';
+  if (String(r.critic_mode || 'rounds') === 'until_approved') return 'until_approved';
+  const rounds = Math.min(2, Math.max(1, Number(r.max_rounds) || 1));
+  return String(rounds);
+}
+
+/**
+ * Тело запроса для выбранного варианта — ровно те поля, что ждёт API.
+ * @param {string} choice значение селектора
+ * @returns {{critic: boolean, critic_mode?: string, max_rounds?: number}}
+ */
+export function criticPayload(choice) {
+  const value = String(choice === null || choice === undefined ? 'off' : choice);
+  if (value === 'until_approved') return { critic: true, critic_mode: 'until_approved' };
+  const rounds = Number(value);
+  if (!Number.isFinite(rounds) || rounds < 1) return { critic: false };
+  return { critic: true, critic_mode: 'rounds', max_rounds: Math.min(2, Math.round(rounds)) };
+}
+
+/** Подпись варианта (для подсказок и тестов). */
+export function criticChoiceLabel(choice) {
+  const value = String(choice === null || choice === undefined ? 'off' : choice);
+  const hit = CRITIC_CHOICES.find((c) => c.value === value);
+  return hit ? hit.label : CRITIC_CHOICES[0].label;
+}
 
 /** Мягкая подсказка: длинный запрос лучше разбить, но поле не ограничиваем. */
 const LONG_TEXT = 100000;
@@ -28,7 +87,7 @@ const enc = (s) => encodeURIComponent(String(s == null ? '' : s));
 let pendingWarning = null;
 
 /**
- * Человеческое имя исполнителя: «biz-ops» → «ops», «mikhail» → «Михаил».
+ * Человеческое имя исполнителя: «team-ops» → «ops», «mikhail» → «Михаил».
  * Полный id остаётся в title — в тексте интерфейса системных имён нет.
  * @param {string} id
  * @returns {string}
@@ -76,7 +135,8 @@ export async function mount(el, ctx) {
   const state = {
     sending: false,
     submitError: null,
-    critic: Boolean(room && room.critic_pass) && Boolean(room && room.critic),
+    // Выбор проверки критиком живёт в селекторе `criticValue` (P10): отдельного
+    // да/нет больше нет — «Без критика» это просто первый вариант списка.
     attach: [],
     attachOpen: false,
     ideas: [],
@@ -108,49 +168,35 @@ export async function mount(el, ctx) {
   const longNote = h('div', { class: 'cmp-long hidden', role: 'status' },
     'Очень длинный запрос — лучше разбить на части.');
 
-  const criticToggle = room && room.critic
-    ? h('button', {
-      class: 'cmp-toggle', type: 'button', role: 'switch',
-      'aria-checked': state.critic ? 'true' : 'false',
-      title: 'Проверка ответа вторым агентом: критик читает свод перед отправкой',
-      'aria-label': 'Проверка ответа вторым агентом — с критиком',
-      onclick: () => {
-        state.critic = !state.critic;
-        criticToggle.setAttribute('aria-checked', state.critic ? 'true' : 'false');
-        criticToggle.classList.toggle('is-on', state.critic);
-        if (criticModeSelect) criticModeSelect.classList.toggle('hidden', !state.critic);
-        saveDraftNow();
-      },
-    },
-    h('span', { class: 'cmp-toggle__track', 'aria-hidden': 'true' }, h('span', { class: 'cmp-toggle__knob' })),
-    h('span', { class: 'cmp-toggle__label' }, 'С критиком'))
-    : null;
-  if (criticToggle) criticToggle.classList.toggle('is-on', state.critic);
-
-  /* Режим проверки при постановке запроса (W13-E §9): 1 / 2 / до полного одобрения.
-     По умолчанию — из настроек комнаты; смена действует только на этот запрос. */
-  const roomMode = String((room && room.critic_mode) || 'rounds');
-  const criticModeSelect = room && room.critic
+  // Один селектор проверки: «Без критика / 1 раунд — быстро / 2 раунда / До
+  // полного одобрения». Прежний переключатель «С критиком» и отдельный список
+  // раундов слиты (P10); `criticValue` — единственный источник выбора.
+  const hasCritic = Boolean(room && room.critic);
+  let criticValue = criticChoiceOf(room);
+  const criticSelect = hasCritic
     ? h('select', {
-      class: 'select cmp-critic-mode' + (state.critic ? '' : ' hidden'),
+      class: 'select cmp-critic-mode',
       id: 'cmp-critic-mode',
-      'aria-label': 'Сколько раз проверять критиком',
-      title: 'Раунд — один цикл «критик проверил → доработали → проверили снова»',
-    },
-    h('option', { value: '1' }, '1 раунд — быстро'),
-    h('option', { value: '2' }, '2 раунда — тщательнее'),
-    h('option', { value: 'until_approved' }, 'До полного одобрения'),
-    )
+      'aria-label': 'Проверка ответа критиком',
+      title: CRITIC_HINT,
+    }, ...CRITIC_CHOICES.map((item) => h('option', {
+      value: item.value, title: item.hint,
+    }, item.label)))
     : null;
-  if (criticModeSelect) {
-    criticModeSelect.value = roomMode === 'until_approved'
-      ? 'until_approved'
-      : String(Math.min(2, Math.max(1, Number(room.max_rounds) || 1)));
-    criticModeSelect.addEventListener('change', () => { saveDraftNow(); });
+  if (criticSelect) {
+    criticSelect.value = criticValue;
+    criticSelect.addEventListener('change', () => {
+      criticValue = criticSelect.value;
+      saveDraftNow();
+    });
   }
+  const criticControl = criticSelect
+    ? h('label', { class: 'cmp-critic', title: CRITIC_HINT },
+      icon('shield', { size: 13 }), criticSelect)
+    : null;
 
   const pathInput = h('input', {
-    class: 'input', type: 'text', placeholder: 'D:/Проекты/Комната/STATE.md',
+    class: 'input', type: 'text', placeholder: 'C:/Проекты/Комната/STATE.md',
     'aria-label': 'Путь к файлу',
     'data-mic': 'off',
   });
@@ -185,7 +231,7 @@ export async function mount(el, ctx) {
   });
 
   const bar = h('div', { class: 'cmp-bar' },
-    criticToggle, criticModeSelect, attachBtn,
+    criticControl, attachBtn,
     h('div', { class: 'cmp-bar__right' }, counter, micBtn, sendBtn),
   );
 
@@ -239,13 +285,22 @@ export async function mount(el, ctx) {
     textarea.style.overflowY = textarea.scrollHeight > max ? 'auto' : 'hidden';
   }
 
+  /** Состояние кнопки «Отправить» — одно место: пусто → неактивна и объясняет почему. */
+  function syncSendState() {
+    const empty = !textarea.value.trim();
+    sendBtn.disabled = state.sending || empty;
+    sendBtn.setAttribute('aria-disabled', sendBtn.disabled ? 'true' : 'false');
+    sendBtn.setAttribute('title', empty
+      ? 'Напишите или надиктуйте запрос — кнопка станет активной'
+      : 'Отправить запрос (Ctrl+Enter)');
+  }
+
   function updateCounter() {
     const n = textarea.value.length;
     counter.textContent = n.toLocaleString('ru-RU') + ' ' + plural(n, ['знак', 'знака', 'знаков']);
     counter.classList.toggle('cmp-count--warn', n >= LONG_TEXT);
     longNote.classList.toggle('hidden', n < LONG_TEXT);
-    sendBtn.disabled = state.sending || !textarea.value.trim();
-    sendBtn.setAttribute('title', 'Отправить запрос');
+    syncSendState();
   }
 
   const draftKey = 'draft.' + roomId;
@@ -256,7 +311,10 @@ export async function mount(el, ctx) {
       return;
     }
     lsSet(draftKey, {
-      text: textarea.value, attach: state.attach.slice(), critic: state.critic,
+      text: textarea.value, attach: state.attach.slice(),
+      // Выбор проверки помним вместе с черновиком: `criticChoice` — новый ключ,
+      // `critic` оставлен для старых черновиков и внешних читателей.
+      critic: criticValue !== 'off', criticChoice: criticValue,
       brief: state.brief, briefTouched: state.briefTouched, at: Date.now(),
     });
   }
@@ -359,8 +417,8 @@ export async function mount(el, ctx) {
   function renderHint() {
     hint.replaceChildren();
     const director = (room && room.orchestrator) || '';
-    const name = personName(director);
-    const roleWord = name === 'director' || name === 'default' ? '' : name;
+    const directorLabel = director ? teamLabel(director) : null;
+    const roleWord = directorLabel && directorLabel.short ? directorLabel.short : '';
 
     const members = Array.isArray(room && room.members) ? room.members : [];
     const names = [];
@@ -372,25 +430,62 @@ export async function mount(el, ctx) {
 
     hint.appendChild(h('span', {
       class: 'cmp-hint__sentence truncate',
-      title: director ? 'Руководитель комнаты: ' + director : null,
+      title: directorLabel ? 'Руководитель комнаты: ' + directorLabel.title : null,
     }, 'Руководитель комнаты', roleWord ? ' ' : '', roleWord ? h('span', { class: 'cmp-hint__who' }, roleWord) : null, ' раздаст запрос команде'));
 
     if (names.length) {
+      // Подсказка у каждого аватара — «имя — роль», а не системный id профиля:
+      // «Кто это?» должно отвечаться наведением, без открытия «Команды» (P10).
+      const labels = names.map((n) => teamLabel(n));
       hint.appendChild(h('span', { class: 'cmp-hint__sep', 'aria-hidden': 'true' }, '·'));
-      const team = h('span', { class: 'cmp-hint__team', title: 'Команда: ' + names.join(', ') });
-      for (const n of names.slice(0, 5)) team.appendChild(shortAvatar(n));
+      const team = h('span', {
+        class: 'cmp-hint__team',
+        title: 'Команда: ' + labels.map((l) => l.title).join(', '),
+      });
+      for (const label of labels.slice(0, 5)) team.appendChild(shortAvatar(label));
       if (names.length > 5) {
-        team.appendChild(h('span', { class: 'avatar avatar--sm avatar--stacked cmp-hint__more' }, '+' + (names.length - 5)));
+        const rest = labels.slice(5).map((l) => l.title).join(', ');
+        team.appendChild(h('span', {
+          class: 'avatar avatar--sm avatar--stacked cmp-hint__more',
+          title: 'Ещё в команде: ' + rest,
+          'aria-label': 'Ещё в команде: ' + rest,
+        }, '+' + (names.length - 5)));
       }
       hint.appendChild(team);
     }
   }
 
-  /** Аватар с одной буквой: «MA/BO/BD» из системных id в тексте не нужны. */
-  function shortAvatar(raw) {
-    const name = personName(raw) || raw;
-    const a = avatar(name, { size: 'sm', title: raw });
-    a.textContent = (Array.from(String(name))[0] || '?').toUpperCase();
+  /** Подпись участника «имя — роль»: одна для подсказок и аватаров. */
+  function teamLabel(profile) {
+    const id = String(profile || '');
+    // Участник комнаты может знать только профиль и роль, а имя и должность лежат
+    // в каталоге Hermes: складываем оба источника, иначе подсказка — сухая роль.
+    const member = memberOf(room, id);
+    const entry = profileEntry(id);
+    const merged = Object.assign({}, member || {}, {
+      name: (member && member.name) || (entry && entry.name) || '',
+      job: (member && member.job) || (entry && entry.job) || '',
+      label: (member && member.label) || (entry && entry.label) || '',
+    });
+    const label = participantLabel(id, { member: merged, room });
+    const role = String(label.role || '');
+    const name = personName(label.short || label.name || '') || label.short || label.title || '';
+    // Подпись из каталога («Антон — юрист по праву России») точнее нашей сборки;
+    // когда её нет, остаётся «имя — роль», но без повтора «Исполнитель — исполнитель».
+    const title = label.source !== 'role' && label.title
+      ? label.title
+      : (name && role && name.toLowerCase() !== role.toLowerCase() ? name + ' — ' + role : (name || role));
+    return { profile: id, name, short: name, role, title };
+  }
+
+  /** Аватар с одной буквой и подсказкой: «Анна — исполнитель». */
+  function shortAvatar(label) {
+    const shown = (label && (label.short || label.name)) || '';
+    const title = (label && label.title) || '';
+    const a = avatar(shown, { size: 'sm', title });
+    a.setAttribute('aria-label', title || shown || 'Участник команды');
+    if (title) a.setAttribute('title', title);
+    a.textContent = (Array.from(String(shown))[0] || '?').toUpperCase();
     return a;
   }
 
@@ -426,8 +521,10 @@ export async function mount(el, ctx) {
       sendBtn.appendChild(h('kbd', { class: 'kbd cmp-send__kbd' }, 'Ctrl↵'));
       sendBtn.classList.remove('is-busy');
     }
-    sendBtn.disabled = state.sending || !textarea.value.trim();
-    if (criticToggle) criticToggle.classList.toggle('hidden', state.sending);
+    // P10: на пустом поле кнопка неактивна и объясняет, чего не хватает —
+    // «пустая» кнопка без подсказки выглядит как поломка.
+    syncSendState();
+    if (criticControl) criticControl.classList.toggle('hidden', state.sending);
   }
 
   function renderWarning() {
@@ -458,15 +555,12 @@ export async function mount(el, ctx) {
     state.submitError = null;
     renderSubmitError(); renderSend();
     try {
+      // Проверка критиком: один выбор → ровно те поля, что ждёт API
+      // (`critic`, `critic_mode`, `max_rounds`). Обратная совместимость сохранена.
+      const criticBody = criticPayload(criticSelect ? criticSelect.value : 'off');
       const res = await api.post('/api/rooms/' + enc(roomId) + '/requests', {
         text,
-        critic: Boolean(state.critic),
-        // Режим проверки: 1 / 2 раунда либо «до полного одобрения» (W13-E §9).
-        ...(state.critic && criticModeSelect
-          ? (criticModeSelect.value === 'until_approved'
-            ? { critic_mode: 'until_approved' }
-            : { critic_mode: 'rounds', max_rounds: Number(criticModeSelect.value) || 1 })
-          : {}),
+        ...criticBody,
         attach: state.attach.slice(),
         // «Это бриф проекта»: поле уходит только в проектной комнате.
         ...briefPayload({ projectMode, brief: state.brief }),
@@ -572,12 +666,16 @@ export async function mount(el, ctx) {
   if (draft && typeof draft === 'object' && typeof draft.text === 'string' && draft.text) {
     textarea.value = draft.text;
     if (Array.isArray(draft.attach)) state.attach = draft.attach.filter((p) => typeof p === 'string').slice(0, MAX_ATTACH);
-    if (typeof draft.critic === 'boolean' && room && room.critic) {
-      state.critic = draft.critic;
-      if (criticToggle) {
-        criticToggle.setAttribute('aria-checked', draft.critic ? 'true' : 'false');
-        criticToggle.classList.toggle('is-on', draft.critic);
+    // Выбор проверки из черновика: новый ключ `criticChoice`; старый `critic`
+    // (да/нет) понимаем как «раунды комнаты» или «без критика».
+    if (criticSelect) {
+      const byChoice = String(draft.criticChoice || '');
+      if (CRITIC_CHOICES.some((c) => c.value === byChoice)) {
+        criticValue = byChoice;
+      } else if (typeof draft.critic === 'boolean') {
+        criticValue = draft.critic ? criticChoiceOf(Object.assign({}, room, { critic_pass: true })) : 'off';
       }
+      criticSelect.value = criticValue;
     }
     // Флажок брифа помним вместе с черновиком: Михаил не должен включать заново.
     if (typeof draft.brief === 'boolean' && projectMode) {
@@ -595,6 +693,9 @@ export async function mount(el, ctx) {
   renderAttach();
   renderDraftNote();
   renderHint();
+  // Подсказки аватаров — «имя — роль»: каталог профилей приходит отдельным запросом,
+  // поэтому после его загрузки подпись перерисовывается один раз (P10).
+  ensureProfileDirectory(api).then(() => renderHint()).catch(() => {});
   renderWarning();
   renderIdeas();
 

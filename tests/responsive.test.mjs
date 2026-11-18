@@ -137,10 +137,12 @@ test('шапка: точки перелома 1099 / 899 / 699 / 639 / 559 су�
   assert.match(narrow, /\.topbar__search-label\s*\{\s*display:\s*none/, 'подпись поиска скрыта');
 });
 
-test('шапка: бейдж «вся комната» и этап — в мете, а не в крошках', () => {
+test('шапка: этап и переключатель охвата — в мете, а не в крошках', () => {
+  // W20-U1 (P8): бейдж «вся команда» из шапки убран — охват показывает
+  // переключатель «Вся комната / Этот запрос», а этап подписан словами.
   assert.doesNotMatch(APP, /item\.badge\)\s*\{\s*nav\.appendChild/, 'бейдж не должен жить внутри .crumbs');
-  assert.match(APP, /items\.find\(\(item\) => item\.badge\)/);
-  assert.match(APP, /class: 'chip chip--muted crumbs__badge'/);
+  assert.doesNotMatch(APP, /crumbs__badge/, 'отдельного бейджа у крошек больше нет');
+  assert.match(APP, /scopeSwitcher\(/);
   assert.match(APP, /h\('div', \{ class: 'topbar__meta' \}, \.\.\.meta\)/);
   assert.equal(crumbItems({ route: { name: 'room', roomId: 'cafe', tab: 'backlog' }, roomTitle: 'Лето' })
     .find((i) => i.badge).badge, WHOLE_ROOM_LABEL);

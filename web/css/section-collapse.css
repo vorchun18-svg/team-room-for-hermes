@@ -1,0 +1,117 @@
+/* section-collapse.css — общий сворачиваемый блок страницы запроса (У-1, 1.2.0).
+
+   Один заголовок со стрелкой для всех блоков: «Запрос», «Диалог по запросу»,
+   «Дерево работ», «Артефакты». Только токены tokens.css и классы components.css;
+   свои имена — с префиксом .sec-.
+
+   Заголовок — настоящая кнопка на всю ширину: попасть мышью легко, Tab ставит
+   фокус, Enter/Space переключают (поведение браузера), `aria-expanded` говорит
+   состояние. Стрелка поворачивается на 90°, тексты не прыгают: место под стрелку
+   занято всегда, высота заголовка не зависит от состояния (нет скачков прокрутки). */
+
+.sec {
+  display: block;
+  min-width: 0;
+  scroll-margin-top: var(--space-4);
+}
+
+/* Заголовок: раньше это был .section-header — оставляем тот же отступ снизу,
+   но убираем «резинку» между левой и правой частью (кнопка занимает всё). */
+.sec__head {
+  margin: 0;
+  display: block;
+  min-width: 0;
+}
+
+.sec__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+.sec__toggle:hover { background: var(--ui-row-hover-background); }
+.sec__toggle:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Место под стрелку занято всегда — заголовок не сдвигается при переключении. */
+.sec__chev {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--ui-text-quaternary);
+  transition: transform var(--dur-fast) var(--ease);
+}
+.sec[data-open="1"] .sec__chev { transform: rotate(90deg); }
+
+.sec__title {
+  flex: none;
+  max-width: 100%;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--ui-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.sec__chips,
+.sec__extra {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.sec__chips:empty,
+.sec__chips[data-empty="1"],
+.sec__extra:empty { display: none; }
+.sec__chip { flex: 0 0 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Содержимое: свёрнутое не занимает места и не строится (ленивая сборка). */
+.sec__body { min-width: 0; }
+.sec__body[hidden] { display: none !important; }
+
+/* В карточке содержимое дышит от заголовка, а не липнет к нему. */
+.sec > .sec__body > *:first-child { margin-top: var(--space-3); }
+
+/* «Запрос» (Исходный запрос вверху страницы) — тише остальных блоков и без
+   карточки: рамку и скругление даёт .req-ask (view-request.css). */
+.sec.req-ask { border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: transparent; }
+.sec.req-ask .sec__toggle { min-height: var(--control-lg); padding: 0 var(--space-3); font-size: var(--text-sm); }
+.sec.req-ask .sec__title { font-weight: 500; }
+.sec__preview {
+  min-width: 0;
+  flex: 1 1 8ch;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Метка «есть новый ответ руководителя» в свёрнутом диалоге. */
+.sec__dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ui-accent, var(--accent, currentColor));
+  box-shadow: 0 0 0 2px var(--ui-bg-editor, transparent);
+}
+
+/* Узкая ширина: чипы уходят на вторую строку, заголовок не обрезается. */
+@media (max-width: 520px) {
+  .card.sec { padding: var(--space-3) var(--space-3); }
+  .sec__title { font-size: var(--text-sm); }
+  .sec__chip { max-width: 26ch; }
+}

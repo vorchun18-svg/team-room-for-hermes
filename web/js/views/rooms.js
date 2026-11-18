@@ -55,7 +55,7 @@ function roomArray(payload) {
   return [];
 }
 
-/** «biz-ops» → «ops»: системные id остаются в title, не в тексте. */
+/** «team-ops» → «ops»: системные id остаются в title, не в тексте. */
 function personName(id) {
   const s = String(id == null ? '' : id).trim();
   if (!s) return '';

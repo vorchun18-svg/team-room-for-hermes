@@ -45,11 +45,11 @@ from server.http_util import ApiError         # noqa: E402
 from tests.helpers import Sandbox, SimAgents  # noqa: E402
 
 ROOM = "cafe"
-LEAD = "biz-director"
+LEAD = "team-director"
 
-QUESTION = "Добавляем ли биз-финансиста (biz-cfo) и геолога в команду?"
+QUESTION = "Добавляем ли биз-финансиста (team-cfo) и геолога в команду?"
 Q_ASK = "Какой канал продаж выбрать: бот, QR или вручную?"
-STEP_TEXT = "Решить по составу команды: добавить biz-cfo и/или геолога"
+STEP_TEXT = "Решить по составу команды: добавить team-cfo и/или геолога"
 STEP_OTHER = "Проверить состав и аллергены на этикетке по СанПиН до первой партии"
 ANSWER_NO = "Нет, никакого финансиста не добавляем — команда заточена на Россию."
 
@@ -129,11 +129,17 @@ class _Base(unittest.TestCase):
         self.shim.bodies.clear()
 
     # --- помощники ---------------------------------------------------------
-    def rid(self, question: str = QUESTION, answer_style: str = "modern") -> str:
-        """Свой запрос: корень с завершённым run'ом, вопрос и два шага в metadata."""
+    def rid(self, question: str = QUESTION, answer_style: str = "modern",
+            questions=None) -> str:
+        """Свой запрос: корень с завершённым run'ом, вопрос и два шага в metadata.
+
+        ``questions`` — несколько вопросов сразу (W21-REV2: идемпотентность просьбы
+        о пояснении не должна смешивать РАЗНЫЕ вопросы).
+        """
         root = self.sa.card("Собери команду под Россию", LEAD, status="running")
-        metadata = {"open_questions": [{"text": question, "for": "mikhail"}],
-                    "next_steps": [{"text": STEP_OTHER, "owner": "biz-lawyer"},
+        asked = [q for q in (questions or [question]) if str(q or "").strip()]
+        metadata = {"open_questions": [{"text": q, "for": "mikhail"} for q in asked],
+                    "next_steps": [{"text": STEP_OTHER, "owner": "team-lawyer"},
                                    {"text": STEP_TEXT, "owner": "default", "due": "2026-11-07"}],
                     "stage": {"current": "sales", "phases": [{"id": "sales", "title": "Продажи",
                                                               "status": "active", "note": ""}]}}
@@ -243,7 +249,7 @@ class AnswerLinkTests(_Base):
         self.assertIn("--assignee=" + LEAD, argv)
         body = self.shim.bodies[0]
         self.assertIn(qid, body)
-        self.assertIn("ОТВЕТ МАКСИМА НА ВОПРОС", body)
+        self.assertIn("ОТВЕТ МИХАИЛА НА ВОПРОС", body)
         self.assertIn(answers_mod.REACTION_MARK, body, "контракт реакции — в брифе")
         self.assertIn("Работа пересмотрена: карточки", body)
         self.assertIn("ничего менять не нужно", body)
@@ -460,7 +466,7 @@ class StepLinkTests(_Base):
         self.assertEqual(item["status"], "dismissed")
         self.assertNotIn(item_id,
                          [i["id"] for i in backlog["sections"]["next_steps"]],
-                         "снятый шаг не должен висеть в «Дальше»")
+                         "снятый шаг не должен висеть в «От вас нужно»")
 
     def test_step_created_after_answer_is_conflict(self):
         """Шаг появился ПОСЛЕ ответа «нет» — метка «противоречит вашему ответу»."""

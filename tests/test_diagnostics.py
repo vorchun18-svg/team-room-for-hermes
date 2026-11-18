@@ -66,7 +66,7 @@ class StructureTests(unittest.TestCase):
             self.assertIsInstance(item["details"], list)
             fix = item["fix"]
             if fix is not None:
-                self.assertIn(fix.get("kind"), {"command", "doc", "route", "link"})
+                self.assertIn(fix.get("kind"), {"command", "doc", "route", "link", "action"})
                 self.assertTrue(str(fix.get("label") or "").strip())
         # ключевые пункты на месте
         for expected in ("version", "system", "hermes_cli", "board", "dictation",

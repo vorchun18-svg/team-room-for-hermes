@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import random
 import re
 import time
@@ -33,30 +34,66 @@ MARK = "[Михаил · уточнение]"
 MARK_URGENT = "[Михаил · ПЕРЕСМОТРЕТЬ ПЛАН]"
 
 # Имена из демо-данных (Vault/журнал Лето) — чтобы лента читалась как живая переписка.
-NAMES = {"biz-director": "Глеб", "biz-lawyer": "Антон", "biz-ops": "Сергей", "biz-strategy": "Илья",
-         "biz-marketing": "Марина", "biz-cfo": "Вера", "biz-critic": "Ольга", "biz-runner": "Егор",
+NAMES = {"team-director": "Глеб", "team-lawyer": "Антон", "team-ops": "Сергей", "team-strategy": "Илья",
+         "team-marketing": "Марина", "team-cfo": "Вера", "team-critic": "Ольга", "team-runner": "Егор",
          "lawyer": "Юрист", "coder": "Программист", "surveyor": "Исследователь"}
 # роли по-русски — как в server/thread.py ROLE_RU (ключи профилей не меняем)
 ROLE_RU = {"orchestrator": "руководитель комнаты", "critic": "критик", "worker": "исполнитель",
            "observer": "наблюдатель"}
-TOPICS = {"biz-ops": "упаковка и поставщики", "biz-marketing": "каналы и продвижение",
-          "biz-lawyer": "юридический блок", "biz-cfo": "экономика и расчёты",
-          "biz-strategy": "план и этапы", "biz-runner": "сбор фактов", "biz-critic": "проверка свода"}
+TOPICS = {"team-ops": "упаковка и поставщики", "team-marketing": "каналы и продвижение",
+          "team-lawyer": "юридический блок", "team-cfo": "экономика и расчёты",
+          "team-strategy": "план и этапы", "team-runner": "сбор фактов", "team-critic": "проверка свода"}
 # Кому передать уточнение: ключевые слова → профиль и тема (по компетенции, Д1).
 ROUTING = (
     (("упаков", "поставщ", "moq", "короб", "тираж", "доставк", "склад", "слой", "образец", "котиров",
-      "печать", "пе "), "biz-ops", "упаковка и поставщики"),
+      "печать", "пе "), "team-ops", "упаковка и поставщики"),
     (("канал", "продаж", "едок", "развоз", "telegram", "реклам", "контент", "d19"),
-     "biz-marketing", "каналы и продвижение"),
+     "team-marketing", "каналы и продвижение"),
     (("роспатент", "ип", "оквэд", "бренд", "юр", "сэс", "лиценз", "налог", "договор", "разрешение"),
-     "biz-lawyer", "юридический блок"),
-    (("марж", "себестоим", "цифр", "смет", "эконом", "цен", "r$"), "biz-cfo", "экономика и расчёты"),
-    (("план", "этап", "стратег", "дорог", "roadmap", "срок"), "biz-strategy", "план и этапы"),
+     "team-lawyer", "юридический блок"),
+    (("марж", "себестоим", "цифр", "смет", "эконом", "цен", "r$"), "team-cfo", "экономика и расчёты"),
+    (("план", "этап", "стратег", "дорог", "roadmap", "срок"), "team-strategy", "план и этапы"),
 )
 _CLEAN = re.compile(r"[#*`>]+")
 
 # Порядок в одну и ту же секунду: сообщение Михаила → ответ → системное событие.
 KIND_RANK = {"message": 0, "comment": 1, "event": 2}
+
+# ── идемпотентность сообщений (W20-C1 §1.3, B-39) ───────────────────────────
+#: Окно, в котором повтор считается дублем (как на боевом сервере — 120 с).
+MESSAGE_DEDUPE_S = 120.0
+#: Сколько помним (демо живёт часами — старые ключи выбрасываем).
+_SLOT_MAX = 400
+_slots: dict = {}
+
+
+def _message_slot(rid: str, client_id, text: str, attach) -> str:
+    """Ключ нажатия: `client_id`, иначе отпечаток текста (автор всегда Михаил)."""
+    cid = str(client_id or "").strip()
+    if cid:
+        return "%s|cid|%s" % (rid, cid)
+    body = "\u0001".join(["mikhail", " ".join(str(text or "").split()),
+                          "\u0000".join(str(p) for p in (attach or []))])
+    return "%s|txt|%s" % (rid, hashlib.sha1(body.encode("utf-8")).hexdigest()[:20])
+
+
+def _slot_get(slot: str):
+    """Прежний ответ того же нажатия в окне 120 с (иначе None)."""
+    item = _slots.get(slot)
+    if not item:
+        return None
+    if time.time() - item["at"] > MESSAGE_DEDUPE_S:
+        _slots.pop(slot, None)
+        return None
+    return item["payload"]
+
+
+def _slot_put(slot: str, payload: dict) -> None:
+    """Запомнить ответ нажатия (память ограничена)."""
+    _slots[slot] = {"at": time.time(), "payload": copy.deepcopy(payload)}
+    if len(_slots) > _SLOT_MAX:
+        for key in sorted(_slots, key=lambda k: _slots[k]["at"])[:len(_slots) - _SLOT_MAX]:
+            _slots.pop(key, None)
 
 
 _PREFIX = re.compile(r"^(?:уточнение|дополнение|ещ[её]|и)\s*[:\-—]\s*", re.IGNORECASE)
@@ -73,7 +110,7 @@ def _short(text: str, limit: int = 90) -> str:
 
 
 def author_label(profile: str, role: str | None = None) -> str:
-    """`biz-director` → «Глеб · руководитель» (Д1.6: по-русски, не техническое имя)."""
+    """`team-director` → «Глеб · руководитель» (Д1.6: по-русски, не техническое имя)."""
     profile = str(profile or "system")
     if profile in ("system", "team"):
         return "Комната команды"
@@ -90,7 +127,7 @@ def lead_profile(room: dict, detail: dict) -> str:
     root = next((n for n in (detail.get("tree") or []) if n.get("role") == "root"), None)
     if root and root.get("assignee"):
         return str(root["assignee"])
-    return "biz-director"
+    return "team-director"
 
 
 def _roster(room: dict) -> list:
@@ -121,8 +158,14 @@ def reply_text(text: str, room: dict, detail: dict, *, status: str, urgent: bool
     name = NAMES.get(profile) or profile
     prefix = "Пересматриваю оставшиеся шаги, начатую работу не останавливаю. " if urgent else ""
     if status == "done":
-        return ("%sПринял: собираю новую версию ответа с учётом уточнения. Передал: %s — %s; "
-                "версию {version} пришлю, как только он вернётся с ответом." % (prefix, name, topic))
+        # W20-FA §1.2 (B-38): метка вопроса — в НАЧАЛЕ сообщения (контракт руководителя);
+        # демо показывает то же, что боевой сервер: вопрос уходит в «Нужен ваш ответ»,
+        # а у сообщения появляется «ждёт ваших ответов: N → справа».
+        return ("[Руководитель · вопрос] Подтвердите срок: письмо уходит 20 ноября или ждём, "
+                "пока поставщик ответит по партии?\n"
+                "%sПринял: собираю новую версию ответа с учётом уточнения. Передал: %s — %s; "
+                "версию {version} пришлю, как только он вернётся с ответом."
+                % (prefix, name, topic))
     if status == "failed":
         return ("%sПринял: повторяем работу с уточнением. Передал: %s — %s; о результате напишу здесь."
                 % (prefix, name, topic))
@@ -157,7 +200,9 @@ class MockThread:
     def thread_init(self) -> None:
         self.thread_store = {}      # rid → [ThreadItem] уже доставленные
         self.thread_pending = {}    # rid → [{"due": monotonic, ...}] ждут доставки
-        self.thread_seq = 0
+        # W20-FA: номера ленты начинаются выше заводских (c1…c6 из фикстур) — иначе
+        # новое сообщение получало чужой id и `asks` вешался на два сообщения сразу.
+        self.thread_seq = 100
 
     def _delay(self) -> float:
         """3–6 с на демо; в тестах умножается на phase_scale (0.03 → ~0,1 с)."""
@@ -293,6 +338,16 @@ class MockThread:
             raise ApiError(400, "bad_request", "Поле «urgent» должно быть true или false",
                            {"field": "urgent", "got": type(urgent).__name__})
 
+        # W20-C1 §1.3 (B-39): повтор нажатия не создаёт второе сообщение.
+        # Те же правила, что на боевом сервере: `client_id` нажатия или тот же
+        # текст от того же автора в окне 120 с → прежний ответ с `duplicate: true`.
+        slot = _message_slot(rid, body.get("client_id"), text, attach)
+        replayed = _slot_get(slot)
+        if replayed is not None:
+            out = copy.deepcopy(replayed)
+            out["duplicate"] = True
+            return out
+
         room = self.room(detail["room"])
         lead = lead_profile(room, detail)
         status = str(detail.get("status") or "working")
@@ -342,9 +397,11 @@ class MockThread:
         current = int((detail.get("synthesis") or {}).get("version") or 0)
         revision = ({"version": current + 1, "previous_version": current, "revision_task_id": None,
                      "note": text} if status == "done" else None)
-        return {"message": message, "thread": self.thread_for(rid), "routed_to": lead,
-                "merged": merged, "task_id": None, "status": status, "revision": revision,
-                "retry": status == "failed", "room": room["id"]}
+        payload = {"message": message, "thread": self.thread_for(rid), "routed_to": lead,
+                   "merged": merged, "task_id": None, "status": status, "revision": revision,
+                   "retry": status == "failed", "room": room["id"], "duplicate": False}
+        _slot_put(slot, payload)
+        return payload
 
     def _comment_root(self, rid: str, detail: dict, text: str, *, urgent: bool) -> None:
         """Комментарий на корневую карточку — сразу виден в диалоге и на доске."""

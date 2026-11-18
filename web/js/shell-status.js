@@ -67,7 +67,7 @@ export function renderBanners() {
     host.appendChild(bannerNode('error', 'error', 'Данные движка изменили формат — приложение только показывает их, без правок.'));
   }
   if (hd.ok === false && !health.get('error')) {
-    host.appendChild(bannerNode('warn', 'warning', 'Приложение сообщает о проблеме: ' + plainTerms(hd.message || hd.detail || 'подробности — в «Настройки → Здоровье»')));
+    host.appendChild(bannerNode('warn', 'warning', 'Приложение сообщает о проблеме: ' + plainTerms(hd.message || hd.detail || 'подробности — в «Настройки → Статус»')));
   }
 }
 

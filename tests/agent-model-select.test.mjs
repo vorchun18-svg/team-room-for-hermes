@@ -157,9 +157,9 @@ const TWINS = {
 const ROOM = {
   id: 'cafe',
   title: 'Лето',
-  orchestrator: 'biz-director',
+  orchestrator: 'team-director',
   members: [{
-    profile: 'biz-director', role: 'orchestrator',
+    profile: 'team-director', role: 'orchestrator',
     model_settings: { provider: 'ollama-cloud', model: 'kimi-k2.6', reasoning: 'high', source: 'agent' },
     agent_default: { provider: 'ollama-cloud', model: 'kimi-k2.6', reasoning: 'high' },
   }],
@@ -189,9 +189,9 @@ async function mountLive(catalog, room) {
   const api = fakeApi();
   const host = new FakeElement('div');
   const ui = await mountAgentModel(host, { api }, {
-    room: room || ROOM, catalog, mode: 'live', profile: 'biz-director',
+    room: room || ROOM, catalog, mode: 'live', profile: 'team-director',
   });
-  return { api, ui, row: ui.rowFor('biz-director') };
+  return { api, ui, row: ui.rowFor('team-director') };
 }
 
 /* ───────────────────────────── 3. клик выбирает ровно ту модель ───────── */
@@ -275,11 +275,11 @@ test('поиск: клик по любой из похожих строк даё
 
 test('фикстура fixtures/models.json: каждая модель каждого провайдера — по клику и по клавиатуре', async () => {
   const providers = FIXTURE_CATALOG.providers.filter((p) => p.configured);
-  const defaults = FIXTURE_CATALOG.agent_defaults['biz-director'];
+  const defaults = FIXTURE_CATALOG.agent_defaults['team-director'];
   const room = {
-    id: 'cafe', title: 'Лето', orchestrator: 'biz-director',
+    id: 'cafe', title: 'Лето', orchestrator: 'team-director',
     members: [{
-      profile: 'biz-director', role: 'orchestrator',
+      profile: 'team-director', role: 'orchestrator',
       model_settings: { ...defaults, source: 'agent' },
       agent_default: { ...defaults },
     }],
@@ -321,8 +321,8 @@ test('фикстура fixtures/models.json: каждая модель кажд�
 test('список моделей открыт сразу при уже выбранном провайдере', async () => {
   installDom();
   const host = new FakeElement('div');
-  const ui = await mountAgentModel(host, { api: fakeApi() }, { room: ROOM, catalog: TWINS, mode: 'live', profile: 'biz-director' });
-  const row = ui.rowFor('biz-director');
+  const ui = await mountAgentModel(host, { api: fakeApi() }, { room: ROOM, catalog: TWINS, mode: 'live', profile: 'team-director' });
+  const row = ui.rowFor('team-director');
 
   assert.equal(row.provider(), 'ollama-cloud', 'провайдер уже выбран до открытия');
   assert.equal(row.listOpen(), true, 'список раскрыт без смены провайдера');

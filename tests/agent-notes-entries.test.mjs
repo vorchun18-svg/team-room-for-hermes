@@ -53,7 +53,7 @@ function walk(node, pred, out = []) {
   return out;
 }
 
-const ROOM = { id: 'cafe', title: 'Лето', orchestrator: 'biz-director', members: [] };
+const ROOM = { id: 'cafe', title: 'Лето', orchestrator: 'team-director', members: [] };
 
 const ENTRIES = [
   {
@@ -101,7 +101,7 @@ test('entryMetaText: «закреплено · источник · дата · �
 test('редактор: список записей, счётчики и поле с микрофоном', async () => {
   installDom();
   const host = new FakeElement('div');
-  const ui = await mountNotesEntries(host, {}, { profile: 'biz-lawyer', entries: ENTRIES });
+  const ui = await mountNotesEntries(host, {}, { profile: 'team-lawyer', entries: ENTRIES });
   const text = host.textContent;
   assert.match(text, /Всегда проверяй по закону X/);
   assert.match(text, /Ornith — слабая модель/);
@@ -119,7 +119,7 @@ test('редактор: «Добавить» дописывает запись �
   const host = new FakeElement('div');
   const seen = [];
   const ui = await mountNotesEntries(host, {}, {
-    profile: 'biz-lawyer', entries: ENTRIES,
+    profile: 'team-lawyer', entries: ENTRIES,
     onChange: (profile, text) => seen.push([profile, text]),
   });
   const area = host.find('textarea');
@@ -133,13 +133,13 @@ test('редактор: «Добавить» дописывает запись �
   assert.match(ui.value(), /Не согласовывай сроки без меня/);
   assert.match(host.textContent, /записей 3 из 24/);
   assert.equal(seen.length, 1);
-  assert.equal(seen[0][0], 'biz-lawyer');
+  assert.equal(seen[0][0], 'team-lawyer');
 });
 
 test('редактор: пустое поле не добавляет запись', async () => {
   installDom();
   const host = new FakeElement('div');
-  const ui = await mountNotesEntries(host, {}, { profile: 'biz-lawyer', entries: [] });
+  const ui = await mountNotesEntries(host, {}, { profile: 'team-lawyer', entries: [] });
   assert.equal(ui.count(), 0);
   const add = walk(host, (n) => n.tagName === 'button' && /Добавить/.test(n.textContent))[0];
   add.dispatch('click', { type: 'click', target: add });

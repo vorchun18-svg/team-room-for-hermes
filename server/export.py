@@ -13,6 +13,7 @@ Markdown рисует web/js/md.js в браузере; если у запрос
 """
 from __future__ import annotations
 
+import re
 import sys
 import time
 from pathlib import Path
@@ -104,6 +105,84 @@ def _synth(detail: dict) -> dict:
 
 
 # --- markdown ----------------------------------------------------------------
+# --- «Найдено» в текстовом экспорте (W26-D4) --------------------------------
+FOUND_REL = {"искомое": "Искомое", "упоминает": "Упоминает", "смежное": "Смежное",
+             "не то": "Похожее, но не то"}
+FOUND_TYPE = {"файл": "файл", "сайт": "сайт", "письмо": "письмо", "запись": "запись"}
+
+
+def _found_items(block: str) -> list:
+    """Простой разбор машинного блока «Найдено» (YAML-список, ключи по-русски)."""
+    items, cur = [], None
+    for line in str(block or "").replace("\r\n", "\n").split("\n"):
+        if not line.strip() or line.strip() in ("---", "..."):
+            continue
+        bullet = re.match(r"^\s*[-*]\s+(.*)$", line)
+        body = bullet.group(1) if bullet else line.strip()
+        pair = re.match(r"^([^:]{1,40}):\s*(.*)$", body)
+        if not pair:
+            continue
+        key, value = pair.group(1).strip().lower(), pair.group(2).strip().strip('"\'')
+        if bullet:
+            cur = {}
+            items.append(cur)
+        if cur is None:
+            cur = {}
+            items.append(cur)
+        names = {"название": "title", "имя": "title", "тип": "type", "где": "where", "путь": "where",
+                 "описание": "desc", "отношение": "rel", "комментарий": "comment", "примечание": "comment"}
+        field = names.get(key)
+        if field and not cur.get(field):
+            cur[field] = value
+    return [it for it in items if it.get("title") or it.get("where")]
+
+
+def found_md(text: str) -> str:
+    """Блоки ```найдено → читаемый текст того же вида: группы, метки, «где»."""
+    src = _s(text)
+    if not src or "```найдено" not in src:
+        return src
+    out, pos = [], 0
+    for m in re.finditer(r"```найдено[ \t]*\n(.*?)```", src, re.S):
+        out.append(src[pos:m.start()])
+        items = _found_items(m.group(1))
+        if not items:
+            out.append(src[m.start():m.end()])
+            pos = m.end()
+            continue
+        groups = {}
+        for it in items:
+            rel = str(it.get("rel") or "смежное").strip().lower()
+            groups.setdefault(rel, []).append(it)
+        lines = ["**Найдено — %d**" % len(items), ""]
+        for rel, title in (("искомое", "Нашли то, что искали"), ("упоминает", "Нашли упоминания"),
+                           ("смежное", "Нашли смежное"), ("не то", "Похожее, но не то")):
+            bucket = groups.get(rel) or []
+            if not bucket:
+                continue
+            lines.append("**%s (%d)**" % (title, len(bucket)))
+            lines.append("")
+            for it in bucket:
+                where = _s(it.get("where"))
+                desc = _s(it.get("desc"))
+                line = "- **%s**" % _s(it.get("title") or where)
+                if desc:
+                    line += " — " + desc
+                if where:
+                    line += " (`%s`)" % where
+                lines.append(line)
+                if _s(it.get("comment")):
+                    lines.append("  - %s" % _s(it.get("comment")))
+            lines.append("")
+        if "искомое" not in groups:
+            lines.insert(0, "_Искомого нет; нашли смежное — проверьте, годится ли оно._")
+            lines.insert(1, "")
+        out.append("\n".join(lines))
+        pos = m.end()
+    out.append(src[pos:])
+    return "".join(out)
+
+
 def export_request_md(detail) -> str:
     """Русский Markdown-экспорт запроса: ответ, шаги, вопросы, решения, дерево."""
     d = _dict(detail)
@@ -132,7 +211,8 @@ def export_request_md(detail) -> str:
 
     out += ["## Ответ", ""]
     if syn.get("state") == "ready" and _s(syn.get("text_md")):
-        out.append(_s(syn.get("text_md")))
+        # W26-D4: блок «Найдено» в текстовом экспорте — тем же списком с группами.
+        out.append(found_md(_s(syn.get("text_md"))))
         byline = []
         if syn.get("author"):
             byline.append("автор: %s" % syn["author"])
@@ -150,7 +230,7 @@ def export_request_md(detail) -> str:
 
     steps = _list(d.get("next_steps"))
     if steps:
-        out += ["## Дальше", "", "| Шаг | Кто | Срок | Статус |", "|---|---|---|---|"]
+        out += ["## От вас нужно", "", "| Шаг | Кто | Срок | Статус |", "|---|---|---|---|"]
         for step in steps:
             if isinstance(step, str):
                 step = {"text": step}
@@ -210,7 +290,8 @@ def export_request_md(detail) -> str:
 
     artifacts = _list(d.get("artifacts"))
     if artifacts:
-        out += ["## Артефакты", ""]
+        # W26-D3: «Артефакты» → «Файлы» — то, что видит человек в экспорте.
+        out += ["## Файлы", ""]
         for art in artifacts:
             if isinstance(art, str):
                 art = {"path": art}
@@ -277,6 +358,7 @@ def _rk_export():
 
 # Исполняется в браузере после загрузки модулей: рисует шапку, Markdown и отчёт.
 PAGE_MODULE = r"""
+/*__SVOD_IMPORT__*/
 import { renderMarkdown } from './md.js';
 
 function node(tag, cls, text) {
@@ -296,7 +378,7 @@ export async function renderReport(app, payload, opts) {
   wrap.appendChild(head);
   const md = node('div', 'tr-md');
   // безопасно: renderMarkdown экранирует весь ввод и отдаёт только свои теги
-  md.innerHTML = renderMarkdown(data.md || '', opts || {});
+  md.innerHTML = renderMarkdown(__SVOD_TEXT__, opts || {});
   wrap.appendChild(md);
   if (data.note) wrap.appendChild(node('p', 'tr-note', data.note));
   app.appendChild(wrap);
@@ -351,6 +433,21 @@ def _css(cfg: Cfg) -> str:
                 parts.append("/* %s */\n%s" % (rel, f.read_text(encoding="utf-8-sig")))
             except OSError:
                 continue
+    # W24-N1 (§2.3): тот же вид, что на странице запроса — колонка чтения,
+    # плашки, таблицы с зеброй. Файл стилей один, копий нет.
+    svod_css = Path(cfg.web_dir) / "css" / "svod.css"
+    if svod_css.is_file():
+        try:
+            parts.append("/* css/svod.css */\n" + svod_css.read_text(encoding="utf-8-sig"))
+        except OSError:
+            pass
+    # W26-D4: чипы-ссылки и карточки «Найдено» — тот же вид, что в приложении.
+    found_css = Path(cfg.web_dir) / "css" / "found.css"
+    if found_css.is_file():
+        try:
+            parts.append("/* css/found.css */\n" + found_css.read_text(encoding="utf-8-sig"))
+        except OSError:
+            pass
     parts.append(PAGE_CSS)
     return "\n".join(parts)
 
@@ -436,9 +533,67 @@ def export_request_html(cfg: Cfg, detail) -> str:
     mods, order = E.collect_modules(Path(cfg.web_dir), "/js/report/index.js", warns.append)
     has_entry = bool(mods.get("/js/md.js"))
     if has_entry:
-        mods["/js/tr-export.js"] = PAGE_MODULE
+        # W24-N1: текст свода в файле приводится к тому же читаемому виду
+        # (formatSvod идемпотентна — разметка не портится повторным проходом).
+        svod_js = Path(cfg.web_dir) / "js" / "svod-format.js"
+        has_svod = svod_js.is_file()
+        if has_svod:
+            try:
+                mods["/js/svod-format.js"] = svod_js.read_text(encoding="utf-8-sig")
+                order.append("/js/svod-format.js")
+            except OSError:
+                has_svod = False
+        page = PAGE_MODULE.replace(
+            "/*__SVOD_IMPORT__*/",
+            "import { formatSvod } from './svod-format.js';" if has_svod else "",
+        ).replace("__SVOD_TEXT__", "formatSvod(data.md || '')" if has_svod else "(data.md || '')")
+        mods["/js/tr-export.js"] = page
         order.append("/js/tr-export.js")
     return _shell(cfg, payload, css, mods, order, files, has_entry)
 
 
-__all__ = ["export_request_md", "export_request_html"]
+def _vault_mirror():
+    """Модуль зеркала заметок (`server/vault_mirror.py`) — ленивый импорт."""
+    try:  # import server.export
+        from . import vault_mirror as mod
+    except ImportError:  # python server/app.py
+        import vault_mirror as mod  # type: ignore
+    return mod
+
+
+def export_request_obsidian(cfg: Cfg, detail) -> dict:
+    """«В Obsidian» (W20-U3, P13): положить свод в зеркальную папку комнаты.
+
+    Пишем В ТО ЖЕ место, куда приложение и так ведёт заметки запросов:
+    ``<vault>/<комната>/Запросы/<дата> <название> (<id>).md`` (см.
+    ``vault_mirror.note_stem``/``sync_request``). Поэтому повторный экспорт не
+    плодит файлы: заметка обновляется, а дописанное человеком ВНЕ служебных
+    маркеров сохраняется.
+
+    Возвращает словарь для интерфейса::
+
+        {"ok": True, "path": "...", "folder": "...", "name": "...", "changed": bool}
+        {"ok": False, "skipped": "mock"|"no_vault", "reason": "по-русски", "path": ""}
+
+    Ошибка записи (нет прав, занятый файл) — исключение: маршрут превратит его
+    в понятный ответ, а не в «сохранено» без файла.
+    """
+    d = _dict(detail)
+    room_id = _s(d.get("room"))
+    rid = _s(d.get("id"))
+    if not room_id or not rid:
+        raise ValueError("В запросе нет комнаты или идентификатора")
+    res = _vault_mirror().sync_request(cfg, room_id, rid, d)
+    path = _s((res or {}).get("path"))
+    if not path:
+        skipped = _s((res or {}).get("skipped")) or "no_vault"
+        reason = ("В демонстрационном режиме заметки не создаются — откройте рабочую комнату."
+                  if skipped == "mock" else
+                  "Хранилище заметок не подключено — укажите папку хранилища в настройках.")
+        return {"ok": False, "skipped": skipped, "reason": reason, "path": ""}
+    target = Path(path)
+    return {"ok": True, "path": str(target), "folder": str(target.parent),
+            "name": target.name, "changed": bool((res or {}).get("changed"))}
+
+
+__all__ = ["export_request_md", "export_request_html", "export_request_obsidian"]

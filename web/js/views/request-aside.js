@@ -1,5 +1,5 @@
 /**
- * request-aside.js — правая колонка «Дальше» (WAVE17, пакет D: B1, B3, B13, B15, P3).
+ * request-aside.js — правая колонка «От вас нужно» (WAVE17, пакет D: B1, B3, B13, B15, P3).
  *
  * Устройство колонки (P3): сверху и всегда раскрыто — «Нужен ваш ответ (N)»
  * (вопросы, которые ждут Михаила, решения, которые ждут его слова, и
@@ -8,7 +8,7 @@
  * свёрнутости запоминается (aside-fold.js).
  *
  * Счётчики — из ОДНОГО источника: `inboxSummary`/`blockedCards` из
- * backlog-model.js — те же функции, что считают бейдж вкладки «Дальше» (B13).
+ * backlog-model.js — те же функции, что считают бейдж вкладки «От вас нужно» (B13).
  * Заголовок блока и бейдж вкладки показывают одно число и одну расшифровку.
  *
  * Вопросы: компактная форма (поле + «Надиктовать» от dictation-auto +
@@ -18,8 +18,12 @@
  * клиенте. Если «Напомнить» вернул 409 с найденной реакцией — реакция сразу
  * показывается у вопроса, а кнопка исчезает (B-12).
  *
- * Действие «Отправить руководителю накопленные ответы» (`answers_resend`) —
- * одна кнопка, только когда есть ответы без реакции (`answers.summary.can_resend`).
+ * Ответы руководителю (W21-Q1, B-45): при включённом автообновлении свода
+ * (`synthesis.live.auto`) кнопки «Отправить накопленные ответы» нет — вместо неё
+ * спокойная строка «Ответы переданы руководителю — он учтёт их в ближайшем
+ * обновлении свода (около 14:20)». Кнопка `answers_resend` остаётся только при
+ * выключенном автообновлении; слова «без реакции» в интерфейсе не осталось.
+ * «Пояснить…» (B-44) работает и с пустым полем: вопрос бывает просто непонятен.
  *
  * Фабрика createAside(R) получает общий контекст страницы из request.js
  * и возвращает { buildAside }.
@@ -29,14 +33,28 @@ import { h, timeAgo } from '../util.js';
 import { icon } from '../icons.js';
 import { ensureCss } from '../ui.js';
 import { firstLine, personName, blockHead } from './request-util.js';
-import { countNoun } from '../text-ru.js';
+import { countNoun, ANSWERS_RU, LAYOUT_RU, pendingAnswersLabel } from '../text-ru.js';
 import { createSteps } from './request-steps.js';
 import { blockedCards, inboxSummary } from './backlog-model.js';
-import { foldCard } from './aside-fold.js';
+import { createApprovals } from './approvals.js';
+import { foldCard, foldState, setFoldState } from './aside-fold.js';
+import { requestStoreFor, bindLive } from './request-store.js';
+import { noticeLine, markRequestSeen } from './reaction-notice.js';
 import {
-  CHAIN_HINT, decisionActions, decisionAnswerOf, decisionStatusOf,
-  openDecisionDialog, postDecision,
+  CHAIN_HINT, decisionActions, decisionAnswerOf, decisionMutedActions, decisionNotice,
+  decisionStatusOf, openDecisionDialog, postDecision,
 } from './decision-dialog.js';
+
+/**
+ * Заменить содержимое узла (без `replaceChildren`: он есть не во всех местах,
+ * где страницу проверяют, а `textContent = ''` работает и в браузере, и в мини-DOM).
+ * @param {Node} node
+ * @param {...Node} nodes
+ */
+function fill(node, ...nodes) {
+  node.textContent = '';
+  for (const child of nodes) if (child) node.appendChild(child);
+}
 
 /**
  * Подписи статусов ответа — те же слова, что в API (`answer_label`, B-21):
@@ -49,6 +67,9 @@ const Q_STATE_RU = {
   received: 'руководитель прочитал',
   applied: 'учтено: работа изменена',
   no_change: 'учтено: менять ничего не нужно',
+  // W20 §1.2 (B-41): ответ записан, руководитель ответил в ленте словами.
+  replied_text: 'руководитель ответил текстом — посмотрите в ленте',
+  dismissed: 'это не вопрос',
 };
 const Q_STATE_CHIP = {
   open: 'chip--muted',
@@ -57,6 +78,8 @@ const Q_STATE_CHIP = {
   received: 'chip--info',
   applied: 'chip--ok',
   no_change: 'chip--muted',
+  replied_text: 'chip--info',
+  dismissed: 'chip--muted',
 };
 /** «Что значит» для статуса ответа — одна подсказка на все вопросы, шаги, решения. */
 const Q_STATE_HINT = {
@@ -66,40 +89,74 @@ const Q_STATE_HINT = {
   received: 'Руководитель прочитал ответ и взял его в работу. «Учтено» появится, когда он запишет, что именно изменил.',
   applied: 'Руководитель учёл ответ: работа пересмотрена, карточки изменены. Их список — рядом с реакцией.',
   no_change: 'Руководитель учёл ответ и решил, что менять в работе ничего не нужно.',
+  replied_text: 'Руководитель ответил в ленте словами — ответа по формату реакции нет. '
+    + 'Посмотрите диалог: там сказано, что решили.',
+  dismissed: 'Вы отметили, что это не вопрос: он не ждёт ответа и не считается в счётчиках.',
 };
+
+/** Откуда вопрос — простыми словами (W20 §1.2, B-38). */
+const Q_SOURCE_RU = {
+  comment: 'из сообщения руководителя',
+  candidate: 'из сообщения руководителя — проверьте, вопрос ли это',
+  card: '',
+};
+
 
 export function createAside(R) {
   const { ctx, rid, keepValues, refresh } = R;
   ensureCss('css/view-backlog-extras.css');
+  // W20-U4 (P9): строка «Ответ учтён: …» у вопроса.
+  ensureCss('css/reaction-notice.css');
   // W14-H §12: шаги — план руководителя с окном шага, не галочки.
   const stepsBlock = createSteps(R);
+  // W22-AP2: «Участник хочет выполнить команду» — отдельный вид элемента в
+  // «Нужен ваш ответ»: сначала разрешения (участник стоит без работы), потом
+  // вопросы и решения.
+  const approvalsUI = createApprovals(R);
+  // W26-D2: ОДИН стор запроса на страницу — колонка и основной блок читают его же.
+  const storeRef = R.store || requestStoreFor(rid, {
+    api: (ctx && ctx.api) || null,
+    roomId: R.roomId,
+    detail: R.detail || null,
+    refresh,
+  });
+  const storeOf = () => storeRef;
 
   /**
    * Ответ на конкретный вопрос (W14-D §1–§3). `needExplanation` — встречный
    * вопрос («поясни»): вопрос при этом НЕ закрывается, руководитель обязан
    * объяснить в ветке, поэтому форма остаётся на месте.
+   *
+   * W21-Q1 (B-44): для «Пояснить» текст НЕ обязателен — вопрос бывает просто
+   * непонятен. Пустое поле → `need_explanation:true` без `text`, сервер сам
+   * ставит стандартную просьбу. «Отправить» с пустым полем — по-прежнему отказ.
    */
   async function answerQuestion(q, ta, btn, opts = {}) {
     const needExplanation = Boolean(opts && opts.needExplanation);
+    // Двойное нажатие (и клик по уже занятой кнопке) — не вторая просьба.
+    if (btn && btn.disabled) return;
     const text = String(ta.value || '').trim();
-    if (!text) {
+    if (!text && !needExplanation) {
       ta.focus();
-      ctx.toast(needExplanation ? 'Напишите, что пояснить в вопросе' : 'Напишите ответ', 'warn');
+      ctx.toast(ANSWERS_RU.answerEmpty, 'warn');
       return;
     }
     btn.disabled = true;
     try {
-      const body = { action: 'answer', question_id: q.id, text };
+      const body = { action: 'answer', question_id: q.id };
+      if (text) body.text = text;
       if (needExplanation) body.need_explanation = true;
       await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, body);
       keepValues.delete('q:' + q.id);
-      ctx.toast(needExplanation
-        ? 'Просьба о пояснении отправлена — вопрос остаётся открытым'
+      ctx.toast(needExplanation ? ANSWERS_RU.explainSent
         : 'Ответ отправлен — руководитель увидит его у вопроса', 'ok');
       await refresh({ force: true });
     } catch (err) {
-      btn.disabled = false;
       ctx.toast((err && err.message) || 'Не удалось отправить ответ', 'danger');
+    } finally {
+      // Кнопка снова живая: строку не всегда пересобирают (состояние вопроса
+      // могло не измениться), и «залипшая» кнопка не дала бы нажать второй раз.
+      btn.disabled = false;
     }
   }
 
@@ -188,8 +245,10 @@ export function createAside(R) {
 
   /* ── вопросы: «Вопрос — ваш ответ», статус и реакция руководителя ────── */
 
-  /** Состояние ответа на вопрос: `open|waiting_explanation|sent|received|applied|no_change`. */
+  /** Состояние ответа на вопрос: `open|waiting_explanation|sent|received|applied|no_change|replied_text|dismissed`. */
   function qState(q) {
+    // W20 §1.2: «Это не вопрос» — вопрос не ждёт ответа, даже если ответа нет.
+    if (q && q.dismissed) return 'dismissed';
     const state = String((q && q.answer_state) || '').trim();
     if (state) return state;
     return q && q.answered ? 'sent' : 'open';
@@ -203,6 +262,7 @@ export function createAside(R) {
   /** Вопрос ещё ждёт Михаила: не отвечен или просит пояснения. */
   function qOpen(q) {
     const state = qState(q);
+    if (state === 'dismissed' || state === 'replied_text') return false;
     if (state === 'waiting_explanation') return true;
     return !(q && q.answered);
   }
@@ -213,14 +273,19 @@ export function createAside(R) {
    * кнопка микрофона остаются теми же узлами, панель не теряет привязку к
    * своему вопросу при опросе, «Стоп» и распознавании (W15-C, п. 4).
    */
-  function qSig(q) {
+  function qSig(q, open) {
     return JSON.stringify([
+      // W25-L2: развёрнутость — часть подписи строки: смена «кто открыт»
+      // пересобирает только затронутые строки.
+      open === true,
       String((q && q.id) || ''), String((q && q.text) || ''), String((q && q.for) || ''),
       Boolean(q && q.answered), String((q && q.answer) || ''), Number((q && q.answered_at) || 0),
       qState(q), Boolean(q && q.needs_explanation), Boolean(q && q.leader_pending),
       Boolean(q && q.can_remind), Boolean(q && q.reaction_overdue),
       Number((q && q.reminded_at) || 0), Boolean(q && q.answer_changes_done),
       JSON.stringify((q && q.reaction) || null),
+      // W20 §1.2 (B-38/B-41): откуда вопрос и снят ли он — строка пересобирается.
+      String((q && q.source) || ''), Boolean(q && q.dismissed), Boolean(q && q.needs_answer),
     ]);
   }
 
@@ -233,13 +298,85 @@ export function createAside(R) {
       }, personName(q.for) || String(q.for)));
   }
 
-  /** Реакция руководителя на ответ: текст и карточки, которых он коснулся. */
+  /**
+   * «Это не вопрос» — `POST …/actions {action:"question_dismiss", question_id}`
+   * (W20 §1.2, B-38): убирает кандидата из «Нужен ваш ответ» и из счётчиков.
+   * Данные запроса не меняются — отметка живёт в реестре ответов.
+   * @param {object} q вопрос
+   * @param {HTMLElement} [btn]
+   */
+  async function dismissQuestion(q, btn) {
+    if (!q || !q.id) return;
+    if (btn) btn.disabled = true;
+    try {
+      await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
+        { action: 'question_dismiss', question_id: String(q.id) });
+      ctx.toast('Убрали из «Нужен ваш ответ» — это не вопрос', 'ok');
+      await refresh({ force: true });
+    } catch (err) {
+      if (btn) btn.disabled = false;
+      ctx.toast((err && err.message) || 'Не удалось убрать вопрос', 'danger');
+    }
+  }
+
+  /**
+   * Строка под вопросом: откуда он и, для пункта-кандидата, кнопка «Это не вопрос».
+   * @param {object} q
+   * @returns {HTMLElement|null}
+   */
+  function sourceRow(q) {
+    const source = String((q && q.source) || '');
+    const text = Q_SOURCE_RU[source] || '';
+    const candidate = source === 'candidate';
+    if (!text && !candidate) return null;
+    const dismiss = candidate ? h('button', {
+      type: 'button', class: 'btn btn--ghost btn--sm req-q__dismiss',
+      'data-action': 'question-dismiss', 'data-question-id': String(q.id || ''),
+      title: 'Убрать из «Нужен ваш ответ»: это не вопрос, отвечать не нужно',
+      onclick: (e) => dismissQuestion(q, e && e.currentTarget),
+    }, icon('circle-slash', { size: 11 }), 'Это не вопрос') : null;
+    return h('div', { class: 'req-q__src', 'data-source': source || 'card' },
+      text ? h('span', {
+        class: 'chip chip--outline req-q__source',
+        title: candidate
+          ? 'Пункт списка из сообщения руководителя: приложение предлагает его как вопрос. Если это не вопрос — нажмите «Это не вопрос».'
+          : 'Вопрос взят из сообщения руководителя в диалоге запроса',
+      }, text) : null,
+      dismiss);
+  }
+
+  /**
+   * Реакция руководителя на ответ: строка «Ответ учтён: …» (P9), текст и карточки,
+   * которых он коснулся.
+   *
+   * Строку собирает `views/reaction-notice.js` из полей API (`status`, `label`, `at`) —
+   * теми же словами, что бейдж вкладки и отметка в «Недавнем». Как только реакция
+   * показана, запрос помечается прочитанным локально: бейдж не должен гореть у того,
+   * кто уже всё видит на экране.
+   */
   function reactionBlock(q) {
     const r = q.reaction;
-    if (!r || typeof r !== 'object' || !r.text) return null;
+    if (!r || typeof r !== 'object') return null;
     const cards = Array.isArray(r.cards) ? r.cards.filter(Boolean).slice(0, 6) : [];
     const when = Number(r.at) || 0;
+    const seenLine = r.text || r.label || when
+      ? noticeLine({ status: r.status, label: r.label, at: when })
+      : '';
+    markSeenIfAny(r);
+
+    const head = h('div', { class: 'req-q__notice' + (String(r.status) === 'received' ? ' req-q__notice--read' : ''),
+      role: 'status' },
+    icon(String(r.status) === 'received' ? 'eye' : 'check', { size: 12 }),
+    h('span', { class: 'req-q__notice-text', title: 'Реакция руководителя на ваш ответ' }, seenLine));
+
+    // Текста реакции нет — но факт «прочитал/учёл» показать всё равно нужно.
+    if (!r.text) return cards.length ? h('div', { class: 'req-q__reaction' }, head,
+      h('div', { class: 'req-q__cards' }, cards.map((id) => h('span', {
+        class: 'req-q__card tnum', title: 'Карточка работы, которой коснулся ответ: ' + id,
+      }, String(id))))) : head;
+
     return h('div', { class: 'req-q__reaction' },
+      head,
       h('div', { class: 'req-q__reaction-head' },
         icon('comment-discussion', { size: 12 }),
         h('span', { class: 'req-q__cap' }, 'Руководитель'),
@@ -250,6 +387,15 @@ export function createAside(R) {
           class: 'req-q__card tnum', title: 'Карточка работы, которой коснулся ответ: ' + id,
         }, String(id))))
         : null);
+  }
+
+  /** Отметка «прочитано» в браузере: реакция в этом запросе больше не новая. */
+  function markSeenIfAny(reaction) {
+    const roomId = String((ctx && ctx.room && ctx.room.id) || (R.roomId || ''));
+    const requestId = String(rid || '');
+    const at = Number(reaction && reaction.at) || 0;
+    if (!roomId || !requestId || !at) return;
+    try { markRequestSeen(roomId, requestId, at); } catch { /* отметка не обязательна */ }
   }
 
   /** Ждём реакции руководителя: подпись и кнопка «Напомнить руководителю». */
@@ -311,7 +457,8 @@ export function createAside(R) {
     const waiting = state === 'waiting_explanation';
     const ta = h('textarea', {
       class: 'textarea req-q__input', rows: 2, 'data-keep': key,
-      placeholder: waiting ? 'Что пояснить в вопросе?' : 'Ваш ответ…',
+      'data-hotkey-input': '',
+      placeholder: waiting ? 'Что пояснить в вопросе? Можно не писать' : 'Ваш ответ…',
       'aria-label': 'Ответ на вопрос: ' + firstLine(q.text, 60),
       value: keepValues.get(key) || '',
     });
@@ -329,9 +476,10 @@ export function createAside(R) {
     });
     // Короткая кнопка «Пояснить…» вместо длинной подписи у каждого вопроса:
     // объяснение — в общей подсказке блока (answerHintLine) и в title.
+    // W21-Q1 (B-44): текст можно не писать — подсказка так и говорит.
     const explain = h('button', {
       type: 'button', class: 'btn btn--ghost btn--sm req-q__explain', 'data-action': 'need-explanation',
-      title: 'Мне нужно пояснение — руководитель объяснит, вопрос останется открытым',
+      title: ANSWERS_RU.explainTitle,
       'aria-label': 'Мне нужно пояснение к вопросу: ' + firstLine(q.text, 60),
     }, icon('comment-discussion', { size: 12 }), 'Пояснить…');
     explain.addEventListener('click', () => answerQuestion(q, ta, explain, { needExplanation: true }));
@@ -342,10 +490,39 @@ export function createAside(R) {
           'ждём пояснения руководителя — вопрос открыт') : null));
   }
 
-  function questionRow(q) {
+  function questionRow(q, open) {
     const isMaxim = (q.for || 'mikhail') === 'mikhail';
     const state = qState(q);
+    let rowEl = null; // строка — нужна обработчику заголовка (одна форма на список)
     const answered = state === 'waiting_explanation' || Boolean(q.answer) || Boolean(q.answered);
+    // Части строки получают СВОИ ключи (`data-key`): `applyLivePatch` сверяет
+    // детей по ключу, а без него — по порядку. Когда состояние вопроса меняется
+    // («открыт» → «ждёт пояснения»), у строки появляется блок «Вопрос — ваш ответ»,
+    // и порядковое сопоставление ставило его узел на место ФОРМЫ: поле ответа и
+    // кнопки пропадали (E2E W21: после «Пояснить» отвечать было нечем).
+    // W25-L2: заголовок вопроса — настоящая кнопка (клик, Enter, Space): по ней
+    // разворачивается форма. Состояние пишем в `data-open` строки.
+    const top = questionTop(q, isMaxim);
+    top.setAttribute('data-key', 'qtop');
+    const head = h('div', {
+      class: 'req-q__head',
+      role: 'button',
+      tabindex: '0',
+      'aria-expanded': open ? 'true' : 'false',
+      title: open ? 'Свернуть вопрос' : 'Ответить на этот вопрос',
+    }, top, h('span', { class: 'req-q__badge', 'aria-hidden': 'true' }, open ? 'свернуть' : 'ответить'));
+    const toggleFromHead = (ev) => {
+      if (ev && ev.target && ev.target.closest && ev.target.closest('.req-q__badge, .chip')) return;
+      const listEl = rowEl && rowEl.parentNode ? rowEl.parentNode : null;
+      if (ev && ev.preventDefault) ev.preventDefault();
+      if (open) expandQuestion('', listEl);
+      else expandQuestion(String(q.id || ''), listEl);
+    };
+    head.addEventListener('click', toggleFromHead);
+    head.addEventListener('keydown', (ev) => {
+      if (!ev) return;
+      if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') toggleFromHead(ev);
+    });
     const row = h('div', {
       class: 'req-q req-q--' + state,
       'data-q': String(q.id || ''),
@@ -353,27 +530,114 @@ export function createAside(R) {
       // WAVE17 §1: ключ точечной перерисовки — строка вопроса не пересобирается,
       // пока не изменился сам вопрос (от этого зависит диктовка и фокус).
       'data-key': 'q' + String(q.id || ''),
+      // W20-U3: строка — шаг клавиш J/K (hotkeys.js), поле — цель фокуса.
+      'data-hotkey-item': '',
       // Ключ привязки панели диктовки: панель находит СВОЙ вопрос после перерисовки.
       'data-mic-anchor': 'q:' + String(q.id || ''),
-    }, questionTop(q, isMaxim));
-    if (answered) row.appendChild(answerBlock(q, state));
+      'data-open': open ? '1' : '0',
+      // Ключ, по которому строку находят клавиши и «развернуть один вопрос».
+      'data-q-open': open ? '1' : '0',
+    }, head);
+    rowEl = row;
+    const src = sourceRow(q);
+    if (src) {
+      src.setAttribute('data-key', 'qsrc');
+      row.appendChild(src);
+    }
+    if (answered) {
+      const block = answerBlock(q, state);
+      block.setAttribute('data-key', 'qans');
+      row.appendChild(block);
+    }
     // Встречный вопрос вопрос не закрывает: форму показываем и после ответа.
-    if (!q.answered || state === 'waiting_explanation') row.appendChild(answerForm(q, state));
+    // Снятый вопрос («Это не вопрос») формы не получает — отвечать нечего.
+    if (state !== 'dismissed' && (!q.answered || state === 'waiting_explanation')) {
+      const form = answerForm(q, state);
+      form.setAttribute('data-key', 'qform');
+      row.appendChild(form);
+    }
     return row;
+  }
+
+  /**
+   * W25-L2 (R5 §7.2, §9 п. 9): id ЕДИНСТВЕННОГО раскрытого вопроса.
+   *
+   * До этого открыты были все 7–10 форм сразу: человек с первого экрана получал
+   * десять полей и ни одного ответа. Теперь на список — одна форма, остальные
+   * строки-заголовки; клик по строке разворачивает её и сворачивает прежнюю.
+   * `null` — «ещё не выбирали»: открывается первый вопрос списка.
+   * Набранный текст при сворачивании НЕ теряется: поле остаётся в DOM (скрыто
+   * стилем) и его значение лежит в `keepValues` (`data-keep`).
+   */
+  let openQId = null;
+
+  /** Раскрыт ли вопрос: выбранный человеком, иначе первый в списке. */
+  function isQOpen(q, firstId) {
+    if (!q || !q.id) return false;
+    const id = String(q.id);
+    if (openQId != null) return openQId === id;
+    return String(firstId || '') === id;
+  }
+
+  /** Развернуть один вопрос и свернуть остальные (одна форма на список). */
+  function expandQuestion(id, listEl) {
+    openQId = String(id || '');
+    const doc = (typeof document !== 'undefined') ? document : null;
+    const rows = listEl && listEl.querySelectorAll ? Array.from(listEl.querySelectorAll('.req-q')) : [];
+    for (const row of rows) {
+      const on = row.getAttribute('data-q') === openQId;
+      row.setAttribute('data-open', on ? '1' : '0');
+      const head = row.querySelector ? row.querySelector('.req-q__head') : null;
+      if (head) head.setAttribute('aria-expanded', on ? 'true' : 'false');
+    }
+    const row = rows.find((r) => r.getAttribute('data-q') === openQId);
+    const field = row && row.querySelector ? row.querySelector('.req-q__input') : null;
+    if (field && typeof field.focus === 'function' && doc && doc.activeElement && doc.activeElement !== field) {
+      try { field.focus({ preventScroll: true }); } catch { /* старый браузер */ }
+    }
+    return openQId;
   }
 
   /** Кэш строк вопросов: узел живёт между перерисовками, пока вопрос не изменился. */
   const qRows = new Map();
 
+  /** Короткий хеш подписи строки — им помечается сам узел (`data-vsig`). */
+  function sigHash(sig) {
+    let h = 2166136261;
+    for (let i = 0; i < sig.length; i++) {
+      h ^= sig.charCodeAt(i);
+      h = (h * 16777619) >>> 0;
+    }
+    return String(h >>> 0);
+  }
+
   function reconcileQuestions(body, questions) {
     const wanted = [];
+    const doc = (typeof globalThis !== 'undefined' && globalThis.document) || null;
+    const firstId = questions.length ? String((questions[0] && questions[0].id) || '') : '';
     for (const q of questions) {
       if (!q || !q.id) continue;
       const id = String(q.id);
-      const sig = qSig(q);
+      const open = isQOpen(q, firstId);
+      const sig = qSig(q, open);
+      const hash = sigHash(sig);
       let entry = qRows.get(id);
+      // Кэш мог разойтись с экраном: `applyLivePatch` переносит недостающие узлы
+      // из НОВОЙ сборки в живую страницу, и кэшированная строка остаётся пустой
+      // оболочкой, а на экране — живая строка с полем и обработчиками
+      // (W21-E2E: после «Пояснить» опрос вычищал поле ответа — отвечать нечем).
+      // Сверяем по `data-vsig`: атрибуты живой строки патч обновляет сам, так что
+      // метка на экране всегда соответствует последней сборке.
+      if (doc && typeof doc.querySelector === 'function') {
+        const live = doc.querySelector('.req-q[data-q="' + id.replace(/["\\]/g, '\\$&') + '"]');
+        if (live && live !== (entry && entry.row) && live.getAttribute('data-vsig') === hash) {
+          entry = { sig, row: live };
+          qRows.set(id, entry);
+        }
+      }
       if (!entry || entry.sig !== sig) {
-        entry = { sig, row: questionRow(q) };
+        entry = { sig, row: questionRow(q, open) };
+        entry.row.setAttribute('data-vsig', hash);
         qRows.set(id, entry);
       }
       wanted.push(entry.row);
@@ -411,33 +675,65 @@ export function createAside(R) {
     }
   }
 
-  /** Одна общая подсказка блока вопросов: что делает «Пояснить…» (B15). */
+  /** Одна общая подсказка блока вопросов: что делает «Пояснить…» (B15, B-44). */
   function answerHintLine() {
     return h('div', { class: 'req-side__hint req-q__common-hint small muted' },
       icon('comment-discussion', { size: 11 }),
-      h('span', null, 'Вопрос непонятен? «Пояснить…» — руководитель объяснит, вопрос останется открытым.'));
+      h('span', null, ANSWERS_RU.explainHint));
   }
 
-  /** Кнопка досылки накопленных ответов (W17-B §3) — только по клику. */
-  function resendButton(resend) {
+  /** Время ближайшего обновления свода «14:20» из unix-секунд ('' — времени нет). */
+  function nextUpdateLabel(at) {
+    const sec = Number(at) || 0;
+    if (!sec) return '';
+    const date = new Date(sec * 1000);
+    if (!isFinite(date.getTime())) return '';
+    const hh = String(date.getHours()).padStart(2, '0');
+    const mm = String(date.getMinutes()).padStart(2, '0');
+    return hh + ':' + mm;
+  }
+
+  /**
+   * Низ блока «Нужен ваш ответ» — что происходит с ответами дальше.
+   *
+   * W21-Q1 (B-45): пока автообновление свода включено (`synthesis.live.auto`),
+   * руководитель забирает ответы сам, поэтому кнопки «Отправить руководителю
+   * накопленные ответы» нет, а вместо «N ответа без реакции» — спокойная строка
+   * «Ответы переданы руководителю — он учтёт их в ближайшем обновлении свода
+   * (около 14:20)» с временем из `synthesis.live.next_update_at`.
+   * Кнопка остаётся ТОЛЬКО при выключенном автообновлении: тогда ответы правда
+   * лежат и ждут нажатия.
+   */
+  function resendBlock(resend) {
+    if (!resend.can_resend) return null;
+    if (resend.auto) {
+      const at = nextUpdateLabel(resend.next_at);
+      const base = resend.hint || ANSWERS_RU.delivered;
+      const line = at ? base + ' (около ' + at + ')' : ANSWERS_RU.deliveredSoon;
+      return h('div', {
+        class: 'req-side__foot req-side__delivered small muted',
+        'data-auto-svod': 'true',
+        title: 'Руководитель получает ответы сам — досылать ничего не нужно.',
+      }, icon('refresh', { size: 12 }), h('span', null, line));
+    }
     const n = Math.max(0, Number(resend.pending) || 0);
     const btn = h('button', {
       type: 'button', class: 'btn btn--secondary btn--sm req-side__resend',
       'data-action': 'answers-resend',
-      title: 'Одна карточка руководителю: все ваши ответы, на которые ещё нет реакции',
+      title: 'Одна карточка руководителю: все ваши ответы, которые ещё не учтены',
     }, icon('send', { size: 12 }), String(resend.label || 'Отправить руководителю накопленные ответы'));
     btn.addEventListener('click', () => resendAnswers(btn));
     return h('div', { class: 'req-side__foot req-side__resend-row' },
       btn,
-      n ? h('span', { class: 'muted req-q__hint' },
-        n + ' ' + countNoun(n, ['ответ', 'ответа', 'ответов']) + ' без реакции руководителя') : null);
+      n ? h('span', { class: 'muted req-q__hint', title: 'Автообновление свода выключено — ответы уйдут по кнопке.' },
+        pendingAnswersLabel(n)) : null);
   }
 
   /**
    * Закреплённый блок «Нужен ваш ответ (N)»: вопросы, ждущие ответа, решения,
    * ждущие слова Михаила, и заблокированные задачи этой ветки. Всегда раскрыт.
    * Число N и расшифровка — из `inboxSummary` (тот же счётчик, что на вкладке
-   * «Дальше»): одно число, одни слова (B13).
+   * «От вас нужно»): одно число, одни слова (B13).
    */
   function answersCard(view) {
     const total = view.inbox.total;
@@ -448,54 +744,107 @@ export function createAside(R) {
       'data-key': 'blk-answers',
       'aria-label': 'Нужен ваш ответ',
     });
-    card.appendChild(blockHead('Нужен ваш ответ', total || null));
+    // W26-D2 (в): «Нужен ваш ответ» сворачивается — человек сам решает, держать ли
+    // список перед глазами. По умолчанию раскрыт, если есть что решать.
+    const details = h('details', {
+      class: 'req-side__fold',
+      'data-fold': 'answers',
+      open: foldState(rid, 'answers', Boolean(total)) ? true : null,
+    });
+    const summary = h('summary', { class: 'req-side__fold-head req-side__fold-head--pin' });
+    const box = h('div', { class: 'req-side__fold-body', 'data-answers-body': '' });
+    details.appendChild(summary);
+    details.appendChild(box);
+    details.addEventListener('toggle', () => setFoldState(rid, 'answers', Boolean(details.open)));
+    card.appendChild(details);
+    paintAnswers(summary, box);
+    // Одно действие — везде: действие в основном блоке, нижнем листе или в
+    // «Сегодня» приходит сюда событием стора, и колонка перерисовывается сама.
+    if (R.store || storeRef) bindLive(storeOf(), card, () => paintAnswers(summary, box));
+    return card;
+  }
+
+  /**
+   * Содержимое «Нужен ваш ответ»: только пункты с действием (W26 §1, T1).
+   * Перерисовывается из стора, не дожидаясь опроса страницы.
+   */
+  function paintAnswers(summary, box) {
+    const view = asideData();
+    const total = view.inbox.total;
+    fill(summary,
+      icon('chevron-right', { size: 12, className: 'req-side__fold-chev' }),
+      h('span', { class: 'req-side__fold-title' }, 'Нужен ваш ответ'),
+      h('span', {
+        class: 'chip chip--' + (total ? 'warn' : 'muted') + ' req-side__fold-count tnum',
+        title: total ? 'Из чего складывается число: ' + view.inbox.full : 'Сейчас от вас ничего не нужно',
+      }, String(total)));
+    fill(box);
+
     if (total) {
-      card.appendChild(h('div', {
+      box.appendChild(h('div', {
         class: 'req-side__count-line small muted',
         title: 'Из чего складывается число: ' + view.inbox.full,
       }, view.inbox.text));
     }
 
     if (!total) {
-      card.appendChild(h('div', { class: 'req-side__body' },
+      box.appendChild(h('div', { class: 'req-side__body' },
         h('div', { class: 'req-aside-empty' }, 'Сейчас от вас ничего не нужно: команда продолжает работу.')));
-      if (view.resend.can_resend) card.appendChild(resendButton(view.resend));
-      return card;
+      const quiet = resendBlock(view.resend);
+      if (quiet) box.appendChild(quiet);
+      return;
+    }
+
+    if (view.approvals && view.approvals.length) {
+      // W22-AP2: сначала разрешения — участник стоит и не может работать.
+      // W26-D2: у каждого пункта есть действие («нельзя штатно» — тоже).
+      box.appendChild(h('div', { class: 'req-side__subhead small muted' },
+        'Участник просит разрешение',
+        h('span', { class: 'tnum' }, ' · ' + view.approvals.length)));
+      box.appendChild(h('div', {
+        class: 'req-side__body ap-aside', 'data-scroll-key': 'approvals',
+        'data-approvals-list': '',
+      }, approvalsUI.pendingCards(view.approvals)));
     }
 
     if (view.openQs.length) {
-      card.appendChild(answerHintLine());
+      // Первый вопрос списка открыт по умолчанию (R5 §7.2): пока человек не
+      // выбрал другой, `openQId` = null и раскрыт ровно первый.
+      if (openQId == null && view.openQs[0]) openQId = null;
+      box.appendChild(answerHintLine());
       const list = h('div', {
         class: 'req-side__body req-q__list', 'data-question-list': '',
+        'data-hotkey-list': 'questions',
+        title: 'J — следующий вопрос, K — предыдущий',
         'data-scroll-key': 'questions-open',
       });
       reconcileQuestions(list, view.openQs);
-      card.appendChild(list);
+      box.appendChild(list);
     }
 
     if (view.openDecisions.length) {
-      card.appendChild(h('div', { class: 'req-side__subhead small muted' },
+      box.appendChild(h('div', { class: 'req-side__subhead small muted' },
         'Решения, которые ждут вашего слова',
         h('span', { class: 'tnum' }, ' · ' + view.openDecisions.length)));
-      card.appendChild(decisionHintLine());
-      card.appendChild(h('div', { class: 'req-side__body req-decisions', 'data-scroll-key': 'decisions-open' },
+      box.appendChild(decisionHintLine());
+      box.appendChild(h('div', { class: 'req-side__body req-decisions', 'data-scroll-key': 'decisions-open' },
         view.openDecisions.map(decisionRow)));
     }
 
     if (view.blocked.length) {
-      // Заблокированные задачи считаются в том же числе, что и бейдж «Дальше»;
-      // здесь — короткая строка со ссылкой: разбираются они на вкладке «Дальше».
-      card.appendChild(h('a', {
+      // Заблокированные задачи считаются в том же числе, что и бейдж «От вас нужно»;
+      // здесь — короткая строка со ссылкой: разбираются они на вкладке «От вас нужно».
+      box.appendChild(h('a', {
         class: 'req-side__blocked',
         href: `#/room/${encodeURIComponent(R.roomId)}/backlog?request=${encodeURIComponent(R.detail.id)}`,
         title: view.blocked.map((b) => b.text).join('; '),
       }, icon('stop-circle', { size: 12 }),
         h('span', null, countNoun(view.blocked.length, ['задача', 'задачи', 'задач'])
-          + ' ждёт вашего решения — разобрать в «Дальше»')));
+          + ' ждёт вашего решения — разобрать в «От вас нужно»')));
     }
 
-    if (view.resend.can_resend) card.appendChild(resendButton(view.resend));
-    return card;
+    const foot = resendBlock(view.resend);
+    if (foot) box.appendChild(foot);
   }
 
   /* ── решения руководителя: принять / отклонить / обсудить (W19-D2, B-20) ── */
@@ -507,13 +856,13 @@ export function createAside(R) {
     return status === 'proposed' || status === 'discuss';
   }
 
-  /** Понятная расшифровка блока решений: что происходит после ответа (B-20, B-21). */
+  /** Понятная расшифровка блока решений: что происходит после ответа (B-20, B-21, B-37). */
   function decisionHintLine() {
     return h('div', { class: 'req-side__hint req-decision__hint small muted', title: CHAIN_HINT },
       icon('comment-discussion', { size: 11 }),
       h('span', null, 'Решение за вами: «Принять» или «Отклонить» — и оно уйдёт из этого '
         + 'списка; у ответа видна цепочка «отправлен → прочитал → учтено». '
-        + '«Обсудить» оставляет решение за вами.'));
+        + '«Снять — неактуально» убирает ненужное решение: оно останется серым, вернуть можно в любой момент.'));
   }
 
   /** Отправить «Принять» сразу: одно нажатие, без окна (остальное — с текстом и диктовкой). */
@@ -541,6 +890,49 @@ export function createAside(R) {
     });
     if (!dlg) ctx.toast('Не удалось открыть окно решения', 'danger');
     return dlg;
+  }
+
+  /** «Вернуть» снятое решение: одно нажатие, без окна (W20 §1.2, B-37). */
+  async function restoreDecision(d, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await postDecision({ api: ctx.api, requestId: rid, decision: d, outcome: 'restore' });
+      ctx.toast('Решение возвращено в работу — снова ждёт вашего слова', 'ok');
+      await refresh({ force: true });
+    } catch (err) {
+      if (btn) btn.disabled = false;
+      ctx.toast((err && err.message) || 'Не удалось вернуть решение', 'danger');
+    }
+  }
+
+  /**
+   * «Снять — неактуально» / «Вернуть» (W20 §1.2, B-37). Живут отдельной строкой
+   * от трёх привычных действий: снятие — уборка списка, а не ответ руководителю.
+   * @param {object} d решение
+   * @returns {HTMLElement|null}
+   */
+  function decisionMutedRow(d) {
+    const items = decisionMutedActions(d);
+    if (!items.length) return null;
+    const box = h('div', {
+      class: 'req-decision__muted-actions', role: 'group',
+      'aria-label': 'Решение неактуально: ' + firstLine(d.text, 60),
+    });
+    for (const item of items) {
+      const btn = h('button', {
+        type: 'button', class: 'btn btn--ghost btn--sm req-decision__muted-act',
+        'data-action': 'decision-' + item.action,
+        'data-decision-id': String(d.id || ''),
+        title: item.hint,
+        'aria-label': item.label + ': ' + firstLine(d.text, 60),
+      }, icon(item.action === 'dismiss' ? 'circle-slash' : 'history', { size: 11 }), item.label);
+      btn.addEventListener('click', () => {
+        if (item.action === 'restore') restoreDecision(d, btn);
+        else openDecisionAction(d, 'dismiss');
+      });
+      box.appendChild(btn);
+    }
+    return box;
   }
 
   /** Кнопки решения. Текущее действие помечено `aria-pressed` — видно, что уже сделано. */
@@ -577,6 +969,8 @@ export function createAside(R) {
     const reaction = answer.reaction || null;
     const cards = reaction && Array.isArray(reaction.cards) ? reaction.cards.filter(Boolean).slice(0, 6) : [];
     const at = Number(d.answered_at) || 0;
+    // W21-L1 (U4): «Решение учтено · 13:48» — рядом с цепочкой, без повтора её слов.
+    const noticed = decisionNotice(d);
     const block = h('div', { class: 'req-decision__answer req-decision__answer--' + answer.key },
       h('div', { class: 'req-decision__answer-head' },
         h('span', { class: 'req-decision__pair small muted' }, 'Ваш ответ'),
@@ -584,6 +978,13 @@ export function createAside(R) {
           class: 'chip chip--' + answer.tone + ' req-decision__state',
           title: 'Статус ответа: ' + answer.label + ' — ' + answer.hint,
         }, answer.label)),
+      noticed
+        ? h('div', {
+          class: 'req-q__notice req-decision__notice', role: 'status',
+          title: 'Реакция руководителя на ваш ответ по этому решению',
+        }, icon('check', { size: 12 }),
+        h('span', { class: 'req-q__notice-text' }, noticed))
+        : null,
       answer.text ? h('div', { class: 'req-decision__atext' }, String(answer.text)) : null,
       at ? h('div', { class: 'muted req-q__when' }, 'отвечено ' + timeAgo(at)) : null);
     if (reaction && reaction.text) {
@@ -611,22 +1012,45 @@ export function createAside(R) {
   function decisionRow(d) {
     const status = decisionStatusOf(d);
     const answer = decisionAnswerOf(d);
+    // W20 §1.2 (B-37): снятое и устаревшее — серым, без ожидания ответа.
+    const muted = Boolean(d.status_muted) || status.key === 'dismissed' || status.key === 'superseded';
+    const cls = ['req-decision', 'req-decision--' + status.key];
+    if (muted) cls.push('req-decision--muted');
     const row = h('div', {
-      class: 'req-decision req-decision--' + status.key,
+      class: cls.join(' '),
       'data-key': 'dec' + String(d.id || ''),
       'data-decision-id': String(d.id || ''),
       'data-decision-status': status.key,
+      'data-muted': muted ? 'true' : null,
     },
       h('div', { class: 'req-decision__top' },
         h('div', { class: 'req-decision__text' }, d.text || ''),
         h('span', {
           class: 'chip chip--' + status.tone + ' req-decision__status', title: status.hint,
         }, status.label)),
-      d.why ? h('div', { class: 'req-decision__why' }, d.why) : null);
-    if (answer) row.appendChild(decisionAnswerBlock(d, answer));
+      d.why ? h('div', { class: 'req-decision__why' }, d.why) : null,
+      status.key === 'superseded' ? supersededNote(d) : null);
+    // Снятое и устаревшее не отвечают: цепочка «ваш ответ → прочитал → учтено» здесь
+    // только сбивала бы с толку (сервер отдаёт для них состояние «снято»).
+    if (answer && !muted) row.appendChild(decisionAnswerBlock(d, answer));
     // Действия — только пока решение ждёт слова Михаила (B-20: «предложено»).
     if (decisionOpen(d)) row.appendChild(decisionActionsRow(d));
+    const mutedRow = decisionMutedRow(d);
+    if (mutedRow) row.appendChild(mutedRow);
     return row;
+  }
+
+  /** Почему решение устарело — одной строкой (W20 §1.2, B-37). */
+  function supersededNote(d) {
+    const by = Number(d.superseded_by) || 0;
+    const why = String(d.superseded_why || '');
+    const reason = why === 'retracted' ? 'руководитель его отозвал'
+      : why === 'absent' ? 'его нет в новой версии свода' : '';
+    const parts = [];
+    if (by) parts.push('с версии ' + by);
+    if (reason) parts.push(reason);
+    const text = parts.length ? 'Устарело: ' + parts.join(' · ') : 'Устарело — в работу не идёт';
+    return h('div', { class: 'req-decision__superseded small muted', title: text }, text);
   }
 
   function decisionsCard(decisions) {
@@ -738,7 +1162,9 @@ export function createAside(R) {
 
   /** Данные колонки в одном месте: что ждёт ответа, что уже отвечено, что свёрнуто. */
   function asideData() {
-    const detail = R.detail || {};
+    // W26-D2: деталь берём из общего стора — он знает и правки, пришедшие из
+    // других мест страницы, а не только из последнего опроса.
+    const detail = (storeRef && storeRef.get().detail) || R.detail || {};
     const steps = Array.isArray(detail.next_steps) ? detail.next_steps : [];
     const questions = Array.isArray(detail.open_questions) ? detail.open_questions : [];
     const decisions = Array.isArray(detail.decisions) ? detail.decisions : [];
@@ -748,27 +1174,94 @@ export function createAside(R) {
     const answeredQs = questions.filter((q) => q && !qOpen(q) && (q.answer || q.answered));
     const openDecisions = decisions.filter((d) => d && decisionOpen(d));
     const closedDecisions = decisions.filter((d) => d && !decisionOpen(d));
-    // Заблокированные задачи этой ветки: тот же источник, что у вкладки «Дальше».
+    // Заблокированные задачи этой ветки: тот же источник, что у вкладки «От вас нужно».
     let blocked = [];
     try { blocked = blockedCards([detail]); } catch { blocked = []; }
+    // W22-AP2: запросы разрешений агентам — отдельный вид элемента «Нужен ваш ответ».
+    const approvals = approvalsUI.pending();
 
-    const inbox = inboxSummary({ questions: openQs, decisions: openDecisions, blocked });
+    const inbox = inboxSummary({ questions: openQs, decisions: openDecisions, blocked, approvals });
     const summary = (detail.answers && detail.answers.summary) || {};
+    // W21-Q1 (B-45): автообновление свода включено? Тогда ответы забирает
+    // руководитель сам, и кнопка досылки не нужна. Нет поля — считаем выключенным
+    // (старый сервер): кнопка ведёт себя как раньше.
+    const live = (detail.synthesis && detail.synthesis.live) || {};
     return {
       steps, questions, decisions, future,
-      openQs, answeredQs, openDecisions, closedDecisions, blocked, inbox,
+      openQs, answeredQs, openDecisions, closedDecisions, blocked, inbox, approvals,
       resend: {
         can_resend: Boolean(summary.can_resend),
         pending: Number(summary.resend_pending) || 0,
         label: String(summary.resend_label || 'Отправить руководителю накопленные ответы'),
+        hint: String(summary.resend_hint || ''),
+        auto: live.auto === true,
+        next_at: Number(live.next_update_at) || 0,
       },
     };
+  }
+
+  /* ── плашка «Нужен ваш ответ · N → показать» (W21-R1, п. 4) ──────────────── */
+
+  /**
+   * Плашка над содержимым страницы: в одноколоночном режиме блок вопросов уходит
+   * под свод, и без неё «Нужен ваш ответ» прятался глубоко под страницей.
+   * Видимость — CSS (`@container view`): в двух колонках её нет, плашку прячет
+   * стиль, а не JS (иначе при смене ширины оставался бы «мёртвый» элемент).
+   */
+  function pinBar(view) {
+    const total = Math.max(0, Number(view.inbox.total) || 0);
+    const node = h('button', {
+      class: 'req-pinbar', type: 'button', 'data-pinbar': '',
+      title: LAYOUT_RU.pinbarTitle,
+      // Кнопка ведёт к блоку «Нужен ваш ответ» — говорим об этом явно.
+      'aria-controls': 'questions',
+    },
+    h('span', { class: 'req-pinbar__count', 'aria-hidden': 'true' }, String(total)),
+    h('span', { class: 'req-pinbar__text' }, LAYOUT_RU.pinbar),
+    h('span', { class: 'req-pinbar__go' }, LAYOUT_RU.pinbarShow, icon('arrow-down', { size: 13 })));
+    node.addEventListener('click', () => showQuestions());
+    return node;
+  }
+
+  /** Перейти к вопросам: прокрутка к блоку, короткая подсветка, фокус в ответ. */
+  function showQuestions() {
+    const target = document.getElementById('questions');
+    if (!target) return;
+    try {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch {
+      target.scrollIntoView();
+    }
+    target.classList.remove('is-flash');
+    // Перезапуск анимации: без паузы класс не «переигрывает».
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => target.classList.add('is-flash'));
+    else target.classList.add('is-flash');
+    setTimeout(() => target.classList.remove('is-flash'), 1500);
+    const field = target.querySelector('.req-q__input, textarea, input[type="text"]');
+    if (field && typeof field.focus === 'function') {
+      try { field.focus({ preventScroll: true }); } catch { /* старый браузер */ }
+    }
+  }
+
+  /**
+   * Поставить плашку первым элементом страницы `.req` (над сводом). Именно там,
+   * а не в сетке: sticky внутри ячейки сетки не «прилипает» — у ячейки нет
+   * высоты, по которой можно ехать. Вызывается после вставки колонки в DOM.
+   */
+  function mountPinBar(node, aside) {
+    const grid = aside && aside.parentElement;
+    const page = grid && grid.parentElement;
+    if (!page || !page.querySelectorAll) return;
+    for (const old of page.querySelectorAll('.req-pinbar')) {
+      if (old !== node) old.remove();
+    }
+    page.insertBefore(node, page.firstChild);
   }
 
   function buildAside() {
     const wrap = h('aside', {
       class: 'req__aside',
-      'aria-label': 'Дальше по запросу',
+      'aria-label': 'От вас нужно по этому запросу',
       // WAVE17 §1: прокрутка колонки переживает точечное обновление страницы.
       'data-scroll-key': 'request-aside',
     });
@@ -785,7 +1278,7 @@ export function createAside(R) {
    
     wrap.append(answersCard(view));
 
-    // Дальше — свёрнутые блоки со счётчиками (P3), состояние запоминается.
+    // Ниже — свёрнутые блоки со счётчиками (P3), состояние запоминается.
     if (view.answeredQs.length) wrap.append(answeredCard(view.answeredQs));
     if (view.steps.length) wrap.append(stepsBlock.stepsCard(view.steps));
     if (view.closedDecisions.length) wrap.append(decisionsCard(view.closedDecisions));
@@ -795,6 +1288,14 @@ export function createAside(R) {
     }
     // Кэш строк вопросов чистим ОДИН раз по всему набору (а не по одному списку).
     pruneQuestionRows(view.questions);
+
+    // W21-R1 п. 4: над сводом — плашка «Нужен ваш ответ · N → показать»
+    // (только если ждёт ответа; ставится после вставки колонки в DOM).
+    if (view.inbox.total) {
+      const bar = pinBar(view);
+      if (typeof queueMicrotask === 'function') queueMicrotask(() => mountPinBar(bar, wrap));
+      else setTimeout(() => mountPinBar(bar, wrap), 0);
+    }
 
     if (!view.openQs.length && !view.answeredQs.length && !view.steps.length
         && !view.decisions.length && !view.future.length) {

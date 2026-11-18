@@ -21,6 +21,10 @@
  * (хеш поддерева). Иначе он заменяется целиком — так обработчики кликов никогда
  * не остаются от старой карточки (например, с чужим id вопроса).
  *
+ * Исключение — поддерево с `data-keep-tree` (W20-C1, B-40): узел живёт сам, его
+ * содержимое обновляет владелец (диалог по запросу — через `update(detail)`),
+ * поэтому правка страницы такой узел не заменяет и внутрь не заходит.
+ *
  * Модуль не зависит от других файлов приложения: только DOM, который ему дали.
  */
 
@@ -473,6 +477,10 @@ function patchNode(oldNode, newNode, stats, memo) {
     return oldNode;
   }
   if (oldNode.nodeType !== ELEMENT) return newNode;
+  // W20-C1 (B-40): блок с `data-keep-tree` живёт сам — страница обновляет его
+  // через свой `update()`. Такой узел не заменяем и внутрь не заходим: иначе
+  // кнопка окажется из новой сборки, а поле с набранным текстом — из старой.
+  if (oldNode.dataset && oldNode.dataset.keepTree !== undefined) return oldNode;
   if (hashTree(oldNode, memo) === hashTree(newNode, memo)) {
     stats.reused += 1;
     return oldNode;

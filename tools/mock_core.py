@@ -25,7 +25,7 @@ MAX_NOTE = 200_000                  # комментарий/заметка/от
 MAX_AGENT_NOTE = 8000               # «Особые указания участнику» (WAVE9 §9)
 MOCK = True                         # health.engine.mock: фронт показывает плашку «ДЕМО»
 # Белый список /api/file — те же пять корней, что в API §2 / server/config.py.
-FILE_ROOTS = [DATA_DIR, r"D:\Проекты\Vault", r"D:\Проекты\Комната", r"D:\Проекты\Код"]
+FILE_ROOTS = [DATA_DIR, r"C:\Проекты\Vault", r"C:\Проекты\Комната", r"C:\Проекты\Код"]
 _boards = os.path.join(os.environ.get("LOCALAPPDATA") or "", "hermes", "kanban", "boards")
 if os.path.isdir(_boards):
     FILE_ROOTS += [os.path.join(b, "workspaces") for b in os.listdir(_boards)
@@ -48,10 +48,12 @@ FIXTURE_BY_RID = {
     "t_3b7e9d11": "request_failed.json",
     "t_2a6f5c93": "request_queued.json",
     "t_4e91c7b2": "request_outside_room.json",
-    # W17-D: длинная фикстура колонки «Дальше» — 12 шагов, 10 вопросов, длинные тексты
+    # W17-D: длинная фикстура колонки «От вас нужно» — 12 шагов, 10 вопросов, длинные тексты
     "t_10e9f0a1": "request_long.json",
     # W17-S: свод с тремя версиями, «что изменилось» и 3 ответа после версии 3
     "t_5d0c11a2": "request_svod.json",
+    # W26-D4: свод с машинным блоком «Найдено» и чипами-ссылками
+    "t_d4f0a1c9": "request_found.json",
 }
 MIME = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
         ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
@@ -195,7 +197,8 @@ def split_heartbeats(timeline, include: bool = False) -> tuple:
 
 def detail_to_summary(d: dict) -> dict:
     keys = ("id", "room", "title", "status", "status_reason", "mode", "critic", "created_at", "started_at",
-            "finished_at", "duration_s", "progress", "assignee", "needs_you", "preview", "archived")
+            "finished_at", "duration_s", "progress", "assignee", "needs_you", "preview", "archived",
+            "pinned", "pinned_at")
     out = {k: d.get(k) for k in keys}
     out["title_short"] = d.get("title_short") or short_title(d.get("title") or d.get("text") or "")
     # W17-B §4 / W17-G §1: откуда название и переименовал ли пользователь.
@@ -208,6 +211,9 @@ def detail_to_summary(d: dict) -> dict:
         out["preview"] = (d.get("text") or "")[:200]
     if out.get("archived") is None:
         out["archived"] = False
+    # W20-U3 (P13): закрепление запроса — флаг реестра комнаты.
+    out["pinned"] = bool(d.get("pinned"))
+    out["pinned_at"] = int(d.get("pinned_at") or 0) or None
     return out
 
 
@@ -235,6 +241,8 @@ ROUTE_METHODS = (
     (r"^/api/rooms/%s/requests$" % _ROOM, ("GET", "POST")),
     (r"^/api/rooms/%s/candidates$" % _ROOM, ("GET",)),
     (r"^/api/rooms/%s/team$" % _ROOM, ("GET",)),
+    # W23-MG2: сверка моделей комнаты (что ожидается и куда ушёл последний запуск).
+    (r"^/api/rooms/%s/model-check$" % _ROOM, ("GET",)),
     (r"^/api/rooms/%s/roadmap$" % _ROOM, ("GET",)),
     (r"^/api/rooms/%s/backlog$" % _ROOM, ("GET",)),
     (r"^/api/rooms/%s/backlog/.+/ask$" % _ROOM, ("POST",)),
@@ -263,6 +271,7 @@ ROUTE_METHODS = (
     (r"^/api/requests/%s$" % _RID, ("GET", "PATCH")),   # W17-B §4: переименование
     (r"^/api/requests/%s/actions$" % _RID, ("POST",)),
     (r"^/api/requests/%s/messages$" % _RID, ("POST",)),
+    (r"^/api/requests/%s/export$" % _RID, ("POST",)),   # W20-U3: Obsidian / HTML / печать
     (r"^/api/reports/%s/[a-z0-9-]{2,64}$" % _ROOM, ("GET",)),
     (r"^/api/search$", ("GET",)),
     (r"^/api/ics$", ("GET",)),
@@ -304,7 +313,7 @@ def ics_escape(text: str) -> str:
 def export_markdown(d: dict) -> str:
     lines = ["# %s" % d["title"], "", "Комната: %s · статус: %s · создан: %s" % (
         d["room"], d["status"], time.strftime("%d.%m.%Y %H:%M", time.localtime(d["created_at"]))), "",
-        d.get("synthesis", {}).get("text_md") or "_Ответ ещё не готов._", "", "## Дальше", ""]
+        d.get("synthesis", {}).get("text_md") or "_Ответ ещё не готов._", "", "## От вас нужно", ""]
     lines += ["- [%s] %s — %s" % ("x" if s["state"] == "done" else " ", s["text"], s.get("owner") or "—")
               for s in d.get("next_steps", [])] or ["—"]
     lines += ["", "## Вопросы", ""]

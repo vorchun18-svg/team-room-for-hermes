@@ -72,7 +72,7 @@ function activeNames(detail) {
   return names.slice(0, 3);
 }
 
-/** «biz-ops» → «ops»: в ленте не должно быть системных имён. */
+/** «team-ops» → «ops»: в ленте не должно быть системных имён. */
 function personName(id) {
   const raw = String(id == null ? '' : id).trim();
   if (!raw) return '';

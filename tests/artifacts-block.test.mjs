@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { FakeElement, createFakeDocument } from './fake-dom.mjs';
+import { FakeElement, createFakeDocument, expandSections } from './fake-dom.mjs';
 
 FakeElement.prototype.remove = function remove() {
   if (this.parentNode) {
@@ -58,12 +58,12 @@ function detail() {
     room: ROOM,
     artifacts: [
       {
-        path: `${PROJECT}\\2026-11-06 Письмо Лебедев — ответ\\Письмо Лебедев — ответ.docx`,
-        title: 'Письмо Лебедев — ответ',
+        path: `${PROJECT}\\2026-11-06 Письмо поставщику — ответ\\Письмо поставщику — ответ.docx`,
+        title: 'Письмо поставщику — ответ',
         kind: 'docx', exists: true, size: 18432, state: 'ok', outside_project: false, reason: null,
       },
       {
-        path: `${PROJECT}\\2026-11-06 Письмо Лебедев — ответ\\черновик.md`,
+        path: `${PROJECT}\\2026-11-06 Письмо поставщику — ответ\\черновик.md`,
         title: 'Черновик', kind: 'md', exists: false, size: null, state: 'missing',
         outside_project: false, reason: 'Файл удалён или перемещён',
       },
@@ -81,9 +81,15 @@ function detail() {
   };
 }
 
-function mount() {
+async function mount() {
   installDom();
-  return import('../web/js/views/request-parts.js');
+  const mod = await import('../web/js/views/request-parts.js');
+  // W25-L2: блок «Артефакты» свёрнут по умолчанию (R5 §7.2), содержимое
+  // собирается при раскрытии. Тест проверяет СОДЕРЖИМОЕ — разворачивает блок
+  // нажатием по заголовку, как человек. Умолчание проверяет request-blocks.test.mjs.
+  return Object.assign({}, mod, {
+    renderArtifacts: (d, c, o) => expandSections(mod.renderArtifacts(d, c, o)),
+  });
 }
 
 function makeCtx(calls) {
@@ -100,13 +106,17 @@ test('артефакт в папке проекта: кнопки есть, пу
   const calls = [];
   const card = renderArtifacts(detail(), makeCtx(calls), { projectDir: PROJECT });
   const text = textOf(card);
-  assert.ok(text.includes('Письмо Лебедев — ответ'), text);
-  assert.ok(text.includes('2026-11-06 Письмо Лебедев — ответ\\Письмо Лебедев — ответ.docx')
-    || text.includes('Письмо Лебедев — ответ.docx'), 'путь показан относительно папки проекта');
+  assert.ok(text.includes('Письмо поставщику — ответ'), text);
+  assert.ok(text.includes('2026-11-06 Письмо поставщику — ответ\\Письмо поставщику — ответ.docx')
+    || text.includes('Письмо поставщику — ответ.docx'), 'путь показан относительно папки проекта');
   const buttons = walk(card, (n) => n.tagName === 'button').map(textOf);
   assert.ok(buttons.includes('Открыть'), buttons.join('|'));
   assert.ok(buttons.includes('Копировать путь'), buttons.join('|'));
-  assert.ok(buttons.includes('В проводнике'), buttons.join('|'));
+  // W26-D3: кнопки — «Открыть», «Просмотр» (текст), «Копировать путь», «Показать в папке».
+  assert.ok(buttons.includes('Показать в папке'), buttons.join('|'));
+  assert.ok(!buttons.includes('В проводнике'), 'старая подпись «В проводнике» не остаётся');
+  // «Просмотр» — только у текстовых типов (у .docx его нет; см. files-launch.test.mjs).
+  assert.ok(!buttons.includes('Просмотр'), 'у Word-файла просмотра внутри приложения нет');
 });
 
 test('пропавший файл: «Файл удалён или перемещён», без кнопок открытия', async () => {
@@ -130,16 +140,20 @@ test('файл вне папки проекта: предупреждение и
   const card = renderArtifacts(detail(), makeCtx(calls), { projectDir: PROJECT });
   const text = textOf(card);
   assert.ok(text.includes('вне папки проекта'), text);
-  assert.ok(text.includes('Сохранён вне папки проекта'), 'пояснение под путём');
+  // W25.5: совет «договоритесь хранить файлы в папке проекта» больше не
+  // повторяется под каждым файлом — он один в строке «вне папки проекта»
+  // (renderWarnings → outsideNotice, см. w25-polish.test.mjs).
+  assert.ok(!text.includes('Сохранён вне папки проекта'), 'дубль совета убран');
   const items = walk(card, (n) => String(n.getAttribute('class') || '').split(/\s+/).includes('rp-art'));
   const outside = items.find((n) => textOf(n).includes('Смета'));
   const buttons = walk(outside, (n) => n.tagName === 'button');
   const labels = buttons.map(textOf);
-  assert.ok(labels.includes('В проводнике'), labels.join('|'));
-  const reveal = buttons.find((n) => textOf(n) === 'В проводнике');
+  assert.ok(labels.includes('Показать в папке'), labels.join('|'));
+  const reveal = buttons.find((n) => textOf(n) === 'Показать в папке');
   await (reveal.listeners.click || []).reduce((p, fn) => p.then(() => fn({})), Promise.resolve());
   assert.equal(calls.length, 1, 'одно действие — один запрос');
-  assert.equal(calls[0].url, '/api/artifacts/open');
+  assert.equal(calls[0].url, '/api/files/launch');
+  assert.equal(calls[0].body.mode, 'reveal');
   assert.equal(calls[0].body.room, ROOM, 'комната уходит вместе с путём');
   assert.equal(calls[0].body.path, 'C:\\Users\\User\\AppData\\Local\\Temp\\work\\смета.xlsx');
 });

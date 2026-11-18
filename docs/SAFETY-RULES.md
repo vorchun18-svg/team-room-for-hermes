@@ -137,7 +137,7 @@ cfg.hermes_home.mkdir(parents=True, exist_ok=True)  # SAFETY-OK: fake_hermes в�
 
 1. `tools/check_conformance.py` записал тестовые заглушки в `cfg.hermes_home`
    (реальный `%LOCALAPPDATA%\hermes`), затёр `config.yaml` и профили
-   `biz-director`/`biz-critic`/`coder`; восстановлено из `backups\config`.
+   `team-director`/`team-critic`/`coder`; восстановлено из `backups\config`.
 2. Тест послал `POST /api/dispatcher/kick` в «песочницу» без подмены CLI —
    `hermes kanban dispatch` запустил реальных агентов: 65 вызовов LLM,
    5,71 млн входных токенов, 5 файлов записано в реальный `C:\TeamRoom\Vault`.

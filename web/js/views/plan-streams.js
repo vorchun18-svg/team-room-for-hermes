@@ -29,7 +29,7 @@ import { countNoun, fromForm, errorText } from '../text-ru.js';
 /* --------------------------------------------------------------- кто есть кто */
 
 /**
- * Индекс людей комнаты: профиль (`biz-ops`) → человеческое имя и роль.
+ * Индекс людей комнаты: профиль (`team-ops`) → человеческое имя и роль.
  * Принимает Map, объект `{profile: {title, role}}` или список участников
  * (`{profile, role, title}` из /team или состава комнаты). Технические id
  * наружу не показываем — они остаются только в подсказке (title).
@@ -354,7 +354,7 @@ function streamCard(stream, ctx) {
   const dep = dependencyNote(stream, byId);
   const due = stream.due ? dueBadge(stream.due, ctx.now) : null;
   // Ответственный — по-русски: имя из /team («Операции»), иначе роль
-  // («Руководитель комнаты»). Системный профиль biz-ops — только в title.
+  // («Руководитель комнаты»). Системный профиль team-ops — только в title.
   const ownerInfo = ownerLabelOf(stream, index);
   const owner = ownerInfo
     ? profileLabel({ profile: String(stream.owner || ''), name: ownerInfo.name }, { size: 'sm' })

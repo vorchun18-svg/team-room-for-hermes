@@ -1,0 +1,155 @@
+{
+  "_comment": "W24-N3: фикстура GET /api/duties?room=all (контракт docs/WAVE24-RULES.md §3.2). Дежурства — задания по расписанию; данные вымышленные. Времена сдвигаются мок-сервером на «сейчас − generated_at».",
+  "generated_at": 1794976163,
+  "items": [
+    {
+      "job_id": "j_daily_brief",
+      "name": "Утренняя сводка по комнатам",
+      "enabled": true,
+      "schedule": "0 8 * * *",
+      "schedule_human": "каждый день в 08:00",
+      "bound_rooms": [
+        "cafe"
+      ],
+      "last_run": {
+        "status": "completed",
+        "started_at": 1794973163,
+        "finished_at": 1794973343,
+        "scheduled_for": 1794973163,
+        "late_s": 12,
+        "delivered": true,
+        "error": null
+      },
+      "next_run_at": 1795059563,
+      "missed_recent": 0,
+      "recent": [
+        {
+          "status": "completed",
+          "started_at": 1794973163,
+          "scheduled_for": 1794973163
+        },
+        {
+          "status": "completed",
+          "started_at": 1794886763,
+          "scheduled_for": 1794886763
+        },
+        {
+          "status": "completed",
+          "started_at": 1794800363,
+          "scheduled_for": 1794800363
+        }
+      ],
+      "excerpt": "Собрано 4 запроса: 2 готовы, 1 в работе, 1 ждёт ответа. Просроченных пунктов нет.",
+      "problem": null
+    },
+    {
+      "job_id": "j_overdue_watch",
+      "name": "Проверка просроченных пунктов",
+      "enabled": true,
+      "schedule": "*/30 * * * *",
+      "schedule_human": "каждые 30 минут",
+      "bound_rooms": [
+        "cafe",
+        "fn"
+      ],
+      "last_run": {
+        "status": "failed",
+        "started_at": 1794975363,
+        "finished_at": 1794975375,
+        "scheduled_for": 1794974963,
+        "late_s": 400,
+        "delivered": false,
+        "error": "Не удалось открыть список пунктов: файл занят другой программой"
+      },
+      "next_run_at": 1794976763,
+      "missed_recent": 2,
+      "recent": [
+        {
+          "status": "failed",
+          "started_at": 1794975363,
+          "scheduled_for": 1794974963
+        },
+        {
+          "status": "missed",
+          "started_at": null,
+          "scheduled_for": 1794971363
+        },
+        {
+          "status": "completed",
+          "started_at": 1794969863,
+          "scheduled_for": 1794969563
+        },
+        {
+          "status": "missed",
+          "started_at": null,
+          "scheduled_for": 1794967763
+        },
+        {
+          "status": "completed",
+          "started_at": 1794966263,
+          "scheduled_for": 1794965963
+        }
+      ],
+      "excerpt": "Проверено 12 пунктов. Просрочено 3, из них 2 — на вас.",
+      "problem": {
+        "kind": "failed",
+        "text": "последний запуск завершился ошибкой: файл занят другой программой"
+      }
+    },
+    {
+      "job_id": "j_backup",
+      "name": "Резервная копия данных",
+      "enabled": false,
+      "schedule": "0 2 * * *",
+      "schedule_human": "каждый день в 02:00",
+      "bound_rooms": [],
+      "last_run": {
+        "status": "completed",
+        "started_at": 1794887963,
+        "finished_at": 1794888143,
+        "scheduled_for": 1794887963,
+        "late_s": 0,
+        "delivered": false,
+        "error": null
+      },
+      "next_run_at": null,
+      "missed_recent": 0,
+      "recent": [
+        {
+          "status": "completed",
+          "started_at": 1794887963,
+          "scheduled_for": 1794887963
+        },
+        {
+          "status": "completed",
+          "started_at": 1794801563,
+          "scheduled_for": 1794801563
+        }
+      ],
+      "excerpt": "Копия собрана: 148 файлов, 26 МБ. Хранится 14 дней.",
+      "problem": {
+        "kind": "disabled_but_due",
+        "text": "выключено, но по расписанию должно было сработать сегодня в 02:00"
+      }
+    },
+    {
+      "job_id": "j_report_digest",
+      "name": "Сборка недельного отчёта",
+      "enabled": true,
+      "schedule": "0 18 * * 5",
+      "schedule_human": "по пятницам в 18:00",
+      "bound_rooms": [
+        "long"
+      ],
+      "last_run": null,
+      "next_run_at": 1795304363,
+      "missed_recent": 0,
+      "recent": [],
+      "excerpt": "",
+      "problem": {
+        "kind": "never_ran",
+        "text": "ещё ни разу не запускалось"
+      }
+    }
+  ]
+}

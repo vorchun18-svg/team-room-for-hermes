@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as _dt
 
+from . import decision_registry as dec_reg
 from . import phase_book as phase_mod
 from . import registry
 from . import rooms as rooms_mod
@@ -87,6 +88,98 @@ def apply_plan_from_detail(cfg, room, detail: dict, rec: dict | None = None) -> 
     return result
 
 
+# --- W20 §1.7 (P1): предложение этапов из metadata ответа --------------------
+
+def _phases_metadata(detail: dict) -> tuple[dict, dict]:
+    """Metadata с `phases_proposal` (последняя по времени карточка) + сам узел."""
+    best = None
+    for node in (detail or {}).get("tree") or []:
+        if not isinstance(node, dict):
+            continue
+        meta = node.get("metadata")
+        if not isinstance(meta, dict) or "phases_proposal" not in meta:
+            continue
+        key = (_as_int(node.get("finished_at")), str(node.get("id") or ""))
+        if best is None or key >= best[0]:
+            best = (key, meta, node)
+    return (best[1], best[2]) if best else ({}, {})
+
+
+def apply_phases_from_detail(cfg, room, detail: dict) -> dict:
+    """`metadata.phases_proposal` → поле комнаты `phases_proposal` (W20 §1.7).
+
+    Руководитель предлагает этапы ЛЮБОЙ своей карточкой — не только брифом и не
+    только по кнопке. Приложение складывает предложение в комнату и НЕ трогает
+    её этапы: порядок, переименования, удаления и добавления пользователя
+    остаются его. Повторное чтение той же карточки ничего не меняет (отпечаток
+    предложения), поэтому решение «отклонено» не воскресает.
+
+    Ошибки не роняют приём ответа: карта вторична, предупреждение — в результат.
+    """
+    result: dict = {"applied": None, "reason": None, "warnings": [], "proposal": None}
+    meta, node = _phases_metadata(detail)
+    if not meta:
+        return result
+    items, warnings = phase_mod.parse_meta_proposal(meta.get("phases_proposal"))
+    result["warnings"] = list(warnings)
+    room_id = _room_id(room)
+    if not items or not room_id:
+        return result
+    by = str((node or {}).get("assignee") or (node or {}).get("profile")
+             or (room or {}).get("orchestrator") or "").strip()
+    at = (_as_int((node or {}).get("finished_at")) or _as_int((detail or {}).get("finished_at"))
+          or _now())
+    source = str((detail or {}).get("id") or (detail or {}).get("root_id") or "").strip()
+    info: dict = {}
+
+    def compute(snapshot: dict) -> dict:
+        got = phase_mod.capture(snapshot, items, by=by, source=source, at=at)
+        info.update(got)
+        return {"phases_proposal": got["proposal"]} if got.get("applied") else {}
+
+    try:
+        rooms_mod.set_phases_state(cfg, room_id, compute=compute)
+    except rooms_mod.RoomsError as exc:
+        result["warnings"].append("Предложение этапов не сохранено: %s" % exc.message)
+        return result
+    result["reason"] = info.get("reason")
+    result["proposal"] = info.get("proposal")
+    if info.get("applied"):
+        result["applied"] = "proposed"
+        _append_journal(cfg, room_id, [{
+            "at": at, "kind": "phases_proposed", "request_id": source, "task_id": source,
+            "actor": "manager",
+            "text": "Руководитель предложил этапы проекта: %s"
+                    % ", ".join(item["title"] for item in items[:6]),
+            "detail": {"items": [item["id"] for item in items], "by": by},
+        }])
+    return result
+
+
+def log_phases_decision(cfg, room_id: str, room: dict, decided: dict, action: str) -> None:
+    """Запись в журнал комнаты: человек принял или отклонил предложение этапов."""
+    proposal = (decided or {}).get("proposal") or {}
+    titles = [item.get("title") for item in (proposal.get("items") or [])][:6]
+    text = {
+        "accept": "Этапы проекта приняты",
+        "accept_selected": "Этапы проекта приняты выбранные",
+        "reject": "Предложение этапов отклонено",
+    }.get(str(action), "Решение по этапам")
+    if action == "accept_selected":
+        accepted = set(proposal.get("accepted_ids") or [])
+        titles = [item.get("title") for item in (proposal.get("items") or [])
+                  if item.get("id") in accepted][:6]
+    try:
+        _append_journal(cfg, room_id, [{
+            "at": _now(), "kind": "phases_decided", "actor": "mikhail",
+            "text": "%s: %s" % (text, ", ".join(str(t) for t in titles if t)),
+            "detail": {"action": str(action), "state": proposal.get("state"),
+                       "added": list((decided or {}).get("added") or [])},
+        }])
+    except Exception:  # noqa: BLE001 - журнал вторичен для решения
+        pass
+
+
 # --- публичный ingest -------------------------------------------------------
 
 
@@ -98,12 +191,17 @@ def ingest_request(cfg, room, detail: dict) -> dict:
     root_id = str(detail.get("id") or detail.get("root_id") or "").strip()
     if not root_id:
         raise IngestError("В detail нет id запроса")
+    # W20 §1.7 (P1): предложение этапов из metadata ЛЮБОЙ карточки руководителя
+    # принимаем ДО проверки «ответ ещё не готов»: карточка «предложи этапы» может
+    # не нести свода, а этапы в ней уже есть. Этапы комнаты при этом не трогаются.
+    phases_res = apply_phases_from_detail(cfg, room, detail)
     title = _clean(detail.get("title")) or root_id
     syn = detail.get("synthesis") or {}
     syn = syn if isinstance(syn, dict) else {}
     if syn.get("state") == "pending" and not detail.get("next_steps") and not detail.get("stage"):
         return {"room": room_id, "root_id": root_id, "run_id": None, "changed": False,
-                "added": _empty_added(), "added_counts": {}, "skipped": "not_finished"}
+                "added": _empty_added(), "added_counts": {}, "skipped": "not_finished",
+                "phases": phases_res}
     at = (_as_int(detail.get("finished_at")) or _as_int(syn.get("at"))
           or _as_int(detail.get("created_at")) or _now())
     run_id = version_key(detail)
@@ -124,6 +222,19 @@ def ingest_request(cfg, room, detail: dict) -> dict:
     extracted = _extract(detail)
     phase_ids, _roadmap = _merge_roadmap(cfg, room_id, root_id, at, extracted["phases"])
     new_decisions, changed_decisions = _merge_decisions(cfg, room_id, root_id, at, extracted["decisions"])
+    # W25 M1: реестр решений комнаты — append-only, единственный источник правды.
+    # Сюда приходит УЖЕ разрешённый статус (принято/отклонено/снято/устарело),
+    # поэтому отменённое решение не «воскресает» в паспорте комнаты.
+    try:
+        dec_reg.sync_request(cfg, room_id, root_id, extracted["decisions"], at=at)
+        dec_reg.project_decisions(cfg, room_id)
+        dec_reg.write_snapshot(cfg, room_id)
+    except Exception as exc:  # noqa: BLE001 - реестр памяти не должен ронять приём
+        warnings_memory = [{"code": "registry_error",
+                            "message": "Реестр решений не обновлён: %s" % exc,
+                            "detail": {"room": room_id, "request": root_id}}]
+    else:
+        warnings_memory = []
     incoming = _backlog_incoming(extracted, root_id)
     new_items, changed_items = _merge_backlog(cfg, room_id, root_id, title, at, incoming)
     _sync_decision_items(cfg, room_id)
@@ -176,8 +287,9 @@ def ingest_request(cfg, room, detail: dict) -> dict:
     return {"room": room_id, "root_id": root_id, "run_id": run_id, "changed": changed,
             "added": added, "added_counts": counts, "skipped": self_skipped,
             "ingested": dict(rec.get("ingested") or {}),
-            "warnings": list(detail.get("warnings") or []) + list(plan_res.get("warnings") or []),
-            "plan": plan_res}
+            "warnings": (list(detail.get("warnings") or []) + list(plan_res.get("warnings") or [])
+                         + list(phases_res.get("warnings") or []) + warnings_memory),
+            "plan": plan_res, "phases": phases_res}
 
 
 # --- чтение состояния -------------------------------------------------------
@@ -191,7 +303,11 @@ def _phases_public(cfg, room_id: str) -> tuple[list[dict], int, dict | None]:
     """
     data = sf.read_json(_roadmap_path(cfg, room_id), None)
     stored = {}
-    declared = phase_mod.phases_of(cfg, {"id": room_id})
+    # Этапы — свойство КОМНАТЫ (W17-R §1): берём её поле `phases` (правки видны на
+    # карте сразу, без ожидания следующего приёма ответа), а для старых комнат без
+    # поля — миграцию чтением из их собственного файла карты.
+    room_obj = rooms_mod.get_room(cfg, str(room_id)) or {"id": room_id}
+    declared = phase_mod.phases_of(cfg, room_obj)
     if isinstance(data, dict):
         stored = {p.get("id"): p for p in (data.get("phases") or []) if isinstance(p, dict)}
     phases = []
@@ -222,10 +338,49 @@ def _backlog_counts(items: list[dict]) -> dict:
 
 
 def roadmap_view(cfg, room_id: str) -> dict:
-    """Roadmap в форме API §3.5: 6 фаз + решения комнаты."""
+    """Roadmap в форме API §3.5: этапы комнаты + решения + предложение этапов."""
     phases, updated, current = _phases_public(cfg, room_id)
+    room = rooms_mod.get_room(cfg, str(room_id)) or {}
+    proposal = phase_mod.proposal_of(room)
     return {"room": str(room_id), "updated_at": updated, "current": current,
-            "phases": phases, "decisions": _decisions_list(cfg, room_id)}
+            "phases": phases, "decisions": _decisions_list(cfg, room_id),
+            # W20 §1.7: карта проекта показывает предложение руководителя и его
+            # короткую подпись — отдельного запроса интерфейсу не нужно.
+            "phases_proposal": proposal,
+            "proposal_text": phase_mod.state_text(proposal)}
+
+
+def _proposal_item(cfg, room_id: str) -> dict | None:
+    """Строка «Руководитель предлагает этапы» для вкладки «От вас нужно» (W20 §1.7).
+
+    Это НЕ запись бэклога: файл комнаты не меняется, строка живёт в ответе, пока
+    предложение ждёт решения человека. Поэтому счётчики самого бэклога (записи)
+    остаются прежними — новый вид элемента в файле не появляется.
+    """
+    room = rooms_mod.get_room(cfg, str(room_id)) or {}
+    proposal = phase_mod.proposal_of(room)
+    if not proposal or proposal.get("state") != "proposed":
+        return None
+    titles = [item.get("title") or "" for item in proposal.get("items") or []]
+    return {
+        "id": "phases_proposal",
+        "kind": "phases_proposal",
+        "status": "open",
+        "text": "Руководитель предлагает этапы проекта: %s" % ", ".join(titles[:4])
+                + ("…" if len(titles) > 4 else ""),
+        "why": "Примите все, выберите нужные или отклоните — этапы останутся вашими: "
+               "порядок, названия и удаления вы правите сами.",
+        "source_title": str(room.get("title") or room_id),
+        "source_request": None,
+        "owner": room.get("orchestrator"),
+        "due": None,
+        "created_at": int(proposal.get("at") or 0),
+        "updated_at": int(proposal.get("at") or 0),
+        "count": len(titles),
+        "titles": titles,
+        "by": str(proposal.get("by") or ""),
+        "proposal_text": phase_mod.state_text(proposal),
+    }
 
 
 def backlog_view(cfg, room_id: str) -> dict:
@@ -240,11 +395,23 @@ def backlog_view(cfg, room_id: str) -> dict:
         "future_questions": [i for i in items if i.get("kind") == "future_question"],
         "decisions": [i for i in items if i.get("kind") == "decision"],
     }
+    # W20 §1.7: предложение этапов ждёт решения человека — строка «От вас нужно» (в «Нужен
+    # ваш ответ», сверху: это редкое и важное действие). Живёт в ответе, а не в файле
+    # бэклога: закрыть её статусом нельзя, только «принять/отклонить» на карте.
+    proposal_item = _proposal_item(cfg, room_id)
+    if proposal_item:
+        items = [proposal_item] + items
+        sections["inbox"] = [proposal_item] + sections["inbox"]
+        sections["proposal"] = [proposal_item]
     updated = 0
     for item in items:
         updated = max(updated, _as_int(item.get("updated_at")))
     return {"room": str(room_id), "updated_at": updated, "counts": _backlog_counts(items),
-            "items": items, "sections": sections}
+            "items": items,
+            # Строка предложения — отдельно от записей бэклога (id `phases_proposal`):
+            # её нельзя закрыть статусом, только «принять/отклонить» на карте.
+            "proposal_item": proposal_item,
+            "sections": sections}
 
 
 def _reports_list(cfg, room_id: str) -> list[dict]:
@@ -459,4 +626,10 @@ def write_vault_mirror(cfg, room_id: str, dry_run: bool = False) -> bool:
             changed = changed or current != text.encode("utf-8")
         else:
             changed = sf.write_text_if_changed(path, text) or changed
+    if not dry_run:
+        # W25 M1 п.6: читаемый вид реестра решений в Vault (`Решения/реестр.md`).
+        try:
+            dec_reg.write_mirror(cfg, room_id)
+        except Exception:  # noqa: BLE001 - зеркало реестра вторично
+            pass
     return changed

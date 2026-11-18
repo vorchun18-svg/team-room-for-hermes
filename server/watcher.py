@@ -8,6 +8,8 @@
   модель идущих запусков (``agent_models.apply_to_room`` + ``verify_started``) — до того,
   как движок успеет взять карточку на модель профиля;
 * для завершённых — ``ingest.ingest_request`` + ``ingest.write_vault_mirror`` (идемпотентно);
+* кладёт в «Ход работы» промежуточный итог сторожа (раз в ``digest_every_min`` минут, без
+  модели) и находит карточки без активности дольше 15 минут (W20 §1.6);
 * обновляет кэш сводок для ``GET /api/rooms``.
 
 Ошибка одного запроса не валит цикл: она уходит в ``data/logs/app.log`` и в
@@ -21,6 +23,14 @@ import time
 
 TICK_ACTIVE = 5          # секунд, когда есть незавершённая работа
 TICK_IDLE = 15           # секунд простоя
+#: W23 §2.3: свой быстрый цикл контроля моделей — отдельно от общего тика наблюдателя.
+#: Он должен успевать ДО того, как диспетчер возьмёт карточку на чужую модель, поэтому
+#: 3 секунды, а не 5–15. Один проход — по одному дешёвому чтению tenant на комнату.
+GUARD_TICK = 3.0
+#: W25-M2: свой цикл сторожа зависаний — пороги в минутах, спешить незачем
+WATCHDOG_TICK = 30.0
+GUARD_ROOM_BUDGET = 8.0  # секунд на комнату: медленная доска не задерживает остальные
+GUARD_PASS_BUDGET = 20.0  # секунд на весь проход сторожа (дальше комнаты уходят на следующий)
 MAX_REQUESTS = 6         # сколько последних запросов комнаты смотреть за тик
 TICK_BUDGET = 20.0       # D6: тик не висит дольше этого бюджета (секунды)
 REQUEST_BUDGET = 5.0     # бюджет одного чтения запроса внутри тика
@@ -89,6 +99,20 @@ class Watcher:
         self._stop = threading.Event()
         self._mirrored: set = set()
         self._synced: dict = {}        # (room_id, root_id) -> подпись заметки Obsidian
+        #: W23 §2.3: быстрый сторож моделей — свой поток и своя статистика
+        self._guard_thread: threading.Thread | None = None
+        self._guard_stop = threading.Event()
+        self.guard_last_run_at: int | None = None
+        self.guard_last_error: str | None = None
+        self.guard_stats: dict | None = None
+        self.guard_running = False
+        #: W25-M2: сторож зависаний — тоже своим потоком (пороги в минутах)
+        self._wd_thread: threading.Thread | None = None
+        self._wd_stop = threading.Event()
+        self.wd_last_run_at: int | None = None
+        self.wd_last_error: str | None = None
+        self.wd_stats: dict | None = None
+        self.wd_running = False
         #: B-35: с какого момента напоминаем об оценке работы (без ретро-рассылки)
         self._duty_since = int(time.time())
 
@@ -99,17 +123,58 @@ class Watcher:
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="team-room-watcher", daemon=True)
         self._thread.start()
+        # W23 §2.3: быстрый сторож моделей — своим потоком, чтобы не ждать общего тика
+        if not (self._guard_thread and self._guard_thread.is_alive()):
+            self._guard_stop.clear()
+            self._guard_thread = threading.Thread(target=self._guard_loop,
+                                                  name="team-room-model-guard", daemon=True)
+            self._guard_thread.start()
+        # W25-M2: сторож зависаний (10 мин — предупреждение, 20 — остановка)
+        if not (self._wd_thread and self._wd_thread.is_alive()):
+            self._wd_stop.clear()
+            self._wd_thread = threading.Thread(target=self._watchdog_loop,
+                                               name="team-room-watchdog", daemon=True)
+            self._wd_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        self._guard_stop.set()
         thread, self._thread = self._thread, None
         if thread and thread.is_alive():
             thread.join(timeout=3.0)
+        guard, self._guard_thread = self._guard_thread, None
+        if guard and guard.is_alive():
+            guard.join(timeout=3.0)
+        wd, self._wd_thread = self._wd_thread, None
+        if wd and wd.is_alive():
+            wd.join(timeout=3.0)
         self.running = False
+        self.guard_running = False
+        self.wd_running = False
 
     def status(self) -> dict:
         return {"running": bool(self.running), "last_run_at": self.last_run_at,
-                "last_error": self.last_error}
+                "last_error": self.last_error,
+                # W23-MG1 §2.3: сводка быстрого сторожа моделей (для /api/health.guard)
+                "guard": self.guard_status(),
+                # W25-M2: сводка сторожа зависаний (для /api/health.watchdog)
+                "watchdog": self.watchdog_status()}
+
+    def guard_status(self) -> dict:
+        """Состояние быстрого сторожа моделей: идёт ли, когда был тик, что сделал."""
+        thread = self._guard_thread
+        alive = bool(thread is not None and thread.is_alive())
+        return {"running": bool(self.guard_running or alive), "tick_s": GUARD_TICK,
+                "last_run_at": self.guard_last_run_at, "last_error": self.guard_last_error,
+                "stats": dict(self.guard_stats or {})}
+
+    def watchdog_status(self) -> dict:
+        """Состояние сторожа зависаний: идёт ли, когда был проход, что сделал."""
+        thread = self._wd_thread
+        alive = bool(thread is not None and thread.is_alive())
+        return {"running": bool(self.wd_running or alive), "tick_s": WATCHDOG_TICK,
+                "last_run_at": self.wd_last_run_at, "last_error": self.wd_last_error,
+                "stats": dict(self.wd_stats or {})}
 
     def summary_for(self, room_id):
         return self.cache.get(room_id)
@@ -132,6 +197,148 @@ class Watcher:
                 self._stop.wait(interval)
         finally:
             self.running = False
+
+    # --- быстрый сторож моделей (W23 §2.3) ---
+    def _guard_loop(self) -> None:
+        """Свой цикл: раз в `GUARD_TICK` секунд, не дожидаясь общего тика.
+
+        Пауза считается от НАЧАЛА прохода (а не от его конца): медленная доска иначе
+        растягивала бы интервал до «проход + 3 с» и сторож переставал быть быстрым.
+        """
+        self.guard_running = True
+        try:
+            while not self._guard_stop.is_set():
+                started = time.monotonic()
+                try:
+                    self.guard_tick_once()
+                except Exception as exc:  # noqa: BLE001 - поток не должен умирать
+                    self.app.log.error("model_guard: тик не удался", exc)
+                    self.guard_last_error = ("тик: %s" % (exc or exc.__class__.__name__))[:400]
+                pause = GUARD_TICK - (time.monotonic() - started)
+                self._guard_stop.wait(max(0.2, pause))
+        finally:
+            self.guard_running = False
+
+    def _watchdog_loop(self) -> None:
+        """Свой цикл сторожа зависаний: пауза от начала прохода, не от конца."""
+        self.wd_running = True
+        try:
+            while not self._wd_stop.is_set():
+                started = time.monotonic()
+                try:
+                    self.watchdog_tick_once()
+                except Exception as exc:         # noqa: BLE001 - поток не должен умирать
+                    self.app.log.error("watchdog: тик не удался", exc)
+                    self.wd_last_error = ("тик: %s" % (exc or exc.__class__.__name__))[:400]
+                pause = WATCHDOG_TICK - (time.monotonic() - started)
+                self._wd_stop.wait(max(0.5, pause))
+        finally:
+            self.wd_running = False
+
+    def watchdog_tick_once(self) -> dict:
+        """Один проход сторожа зависаний по комнатам (W25-M2).
+
+        Логика — в `server/watchdog.tick`: предупредить на 10 мин, остановить
+        штатным механизмом W23 на 20 мин. Ошибка комнаты не валит проход.
+        """
+        stamp = int(time.time())
+        stats = {"rooms": 0, "checked": 0, "warned": 0, "stopped": 0, "alive_tools": 0,
+                 "errors": 0, "at": stamp}
+        self.wd_last_error = None
+        try:
+            rooms = self._rooms()
+        except Exception as exc:                 # noqa: BLE001 - реестр может быть занят
+            stats["errors"] += 1
+            self.wd_last_error = ("список комнат: %s" % str(exc))[:400]
+            self.wd_stats = stats
+            self.wd_last_run_at = stamp
+            return stats
+        try:
+            func = self.app.fn("watchdog", "tick")
+        except Exception as exc:                 # noqa: BLE001 - старая сборка
+            if not _module_missing(exc):
+                stats["errors"] += 1
+                self.wd_last_error = ("модуль сторожа: %s" % str(exc))[:400]
+            self.wd_stats = stats
+            self.wd_last_run_at = stamp
+            return stats
+        for room in rooms:
+            if not isinstance(room, dict) or room.get("archived"):
+                continue
+            stats["rooms"] += 1
+            try:
+                res = func(self.cfg, room, now=stamp) or {}
+            except Exception as exc:             # noqa: BLE001 - комната не валит проход
+                stats["errors"] += 1
+                self.wd_last_error = ("комната %s: %s" % (room.get("id"), str(exc)))[:400]
+                self.app.log.error("watchdog: комната %s" % room.get("id"), exc)
+                continue
+            stats["checked"] += int(res.get("checked") or 0)
+            stats["warned"] += len(res.get("warned") or [])
+            stats["stopped"] += len(res.get("stopped") or [])
+            stats["alive_tools"] += int(res.get("alive_tools") or 0)
+        self.wd_stats = stats
+        self.wd_last_run_at = stamp
+        return stats
+
+    def guard_tick_once(self) -> dict:
+        """Один проход контроля моделей: исправить до запуска, остановить чужой запуск.
+
+        По каждой неархивной комнате зовётся `model_guard.tick` (там вся логика и все
+        правила «не трогать чужое/неизвестное»). Ошибка одной комнаты не валит проход:
+        она остаётся в `guard_last_error` и в `data/logs/app.log`.
+        """
+        stamp = int(time.time())
+        stats = {"rooms": 0, "fixed": 0, "stopped": 0, "warned": 0, "unknown": 0,
+                 "errors": 0, "at": stamp}
+        self.guard_last_error = None
+        try:
+            rooms = self._rooms()
+        except Exception as exc:  # noqa: BLE001 - реестр комнат может быть занят
+            stats["errors"] += 1
+            self.guard_last_error = ("список комнат: %s" % str(exc))[:400]
+            self.guard_stats = stats
+            self.guard_last_run_at = stamp
+            return stats
+        budget_end = time.monotonic() + GUARD_PASS_BUDGET
+        for room in rooms:
+            if not isinstance(room, dict) or room.get("archived"):
+                continue
+            if time.monotonic() > budget_end:
+                # проход длиннее бюджета: не копим долг, остальные комнаты — следующий проход
+                stats["skipped_rooms"] = int(stats.get("skipped_rooms") or 0) + 1
+                continue
+            stats["rooms"] += 1
+            room_started = time.monotonic()
+            try:
+                func = self.app.fn("model_guard", "tick")
+            except Exception as exc:  # noqa: BLE001 - модуль ещё не готов (старая сборка)
+                if not _module_missing(exc):
+                    stats["errors"] += 1
+                    self.guard_last_error = ("модуль контроля: %s" % str(exc))[:400]
+                break
+            try:
+                res = func(self.cfg, room, now=stamp) or {}
+            except Exception as exc:  # noqa: BLE001 - одна комната не валит проход
+                stats["errors"] += 1
+                self.guard_last_error = ("комната %s: %s" % (room.get("id"), str(exc)))[:400]
+                self.app.log.error("model_guard: комната %s" % room.get("id"), exc)
+                continue
+            stats["fixed"] += len(res.get("fixed") or [])
+            stats["stopped"] += len(res.get("stopped") or [])
+            stats["warned"] += len(res.get("warned") or [])
+            stats["unknown"] += int(res.get("unknown") or 0)
+            if res.get("errors"):
+                stats["errors"] += 1
+                self.guard_last_error = str((res.get("errors") or [""])[0])[:400]
+            took = time.monotonic() - room_started
+            if took > GUARD_ROOM_BUDGET:
+                # комната не уложилась в бюджет: видно в /api/health.guard, а не «тихо тормозит»
+                stats["slow_rooms"] = int(stats.get("slow_rooms") or 0) + 1
+                stats["slowest_s"] = round(max(float(stats.get("slowest_s") or 0), took), 2)
+        self.guard_stats = stats
+        self.guard_last_run_at = stamp
+        return stats
 
     def tick_once(self) -> dict:
         """Один проход. Никогда не бросает исключений наружу (кроме остановки).
@@ -242,6 +449,22 @@ class Watcher:
                     # 6) B-35: отметка «оценил работу» после завершения, иначе ОДНО
                     #    напоминание комментарием в ветке. Модели не запускаются.
                     self._leader_duty(room, root_id, detail, stats)
+                    # 7) W20-S1 §1.1 (B-36): живой свод — после «тишины» и не чаще
+                    #    минимального интервала ставим карточку обновления. Модели
+                    #    приложение не запускает: карточку берёт обычный движок.
+                    try:
+                        tick = self.app.fn("svod_live", "tick")
+                        svod = tick(self.cfg, room, rec, detail, log=self.app.log)
+                        if isinstance(svod, dict) and svod.get("card_id"):
+                            stats["svod_cards"] = int(stats.get("svod_cards") or 0) + 1
+                            stats["active"] = True
+                    except Exception as exc:  # noqa: BLE001 - свод не должен ронять тик
+                        if not _module_missing(exc):
+                            stats["errors"] += 1
+                            self._fail("живой свод %s (%s)" % (root_id, room_id), exc)
+                    # 8) W20 §1.6: промежуточный итог «Хода работы» — сторож без модели
+                    #    (0 токенов), раз в digest_every_min минут, и пометки «возможно завис».
+                    self._worklog_digest(room, rec, detail, stats)
                 except Exception as exc:  # noqa: BLE001 - один запрос не валит цикл
                     stats["errors"] += 1
                     self._fail("запрос %s (%s)" % (root_id, room_id), exc)
@@ -253,6 +476,10 @@ class Watcher:
                 except Exception as exc:  # noqa: BLE001
                     stats["errors"] += 1
                     self._fail("зеркало Vault %s" % room_id, exc)
+            # 3.5) W22-AP1 §2.2: снять временные разрешения («один раз»), которые
+            #      истекли или чья карточка завершилась. Модели не запускаются,
+            #      подпроцесс Hermes — только когда срок действительно вышел.
+            self._approvals_sweep(room, stats)
             # 4) карта проекта (WAVE 9): очередь направлений — одна строка, ошибки не валят тик
             try:
                 self.app.call("plan", "tick", ((self.cfg, room_id), {"room": room}))
@@ -305,6 +532,14 @@ class Watcher:
                                ((self.cfg, board, root_id, room.get("id")), {}))
         if not isinstance(detail, dict) or not detail:
             raise RuntimeError("engine_read.request_detail вернул пустой ответ")
+        # W22-AP1 §2.1: «Нужен ваш ответ» и счётчики комнаты учитывают и ожидающие
+        # разрешения — иначе бейдж вкладки не загорится, пока участник стоит.
+        view = getattr(self.app, "_approvals_view", None)
+        if callable(view):
+            try:
+                view(room, rec, detail)
+            except Exception as exc:                 # noqa: BLE001 - разрешения вторичны
+                self._fail("разрешения %s (%s)" % (root_id, room.get("id")), exc)
         return detail
 
     def _delivery_hold(self, room: dict, rec: dict, detail: dict) -> bool:
@@ -456,9 +691,60 @@ class Watcher:
             self._fail("журнал напоминания (%s)" % root_id, exc)
         stats["leader_reminders"] = int(stats.get("leader_reminders") or 0) + 1
 
+    def _worklog_digest(self, room: dict, rec: dict, detail: dict, stats: dict) -> None:
+        """Сторож-дайджест «Хода работы» (W20 §1.6): промежуточный итог без модели.
+
+        Пока запрос в работе, раз в ``digest_every_min`` минут (настройка комнаты) в ленту
+        кладётся системная запись «Прошло 6 мин. Работают: … Готово 2 из 5.» — она собирается
+        из событий и счётчиков, моделей не запускает и агентам не отправляется. Тот же шаг
+        находит карточки без активности дольше 15 минут («возможно завис»).
+
+        Настройка «Выключено» (``worklog_mode=off``) гасит экран, но не этот итог:
+        частоту задаёт отдельное поле ``digest_every_min`` (0 — выключить совсем).
+        Ошибка шага не валит тик.
+        """
+        try:
+            step = self.app.fn("worklog", "digest_step")
+        except Exception as exc:  # noqa: BLE001 - модуль ещё не готов (старая сборка)
+            if not _module_missing(exc):
+                stats["errors"] += 1
+                self._fail("ход работы (%s)" % (rec or {}).get("root_id"), exc)
+            return
+        try:
+            res = step(self.cfg, room, rec, detail) or {}
+        except Exception as exc:  # noqa: BLE001 - итог вторичен для тика
+            stats["errors"] += 1
+            self._fail("дайджест хода работы (%s)" % (rec or {}).get("root_id"), exc)
+            return
+        if res.get("digest"):
+            stats["worklog_digest"] = int(stats.get("worklog_digest") or 0) + 1
+        if res.get("stuck"):
+            stats["worklog_stuck"] = int(stats.get("worklog_stuck") or 0) + len(res["stuck"])
+
+    def _approvals_sweep(self, room: dict, stats: dict) -> None:
+        """Снять истёкшие «разовые» разрешения (W22-AP1 §2.2, server/approvals.sweep).
+
+        Разрешение «один раз» живёт до конца карточки или 30 минут — иначе временная
+        запись осталась бы в профиле навсегда. Ошибка шага не валит тик.
+        """
+        try:
+            func = self.app.fn("approvals", "sweep")
+        except Exception as exc:                        # noqa: BLE001 - старaя сборка
+            if not _module_missing(exc):
+                stats["errors"] += 1
+                self._fail("разрешения комнаты %s" % (room or {}).get("id"), exc)
+            return
+        try:
+            res = func(self.cfg, room) or {}
+        except Exception as exc:                        # noqa: BLE001 - разрешения вторичны
+            stats["errors"] += 1
+            self._fail("снятие разрешений %s" % (room or {}).get("id"), exc)
+            return
+        if int(res.get("revoked") or 0):
+            stats["approvals_revoked"] = int(stats.get("approvals_revoked") or 0) + int(res["revoked"])
+
     def _agent_models_room(self, room: dict, stats: dict) -> None:
         """Модель комнаты на ВСЕ её карточки + сверка факта (WAVE10, WAVE13 пакет A).
-
         Один проход по tenant комнаты за тик (а не по деревьям запросов): карточки,
         которые руководитель создаёт сам, в деревьях реестра не видны — из-за этого
         работа уходила на модель профиля. Затем `verify_started` сверяет модель

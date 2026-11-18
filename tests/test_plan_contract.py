@@ -50,13 +50,13 @@ def make_room(**over) -> dict:
         "title": "Лето",
         "board": "team",
         "tenant": "room:cafe",
-        "orchestrator": "biz-director",
-        "critic": "biz-critic",
+        "orchestrator": "team-director",
+        "critic": "team-critic",
         "project_mode": True,
         "members": [
-            {"profile": "biz-lawyer", "role": "worker", "note": "юрист по праву России"},
-            {"profile": "biz-ops", "role": "worker", "note": ""},
-            {"profile": "biz-cfo", "role": "worker", "note": "деньги"},
+            {"profile": "team-lawyer", "role": "worker", "note": "юрист по праву России"},
+            {"profile": "team-ops", "role": "worker", "note": ""},
+            {"profile": "team-cfo", "role": "worker", "note": "деньги"},
         ],
         "context_files": [],
         "critic_pass": True,
@@ -69,13 +69,13 @@ def make_room(**over) -> dict:
 
 
 STREAMS = [
-    {"title": "Легализация и ИП", "goal": "Оформить ИП и разрешения", "owner": "biz-lawyer",
-     "members": ["biz-ops"], "depends_on": [], "due": "2026-11-10",
+    {"title": "Легализация и ИП", "goal": "Оформить ИП и разрешения", "owner": "team-lawyer",
+     "members": ["team-ops"], "depends_on": [], "due": "2026-11-10",
      "reason": "без ИП нельзя продавать"},
-    {"title": "Экономика набора", "goal": "Себестоимость и цена", "owner": "biz-cfo",
-     "members": ["biz-lawyer"], "depends_on": ["s1"], "due": "2026-11-20",
+    {"title": "Экономика набора", "goal": "Себестоимость и цена", "owner": "team-cfo",
+     "members": ["team-lawyer"], "depends_on": ["s1"], "due": "2026-11-20",
      "reason": "цена зависит от легализации"},
-    {"title": "Упаковка и бренд", "goal": "Название, этикетка", "owner": "biz-ops",
+    {"title": "Упаковка и бренд", "goal": "Название, этикетка", "owner": "team-ops",
      "members": [], "depends_on": [], "due": None, "reason": "идёт параллельно"},
 ]
 
@@ -99,10 +99,10 @@ class BriefBodyTests(unittest.TestCase):
 
     def test_brief_lists_only_room_profiles_with_russian_roles(self):
         body = contract.build_brief_body(self.room, REQUEST, "r-1", self.cfg)
-        self.assertIn("biz-lawyer — исполнитель", body)
-        self.assertIn("biz-director — руководитель комнаты", body)
-        self.assertIn("biz-critic — критик", body)
-        for alien in ("coder", "ornith", "biz-strategy"):
+        self.assertIn("team-lawyer — исполнитель", body)
+        self.assertIn("team-director — руководитель комнаты", body)
+        self.assertIn("team-critic — критик", body)
+        for alien in ("coder", "ornith", "team-strategy"):
             self.assertNotIn(alien, body, "чужой профиль не должен попасть в список")
 
     def test_brief_without_roster_says_so(self):
@@ -138,7 +138,7 @@ class BriefBodyTests(unittest.TestCase):
         """`engine_write.brief_body` зовёт `build_brief_body(cfg, room, body)` — так тоже работает."""
         body = contract.build_brief_body(self.cfg, self.room, REQUEST)
         self.assertIn(contract.BRIEF_OPEN, body)
-        self.assertIn("biz-lawyer — исполнитель", body)
+        self.assertIn("team-lawyer — исполнитель", body)
         self.assertEqual(contract.visible_text(body), REQUEST)
 
     def test_engine_write_brief_body_keeps_brief_mode(self):
@@ -216,9 +216,9 @@ class ParsePlanTests(unittest.TestCase):
         first = plan["streams"][0]
         self.assertEqual(set(first), set(contract.STREAM_FIELDS))
         self.assertEqual(first["due"], "2026-11-10")
-        self.assertEqual(first["members"], ["biz-ops"])
+        self.assertEqual(first["members"], ["team-ops"])
         self.assertEqual(plan["streams"][1]["depends_on"], ["s1"])
-        self.assertEqual(plan["streams"][1]["owner"], "biz-cfo")
+        self.assertEqual(plan["streams"][1]["owner"], "team-cfo")
 
     def test_plan_accepts_json_string_and_bare_list(self):
         plan, warnings = contract.parse_plan(json.dumps({"plan": {"streams": STREAMS}}), self.room)
@@ -232,11 +232,11 @@ class ParsePlanTests(unittest.TestCase):
 
     def test_aliens_dropped_with_warning(self):
         streams = [{"title": "Право", "goal": "g", "owner": "coder",
-                    "members": ["coder", "biz-lawyer"], "due": "2026-11-01"}]
+                    "members": ["coder", "team-lawyer"], "due": "2026-11-01"}]
         plan, warnings = contract.parse_plan({"plan": {"streams": streams}}, self.room)
         stream = plan["streams"][0]
         self.assertIsNone(stream["owner"], "чужой исполнитель не назначается")
-        self.assertEqual(stream["members"], ["biz-lawyer"], "чужие участники убраны")
+        self.assertEqual(stream["members"], ["team-lawyer"], "чужие участники убраны")
         self.assertEqual(len(warnings), 2)
         self.assertIn("не из состава комнаты", warnings[0])
         self.assertIn("coder", warnings[1])
@@ -295,8 +295,8 @@ class ParsePlanPatchTests(unittest.TestCase):
 
     def test_full_patch(self):
         raw = {
-            "add": [{"title": "Новое направление", "goal": "g", "owner": "biz-ops", "color": "red"}],
-            "change": [{"id": "s1", "fields": {"due": "2026-12-01", "owner": "biz-lawyer"}}],
+            "add": [{"title": "Новое направление", "goal": "g", "owner": "team-ops", "color": "red"}],
+            "change": [{"id": "s1", "fields": {"due": "2026-12-01", "owner": "team-lawyer"}}],
             "drop": [{"id": "s2", "reason": "не нужно"}, "s3"],
             "note": "перенос сроков",
         }
@@ -304,7 +304,7 @@ class ParsePlanPatchTests(unittest.TestCase):
         self.assertEqual(warnings, [])
         self.assertEqual(len(patch["add"]), 1)
         self.assertEqual(set(patch["add"][0]), set(contract.STREAM_FIELDS), "лишние поля отброшены")
-        self.assertEqual(patch["change"][0]["fields"], {"due": "2026-12-01", "owner": "biz-lawyer"})
+        self.assertEqual(patch["change"][0]["fields"], {"due": "2026-12-01", "owner": "team-lawyer"})
         self.assertEqual(patch["drop"], [{"id": "s2", "reason": "не нужно"}, {"id": "s3", "reason": ""}])
         self.assertEqual(patch["note"], "перенос сроков")
 
@@ -405,10 +405,10 @@ class BriefCycleSandboxTests(unittest.TestCase):
         seq = self.__class__._room_seq
         return rooms.create_room(self.cfg, {
             "id": "planroom%s" % seq, "title": "Планы Лето %s" % seq,
-            "orchestrator": "biz-director", "critic": "biz-critic",
-            "members": [{"profile": "biz-lawyer", "role": "worker"},
-                        {"profile": "biz-ops", "role": "worker"},
-                        {"profile": "biz-cfo", "role": "worker"}],
+            "orchestrator": "team-director", "critic": "team-critic",
+            "members": [{"profile": "team-lawyer", "role": "worker"},
+                        {"profile": "team-ops", "role": "worker"},
+                        {"profile": "team-cfo", "role": "worker"}],
             # W17-R §3: у новых комнат режим «сразу», а эти тесты проверяют
             # ЧЕРНОВИК карты — поэтому здесь явно «сначала план».
             "launch_mode": "plan_first",
@@ -431,7 +431,7 @@ class BriefCycleSandboxTests(unittest.TestCase):
             "id": task_id, "title": title, "text": REQUEST, "status": "done",
             "created_at": now - 100, "finished_at": int(row["completed_at"] or now) if row else now,
             "synthesis": {"state": "ready", "text_md": row["summary"] if row else "Ответ",
-                          "author": "biz-director", "at": now, "version": 1,
+                          "author": "team-director", "at": now, "version": 1,
                           "source_task": task_id},
             "next_steps": [{"id": task_id + ":ns_1", "text": "Запустить карту", "owner": "mikhail",
                             "due": None, "state": "open"}],
@@ -477,7 +477,7 @@ class BriefCycleSandboxTests(unittest.TestCase):
         self.assertGreaterEqual(len(data["streams"]), 3)
         for stream in data["streams"]:
             self.assertEqual(stream["status"], "proposed", "черновик ничего не запускает")
-            self.assertIn(stream["owner"], (None, "biz-lawyer", "biz-ops", "biz-cfo"),
+            self.assertIn(stream["owner"], (None, "team-lawyer", "team-ops", "team-cfo"),
                           "чужой исполнитель не должен попасть в карту")
         self.assertTrue(any("Руководитель предложил карту" in str(item.get("text"))
                             for item in data.get("log") or []), "журнал карты: предложение")
@@ -500,10 +500,10 @@ class BriefCycleSandboxTests(unittest.TestCase):
         # карточка «Уточнение от Михаила»: руководитель приложил plan_patch (§A6)
         note = self.sa.card(thread.NOTE_TITLE, room["orchestrator"], tenant="room:" + room["id"])
         self.sa.start(note)
-        patch = {"add": [{"title": "Логистика", "goal": "доставка", "owner": "biz-ops"}],
+        patch = {"add": [{"title": "Логистика", "goal": "доставка", "owner": "team-ops"}],
                  "change": [{"id": "s1", "fields": {"due": "2026-12-31"}}],
                  "note": "Михаил сдвинул сроки"}
-        self.sa.finish(note, "Принял; передал: biz-ops", {"plan_patch": patch})
+        self.sa.finish(note, "Принял; передал: team-ops", {"plan_patch": patch})
         applied = ingest.apply_plan_from_detail(
             self.cfg, room, self._detail(note, {"plan_patch": patch}, thread.NOTE_TITLE))
         self.assertEqual(applied["applied"], "plan_patch", applied)

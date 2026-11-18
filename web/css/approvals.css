@@ -1,0 +1,455 @@
+/*
+ * approvals.css — «Разрешения агентам» (волна 22, AP2).
+ *
+ * Три места: карточка в «Нужен ваш ответ», блок на странице запроса, раздел
+ * «Разрешения агентов» в настройках. Всё на токенах темы — светлая и тёмная
+ * получаются сами; техника (id, ключи) наружу не выводится.
+ *
+ * Правила раскладки: кнопки не уже 32 px и переносятся на вторую строку при
+ * узком месте, команда — моноширинный блок с прокруткой и переносом, без
+ * горизонтальной прокрутки страницы.
+ */
+
+/* ───────────────────────────────────────────────────── одна карточка */
+
+.ap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-editor);
+  min-width: 0;
+}
+
+.ap--compact { padding: 9px 10px; gap: 6px; }
+
+.ap--pending { border-left: 3px solid var(--warn); }
+.ap--granted_once,
+.ap--granted_always { border-left: 3px solid var(--ok); }
+.ap--denied { border-left: 3px solid var(--danger); }
+.ap--expired { border-left: 3px solid var(--border-soft); opacity: .85; }
+
+.ap__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  /* Узкая колонка «Нужен ваш ответ» (255–300 px): заголовок не должен сжиматься до
+     одной буквы в строке — чипы состояния/счётчика уезжают на свою строку. */
+  flex-wrap: wrap;
+}
+
+.ap__icon {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+}
+
+.ap--granted_once .ap__icon,
+.ap--granted_always .ap__icon { background: var(--ok-soft); color: var(--ok-ink); }
+.ap--denied .ap__icon { background: var(--danger-soft); color: var(--danger-ink); }
+
+.ap__who { flex: 1 1 150px; min-width: 0; }
+
+.ap__title {
+  font-weight: 600;
+  font-size: 13.5px;
+  line-height: 1.3;
+  color: var(--ui-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.ap__sub {
+  margin-top: 2px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ap__state { flex: 0 0 auto; margin-left: auto; }
+
+.ap__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* ── команда: свёрнутый заголовок + полный текст с прокруткой ── */
+
+.ap__cmd {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-secondary);
+  min-width: 0;
+}
+
+.ap__cmd-sum {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  color: var(--ui-text-secondary);
+  min-width: 0;
+}
+
+.ap__cmd-sum::-webkit-details-marker { display: none; }
+
+.ap__cmd-cap { flex: 0 0 auto; font-weight: 600; }
+
+.ap__cmd-prev {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-text-tertiary);
+  font-size: 11.5px;
+}
+
+.ap__cmd-len { flex: 0 0 auto; }
+
+.ap__cmd-body { padding: 0 8px 8px; }
+
+.ap__code {
+  margin: 0;
+  padding: 8px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: var(--radius-xs);
+  background: var(--ui-bg-chrome);
+  border: 1px solid var(--border-soft);
+  color: var(--ui-text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.ap__code:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+
+/* W22-ST: строка-группа — счётчик «×N» и остальные команды той же причины. */
+.ap__count { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+
+.ap__more {
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  min-width: 0;
+}
+
+.ap__more-sum {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.ap__more-sum::-webkit-details-marker { display: none; }
+.ap__more-sum:hover { color: var(--ui-text-primary); }
+
+.ap__more-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+
+.ap__more-item { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ap__more-cap { font-size: 11.5px; }
+
+.ap__code--small { max-height: 140px; font-size: 11.5px; }
+
+.ap__card { display: flex; gap: 4px; align-items: baseline; min-width: 0; }
+.ap__card-cap { flex: 0 0 auto; }
+.ap__card-link,
+.ap__card-name {
+  color: var(--ui-text-primary);
+  overflow-wrap: anywhere;
+}
+.ap__card-link { text-decoration: underline; text-underline-offset: 2px; }
+
+/* ── кнопки: не уже 32 px, переносятся ── */
+
+.ap__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.ap__actions .btn { min-height: 32px; }
+.ap__actions .btn:disabled { cursor: default; opacity: .6; }
+
+.ap__always-hint {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  line-height: 1.35;
+}
+
+.ap__always-hint .codicon { margin-top: 2px; flex: 0 0 auto; }
+
+.ap__result-line {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.ap__result-line--danger { background: var(--danger-soft); color: var(--danger-ink); }
+.ap__result-line .codicon { margin-top: 2px; flex: 0 0 auto; }
+
+.ap__error-line {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.ap__floor {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-quaternary);
+  color: var(--ui-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.ap__floor .codicon { margin-top: 2px; flex: 0 0 auto; }
+
+.ap__hint { line-height: 1.4; }
+
+/* ───────────────────────────────────────── блок на странице запроса */
+
+.ap-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+.ap-block__head { display: flex; flex-direction: column; gap: 4px; }
+
+.ap-block__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ap-block__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ui-text-primary);
+}
+
+.ap-block__title .codicon { color: var(--warn); }
+
+.ap-block__count { flex: 0 0 auto; }
+
+.ap-block__lead { margin: 0; line-height: 1.45; max-width: 90ch; }
+
+.ap-block__list { display: flex; flex-direction: column; gap: 8px; }
+
+.ap-block__done { border-top: 1px solid var(--border-soft); padding-top: 8px; }
+
+.ap-block__done-sum {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ap-block__done-sum::-webkit-details-marker { display: none; }
+
+.ap-block__list--done { margin-top: 8px; }
+
+/* ─────────────────────────────────── раздел «Разрешения агентов» */
+
+.ap-grants { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+.ap-grants__status { min-height: 18px; }
+
+.ap-grants__list { display: flex; flex-direction: column; gap: 8px; }
+
+.ap-grant {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-editor);
+  min-width: 0;
+}
+
+.ap-grant__main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+
+.ap-grant__top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.ap-grant__who { font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; }
+
+.ap-grant__what { font-size: 13px; color: var(--ui-text-primary); overflow-wrap: anywhere; }
+
+.ap-grant__meta { line-height: 1.35; }
+
+.ap-grant__revoke { flex: 0 0 auto; min-height: 32px; }
+
+.ap-grants__empty {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-secondary);
+  color: var(--ui-text-secondary);
+}
+
+.ap-grants__empty-title { font-weight: 600; color: var(--ui-text-primary); margin-bottom: 2px; }
+
+.ap-grants__error {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+}
+
+/* ──────────────────────────────────────────────────────── адаптив */
+
+/* Узкая колонка «Нужен ваш ответ» и пол-экрана: кнопки в столбик. */
+@container view (max-width: 720px) {
+  .ap__actions { flex-direction: column; align-items: stretch; }
+  .ap__actions .btn { width: 100%; justify-content: center; }
+  .ap-grant { flex-direction: column; align-items: stretch; }
+  .ap-grant__revoke { align-self: flex-start; }
+}
+
+/* Совсем узко (560–640): меньше отступов, команда ниже. */
+@container view (max-width: 560px) {
+  .ap-block { padding: 12px; }
+  .ap { padding: 9px 10px; }
+  .ap__code { max-height: 180px; font-size: 11.5px; }
+  .ap__cmd-prev { display: none; }
+}
+
+@media (max-width: 640px) {
+  .ap__actions { flex-direction: column; align-items: stretch; }
+  .ap__actions .btn { width: 100%; justify-content: center; }
+}
+
+@media print {
+  .ap__cmd { display: block; }
+  .ap__cmd-body { display: block; }
+  .ap__code { max-height: none; overflow: visible; }
+  /* на бумаге видно всё, что человек разрешает — группу тоже */
+  .ap__more { display: block; border-style: solid; }
+}
+
+/* ═══════════════════════ W26-D2: три вида блокировок и одно состояние ════════
+ *
+ * Правило Михаила «без тупиков»: вид блокировки виден словом, у каждого пункта
+ * есть действие, жёсткий запрет — информация (отдельный, спокойный блок).
+ * Свёрнутость «Нужен ваш ответ» и выбор срока доверия живут здесь же: это те же
+ * карточки разрешений, только в колонке.
+ */
+
+/* Вид блокировки — рядом с состоянием, но тише: это пояснение, а не статус. */
+.ap__kind { flex: none; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* «Не вопрос к вам»: жёсткий запрет не спорит за внимание с тем, что решается. */
+.ap-block__subhead {
+  font-weight: 600;
+  margin: var(--space-3) 0 var(--space-2);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+.ap-block__list--info {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+  opacity: 0.94;
+}
+.ap-block--info .ap-block__count { flex: none; }
+.ap-block__list--info .ap { background: var(--ui-bg-quaternary); }
+
+/* Выбор срока доверия: обязателен, поэтому стоит отдельной строкой с пояснением. */
+.ap__ttl { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; }
+.ap__ttl-lead { line-height: var(--leading-normal); max-width: 62ch; }
+.ap__ttl-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+
+/* «Нужен ваш ответ» в колонке: свёртывается как остальные блоки колонки. */
+.req-side__fold { padding: 0; }
+.req-side__fold > summary.req-side__fold-head--pin {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-lg);
+  list-style: none;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  color: var(--ui-text-primary);
+  font-weight: 600;
+  padding: 0 0 var(--space-1);
+}
+.req-side__fold > summary.req-side__fold-head--pin::-webkit-details-marker { display: none; }
+.req-side__fold-head--pin:hover { color: var(--ui-text-primary); background: var(--ui-row-hover-background); }
+.req-side__fold-head--pin:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.req-side__fold[open] > .req-side__fold-head--pin .req-side__fold-chev { transform: rotate(90deg); }
+.req-side__fold-body { display: flex; flex-direction: column; }
+.req-side__fold-body > .req-side__body { padding: 0; }
+.req-side__fold:not([open]) > .req-side__fold-body { display: none; }
+
+@media (max-width: 640px) {
+  .ap__kind { display: none; }        /* в узком окне вид уже виден по плашке */
+  .ap__ttl-row .btn { flex: 1 1 100%; justify-content: center; }
+}

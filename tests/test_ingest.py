@@ -39,11 +39,11 @@ def make_detail(root_id: str = "t_a1", at: int = AT, title: str = "Дорожн�
         "finished_at": at,
         "mode": "auto",
         "critic": False,
-        "synthesis": {"state": "ready", "text_md": "Готовый ответ.", "author": "biz-director",
+        "synthesis": {"state": "ready", "text_md": "Готовый ответ.", "author": "team-director",
                       "at": at, "version": 1, "source_task": root_id},
         "next_steps": [
             {"id": "ns_1", "text": "Подать заявление на ИП через Госуслуги", "owner": "mikhail", "due": "2026-11-01", "state": "open"},
-            {"id": "ns_2", "text": "Запросить свидетельство", "owner": "biz-ops", "due": None, "state": "open"},
+            {"id": "ns_2", "text": "Запросить свидетельство", "owner": "team-ops", "due": None, "state": "open"},
         ],
         "open_questions": [
             {"id": "q_1", "text": "Подача в Роспатент: класс 30 или 30+43?", "for": "mikhail",
@@ -136,7 +136,7 @@ class TestIngestCore(IngestBase):
         by_id = {i["id"]: i for i in items}
         self.assertIn("t_a1:ns_1", by_id)
         self.assertEqual(by_id["t_a1:ns_1"]["due"], "2026-11-01")
-        self.assertEqual(by_id["t_a1:ns_2"]["owner"], "biz-ops")
+        self.assertEqual(by_id["t_a1:ns_2"]["owner"], "team-ops")
         self.assertEqual(by_id["t_a1:q_1"]["owner"], "mikhail")
         self.assertEqual(by_id["t_a1:fq_1"]["kind"], "future_question")
         self.assertEqual(by_id["t_a1:d_1"]["kind"], "decision")
@@ -272,7 +272,7 @@ class TestLegacy(IngestBase):
             "title": "Дорожная карта проекта",
             "finished_at": AT,
             "created_at": AT - 3000,
-            "synthesis": {"state": "ready", "text_md": "Ответ в старом формате.", "author": "biz-director",
+            "synthesis": {"state": "ready", "text_md": "Ответ в старом формате.", "author": "team-director",
                           "at": AT, "legacy": True},
             "next_steps": ["Ш1 Михаил: снять блокер канала TG/WA"],
             "open_questions": ["Q1 Канал для D19: V1 / V2 / V3?"],

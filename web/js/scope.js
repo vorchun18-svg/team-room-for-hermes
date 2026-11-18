@@ -5,7 +5,7 @@
  * Одно имя параметра на весь продукт — `request` в query-части хэша:
  *   #/room/cafe/reports?request=t_a1b2c3d4
  *   #/room/cafe/journal?request=t_a1b2c3d4
- * BACKLOG-FIX («Дальше», «Ждёт твоего решения») использует то же имя.
+ * BACKLOG-FIX («От вас нужно», «Ждёт твоего решения») использует то же имя.
  *
  * Чистые функции без побочных эффектов проверяются node --test
  * (tests/scope-ux.test.mjs), DOM-часть — через tests/fake-dom.mjs.
@@ -13,15 +13,20 @@
 
 import { h } from './util.js';
 import { deriveTitle } from './request-title.js';
+import { SCOPE_LABELS } from './text-ru.js';
 
 /** Имя query-параметра фильтра по запросу. */
 export const REQUEST_PARAM = 'request';
 
-/** Бейдж у вкладок комнаты: раздел относится ко всей комнате целиком. */
-export const WHOLE_ROOM_LABEL = 'вся комната';
+/**
+ * Бейдж у вкладок комнаты: раздел относится ко всей комнате целиком.
+ * W20-U1 (P7/P8): слова охвата — одни на весь продукт (text-ru.js): в шапке
+ * переключатель «Вся комната / Этот запрос», здесь те же два слова.
+ */
+export const WHOLE_ROOM_LABEL = SCOPE_LABELS.whole;
 
-/** Подпись фильтра на вкладках «Отчёты» / «Журнал» / «Дальше». */
-export const FILTER_LABEL = 'Только этот запрос';
+/** Подпись фильтра на вкладках «От вас нужно» / «Отчёты» / «Журнал». */
+export const FILTER_LABEL = SCOPE_LABELS.request;
 
 /**
  * Похоже ли на системный id запроса (t_a1b2c3d4) — такое в тексте не показываем.

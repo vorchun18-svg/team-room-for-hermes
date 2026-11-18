@@ -112,7 +112,11 @@ def _extract(detail: dict) -> dict:
             "id": str(raw.get("id") or f"d_{idx}"),
             "text": _clean(raw.get("text")),
             "why": _clean(raw.get("why")) or None,
-            "status": status if status in ("proposed", "accepted", "rejected") else "proposed",
+            # W25 M1: статус решения — окончательный (его уже разрешили реестр ответов
+            # и история версий свода). Раньше `dismissed`/`superseded` здесь терялись
+            # и решение «воскресало» как принятое (R4 §3 п.1).
+            "status": status if status in ("proposed", "accepted", "rejected",
+                                           "dismissed", "superseded") else "proposed",
             "owner": (str(raw.get("owner")).strip() if raw.get("owner") else "mikhail"),
         })
 

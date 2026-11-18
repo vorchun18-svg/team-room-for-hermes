@@ -7,7 +7,7 @@
  * renderTree оттуда, сигнатура фиксирована — (detail, ctx, {onChanged}).
  */
 
-import { h, fmtDuration, timeAgo, fmtDateTime, plainTerms, fromCount } from '../util.js';
+import { h, fmtDuration, timeAgo, fmtDateTime, plainTerms } from '../util.js';
 import { fileUrl } from '../api.js';
 import { icon } from '../icons.js';
 import {
@@ -19,9 +19,11 @@ import { createTreeState, problemSignature } from './request-tree-state.js';
 import { createNotices, createMarks } from './notice-state.js';
 import { createRetryButton } from './retry-button.js';
 import { toast, changed, postAction, button, lock } from './rp-shared.js';
-import { personName, profileName, devDetails, blockHead } from './request-util.js';
+import { personName, profileName, devDetails } from './request-util.js';
 import { participantLabel } from '../participant-label.js';
-import { countNoun } from '../text-ru.js';
+import { createSection, sectionDefaults, treeSummaryChips } from './section-collapse.js';
+// W23-MG2 «Контроль моделей»: кнопки управления работой карточки и строка «Остановлено…».
+import { cardControls, stoppedLine } from './model-guard.js';
 
 /* ─────────────────────────────────────────────────────────── дерево работ */
 
@@ -408,14 +410,25 @@ function nodeRow(row, ctx, detail, onChanged, ui) {
       class: 'rp-node__model',
       title: 'Что реально ушло (' + why + ')',
     }, sentText));
-    if (sent.mismatch) {
-      sub.appendChild(h('span', {
-        class: 'chip chip--warn',
-        title: 'Модель карточки не совпала с выбором комнаты',
-      }, 'расходится с выбором комнаты'));
-    }
+    // W23-MG2: «расходится с выбором комнаты» здесь больше нет — расхождение
+    // исправляет сторож моделей, а человеку показывается результат (лента
+    // «Контроль моделей» на странице и строка «Остановлено…» у карточки).
   }
   main.appendChild(sub);
+
+  // W23-MG2: управление работой — как в самом Hermes. «Остановить» у идущей
+  // карточки, «Продолжить» и объяснение — у остановленной.
+  const requestId = String((detail && detail.id) || '');
+  const onChangedCb = () => changed(ctx, onChanged);
+  const stoppedBox = stoppedLine(ctx, {
+    node, requestId, catalog: (ctx && ctx.catalog) || null, onChanged: onChangedCb,
+  });
+  if (stoppedBox) main.appendChild(stoppedBox);
+  const guardActions = cardControls(ctx, {
+    node, requestId, profile: rawAssignee, title: node.title,
+    catalog: (ctx && ctx.catalog) || null, compact: true, onChanged: onChangedCb,
+  });
+  if (guardActions && guardActions.childNodes && guardActions.childNodes.length) main.appendChild(guardActions);
   head.appendChild(main);
 
   const actBox = h('div', { class: 'rp-actions' });
@@ -531,32 +544,44 @@ export function renderTree(detail, ctx, opts = {}) {
       }));
   }
 
-  const card = h('section', { class: 'card rp-tree', 'data-rp-tree': '', 'data-rp': 'tree' });
-  const progress = detail && detail.progress ? detail.progress : {};
-  const done = Number(progress.done) || 0;
-  const total = Number(progress.total) || Math.max(0, tree.rows.length - 1);
-  // Один счётчик вместо двух: «6 из 6 задач» — и сколько всего, и сколько готово (D18).
-  const count = total
-    ? fromCount(done, total, ['задача', 'задачи', 'задач'])
-    : countNoun(tree.rows.length, ['задача', 'задачи', 'задач']);
-  card.appendChild(blockHead('Дерево работ', count));
-
-  if (tree.cycleIds.length) {
-    card.appendChild(h('p', { class: 'small muted rp-tree__note' }, 'Связи между задачами зациклены — такие строки показаны без отступа.'));
-  }
-
-  const list = h('ul', { class: 'rp-tree__list' });
-  // B-19/B-24/B-25: состояние — в данных (sessionStorage), ключ — id запроса.
-  // Одна копия на отрисовку: раскрытость, закрытые плашки, отметки «повтор отправлен».
   const rid = String((detail && detail.id) || '');
-  const ui = {
-    state: createTreeState({ requestId: rid }),
-    notices: createNotices({ requestId: rid }),
-    marks: createMarks({ requestId: rid }),
+  const defaults = sectionDefaults(detail);
+
+  /**
+   * Строки дерева — ТОЛЬКО при раскрытии блока (У-1): у большого запроса это
+   * 200 узлов с панелями, комментариями и кнопками. Свёрнутый блок их не
+   * строит вовсе, поэтому страница открывается быстро.
+   */
+  const buildList = () => {
+    // B-19/B-24/B-25: состояние — в данных (sessionStorage), ключ — id запроса.
+    // Одна копия на отрисовку: раскрытость, закрытые плашки, отметки «повтор отправлен».
+    const ui = {
+      state: createTreeState({ requestId: rid }),
+      notices: createNotices({ requestId: rid }),
+      marks: createMarks({ requestId: rid }),
+    };
+    ui.state.retain(tree.rows.map((row) => row.id));
+    const list = h('ul', { class: 'rp-tree__list' });
+    for (const row of tree.rows) list.appendChild(nodeRow(row, ctx, detail, () => changed(ctx, o.onChanged), ui));
+    return list;
   };
-  ui.state.retain(tree.rows.map((row) => row.id));
-  for (const row of tree.rows) list.appendChild(nodeRow(row, ctx, detail, () => changed(ctx, o.onChanged), ui));
-  card.appendChild(list);
-  return card;
+
+  const note = tree.cycleIds.length
+    ? h('p', { class: 'small muted rp-tree__note' }, 'Связи между задачами зациклены — такие строки показаны без отступа.')
+    : null;
+
+  // Один счётчик вместо двух: «6 из 6 задач» — и сколько всего, и сколько готово (D18),
+  // плюс «есть ошибка» / «ждёт вашего ответа» (У-1) — видно и в свёрнутом виде.
+  const sec = createSection({
+    key: 'tree',
+    requestId: rid,
+    title: 'Дерево работ',
+    defaultOpen: defaults.tree,
+    className: 'rp-tree',
+    attrs: { 'data-rp-tree': '', 'data-rp': 'tree' },
+    summary: treeSummaryChips(detail),
+    content: () => [note, buildList()].filter(Boolean),
+  });
+  return sec.element;
 }
 

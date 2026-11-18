@@ -8,7 +8,7 @@
  * прокомментировать (с диктовкой) или переместить (порядок, срок, исполнитель).
  *
  * Состояния: предстоит / в работе / сделано / снят. Выполненные отделены
- * («Сделано»), предстоящие — «Дальше». Метка «противоречит вашему ответу» — из
+ * («Сделано»), предстоящие — «От вас нужно». Метка «противоречит вашему ответу» — из
  * пакета D (вопрос ↔ шаг, ответ «нет»).
  *
  * Вынесено из request-aside.js (файл колонки правят параллельно): снаружи —
@@ -21,6 +21,7 @@ import { avatar, ensureCss } from '../ui.js';
 import { countNoun } from '../text-ru.js';
 import { firstLine } from './request-util.js';
 import { foldCard } from './aside-fold.js';
+import { cleanReactionLabel, noticeLine } from './reaction-notice.js';
 import { openStepDialog, splitSteps, stepReactionLine, stepOwner, stepState } from './step-dialog.js';
 
 export const STEPS_HINT = 'План руководителя на ближайшее время: поправьте любой шаг';
@@ -66,6 +67,30 @@ export function isStepDone(step, roomItem) {
   return stepState(step).key === 'done' || (roomItem && roomItem.status === 'done');
 }
 
+/** Состояния реакции, после которых уместна строка «Шаг учтён» (U4, W21-L1). */
+const STEP_NOTICED = new Set(['applied', 'no_change']);
+
+/**
+ * Строка «Шаг учтён · 13:48» (W21-L1, недоделка U4) — рядом с подписью реакции.
+ *
+ * Показываем ТОЛЬКО конечный исход «учтено»: пока руководитель не ответил или
+ * только прочитал, строка «учтён» была бы неправдой. Подпись берём без слова
+ * «учтено» (`cleanReactionLabel`), чтобы одна и та же мысль не читалась дважды.
+ * @param {object} step шаг из `detail.steps`
+ * @returns {{notice: string, rest: string}|null}
+ */
+export function stepNotice(step) {
+  const s = step || {};
+  const reaction = s.reaction && typeof s.reaction === 'object' ? s.reaction : null;
+  const status = String((reaction && reaction.status) || '');
+  if (!reaction || !STEP_NOTICED.has(status)) return null;
+  // Время пишем только если это правда часы (заглушки вида `at: 6` не показываем).
+  const at = Number(reaction.at) || 0;
+  const notice = noticeLine({ status, at: at > 1000000000 ? at : 0 }, { kind: 'step' });
+  if (!notice) return null;
+  return { notice, rest: cleanReactionLabel(s.reaction_label || reaction.label || '') };
+}
+
 /** Счётчик предстоящих шагов — для шапки блока. */
 export function openStepsCount(steps) {
   return splitSteps(steps).current.length;
@@ -102,6 +127,7 @@ export function createSteps(R) {
   function stepRow(step) {
     const state = stepState(step);
     const line = stepReactionLine(step);
+    const notice = stepNotice(step);
     const roomItem = (R.backlog && R.detail) ? R.backlog.get(`${R.detail.id}:${step.id}`) : null;
     const done = state.key === 'done' || (roomItem && roomItem.status === 'done');
     const due = step.due || (roomItem && roomItem.due) || null;
@@ -128,9 +154,21 @@ export function createSteps(R) {
       meta.childElementCount ? meta : h('span', { class: 'req-step__meta req-step__meta--empty' }),
     ];
     if (line) {
+      // W21-L1 (U4): конечный исход показываем строкой «Шаг учтён · 13:48», а в
+      // подписи реакции оставляем только суть («работа изменена») — без второго «учтено».
+      const label = notice ? notice.rest : line.label;
       body.push(h('span', { class: 'req-step__reaction req-step__reaction--' + line.kind },
-        h('span', { class: 'req-step__reaction-label' }, line.label),
+        label ? h('span', { class: 'req-step__reaction-label' }, label) : null,
         line.text ? h('span', { class: 'req-step__reaction-text' }, ' · ' + firstLine(line.text, 120)) : null));
+    }
+    if (notice) {
+      body.push(h('span', {
+        class: 'req-step__reaction req-step__reaction--reaction req-step__notice',
+        role: 'status',
+        title: 'Реакция руководителя на ваш ответ по этому шагу',
+      },
+      icon('check', { size: 11 }),
+      h('span', { class: 'req-step__reaction-label req-step__notice-text' }, notice.notice)));
     }
 
     const open = h('div', {
@@ -225,7 +263,7 @@ export function createSteps(R) {
       body.push(h('div', { class: 'req-side__body' },
         h('div', { class: 'small muted' }, 'Руководитель ещё не составил план по этому запросу.')));
     } else {
-      const current = group('Дальше', parts.current, 'req-steps__group--next');
+      const current = group('Предстоит', parts.current, 'req-steps__group--next');
       if (current) body.push(current);
       const done = fold('Сделано', parts.done, 'req-steps__fold--done');
       if (done) body.push(done);
@@ -266,4 +304,4 @@ export function createSteps(R) {
   return { stepsCard, stepRow, openStep, dropStep };
 }
 
-export default { createSteps, splitSteps, stepState, STEPS_HINT, openStepsCount, isStepDone };
+export default { createSteps, splitSteps, stepState, STEPS_HINT, openStepsCount, isStepDone, stepNotice };

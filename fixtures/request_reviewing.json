@@ -23,7 +23,7 @@
     "total": 4,
     "percent": 75
   },
-  "assignee": "biz-director",
+  "assignee": "team-director",
   "needs_you": false,
   "preview": "Проверь, подходит ли ОКВЭД 10.71 для производства моти и что требует СЭС.",
   "archived": false,
@@ -43,7 +43,7 @@
     "state": "ready",
     "version": 1,
     "text_md": "## Ответ (версия 1, у критика)\n\nПо ОКВЭД производство моти попадает в 10.71 (производство хлеба и мучных кондитерских изделий), а не в 56.10 ( общепит ). Для ИП это критично: 56.10 в список разрешённых видов не входит.\n\n**Что подтверждено:**\n* ОКВЭД 10.71 разрешён для ИП.\n* СЭС требует заключение о размещении до открытия и лицензию помещения после.\n* Для продажи в интернете нужен ИНН и регистрация в муниципалитет.\n\n**Что не подтверждено:** срок выдачи свидетельства о регистрации — в двух источниках разные цифры (7 и 20 дней).\n\nЭто проект ответа, его ещё проверяет критик.",
-    "author": "biz-director",
+    "author": "team-director",
     "at": 1793166300,
     "source_task": "t_7d21b8c4",
     "legacy": false,
@@ -52,7 +52,7 @@
         "version": 1,
         "kind": "initial",
         "task_id": "t_7d21b8c4",
-        "author": "biz-director",
+        "author": "team-director",
         "at": 1793166300,
         "verdict": null,
         "note": "Версия 1 отправлена критику, вердикта ещё нет."
@@ -70,14 +70,14 @@
     {
       "id": "ns_2",
       "text": "Запросить заключение о размещении в СЭС",
-      "owner": "biz-lawyer",
+      "owner": "team-lawyer",
       "due": "2026-11-05",
       "state": "open"
     },
     {
       "id": "ns_3",
       "text": "Собрать пакет документов на лицензию помещения",
-      "owner": "biz-ops",
+      "owner": "team-ops",
       "due": null,
       "state": "open"
     }
@@ -139,7 +139,7 @@
   ],
   "artifacts": [
     {
-      "path": "D:/Проекты/Vault/Projects/Rooms/cafe/legal/mei-cnae-2026-10-28.md",
+      "path": "C:/Проекты/Vault/Projects/Rooms/cafe/legal/mei-cnae-2026-10-28.md",
       "title": "Справка по ОКВЭД и СЭС",
       "kind": "md",
       "exists": false,
@@ -157,7 +157,7 @@
       "id": "t_7d21b8c4",
       "parent_ids": [],
       "title": "Юр-проверка: ИП и ОКВЭД 10.71",
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "role": "root",
       "status": "done",
       "started_at": 1793165930,
@@ -170,7 +170,7 @@
       "runs": [
         {
           "id": 90,
-          "profile": "biz-director",
+          "profile": "team-director",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793165930,
@@ -188,7 +188,7 @@
         "t_7d21b8c4"
       ],
       "title": "ОКВЭД и ИП: что разрешено",
-      "assignee": "biz-lawyer",
+      "assignee": "team-lawyer",
       "role": "worker",
       "status": "done",
       "started_at": 1793165960,
@@ -199,7 +199,7 @@
       "runs": [
         {
           "id": 91,
-          "profile": "biz-lawyer",
+          "profile": "team-lawyer",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793165960,
@@ -217,7 +217,7 @@
         "t_7d21b8c4"
       ],
       "title": "СЭС: документы и сроки",
-      "assignee": "biz-ops",
+      "assignee": "team-ops",
       "role": "worker",
       "status": "done",
       "started_at": 1793165980,
@@ -228,7 +228,7 @@
       "runs": [
         {
           "id": 92,
-          "profile": "biz-ops",
+          "profile": "team-ops",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793165980,
@@ -247,7 +247,7 @@
         "t_7d21b8c4"
       ],
       "title": "Сверить нормы по региону",
-      "assignee": "biz-strategy",
+      "assignee": "team-strategy",
       "role": "worker",
       "status": "done",
       "started_at": 1793166000,
@@ -258,7 +258,7 @@
       "runs": [
         {
           "id": 93,
-          "profile": "biz-strategy",
+          "profile": "team-strategy",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793166000,
@@ -276,7 +276,7 @@
         "t_7d21b8c4"
       ],
       "title": "Критик: проверка юр-свода (раунд 1)",
-      "assignee": "biz-critic",
+      "assignee": "team-critic",
       "role": "critic",
       "status": "running",
       "started_at": 1793166310,
@@ -287,7 +287,7 @@
       "runs": [
         {
           "id": 94,
-          "profile": "biz-critic",
+          "profile": "team-critic",
           "status": "running",
           "outcome": null,
           "started_at": 1793166310,
@@ -320,35 +320,35 @@
       "at": 1793166150,
       "kind": "completed",
       "task_id": "t_7d21b8c5",
-      "actor": "biz-lawyer",
+      "actor": "team-lawyer",
       "text": "ОКВЭД проверен"
     },
     {
       "at": 1793166180,
       "kind": "completed",
       "task_id": "t_7d21b8c7",
-      "actor": "biz-strategy",
+      "actor": "team-strategy",
       "text": "Нормы городе сверены"
     },
     {
       "at": 1793166200,
       "kind": "completed",
       "task_id": "t_7d21b8c6",
-      "actor": "biz-ops",
+      "actor": "team-ops",
       "text": "Документы СЭС собраны"
     },
     {
       "at": 1793166300,
       "kind": "completed",
       "task_id": "t_7d21b8c4",
-      "actor": "biz-director",
+      "actor": "team-director",
       "text": "Свод готов (версия 1), отправлен критику"
     },
     {
       "at": 1793166310,
       "kind": "claimed",
       "task_id": "t_7d21b8c8",
-      "actor": "biz-critic",
+      "actor": "team-critic",
       "text": "Критик взял свод на проверку (раунд 1)"
     }
   ],
@@ -368,7 +368,7 @@
       "id": "c2",
       "at": 1793163060,
       "author_kind": "agent",
-      "author": "biz-director",
+      "author": "team-director",
       "author_label": "Глеб · руководитель комнаты",
       "text": "Принял; передал Антону — код ОКВЭД и ИП, Марине — заключение о размещении в СЭС. Свод отдам критику.",
       "task_id": "t_7d21b8c4",
@@ -378,7 +378,7 @@
       "id": "c3",
       "at": 1793163300,
       "author_kind": "agent",
-      "author": "biz-lawyer",
+      "author": "team-lawyer",
       "author_label": "Антон · исполнитель",
       "text": "ОКВЭД 10.71 верный: 56.10 — это общепит, для наборов моти не подходит. Заявление на ИП подано 27.10, ждём свидетельство.",
       "task_id": "t_7d21b8c4",
@@ -398,7 +398,7 @@
       "id": "c4",
       "at": 1793163600,
       "author_kind": "agent",
-      "author": "biz-critic",
+      "author": "team-critic",
       "author_label": "Ольга · критик",
       "text": "Смотрю свод: нужен срок подачи в Роспатент и ссылка на СанПиН — без них ответ неполный.",
       "task_id": "t_7d21b8c4",

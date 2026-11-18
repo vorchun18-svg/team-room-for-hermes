@@ -11,6 +11,7 @@ CREATE_NO_WINDOW`; забыть флаг в одном месте достато
     proc.popen(argv, ...)            # долгоживущий процесс: сервер, воркер диктовки
     proc.popen(argv, detached=True)  # фоновый, переживает родителя
     proc.popen(argv, gui=True)       # GUI-программа (проводник): окно видно, флага нет
+    proc.popen_line(cmdline, gui=True)  # готовая командная строка (свои кавычки)
 
 Правила:
   * `shell=True` запрещён — argv передаётся списком, пути не попадают в оболочку;
@@ -18,11 +19,12 @@ CREATE_NO_WINDOW`; забыть флаг в одном месте достато
   * исключения (`TimeoutExpired`, `FileNotFoundError`, `OSError`) не глотаются —
     вызывающая сторона по-прежнему превращает их в свои ошибки.
 
-Публично: no_window(), detached_flags(), run(), popen().
+Публично: no_window(), detached_flags(), run(), popen(), popen_line(), open_path().
 """
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 
@@ -117,9 +119,35 @@ def popen(argv, *, module=None, gui: bool = False, detached: bool = False,
     return mod.Popen([str(a) for a in argv], **options)
 
 
+def popen_line(command_line, *, module=None, gui: bool = True, creationflags=None, **kwargs):
+    """Запустить готовую командную строку, не собирая её из списка.
+
+    Нужно там, где кавычки должен расставить сам вызывающий: `explorer
+    /select,"<путь>"`. `popen` собирает строку через `list2cmdline`, и кавычки
+    встают вокруг ВСЕГО аргумента (`"/select,C:\\…\\файл.md"`) — проводник такую
+    форму не понимает. Здесь строка уходит системе как есть (lpCommandLine),
+    оболочка не участвует.
+
+    Только Windows; на остальных системах строка разбирается `shlex.split` и
+    передаётся в `popen`.
+    """
+    _reject_shell(kwargs)
+    if not IS_WINDOWS:
+        return popen(shlex.split(str(command_line)), module=module, gui=gui,
+                     creationflags=creationflags, **kwargs)
+    mod = subprocess if module is None else module
+    options = dict(kwargs)
+    _apply(options, _flags(creationflags, base=0 if gui else None))
+    options.setdefault("close_fds", True)
+    if gui:
+        options.setdefault("stdin", subprocess.DEVNULL)
+        options.setdefault("stdout", subprocess.DEVNULL)
+        options.setdefault("stderr", subprocess.DEVNULL)
+    return mod.Popen(str(command_line), **options)
+
+
 def open_path(target) -> bool:
     """Открыть папку или файл программой по умолчанию в сессии пользователя.
-
     Windows — `os.startfile` (ShellExecute), macOS — `open`, остальные POSIX —
     `xdg-open`. Возвращает False, если открыть не удалось (нет программы,
     запрещено окружением); исключения наружу не выходят — вызывающий решает,

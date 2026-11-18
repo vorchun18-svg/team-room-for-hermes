@@ -93,7 +93,7 @@ class RetryIdempotencyApiTests(_Base):
 
     def _blocked_card(self, rid: str, title='Упавшая задача') -> str:
         """Карточка-срез внутри запроса (сервер проверяет принадлежность дереву)."""
-        kids = self.sa.decompose(rid, [{'title': title, 'assignee': 'biz-cfo',
+        kids = self.sa.decompose(rid, [{'title': title, 'assignee': 'team-cfo',
                                         'status': 'blocked'}])
         return kids[0]
 
@@ -196,7 +196,7 @@ class ModelChangeOnRunningCardTests(_Base):
         super().tearDown()
 
     # --- стенд ---------------------------------------------------------
-    def _running_card(self, assignee='biz-cfo', started_at=None, model=OLD_MODEL[1],
+    def _running_card(self, assignee='team-cfo', started_at=None, model=OLD_MODEL[1],
                       provider=OLD_MODEL[0], title='Идёт работа') -> tuple[str, int]:
         """Карточка в работе на СТАРОЙ модели: как в жизни перед сменой модели."""
         card = self.sa.card(title=title, assignee=assignee, status='running',
@@ -243,7 +243,7 @@ class ModelChangeOnRunningCardTests(_Base):
         card, started = self._running_card()
         self.shim.calls.clear()
 
-        self.set_model('biz-cfo')                      # PUT модели, пока карточка идёт
+        self.set_model('team-cfo')                      # PUT модели, пока карточка идёт
 
         self.assertEqual(self._status(card), 'running', 'работа не прервана')
         self.assertEqual([c for c in self.shim.calls if 'reassign' in c], [],
@@ -254,7 +254,7 @@ class ModelChangeOnRunningCardTests(_Base):
 
     def test_verify_reports_pending_and_keeps_card_running(self):
         card, _started = self._running_card()
-        self.set_model('biz-cfo')
+        self.set_model('team-cfo')
         self.shim.calls.clear()
 
         res = models_mod.verify_started(self.cfg, ROOM)
@@ -268,13 +268,13 @@ class ModelChangeOnRunningCardTests(_Base):
     def test_new_attempt_after_change_is_checked_again(self):
         """Новая попытка уже обязана идти на выбранной модели — расхождение снова ловим."""
         card, started = self._running_card()
-        self.set_model('biz-cfo')                     # модель комнаты: llamacpp/qwen36
+        self.set_model('team-cfo')                     # модель комнаты: llamacpp/qwen36
         # новая попытка на СТАРОЙ модели (гонка допуска) — уже после смены
         con = self.sa.connect()
         try:
             con.execute("INSERT INTO task_runs (task_id, profile, status, started_at, metadata) "
                         "VALUES (?,?,?,?,?)",
-                        (card, 'biz-cfo', 'running', started + 30,
+                        (card, 'team-cfo', 'running', started + 30,
                          json.dumps({'worker_session_id': 'sess-late'})))
             run_id = con.execute('SELECT max(id) FROM task_runs WHERE task_id = ?',
                                  (card,)).fetchone()[0]
@@ -283,7 +283,7 @@ class ModelChangeOnRunningCardTests(_Base):
             con.commit()
         finally:
             con.close()
-        self._session('biz-cfo', 'sess-late', OLD_MODEL[1], OLD_MODEL[0])
+        self._session('team-cfo', 'sess-late', OLD_MODEL[1], OLD_MODEL[0])
         self.shim.calls.clear()
 
         res = models_mod.verify_started(self.cfg, ROOM)
@@ -296,11 +296,11 @@ class ModelChangeOnRunningCardTests(_Base):
     def test_explicit_restart_still_interrupts_and_clears_pending(self):
         """«Перезапустить на новой модели» — отдельное явное действие: работу прерывает."""
         card, _started = self._running_card()
-        self.set_model('biz-cfo')
+        self.set_model('team-cfo')
         self.assertIsNotNone(models_mod.pending_marked(self.cfg, ROOM, card))
         self.shim.calls.clear()
 
-        res = models_mod.restart_running(self.cfg, ROOM, 'biz-cfo')
+        res = models_mod.restart_running(self.cfg, ROOM, 'team-cfo')
 
         self.assertEqual(res['restarted'], 1, res)
         self.assertEqual(res['cards'], [card])
@@ -309,14 +309,14 @@ class ModelChangeOnRunningCardTests(_Base):
                           'после явного перезапуска ожидание снято')
 
     def test_pending_marks_helpers_roundtrip(self):
-        card = self.sa.card(title='Отметка', assignee='biz-cfo', status='running',
+        card = self.sa.card(title='Отметка', assignee='team-cfo', status='running',
                             tenant='room:cafe', created_by='default')
-        marked = models_mod.mark_pending(self.cfg, ROOM, 'biz-cfo',
+        marked = models_mod.mark_pending(self.cfg, ROOM, 'team-cfo',
                                          [{'id': card, 'started_at': 1234567890}], model='qwen36')
         self.assertEqual(marked, [card])
         note = models_mod.pending_marked(self.cfg, ROOM, card)
         self.assertEqual((note['profile'], note['started_at'], note['model']),
-                         ('biz-cfo', 1234567890, 'qwen36'))
+                         ('team-cfo', 1234567890, 'qwen36'))
         self.assertTrue(models_mod.clear_pending(self.cfg, ROOM, card))
         self.assertIsNone(models_mod.pending_marked(self.cfg, ROOM, card))
         self.assertFalse(models_mod.clear_pending(self.cfg, ROOM, card), 'повторно снимать нечего')

@@ -14,15 +14,37 @@ import re
 from pathlib import Path
 
 try:  # пакетный и «плоский» импорт (python -m unittest из корня проекта)
-    from .config import (external_allowed, mirror_root_of, path_allowed, project_root_of,
-                         room_roots)
+    from .config import (ALLOWED_EXT, external_allowed, is_denied_name, mirror_root_of,
+                         path_allowed, project_root_of, room_roots)
     from . import phase_book as _phases
 except ImportError:  # pragma: no cover
-    from config import (external_allowed, mirror_root_of, path_allowed, project_root_of,  # type: ignore
-                        room_roots)
+    from config import (ALLOWED_EXT, external_allowed, is_denied_name,  # type: ignore
+                        mirror_root_of, path_allowed, project_root_of, room_roots)
     import phase_book as _phases  # type: ignore
 
 PREVIEW_MAX = 200
+
+# --- артефакты запроса (W20-A1, B-43, контракт WAVE20 §1.4) --------------------
+#: Больше 200 файлов в блоке «Артефакты» не показываем (§1.4): список нужен,
+#: чтобы найти свой файл, а не читать весь диск.
+ARTIFACT_LIMIT = 200
+#: Потолок обхода папок материалов: сколько записей смотрим за одно открытие
+#: страницы (защита от папки-свалки на десятки тысяч файлов; на обычном проекте
+#: не срабатывает — см. docs/status/review-wave1.md).
+VISIT_LIMIT = 5000
+#: Глубина сканирования папки материалов запроса: сама папка и две подпапки.
+ARTIFACT_DEPTH = 2
+#: Группы блока в порядке показа (итоговые — первыми).
+ARTIFACT_GROUPS = ("final", "material", "service")
+#: Слова в имени файла, по которым он итоговый (B-43: «письмо», «краткая сводка»).
+#: «ответ» сюда НЕ входит: «05-Проект-ответа» — рабочий материал, а не итог.
+FINAL_WORDS = ("итог", "письмо", "кратко", "final", "summary", "letter")
+#: Служебные файлы приложения и агентов: `_state.json`, `_index.html` и подобные.
+SERVICE_EXT = (".json", ".html", ".htm", ".log")
+#: Подкаталог зеркала комнаты с заметками запросов — это не материалы запроса.
+MIRROR_NOTE_DIR = "Запросы"
+#: Чужой id запроса в имени файла (`t_1a2b3c4d`) — файл другой работы.
+_REQUEST_ID_RE = re.compile(r"t_[0-9a-f]{8}", re.I)
 # Этапы проекта — свойство КОМНАТЫ (W17-R §1, B-8): списка в коде больше нет.
 # Имена оставлены пустыми списками только для совместимости импортов: код,
 # который ещё спрашивает `PHASES`, получает «этапов нет» и не рисует чужих этапов.
@@ -78,7 +100,9 @@ def decisions(canon: dict, source: str, at) -> list:
         item = {"text": item} if isinstance(item, str) else item
         if not isinstance(item, dict) or not str(item.get("text") or "").strip():
             continue
-        status = item.get("status") if item.get("status") in ("proposed", "accepted", "rejected") else "proposed"
+        # W20-D1 §1.2 (B-37): статусов решения больше — снято/устарело/обсуждаем.
+        status = item.get("status") if item.get("status") in (
+            "proposed", "accepted", "rejected", "discuss", "dismissed", "superseded") else "proposed"
         out.append({"id": item.get("id") or f"d_{i}", "text": str(item["text"]).strip(),
                     "why": item.get("why"), "status": status, "at": item.get("at") or at,
                     "source_request": source})
@@ -174,42 +198,285 @@ def log_outside_artifacts(cfg, room, items) -> list:
         return []
 
 
-def artifacts(cfg, canon: dict, warnings: list, room=None) -> list:
-    """Artifact[] с проверкой существования и места сохранения (B-22, B-27).
+def _norm_path(path) -> str:
+    """Путь к файлу в одном виде: прямые слэши (сравнение и ключ дедупликации)."""
+    return str(path or "").replace("\\", "/")
 
-    `room` — словарь комнаты (обязателен для B-22): её папка проекта и зеркало
-    в Vault входят в разрешённые корни. Состояния (`state`):
 
-    * ``ok``      — файл есть и лежит в разрешённом месте;
-    * ``missing`` — файла нет на диске («Файл удалён или перемещён»);
-    * ``outside`` — файл есть, но сохранён вне папки проекта и зеркала комнаты:
-      показываем и предупреждаем, в журнал комнаты пишем одну запись на файл;
-    * ``denied``  — файл есть, но открыть нельзя (запрещённый тип или имя).
+def _file_stat(path: Path):
+    """`(mtime, size)` файла; `(None, None)`, если файла нет или нет прав."""
+    try:
+        stat = Path(path).stat()
+        return int(stat.st_mtime), int(stat.st_size)
+    except (OSError, ValueError):
+        return None, None
+
+
+def group_of(path, explicit=None) -> str:
+    """Группа артефакта: ``final`` | ``material`` | ``service`` (W20-A1, B-43).
+
+    Явная группа из метаданных карточки важнее имени файла. Иначе: служебные
+    файлы приложения/агентов (`_state.json`, `_index.html`) — ``service``;
+    письмо, итог и краткая сводка — ``final``; всё остальное — ``material``.
     """
-    out, seen, outside = [], set(), []
-    roots = room_roots(cfg, room) if isinstance(room, dict) else None
+    if explicit in ARTIFACT_GROUPS:
+        return str(explicit)
+    name = str(Path(str(path or "")).name)
+    low = name.lower()
+    if low.startswith("_") and Path(low).suffix in SERVICE_EXT:
+        return "service"
+    stem = Path(low).stem
+    if any(word in stem for word in FINAL_WORDS):
+        return "final"
+    return "material"
+
+
+def _is_service_name(name: str) -> bool:
+    """Служебный файл приложения/агента: `_state.json`, `_index.html` (группа service)."""
+    low = str(name or "").lower()
+    return low.startswith("_") and Path(low).suffix in SERVICE_EXT
+
+
+def _scan_folder(root: Path, limit: int, request_id: str = "") -> list:
+    """Файлы папки материалов запроса: глубина ≤ 2, только разрешённые типы имён.
+
+    Возвращает ``[{path, dir, folder, mtime, size, name}]``, где ``folder`` —
+    подпапка относительно ``root`` (пусто — файл лежит прямо в папке материалов).
+    Чужие файлы (другой id запроса в имени) и запрещённые имена не попадают.
+
+    Обход ограничен `VISIT_LIMIT` записями: папка проекта может оказаться огромной
+    (свалка на 20 000 файлов), а деталь запроса читается на каждом открытии
+    страницы — показ списка не должен ждать полного обхода.
+    """
+    out: list = []
+    root = Path(root)
+    visited = 0
+
+    def walk(folder: Path, depth: int, rel: str) -> None:
+        nonlocal visited
+        if len(out) >= limit or visited >= VISIT_LIMIT:
+            return
+        try:
+            entries = sorted(folder.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            return
+        for entry in entries:
+            visited += 1
+            if len(out) >= limit or visited > VISIT_LIMIT:
+                return
+            try:
+                if entry.is_dir():
+                    if depth < ARTIFACT_DEPTH and not entry.name.startswith("."):
+                        walk(entry, depth + 1, (rel + "/" + entry.name).strip("/"))
+                    continue
+                if not entry.is_file():
+                    continue
+            except OSError:
+                continue
+            if entry.suffix.lower() not in ALLOWED_EXT or is_denied_name(entry.name):
+                continue
+            if request_id:
+                foreign = [m for m in _REQUEST_ID_RE.findall(entry.name)
+                           if m.lower() != request_id.lower()]
+                if foreign:
+                    continue           # файл другой работы в общей папке
+            mtime, size = _file_stat(entry)
+            out.append({"path": _norm_path(entry), "dir": _norm_path(folder),
+                        "folder": rel, "mtime": mtime, "size": size, "name": entry.name})
+    walk(root, 0, "")
+    return out
+
+
+def _dirs_with_id(root: Path, request_id: str) -> list:
+    """Подпапки ``root`` (глубина ≤ 2), в названии которых есть id запроса.
+
+    Обход ограничен `VISIT_LIMIT` записями (та же причина, что у `_scan_folder`):
+    перечисление десятков тысяч подпапок на каждом открытии страницы недопустимо.
+    """
+    found: list = []
+    needle = str(request_id or "").strip().lower()
+    if not needle or root is None:
+        return found
+    visited = 0
+
+    def walk(folder: Path, depth: int) -> None:
+        nonlocal visited
+        if visited >= VISIT_LIMIT:
+            return
+        try:
+            entries = list(folder.iterdir())
+        except OSError:
+            return
+        for entry in entries:
+            visited += 1
+            if visited > VISIT_LIMIT:
+                return
+            try:
+                if not entry.is_dir():
+                    continue
+            except OSError:
+                continue
+            if needle in entry.name.lower():
+                found.append(entry)
+            if depth < ARTIFACT_DEPTH:
+                walk(entry, depth + 1)
+    walk(Path(root), 1)
+    return found
+
+
+def material_roots(cfg, room, request_id: str = "", known_paths=()) -> list:
+    """Где искать материалы запроса (§1.4): папка материалов + подпапки проекта.
+
+    Источники (только внутри разрешённых корней комнаты):
+
+    * подпапки папки проекта комнаты и зеркала, в названии которых есть id запроса;
+    * папка, в которой уже лежат файлы из метаданных карточек (это и есть «папка
+      материалов запроса» — так её видит команда);
+    * заметки запросов в зеркале (`Запросы/`) материалами не считаются.
+    """
+    if not isinstance(room, dict):
+        return []
+    out: list = []
+    seen: set = set()
+    root_paths = [p for p in (project_root_of(cfg, room), mirror_root_of(cfg, room)) if p is not None]
+
+    def add(folder) -> None:
+        try:
+            real = Path(folder).resolve()
+        except (OSError, ValueError, RuntimeError):
+            return
+        if real in seen or real in root_paths:
+            return
+        try:
+            if not real.is_dir():
+                return
+        except OSError:
+            return
+        if real.name == MIRROR_NOTE_DIR:
+            return
+        seen.add(real)
+        out.append(real)
+
+    for base in root_paths:
+        for folder in _dirs_with_id(base, request_id):
+            add(folder)
+    for raw in known_paths:
+        try:
+            candidate = Path(str(raw)).resolve(strict=False)
+        except (OSError, ValueError, RuntimeError):
+            continue
+        for base in root_paths:
+            if not _under(candidate, base):
+                continue
+            try:
+                rel = candidate.relative_to(base)
+            except ValueError:
+                continue
+            if len(rel.parts) >= 2:
+                add(base / rel.parts[0])
+    return out
+
+
+def _folder_of(path: str, roots) -> str:
+    """Относительная подпапка файла внутри ближайшей папки материалов (`''` — нет)."""
+    for root in roots:
+        if not _under(Path(path), Path(root)):
+            continue
+        try:
+            rel = Path(path).relative_to(root)
+        except ValueError:
+            continue
+        return "/".join(rel.parts[:-1])
+    return ""
+
+
+def _sorted_artifacts(items: list) -> list:
+    """Порядок §1.4: ``final`` сначала, дальше по времени изменения (новые выше)."""
+    return sorted(items, key=lambda a: (0 if a.get("group") == "final" else 1,
+                                        -(a.get("mtime") or 0),
+                                        str(a.get("title") or "").lower()))
+
+
+def _fold_folders(items: list) -> list:
+    """Свернуть подпапки в элементы `{kind:'folder', …}` (B-43, §1.4).
+
+    Папка стоит там, где стоял её самый свежий файл; внутри — все её файлы
+    в том же порядке. Группа папки — группа самого свежего файла.
+    """
+    groups: dict = {}
+    for item in items:
+        folder = str(item.get("folder") or "")
+        if folder:
+            groups.setdefault(folder, []).append(item)
+    if not groups:
+        return items
+    out, done = [], set()
+    for item in items:
+        folder = str(item.get("folder") or "")
+        if not folder:
+            out.append(item)
+            continue
+        if folder in done:
+            continue
+        done.add(folder)
+        members = groups[folder]
+        member_groups = {str(m.get("group") or "material") for m in members}
+        folder_group = member_groups.pop() if len(member_groups) == 1 else "material"
+        out.append({"kind": "folder", "title": folder.split("/")[-1], "folder": folder,
+                    "path": members[0].get("dir") or "", "exists": True, "size": None,
+                    "state": "ok", "outside_project": False, "reason": None,
+                    "mtime": max([int(m.get("mtime") or 0) for m in members] or [0]) or None,
+                    "newer_than_svod": any(bool(m.get("newer_than_svod")) for m in members),
+                    "group": folder_group,
+                    "count": len(members), "items": members})
+    return out
+
+
+def artifacts(cfg, canon: dict, warnings: list, room=None, request_id=None,
+              svod_at=None) -> list:
+    """Artifact[] запроса (W20-A1, B-43, §1.4).
+
+    Источники: метаданные карточек + папка материалов запроса (зеркало комнаты и
+    подпапки проекта с id запроса). Только внутри ``config.room_roots``, глубина
+    ≤ 2, ≤ 200 файлов. У файла — ``mtime``, ``size``, ``group``, ``folder`` и
+    ``newer_than_svod`` (изменён позже последней версии свода). Подпапки
+    возвращаются элементом ``{kind:'folder', title, count, items}``.
+
+    Состояния прежние (B-22/B-27): ``ok`` — файл есть и лежит в разрешённом месте;
+    ``missing`` — «Файл удалён или перемещён»; ``outside`` — файл есть, но вне
+    папки проекта (предупреждение + журнал комнаты); ``denied`` — открыть нельзя.
+    """
+    room = room if isinstance(room, dict) else None
+    rid = str(request_id or canon.get("id") or "").strip()
+    svod_ts = int(svod_at) if isinstance(svod_at, int) and svod_at else None
+    roots = room_roots(cfg, room) if room is not None else None
     local = [root for root in (project_root_of(cfg, room), mirror_root_of(cfg, room))
-             if root is not None] if isinstance(room, dict) else []
+             if root is not None] if room is not None else []
+
+    entries: dict = {}          # нормализованный путь → элемент
+    raw_items = []
     for item in as_list(canon.get("artifacts")):
         item = {"path": item} if isinstance(item, str) else item
-        if not isinstance(item, dict) or not item.get("path"):
+        if isinstance(item, dict) and item.get("path"):
+            raw_items.append(item)
+
+    scan_dirs = material_roots(cfg, room, rid, [str(i["path"]) for i in raw_items])
+    outside = []
+
+    # 1) метаданные карточек: прежние проверки существования и места сохранения
+    for item in raw_items:
+        path = _norm_path(item["path"])
+        if path in entries:
             continue
-        path = str(item["path"]).replace("\\", "/")
-        if path in seen:
-            continue
-        seen.add(path)
-        real = path_allowed(cfg, path, roots=roots)   # вне корней → None без ошибки
-        state, exists, size, reason = "ok", True, None, None
+        real = path_allowed(cfg, path, roots=roots)
+        state, exists, size, reason, resolved = "ok", True, None, None, real
         if real is not None:
-            try:
-                size = real.stat().st_size
-            except OSError:
-                size = None
+            mtime, size = _file_stat(real)
         else:
             on_disk = external_allowed(cfg, path) if _is_file(path) else None
+            resolved = on_disk
             if on_disk is not None:
                 if local and not any(_under(on_disk, root) for root in local):
-                    # B-27: файл существует, но лежит не там, где договорились
                     state, reason = "outside", "Файл сохранён вне папки проекта"
                     outside.append({"path": path, "title": item.get("title") or Path(path).name,
                                     "resolved": str(on_disk)})
@@ -217,21 +484,24 @@ def artifacts(cfg, canon: dict, warnings: list, room=None) -> list:
                     state = "denied"
                     reason = "Файл нельзя открыть: запрещённый тип или имя"
                     exists = False
-                try:
-                    size = on_disk.stat().st_size
-                except OSError:
-                    size = None
+                mtime, size = _file_stat(on_disk)
             elif _is_file(path):
                 state, exists = "denied", False
                 reason = "Файл нельзя открыть: запрещённый тип или имя"
+                mtime = None
             else:
                 state, exists = "missing", False
                 reason = "Файл удалён или перемещён"
-        entry = {"path": path, "title": item.get("title") or Path(path).name,
-                 "kind": item.get("kind") or kind_of(path), "exists": bool(exists),
-                 "size": size, "state": state, "outside_project": state == "outside",
-                 "reason": reason}
-        out.append(entry)
+                mtime = None
+        entries[path] = {
+            "path": path, "title": item.get("title") or Path(path).name,
+            "kind": item.get("kind") or kind_of(path), "exists": bool(exists),
+            "size": size, "state": state, "outside_project": state == "outside",
+            "reason": reason, "mtime": mtime,
+            "folder": _folder_of(path, scan_dirs),
+            "dir": resolved.parent.as_posix() if resolved is not None else "",
+            "group": group_of(path, item.get("group")), "from_card": True,
+        }
         if state == "missing":
             warnings.append({"code": "missing_artifact",
                              "message": f"Файл удалён или перемещён: {Path(path).name}",
@@ -247,7 +517,42 @@ def artifacts(cfg, canon: dict, warnings: list, room=None) -> list:
                                         "outside_project": True}})
     if outside:
         log_outside_artifacts(cfg, room, outside)
-    return out
+
+    # 2) папка материалов запроса: файлы, которых нет в метаданных карточек
+    budget = max(0, ARTIFACT_LIMIT - len(entries))
+    for folder in scan_dirs:
+        if budget <= 0:
+            break
+        for found in _scan_folder(folder, budget, rid):
+            path = found["path"]
+            if path in entries:
+                # файл уже известен из карточки — дополняем папку и время
+                entry = entries[path]
+                if entry.get("mtime") is None:
+                    entry["mtime"] = found["mtime"]
+                if not entry.get("folder"):
+                    entry["folder"] = found["folder"]
+                continue
+            real = path_allowed(cfg, path, roots=roots)
+            if real is None:
+                continue
+            entries[path] = {
+                "path": path, "title": Path(path).stem or Path(path).name,
+                "kind": kind_of(path), "exists": True, "size": found["size"],
+                "state": "ok", "outside_project": False, "reason": None,
+                "mtime": found["mtime"], "folder": found["folder"],
+                "dir": found["dir"], "group": group_of(path), "from_card": False,
+            }
+            budget -= 1
+            if budget <= 0:
+                break
+
+    items = list(entries.values())
+    for item in items:
+        item["newer_than_svod"] = bool(svod_ts and item.get("mtime") and
+                                       int(item["mtime"]) > svod_ts)
+    ordered = _fold_folders(_sorted_artifacts(items))
+    return ordered[:ARTIFACT_LIMIT] if len(ordered) > ARTIFACT_LIMIT else ordered
 
 
 def report(cfg, canon: dict) -> dict:
@@ -293,4 +598,5 @@ def critic_brief(critic) -> dict:
 __all__ = ["as_list", "stage", "steps", "questions", "decisions", "future", "all_questions",
            "stage_filled", "merge_canon", "kind_of", "artifacts", "report", "progress",
            "preview", "critic_brief", "PHASES", "PHASE_IDS", "CRITIC_STATES", "PREVIEW_MAX",
-           "log_outside_artifacts"]
+           "log_outside_artifacts", "group_of", "material_roots", "ARTIFACT_LIMIT",
+           "ARTIFACT_DEPTH", "ARTIFACT_GROUPS"]

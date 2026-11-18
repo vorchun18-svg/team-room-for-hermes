@@ -17,14 +17,21 @@
  *   иначе   → второй кнопки нет.
  *
  * W17-S §1: кнопки «Отправить на доработку» здесь БОЛЬШЕ НЕТ — доработка свода
- * запускается одним местом («Доработать свод» в блоке «Свод команды»). Если свод
+ * запускается одним местом («Доработать свод» в блоке «Свод»). Если свод
  * готов, под полем есть переключатель «и доработать свод по этому сообщению»:
  * сообщение уходит как уточнение и тем же текстом запускает доработку (revise).
  *
- * Перерисовка страницы (опрос 2/10 с) не сбрасывает набранное, фокус и
- * прокрутку ленты: черновик и позиция живут в записи, привязанной к ctx.
+ * W20-C1 (B-40): блок монтируется ОДИН раз на страницу, дальше страница зовёт
+ * `update(detail)` — пересобрать диалог заново нельзя: живая кнопка «Отправить»
+ * оставалась от новой сборки, а поле с набранным текстом — от старой, и кнопка
+ * читала значение своего (не вставленного в страницу) поля. Поэтому:
+ *   * страница вставляет блок один раз и обновляет только данные;
+ *   * `send()` берёт текст из ВИДИМОГО поля блока, а не из своего замыкания;
+ *   * поле помечено `data-keep`, весь блок — `data-keep-tree`: точечная правка
+ *     страницы (live-patch.js) его не заменяет и внутрь не заходит.
  *
- * Публично: mountThread(container, ctx, {roomId, detail, rid, onSent}).
+ * Публично: mountThread(container, ctx, {roomId, detail, rid, onSent}) →
+ *   {element, update(detail), focus(), destroy()}.
  */
 
 import { h, fmtDate, fmtDateTime, toDate } from '../util.js';
@@ -32,6 +39,7 @@ import { icon } from '../icons.js';
 import { ensureCss, avatar, pathChip, promptDialog } from '../ui.js';
 import { countNoun, errorText } from '../text-ru.js';
 import { profileName } from './request-util.js';
+import { createSection } from './section-collapse.js';
 
 const CSS_HREF = 'css/view-thread.css';
 export const EMPTY_TEXT = 'Здесь можно уточнить задачу, пока команда работает, или задать вопрос после ответа';
@@ -69,7 +77,7 @@ export function ruText(text) {
 }
 
 /**
- * Роль участника для подписи: «biz-ops» → «операции», «mikhail» → «Михаил».
+ * Роль участника для подписи: «team-ops» → «операции», «mikhail» → «Михаил».
  * @param {{author?: string, author_kind?: string}} item
  * @param {object} [room]
  * @returns {string}
@@ -233,7 +241,7 @@ function stateFor(ctx, rid) {
     st = {
       thread: [], text: '', attach: [], urgent: false, revise: false,
       focus: false, feedScroll: 0, atBottom: true,
-      sending: false, error: '', seq: 0,
+      sending: false, error: '', seq: 0, clientId: '',
     };
     byRid.set(rid, st);
   }
@@ -254,7 +262,9 @@ export function mountThread(container, ctx, opts = {}) {
   const detail = o.detail || null;
   const roomId = String(o.roomId || (detail && detail.room) || '');
   const rid = String(o.rid || (detail && (detail.root_id || detail.id)) || '');
-  const status = String((detail && detail.status) || '');
+  // Статус меняется по ходу работы (working → done): от него зависят переключатели
+  // под полем, поэтому это не константа монтажа, а состояние блока.
+  let status = String((detail && detail.status) || '');
   const st = stateFor(ctx, rid || 'thread');
 
   ensureCss(CSS_HREF);
@@ -292,6 +302,13 @@ export function mountThread(container, ctx, opts = {}) {
         h('span', { class: 'thr-msg__time tnum', title: fmtDateTime(item.at) }, clock(item.at))),
       h('div', { class: 'thr-msg__text' }, String(item.text || '')));
 
+    // W20 §1.1 (B-36): у каждого сообщения человека — что с ним стало в своде.
+    const delivery = deliveryNode(item);
+    if (delivery) body.appendChild(delivery);
+    // W20 §1.2 (B-38): у сообщения руководителя с вопросами — «ждёт ваших ответов».
+    const asks = asksNode(item);
+    if (asks) body.appendChild(h('div', { class: 'thr-msg__asks' }, asks));
+
     const cls = ['thr-msg'];
     if (mine) cls.push('thr-msg--mine');
     if (item.pending) cls.push('thr-msg--pending');
@@ -318,6 +335,57 @@ export function mountThread(container, ctx, opts = {}) {
     try { host.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* без плавности */ }
     host.classList.add('is-flash');
     setTimeout(() => { try { host.classList.remove('is-flash'); } catch { /* узел уже другой */ } }, 1400);
+  }
+
+  /** Прокрутить к блоку «Нужен ваш ответ» справа (плашка «ждёт ваших ответов»). */
+  function revealQuestions() {
+    let host = null;
+    try {
+      host = document.querySelector ? document.querySelector('[data-questions]') : null;
+      if (!host) host = document.getElementById('questions');
+    } catch { host = null; }
+    if (!host || typeof host.scrollIntoView !== 'function') return;
+    try { host.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* без плавности */ }
+    host.classList.add('is-flash');
+    setTimeout(() => { try { host.classList.remove('is-flash'); } catch { /* узел уже другой */ } }, 1400);
+  }
+
+  /**
+   * Подпись доставки сообщения (W20 §1.1, B-36): «Учтено в версии 4»,
+   * «Ждёт обновления свода — в 14:05», «Не учтено — автообновление выключено».
+   * Приходит с сервера полем `delivery`; своих догадок здесь нет.
+   * @param {object} item элемент ленты
+   * @returns {HTMLElement|null}
+   */
+  function deliveryNode(item) {
+    const d = item && item.delivery;
+    if (!d || typeof d !== 'object') return null;
+    const state = String(d.state || '');
+    const text = String(d.text || '').trim();
+    if (!text) return null;
+    const iconName = (state === 'applied' || state === 'applied_nochange') ? 'check'
+      : state === 'declined' ? 'warning' : state === 'working' ? 'sync' : 'clock';
+    return h('div', {
+      class: 'thr-msg__delivery thr-msg__delivery--' + (state || 'waiting'),
+      'data-delivery': state || 'waiting',
+    }, icon(iconName, { size: 11 }), h('span', null, text));
+  }
+
+  /**
+   * Плашка у сообщения руководителя с вопросами (W20 §1.2, B-38):
+   * «ждёт ваших ответов: 7 → справа»; клик прокручивает к «Нужен ваш ответ».
+   * @param {object} item элемент ленты с `asks`
+   * @returns {HTMLElement|null}
+   */
+  function asksNode(item) {
+    const asks = Array.isArray(item && item.asks) ? item.asks.filter(Boolean) : [];
+    if (!asks.length) return null;
+    return h('button', {
+      type: 'button', class: 'thr-ask', 'data-action': 'jump-asks', 'data-asks': String(asks.length),
+      title: 'Перейти к «Нужен ваш ответ» — там можно ответить на каждый вопрос',
+      onclick: () => revealQuestions(),
+    }, icon('comment-discussion', { size: 11 }),
+      h('span', null, `ждёт ваших ответов: ${asks.length} → справа`));
   }
 
   /**
@@ -374,6 +442,9 @@ export function mountThread(container, ctx, opts = {}) {
     placeholder: 'Напишите или надиктуйте сообщение…',
     'aria-label': 'Сообщение руководителю комнаты',
     spellcheck: 'false',
+    // W20-C1 (B-40): черновик переживает любую правку страницы — поле с этим
+    // ключом live-patch не заменяет, а значение восстанавливает.
+    'data-keep': 'thread-draft',
   });
   ta.value = st.text || '';
 
@@ -382,16 +453,40 @@ export function mountThread(container, ctx, opts = {}) {
     class: 'btn btn--primary thr__send', type: 'button', 'data-action': 'send',
   }, icon('send', { size: 13 }), sendLabel);
 
-  const second = secondAction(status);
-  const secondBtn = second
-    ? h('button', {
-      class: 'btn btn--secondary thr__second', type: 'button', 'data-action': second.key,
-    }, second.key === 'revise' ? icon('comment-draft', { size: 13 }) : icon('refresh', { size: 13 }), second.label)
-    : null;
+  // W20-C1 (B-40): кнопка «Отправить» и поле живут до конца страницы. Рядом —
+  // переключатели, которые зависят от статуса запроса: их пересобирает
+  // `paintOptions()` только при смене статуса, а не на каждом обновлении.
+  const optsHost = h('div', { class: 'thr__opts' });
+  try { optsHost.style.display = 'contents'; } catch { /* нет стилей — не критично */ }
+  let optsStatus = null;
+  let secondBtn = null;
+  let urgentBox = null;
+  let reviseBox = null;
+  let urgentInput = null;
+  let reviseInput = null;
 
   const errLine = h('div', { class: 'thr__err hidden', role: 'alert' });
   const filesHost = h('div', { class: 'thr__files hidden' });
-  const countNode = h('span', { class: 'chip chip--muted thr__count tnum hidden' });
+  /** Блок-обёртка со стрелкой (У-1): заголовок, счётчик, метка нового ответа. */
+  let sec = null;
+  /**
+   * Сколько сообщений команды пришло, пока диалог был свёрнут (У-1).
+   * Показывается меткой «есть новый ответ» в заголовке: новый ответ руководителя
+   * в свёрнутом блоке не теряется. Обнуляется при раскрытии.
+   */
+  let unread = 0;
+  /** Какие сообщения команды уже видели — чтобы считать только новые. */
+  let seenAgent = new Set();
+
+  function agentIds(list) {
+    const out = new Set();
+    for (const item of Array.isArray(list) ? list : []) {
+      if (!item || isSystem(item) || isMine(item)) continue;
+      out.add(String(item.id || ''));
+    }
+    out.delete('');
+    return out;
+  }
 
   function showError(text) {
     st.error = String(text || '');
@@ -418,23 +513,75 @@ export function mountThread(container, ctx, opts = {}) {
     }
   }
 
+  /**
+   * Заголовок блока (У-1): число сообщений и метка «есть новый ответ».
+   * Раньше это был отдельный чип под заголовком — теперь краткая суть живёт
+   * в общем компоненте (`section-collapse.js`), в том числе в свёрнутом виде.
+   */
   function paintCount() {
+    if (!sec) return;
     const n = (st.thread || []).filter((m) => !isSystem(m)).length;
-    countNode.textContent = n ? countNoun(n, ['сообщение', 'сообщения', 'сообщений']) : '';
-    countNode.classList.toggle('hidden', !n);
+    const chips = [];
+    if (n) chips.push({ text: countNoun(n, ['сообщение', 'сообщения', 'сообщений']), tone: 'muted' });
+    if (unread > 0) {
+      chips.push({
+        text: unread === 1 ? 'есть новый ответ' : 'новых ответов: ' + unread,
+        tone: 'info',
+        dot: true,
+      });
+    }
+    sec.setSummary(chips);
   }
 
-  function syncButtons() {
-    sendBtn.disabled = Boolean(st.sending);
-    sendLabel.textContent = st.sending ? 'Отправляю…' : SEND_LABEL;
-    sendBtn.setAttribute('aria-busy', st.sending ? 'true' : 'false');
-    if (secondBtn) secondBtn.disabled = Boolean(st.sending);
+  /** Метка «есть новый ответ» снимается, когда человек раскрыл блок. */
+  function markRead() {
+    if (!unread) return;
+    unread = 0;
+    paintCount();
   }
 
   /**
-   * Перерисовать кнопки у ЖИВОГО блока: страница по опросу перерисовывается
-   * целиком и монтирует диалог заново, поэтому обновлять надо последнюю копию
-   * (её syncButtons лежит в st.sync), а не свою — та может быть уже отсоединена.
+   * Поле, в котором человек на самом деле печатает (W20-C1, B-40).
+   *
+   * Обычно это наше `ta`. Если же этот блок по какой-то причине оказался не в
+   * странице (а на экране — другой), читаем видимое поле страницы: кнопка не
+   * должна смотреть в пустое невидимое поле и отвечать «Напишите сообщение».
+   */
+  function visibleField() {
+    try {
+      if (section && section.isConnected === true) return ta;
+    } catch { /* нет DOM */ }
+    const d = globalThis.document;
+    if (d && typeof d.querySelector === 'function') {
+      try {
+        const found = d.querySelector('.thr__input') || d.querySelector('textarea.thr__input');
+        if (found && typeof found.value === 'string') return found;
+      } catch { /* страница без селекторов */ }
+    }
+    return ta;
+  }
+
+  /** Текст в поле на этот момент (без пробелов по краям). */
+  function draftText() {
+    const field = visibleField();
+    const raw = field && field.value !== undefined && field.value !== null ? field.value : st.text;
+    return String(raw === undefined || raw === null ? '' : raw).trim();
+  }
+
+  function syncButtons() {
+    // W20-C1: пустое поле — кнопка неактивна (нажимать нечего), идёт отправка —
+    // «Отправляется…» и тоже неактивна. Так двойное нажатие не даёт двух сообщений.
+    const empty = draftText() === '';
+    sendBtn.disabled = Boolean(st.sending) || empty;
+    sendLabel.textContent = st.sending ? 'Отправляется…' : SEND_LABEL;
+    sendBtn.setAttribute('aria-busy', st.sending ? 'true' : 'false');
+    if (secondBtn) secondBtn.disabled = Boolean(st.sending) || empty;
+  }
+
+  /**
+   * Перерисовать кнопки у ЖИВОГО блока. С W20-C1 диалог монтируется один раз,
+   * поэтому «живой» — это он сам; прежний поиск последней копии в `st.sync`
+   * оставлен для совместимости (страница могла ещё держать свою ссылку).
    */
   function syncLive() {
     const live = st.sync;
@@ -460,7 +607,7 @@ export function mountThread(container, ctx, opts = {}) {
       path = await promptDialog({
         title: 'Прикрепить файл',
         label: 'Путь к файлу',
-        placeholder: 'D:/Проекты/Комната/отчёт.md',
+        placeholder: 'C:/Проекты/Комната/отчёт.md',
         submitLabel: 'Прикрепить',
         hint: 'Абсолютный путь на этом компьютере. Файл не копируется — руководитель откроет его по пути.',
       });
@@ -482,27 +629,54 @@ export function mountThread(container, ctx, opts = {}) {
     onclick: () => { attachFile(); },
   }, icon('attach', { size: 14 }));
 
-  const urgentInput = h('input', { type: 'checkbox', 'data-urgent': '' });
-  urgentInput.checked = Boolean(st.urgent);
-  urgentInput.addEventListener('change', () => { st.urgent = Boolean(urgentInput.checked); });
-  const urgentBox = FINAL.has(status)
-    ? null
-    : h('label', {
-      class: 'checkbox thr__urgent',
-      title: 'Руководитель комнаты пересмотрит оставшиеся шаги; начатую работу никто не останавливает',
-    }, urgentInput, h('span', null, URGENT_LABEL));
+  /**
+   * Переключатели и вторая кнопка по статусу запроса. Собираются заново ТОЛЬКО
+   * при смене статуса (W20-C1): кнопка «Отправить» и поле при этом не трогаются.
+   */
+  function paintOptions() {
+    if (optsStatus === status) return;
+    optsStatus = status;
+    secondBtn = null;
+    urgentBox = null;
+    reviseBox = null;
+    urgentInput = null;
+    reviseInput = null;
+    setChildren(optsHost);
 
-  /* W17-S §1: вместо второй кнопки «Отправить на доработку» — переключатель.
-     Сообщение уходит как обычное уточнение и этим же текстом запускает доработку. */
-  const reviseInput = h('input', { type: 'checkbox', 'data-revise-with-message': '' });
-  reviseInput.checked = Boolean(st.revise);
-  reviseInput.addEventListener('change', () => { st.revise = Boolean(reviseInput.checked); });
-  const reviseBox = canReviseWithMessage(status)
-    ? h('label', {
-      class: 'checkbox thr__revise',
-      title: 'Сообщение уйдёт руководителю комнаты как уточнение и сразу запустит доработку свода по нему',
-    }, reviseInput, h('span', null, 'и доработать свод по этому сообщению'))
-    : null;
+    urgentInput = h('input', { type: 'checkbox', 'data-urgent': '' });
+    urgentInput.checked = Boolean(st.urgent);
+    urgentInput.addEventListener('change', () => { st.urgent = Boolean(urgentInput.checked); });
+    urgentBox = FINAL.has(status)
+      ? null
+      : h('label', {
+        class: 'checkbox thr__urgent',
+        title: 'Руководитель комнаты пересмотрит оставшиеся шаги; начатую работу никто не останавливает',
+      }, urgentInput, h('span', null, URGENT_LABEL));
+
+    /* W17-S §1: вместо второй кнопки «Отправить на доработку» — переключатель.
+       Сообщение уходит как обычное уточнение и этим же текстом запускает доработку. */
+    reviseInput = h('input', { type: 'checkbox', 'data-revise-with-message': '' });
+    reviseInput.checked = Boolean(st.revise);
+    reviseInput.addEventListener('change', () => { st.revise = Boolean(reviseInput.checked); });
+    reviseBox = canReviseWithMessage(status)
+      ? h('label', {
+        class: 'checkbox thr__revise',
+        title: 'Сообщение уйдёт руководителю комнаты как уточнение и сразу запустит доработку свода по нему',
+      }, reviseInput, h('span', null, 'и доработать свод по этому сообщению'))
+      : null;
+
+    const second = secondAction(status);
+    secondBtn = second
+      ? h('button', {
+        class: 'btn btn--secondary thr__second', type: 'button', 'data-action': second.key,
+      }, second.key === 'revise' ? icon('comment-draft', { size: 13 }) : icon('refresh', { size: 13 }), second.label)
+      : null;
+    if (secondBtn) secondBtn.addEventListener('click', () => { send(second.key); });
+
+    for (const node of [reviseBox, urgentBox, secondBtn]) if (node) optsHost.appendChild(node);
+    if (reviseBox) hintRevise.classList.remove('hidden');
+    else hintRevise.classList.add('hidden');
+  }
 
   /* ── отправка ─────────────────────────────────────────── */
 
@@ -528,13 +702,25 @@ export function mountThread(container, ctx, opts = {}) {
     });
   }
 
+  /** Ключ одного нажатия (W20-C1, B-39): повтор доставки не создаёт дубля. */
+  function newClientId() {
+    const rnd = Math.random().toString(36).slice(2, 8);
+    return 'msg-' + Date.now().toString(36) + '-' + (rnd || 'x0x0x0');
+  }
+
   async function send(kind) {
     if (st.sending) return;
-    const text = String(ta.value === undefined || ta.value === null ? '' : ta.value).trim();
+    // У-1: отправка разворачивает свёрнутый диалог — человек должен увидеть,
+    // что ушло и что ответил руководитель.
+    if (sec && !sec.isOpen()) sec.expand();
+    // W20-C1 (B-40): текст — из ВИДИМОГО поля блока, а не из замыкания монтажа.
+    const field = visibleField();
+    const text = String(field && field.value !== undefined && field.value !== null
+      ? field.value : '').trim();
     if (!text) {
       showError('');
       toast('Напишите сообщение — оно уйдёт руководителю комнаты', 'info');
-      try { ta.focus(); } catch { /* нет DOM */ }
+      try { field.focus(); } catch { /* нет DOM */ }
       return;
     }
     if (!rid) {
@@ -544,12 +730,13 @@ export function mountThread(container, ctx, opts = {}) {
 
     if (kind === 'revise') {
       // Оставлено для совместимости вызовов, но кнопки в интерфейсе нет (W17-S §1):
-      // доработка запускается только из блока «Свод команды».
+      // доработка запускается только из блока «Свод».
       st.sending = true;
       syncButtons();
       try {
         await api.post(`/api/requests/${enc(rid)}/actions`, { action: 'revise', text });
         st.text = '';
+        field.value = '';
         ta.value = '';
         showError('');
         toast('Свод отправлен на доработку руководителю комнаты', 'ok');
@@ -566,7 +753,7 @@ export function mountThread(container, ctx, opts = {}) {
     st.seq += 1;
     const localId = 'local:' + st.seq;
     const reviseToo = Boolean(st.revise) && canReviseWithMessage(status);
-    if (reviseToo) { st.revise = false; reviseInput.checked = false; }
+    if (reviseToo) { st.revise = false; if (reviseInput) reviseInput.checked = false; }
     const local = {
       id: localId, at: Math.floor(Date.now() / 1000), author: 'mikhail', author_kind: 'mikhail',
       author_label: 'Михаил', text, task_id: null, kind: 'message', pending: true,
@@ -575,7 +762,8 @@ export function mountThread(container, ctx, opts = {}) {
     st.thread = mergeThreads(st.thread, [local]);
     st.sending = true;
     st.text = '';
-    ta.value = '';
+    field.value = '';
+    if (field !== ta) ta.value = '';
     st.atBottom = true;
     showError('');
     paintFeed();
@@ -583,16 +771,23 @@ export function mountThread(container, ctx, opts = {}) {
     syncButtons();
     try { feed.scrollTop = feed.scrollHeight || 0; } catch { /* нет прокрутки */ }
 
+    // Ключ нажатия переживает неудачную попытку: если запрос всё-таки дошёл,
+    // повтор с тем же ключом получит прежний ответ, а не создаст второе сообщение.
+    if (!st.clientId) st.clientId = newClientId();
     try {
-      const body = { text, attach: (st.attach || []).slice() };
+      const body = { text, attach: (st.attach || []).slice(), client_id: st.clientId };
       if (st.urgent && !FINAL.has(status)) body.urgent = true;
       const res = await api.post(`/api/requests/${enc(rid)}/messages`, body);
+      st.clientId = '';
       applyResponse(res, localId);
       st.attach = [];
       st.urgent = false;
-      urgentInput.checked = false;
+      if (urgentInput) urgentInput.checked = false;
       paintFiles();
-      if (reviseToo) {
+      if (res && res.duplicate) {
+        // Сервер уже принял это сообщение чуть раньше — второй раз не нужно.
+        toast('Это сообщение уже отправлено — второго не будет', 'info');
+      } else if (reviseToo) {
         // W17-S §1: то же сообщение запускает доработку свода; дайджест ответов
         // и уточнений руководитель получит автоматически (build_revision_body).
         try {
@@ -608,20 +803,20 @@ export function mountThread(container, ctx, opts = {}) {
       }
       paintFeed();
       paintCount();
-      // Снимаем «Отправляю…» ДО onSent: тот перерисовывает страницу целиком и
-      // монтирует диалог заново, а новая кнопка читает st.sending. Иначе новый
-      // блок рождается с «Отправляю…» и живёт так до следующей перерисовки.
+      // Снимаем «Отправляется…» ДО onSent: страница может обновить данные и
+      // пересобрать кнопки — блок обязан быть уже в спокойном состоянии.
       st.sending = false;
       syncLive();
       if (typeof o.onSent === 'function') await o.onSent();
     } catch (err) {
       st.thread = (st.thread || []).filter((m) => m.id !== localId);
       st.text = text;
-      ta.value = text;
+      field.value = text;
+      if (field !== ta) ta.value = text;
       showError(errorText(err).message + ' Текст остался в поле — попробуйте ещё раз, когда связь вернётся.');
       paintFeed();
       paintCount();
-      try { ta.focus(); } catch { /* нет DOM */ }
+      try { field.focus(); } catch { /* нет DOM */ }
     } finally {
       st.sending = false;
       syncLive();
@@ -630,15 +825,18 @@ export function mountThread(container, ctx, opts = {}) {
   }
 
   sendBtn.addEventListener('click', () => { send('primary'); });
-  if (secondBtn) secondBtn.addEventListener('click', () => { send(second.key); });
 
   ta.addEventListener('input', () => {
     st.text = ta.value;
     st.focus = true;
     if (st.error) showError('');
     autosize();
+    syncButtons();          // пустое поле — «Отправить» неактивна
+    // У-1: диктовка пишет в поле тем же `input`-событием — набранное не должно
+    // оказаться в свёрнутом блоке (человек не увидел бы, что получилось).
+    if (sec && !sec.isOpen()) sec.expand();
   });
-  ta.addEventListener('focus', () => { st.focus = true; });
+  ta.addEventListener('focus', () => { st.focus = true; if (sec && !sec.isOpen()) sec.expand(); });
   ta.addEventListener('blur', () => { st.focus = false; });
   ta.addEventListener('keydown', (ev) => {
     if (!ev || !(ev.ctrlKey || ev.metaKey)) return;
@@ -656,27 +854,57 @@ export function mountThread(container, ctx, opts = {}) {
 
   /* ── сборка ────────────────────────────────────────────── */
 
-  const section = h('section', { class: 'card thr', 'data-thread': '', 'aria-labelledby': 'thr-title' },
-    h('div', { class: 'thr__head' },
-      h('h2', { class: 'thr__title', id: 'thr-title' }, 'Диалог по запросу'),
-      countNode),
-    feed,
-    h('div', { class: 'thr__form' },
-      h('div', { class: 'thr__field' }, ta),
-      filesHost,
-      h('div', { class: 'thr__bar' },
-        clipBtn,
-        h('div', { class: 'spacer' }),
-        reviseBox,
-        urgentBox,
-        secondBtn,
-        sendBtn),
-      reviseBox ? h('div', { class: 'thr__hint thr__hint--revise' },
-        'Без переключателя сообщение только уточняет задачу; с ним — ещё и запускает доработку свода.') : null,
-      h('div', { class: 'thr__hint' }, SEND_HINT),
-      errLine));
+  // W20-C1: `data-keep-tree` — метка «этот блок страница не пересобирает».
+  // live-patch.js его не заменяет и внутрь не заходит; содержимое обновляет
+  // `update(detail)`. Так живая кнопка и живое поле всегда из одной сборки.
+  const hintRevise = h('div', { class: 'thr__hint thr__hint--revise hidden' },
+    'Без переключателя сообщение только уточняет задачу; с ним — ещё и запускает доработку свода.');
 
-  paintFeed();
+  const form = h('div', { class: 'thr__form' },
+    h('div', { class: 'thr__field' }, ta),
+    filesHost,
+    h('div', { class: 'thr__bar' },
+      clipBtn,
+      h('div', { class: 'spacer' }),
+      optsHost,
+      sendBtn),
+    hintRevise,
+    h('div', { class: 'thr__hint' }, SEND_HINT),
+    errLine);
+
+  // У-1 (волна 21): «Диалог по запросу» по умолчанию СВЁРНУТ — один общий
+  // компонент заголовка со стрелкой (section-collapse.js). Лента и поле ввода
+  // строятся при первом раскрытии, но живут одним узлом: `data-keep-tree`
+  // страница не пересобирает, а `update(detail)` обновляет данные.
+  sec = createSection({
+    key: 'thread',
+    requestId: rid || String((detail && detail.id) || ''),
+    title: 'Диалог по запросу',
+    titleClass: 'thr__title',
+    defaultOpen: false,
+    className: 'thr',
+    attrs: { 'data-thread': '', 'data-keep-tree': '', 'aria-labelledby': 'thr-title' },
+    content: () => h('div', { class: 'thr__inner' }, feed, form),
+    onToggle: (open) => {
+      if (!open) return;
+      markRead();
+      // Пока блок был свёрнут, лента не собиралась — собираем сейчас.
+      if (st.dirtyFeed) { paintFeed(); st.dirtyFeed = false; }
+      // Пока блок был свёрнут, у ленты не было высоты: после раскрытия
+      // ставим прокрутку на место и пересчитываем высоту поля.
+      autosize();
+      stick();
+    },
+  });
+  const section = sec.element;
+  // Сколько сообщений команды уже на экране: «новое» считается от этого набора.
+  seenAgent = agentIds(st.thread);
+
+  paintOptions();
+  // У-1: свёрнутый диалог не строит ленту — 200 сообщений собираются в момент
+  // раскрытия (и один раз: дальше обновляются на месте).
+  if (sec.isOpen()) paintFeed();
+  else st.dirtyFeed = true;
   paintFiles();
   paintCount();
   syncButtons();
@@ -711,9 +939,68 @@ export function mountThread(container, ctx, opts = {}) {
     });
   }
 
+  /** Подпись ленты: видно ли человеку, что она изменилась (id, время, длинный текст). */
+  function feedSignature(list) {
+    return (Array.isArray(list) ? list : [])
+      .map((m) => [m.id, m.at, String(m.text || '').length, m.pending ? 'p' : '',
+        m.answer_state || m.delivery && m.delivery.state || '',
+        Array.isArray(m.asks) ? m.asks.length : ''].join('~'))
+      .join('|');
+  }
+
+  /**
+   * Новые данные запроса (W20-C1, B-40) — страница зовёт это вместо повторного
+   * `mountThread`. Лента и состояние кнопок обновляются на месте: поле, кнопка
+   * «Отправить» и фокус остаются теми же узлами (их не заменяют).
+   * @param {object} next  ответ `GET /api/requests/{id}`
+   */
+  function update(next) {
+    if (!next || typeof next !== 'object') return;
+    const nextStatus = String(next.status || '');
+    if (nextStatus !== status) {
+      status = nextStatus;
+      paintOptions();          // переключатели зависят от статуса — и только они
+      syncButtons();
+    }
+    if (Array.isArray(next.thread)) {
+      const before = feedSignature(st.thread);
+      const prevAgents = seenAgent;
+      st.thread = mergeThreads(st.thread, next.thread);
+      const nowAgents = agentIds(st.thread);
+      seenAgent = nowAgents;
+      if (feedSignature(st.thread) !== before) {
+        // У-1: свёрнутый диалог не молчит о новом ответе руководителя —
+        // считаем пришедшее и ставим метку в заголовке. Раскрытие её снимает.
+        let added = 0;
+        for (const id of nowAgents) if (!prevAgents.has(id)) added += 1;
+        if (added > 0 && sec && !sec.isOpen()) unread += added;
+        // Ленту свёрнутого блока не пересобираем: она соберётся при раскрытии.
+        if (!sec || sec.isOpen()) paintFeed();
+        else st.dirtyFeed = true;
+        paintCount();
+        if (sec && sec.isOpen()) stick();
+      }
+    }
+    syncButtons();
+  }
+
   return {
     element: section,
+    update,
+    /**
+     * У-1: раскрыть диалог (страница зовёт из «Добавить сообщение руководителю»,
+     * тесты — чтобы добраться до ленты). Выбор запоминается как выбор человека.
+     */
+    expand() {
+      if (sec) sec.expand();
+      return section;
+    },
+    /** Свёрнут ли блок сейчас (проверки). */
+    isOpen() { return sec ? sec.isOpen() : true; },
     focus() {
+      // У-1: «Добавить сообщение руководителю» из меню должно показать поле,
+      // даже если диалог был свёрнут.
+      if (sec && !sec.isOpen()) sec.expand();
       st.focus = true;
       try {
         if (typeof section.scrollIntoView === 'function') section.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -722,6 +1009,7 @@ export function mountThread(container, ctx, opts = {}) {
     },
     destroy() {
       if (st.sync === syncButtons) st.sync = null;
+      if (sec) sec.destroy();
       if (section && section.parentNode) section.parentNode.removeChild(section);
     },
   };

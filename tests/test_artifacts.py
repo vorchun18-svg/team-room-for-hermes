@@ -32,8 +32,8 @@ from server import agent_notes, config, contract, context_pack, files, read_view
 from server.http_util import ApiError              # noqa: E402
 
 #: Тот же набор, что в документации: путь с «—» и пробелами (боевой случай B-22).
-FOLDER_NAME = "2026-11-06 Письмо Лебедев — ответ"
-FILE_NAME = "Письмо Лебедев — ответ.docx"
+FOLDER_NAME = "2026-11-06 Письмо поставщику — ответ"
+FILE_NAME = "Письмо поставщику — ответ.docx"
 
 
 class ArtifactCase(unittest.TestCase):
@@ -269,14 +269,17 @@ class FilesModuleTest(ArtifactCase):
         roots = config.room_roots(self.cfg, room)
         calls: list = []
 
-        def fake_popen(args, **kwargs):       # noqa: ANN001 - подмена запуска процесса
-            calls.append((args, kwargs))
+        def fake_popen_line(line, **kwargs):  # noqa: ANN001 - подмена запуска процесса
+            calls.append((line, kwargs))
 
         with mock.patch.object(files.sys, "platform", "win32"), \
-                mock.patch.object(files.proc, "popen", fake_popen):
+                mock.patch.object(files.proc, "popen_line", fake_popen_line):
             self.assertTrue(files.reveal(self.cfg, str(path), roots=roots))
         self.assertTrue(calls, "проводник должен получить путь файла")
-        self.assertIn("/select,", calls[0][0][1])
+        # W26-D3: кавычки вокруг ПУТИ — иначе путь с пробелом открывает «Документы».
+        self.assertTrue(calls[0][0].startswith('explorer /select,"'), calls[0][0])
+        self.assertIn(str(path.resolve()), calls[0][0])
+        self.assertTrue(calls[0][0].endswith('"'))
 
 
 class ArtifactApiTest(ArtifactCase):
@@ -307,16 +310,55 @@ class ArtifactApiTest(ArtifactCase):
         path = self.make_file(self.project / FOLDER_NAME)
         calls: list = []
 
-        def fake_popen(args, **kwargs):       # noqa: ANN001 - подмена запуска процесса
-            calls.append((args, kwargs))
+        def fake_popen_line(line, **kwargs):  # noqa: ANN001 - подмена запуска процесса
+            calls.append((line, kwargs))
 
         with mock.patch.object(files.sys, "platform", "win32"), \
-                mock.patch.object(files.proc, "popen", fake_popen):
+                mock.patch.object(files.proc, "popen_line", fake_popen_line):
             status, payload, _headers = self.app.h_artifact_open(
                 {}, {"path": str(path), "room": "fn"})
         self.assertEqual(status, 200)
         self.assertTrue(payload["revealed"])
         self.assertTrue(calls)
+
+    def test_files_launch_open_and_reveal(self):
+        """W26-D3: `/api/files/launch` — «Открыть» (программа по умолчанию) и «Показать в папке»."""
+        path = self.make_file(self.project / FOLDER_NAME)
+        opened: list = []
+
+        def fake_open_path(target):
+            opened.append(target)
+            return True
+
+        with mock.patch.object(files.proc, "open_path", fake_open_path):
+            status, payload, _headers = self.app.h_files_launch(
+                {}, {"path": str(path), "room": "fn"})
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["opened"])
+        self.assertEqual(payload["mode"], "open")
+        self.assertEqual(opened, [path.resolve()])
+
+        revealed: list = []
+
+        def fake_popen_line(line, **kwargs):  # noqa: ANN001
+            revealed.append(line)
+
+        with mock.patch.object(files.sys, "platform", "win32"), \
+                mock.patch.object(files.proc, "popen_line", fake_popen_line):
+            status, payload, _headers = self.app.h_files_launch(
+                {}, {"path": str(path), "room": "fn", "mode": "reveal"})
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["revealed"])
+        self.assertTrue(revealed[0].startswith('explorer /select,"'))
+
+    def test_files_launch_validation(self):
+        with self.assertRaises(ApiError) as no_path:
+            self.app.h_files_launch({}, {"room": "fn"})
+        self.assertEqual(no_path.exception.status, 400)
+        with self.assertRaises(ApiError) as bad_mode:
+            self.app.h_files_launch({}, {"path": str(self.project / "x.md"), "room": "fn",
+                                         "mode": "удалить"})
+        self.assertEqual(bad_mode.exception.status, 400)
 
     def test_artifact_open_validation(self):
         with self.assertRaises(ApiError) as no_path:
@@ -343,7 +385,7 @@ class FilesRuleTextTest(ArtifactCase):
 
     def test_context_block_rule_mentions_mirror_and_warning(self):
         room = self.make_room()
-        rule = context_pack.files_rule(self.cfg, room, "Письмо Лебедев")
+        rule = context_pack.files_rule(self.cfg, room, "Письмо поставщику")
         self.assertIn("Правило мест сохранения файлов", rule)
         self.assertIn(str(self.project), rule)
         self.assertIn(str(self.cfg.vault_dir), rule)

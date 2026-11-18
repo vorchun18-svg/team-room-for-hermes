@@ -9,17 +9,24 @@
   min-width: 0;
 }
 
-/* Правая колонка вопросов: шире прежних 272 px и растёт вместе с окном
-   (W15-C, п. 3; жалоба — «блок вопросов справа слишком узкий»). Ширина
-   ограничена разумными min/max: на 1280 px окна это ~380 px, на широком
-   экране — 460 px, ниже 1100 px — 300…340 px, а с 900 px и уже вопросы
-   уходят под основной блок (без горизонтального скролла). */
+/* Правая колонка вопросов: ширина из ДОСТУПНОЙ ширины вида (W21-R1, уточнено W25-L1).
+   Правило одной строкой (R5 §7.5): колонка не отнимает ширину у свода, если центру
+   остаётся меньше 640 px. Отсюда:
+   * одна колонка по умолчанию (вид < 1100 px), «От вас нужно» — нижний лист 56 px;
+   * две колонки только при виде ≥ 1100 px: справа clamp(280px, 26cqi, 320px),
+     основной блок получает остаток и никогда не бывает уже 640 px
+     (при виде 1100: 1100 − 48 поля − 24 зазор − 286 справа = 742 px центра).
+   Порог тот же, что в web/js/layout-mode.js (TWO_COL_MIN), shell-rail.js
+   (TWO_COL_MIN) и tokens.css (--view-two-col-min): меняете — меняйте везде. */
 .req__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 460px);
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-6);
   align-items: start;
   min-width: 0;
+}
+@container view (min-width: 1100px) {
+  .req__grid { grid-template-columns: minmax(640px, 1fr) clamp(280px, 26cqi, 320px); }
 }
 /* Страница запроса — единственная, где нужна широкая колонка: на большом окне
    отдаём ей больше общего контейнера, иначе колонка упирается в 1180 px. */
@@ -34,14 +41,26 @@
   position: sticky;
   top: var(--space-2);
   align-self: start;
-  max-height: calc(100dvh - var(--topbar-height) - var(--tabbar-height) - var(--space-8));
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  /* W25-L1 (R5 §7.5/§9 п. 10): колонка НЕ имеет своей прокрутки — только липнет.
+     Вложенный скролл оказался ловушкой: колесо крутило колонку, пока страница
+     стояла. Теперь прокрутка одна (страница); «Ход работы» со своей прокруткой —
+     единственный вложенный скролл на экране, как и допускает порог ≤ 1. */
+  overflow: visible;
   scrollbar-width: thin;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   min-width: 0;
+  /* Свои замеры для вопросов: узкая колонка (280–320 px) перестраивает строку
+     «поле ответа + Отправить» в столбик, не дожидаясь ширины окна. */
+  container-type: inline-size;
+  container-name: reqaside;
+}
+/* Одноколоночный режим (вид < 1100 px): колонки нет — «От вас нужно» живёт
+   нижним листом 56 px (см. блок «Нижний лист» ниже). */
+@container view (max-width: 1099px) {
+  .req__aside { position: static; max-height: none; overflow: visible; }
+  .req-side--pin > .section-header { position: static; }
 }
 
 /* ── Шапка ───────────────────────────────────────────────────────────────── */
@@ -62,8 +81,11 @@
 .req__crumb a:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .req__crumb .codicon { font-size: 12px; }
 
-.req__head { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
-.req__headrow { display: flex; align-items: flex-start; gap: var(--space-4); min-width: 0; }
+.req__head { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+/* W25-L1 (R5 §7.1): шапка — ОДНА строка «← К запросам · название · Действия»,
+   под ней одна строка меты. Было три слоя (крошка своей строкой, заголовок,
+   мета) и 96–123 px на любом широком экране. */
+.req__headrow { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
 .req__title {
   flex: 1 1 auto;
   min-width: 0;
@@ -238,7 +260,18 @@
 /* Блоки кода и длинные строки «Свода» — прокручиваются внутри карточки. */
 .req-answer__body .markdown pre { max-width: 100%; overflow-x: auto; }
 .req-answer__body .markdown code { overflow-wrap: anywhere; }
-.req-answer__body .markdown a { overflow-wrap: anywhere; }
+/* Ссылки на локальные файлы в своде — чипом: их открывает приложение в контексте
+   комнаты (W20-A1, §1.4). Прямая ссылка `/api/file` без комнаты отвечала 403. */
+.req-answer__body .markdown a.md-file {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--ui-bg-quaternary); color: var(--ui-text-secondary);
+  text-decoration: none; font-size: var(--text-sm); overflow-wrap: anywhere;
+}
+.req-answer__body .markdown a.md-file:hover {
+  background: var(--ui-row-hover-background); color: var(--ui-text-primary);
+}
+.req-answer__body .markdown a.md-file:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
 /* Ход работы: у завершённых — тихая строка с раскрытием, у идущих — открыта. */
 .req-pipe { border: 1px solid var(--border-soft); border-radius: var(--radius-md); min-width: 0; }
@@ -368,6 +401,65 @@
 }
 .req-answer__stale-text { min-width: 0; flex: 1 1 260px; }
 
+/* W20-FA §1.1 (B-36): «живой свод» — строка «Актуально / Обновляется / Отстаёт»
+   с кнопкой «Обновить сейчас». Заменяет прежнюю плашку «в своде не учтено». */
+.req-answer__live {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--ui-base) 3%, transparent);
+  color: var(--ui-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.req-answer__live-text { min-width: 0; flex: 1 1 240px; overflow-wrap: anywhere; }
+.req-answer__live > .codicon { flex: none; }
+.req-answer__live--fresh { border-color: transparent; background: var(--ok-soft); color: var(--ok-ink); }
+.req-answer__live--pending { border-color: transparent; background: var(--warn-soft); color: var(--warn-ink); }
+.req-answer__live--stale { border-color: transparent; background: var(--danger-soft); color: var(--danger-ink); }
+.req-answer__live--updating { border-color: transparent; background: var(--info-soft); color: var(--info-ink); }
+/* W21-S2 (B-46): «ждём завершения работы команды» — спокойный тон, не тревога */
+.req-answer__live--waiting_cards { border-color: transparent; background: var(--info-soft); color: var(--info-ink); }
+.req-answer__live--off { color: var(--muted-foreground); }
+.req-answer__live-btn { flex: none; }
+.req-answer__live-note { flex: none; color: var(--muted-foreground); font-size: var(--text-xs); }
+@media (max-width: 720px) {
+  .req-answer__live-btn { margin-left: auto; }
+}
+
+/* W20-FA §1.2 (B-38, B-37): вопросы из сообщений руководителя и снятые решения. */
+.req-q__src {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+.req-q__source { font-size: var(--text-2xs); max-width: 100%; }
+.req-q__dismiss { flex: none; }
+.req-decision__muted-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.req-decision__muted-act { color: var(--muted-foreground); }
+.req-decision__muted-act:hover { color: var(--ui-text-secondary); }
+.req-decision--muted {
+  border-left: 2px solid var(--border-soft);
+  padding-left: var(--space-3);
+  background: color-mix(in srgb, var(--ui-base) 2%, transparent);
+}
+.req-decision--muted .req-decision__text { color: var(--muted-foreground); }
+.req-decision--muted .req-decision__status { opacity: 0.9; }
+.req-decision__superseded { margin-top: var(--space-1); }
+
 /* W17-S §2: окно «Доработать свод» и предпросмотр отправки. */
 .req-revise { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
 .req-revise__label { font-size: var(--text-sm); font-weight: 500; color: var(--ui-text-secondary); }
@@ -436,7 +528,7 @@
 .req-pending__line b { color: var(--ui-text-secondary); font-weight: 500; }
 .req-pending__skel { display: flex; flex-direction: column; gap: 11px; margin-top: var(--space-2); }
 
-/* ── Колонка «Дальше» ────────────────────────────────────────────────────── */
+/* ── Колонка «От вас нужно» ────────────────────────────────────────────────────── */
 .req-side { padding: var(--space-4); }
 .req-side__body { display: flex; flex-direction: column; min-width: 0; }
 .req-side__foot { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-soft); display: flex; gap: var(--space-2); }
@@ -466,7 +558,8 @@
   font-size: var(--text-sm);
   white-space: nowrap;
 }
-.req-owner .avatar { width: 18px; height: 18px; font-size: 9px; }
+/* W25-L1 (R5 §9 п. 12): мельче 11 px текста нет. */
+.req-owner .avatar { width: 18px; height: 18px; font-size: var(--text-2xs); }
 .req-owner__name { overflow: hidden; text-overflow: ellipsis; }
 
 /* ── Вопросы и ответы на них ─────────────────────────────────────────────── */
@@ -564,7 +657,7 @@
 .req-q__pending .codicon { font-size: 12px; }
 
 
-/* ── Колонка «Дальше»: закреплённый блок и свёрнутые блоки (P3) ──────────── */
+/* ── Колонка «От вас нужно»: закреплённый блок и свёрнутые блоки (P3) ──────────── */
 
 /* «Нужен ваш ответ (N)»: первым и всегда раскрыт. На широком экране заголовок
    блока прилипает к верху колонки — счётчик виден при прокрутке. */
@@ -604,7 +697,7 @@
 .req-side--fold > .req-steps__group { padding: 0 var(--space-4) var(--space-3); }
 .req-side--fold > .req-side__foot { margin: 0 var(--space-4) var(--space-3); }
 
-/* Заблокированные задачи: строка-ссылка (разбор — на вкладке «Дальше»). */
+/* Заблокированные задачи: строка-ссылка (разбор — на вкладке «От вас нужно»). */
 .req-side__blocked {
   display: flex;
   align-items: center;
@@ -794,32 +887,274 @@
 .req-empty { padding: var(--space-4) 0; }
 .req-aside-empty { color: var(--muted-foreground); font-size: var(--text-sm); line-height: var(--leading-normal); padding: var(--space-1) 0 var(--space-2); }
 
-/* ── Адаптив ─────────────────────────────────────────────────────────────── */
-@media (max-width: 1399px) {
-  .req__grid { grid-template-columns: minmax(0, 1fr) clamp(300px, 32vw, 400px); }
+/* ── Плашка «Нужен ваш ответ · N → показать» (W21-R1, п. 4) ──────────────── */
+/* В одноколоночном режиме блок вопросов уходит ПОД свод — плашка, закреплённая
+   у верха вида, держит его на виду и ведёт к нему одним нажатием. В двух
+   колонках её нет: вопросы и так справа. Элемент ставит request-aside.js
+   первым ребёнком `.req` (иначе sticky не работает: у grid-ячейки нет высоты
+   для «прилипания»), поэтому плашка — flex-элемент страницы. */
+.req-pinbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--primary) 32%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--primary) 9%, var(--background));
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow-xs);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
-@media (max-width: 1099px) {
-  /* Две колонки ещё держим: вопрос с полем ответа должен помещаться целиком. */
-  .req__grid { grid-template-columns: minmax(0, 1fr) clamp(288px, 34vw, 340px); gap: var(--space-5); }
+.req-pinbar:hover { background: color-mix(in srgb, var(--primary) 14%, var(--background)); }
+.req-pinbar:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.req-pinbar[hidden] { display: none; }
+.req-pinbar__count {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
 }
-@media (max-width: 899px) {
-  /* С 900 px и уже вопросы уходят под основной блок — горизонтального скролла нет. */
-  .req__grid { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
-  .req__aside { position: static; max-height: none; overflow: visible; }
-  /* Закреплённый заголовок прилипал бы к верху окна поверх шапки — не нужен. */
-  .req-side--pin > .section-header { position: static; }
-  /* Строка «поле + Отправить» на узком — в столбик: кнопка во всю ширину. */
+.req-pinbar__text { flex: 1 1 auto; min-width: 0; }
+.req-pinbar__go { flex: none; display: inline-flex; align-items: center; gap: 4px; color: var(--primary); }
+.req-pinbar__go .codicon { font-size: 13px; }
+/* Две колонки — плашка не нужна. */
+@container view (min-width: 1100px) {
+  .req-pinbar { display: none; }
+}
+/* Подсветка блока вопросов после нажатия плашки (короткая, не мигает). */
+.req-side--pin.is-flash { animation: req-pin-flash 1.4s ease-out; }
+@keyframes req-pin-flash {
+  from { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 38%, transparent); }
+  to { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .req-side--pin.is-flash { animation: none; }
+}
+
+/* ══ W25-L1: липкая панель действий свода (R5 §7.6) ═══════════════════════
+   Одна строка 40 px вверху области прокрутки: «Свод · v3» слева,
+   «Доработать · Копировать · Ещё ▾» справа. Стоит ВМЕСТО панели внизу
+   карточки (волна 24 её уже переделала: главная кнопка по состоянию +
+   «Копировать» + одно меню «Экспорт ▾»); кнопки панели нажимают те же кнопки,
+   поэтому логика не раздваивается. `scroll-padding-top` на #view не даёт
+   панели закрыть якорь блока при переходе. */
+.req-bar {
+  position: sticky;
+  /* Панель встаёт ровно к краю прокрутки: поднимаем её на верхнее поле вида. */
+  top: calc(-1 * var(--view-pad-top, var(--space-6)));
+  margin-top: calc(var(--space-3) - var(--space-5));
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--req-bar-h);
+  min-height: var(--req-bar-h);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--background) 90%, var(--card));
+  box-shadow: var(--shadow-xs);
+}
+.req-bar__label {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  color: var(--foreground); font-size: var(--text-sm); font-weight: 600;
+  white-space: nowrap;
+}
+.req-bar__dot { width: 6px; height: 6px; flex: none; border-radius: 999px; background: var(--primary); }
+.req-bar__note { color: var(--muted-foreground); font-weight: 400; }
+.req-bar__spacer { flex: 1 1 auto; min-width: 0; }
+.req-bar .btn { height: 28px; }
+.req-bar .req-export__summary { height: 28px; }
+
+/* ── W25.5: переключатель версий и пометка «актуально» — в панели ──────────
+   Внутри карточки свода этих органов больше нет: одно место управления.
+   Высота панели не растёт: чипы 22 px внутри строки 40 px (--req-bar-h). */
+.req-bar__vers { display: inline-flex; align-items: center; flex: none; }
+.req-bar__vers .segmented {
+  height: 24px; padding: 2px; gap: 2px;
+  border-radius: var(--radius-full);
+}
+.req-bar__vers .segmented__btn {
+  height: 20px; min-width: 26px; padding: 0 6px;
+  font-size: var(--text-xs); line-height: 20px;
+}
+.req-bar__live {
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  color: var(--muted-foreground); font-size: var(--text-xs); white-space: nowrap;
+}
+.req-bar__live[data-bar-live="pending"], .req-bar__live[data-bar-live="stale"],
+.req-bar__live[data-bar-live="waiting_cards"] { color: var(--warn-foreground, var(--foreground)); }
+.req-bar__live[data-bar-live="updating"] { color: var(--primary); }
+.req-bar__live[data-bar-live="pending"]::before,
+.req-bar__live[data-bar-live="stale"]::before,
+.req-bar__live[data-bar-live="waiting_cards"]::before,
+.req-bar__live[data-bar-live="updating"]::before {
+  content: ""; width: 5px; height: 5px; border-radius: var(--radius-full);
+  background: currentColor; flex: none;
+}
+/* Пункты «Ещё ▾» с версиями — только для узкого вида (см. @container ниже). */
+.req-bar__vers-item, .req-bar__refresh-item { display: none; }
+.req-export__extra { display: flex; flex-direction: column; gap: 2px; }
+.req-export__extra:not(:empty) {
+  margin-top: var(--space-1); padding-top: var(--space-1);
+  border-top: 1px solid var(--border-soft);
+}
+/* Вид < 900 (R5 §7.1: m/s/xs): версии и «Обновить свод сейчас» переезжают в
+   «Ещё ▾» — три чипа рядом с названием в 800 px спорят за место. */
+@container view (max-width: 899px) {
+  .req-bar__vers { display: none; }
+  .req-bar__vers-item, .req-bar__refresh-item { display: flex; }
+}
+/* Вид < 700: остаются «Свод · v3» и значки — три подписи в 660 px спорят с названием. */
+@container view (max-width: 699px) {
+  .req-bar__btn-text { display: none; }
+  .req-bar__revise, .req-bar__copy { width: 28px; padding: 0; justify-content: center; }
+  /* На самых узких «актуально» уступает место названию: состояние видно по точке. */
+  .req-bar__live { display: none; }
+}
+
+/* ══ W25-L1: нижний лист «От вас нужно» (R5 §7.5) ═════════════════════════
+   При виде < 1100 правая колонка не отнимает ширину у свода: она становится
+   нижним листом 56 px с ручкой «От вас нужно · N». Разворот — поверх
+   содержания (60 % высоты), фон не прокручивается; при виде < 900 — на весь
+   экран (100dvh − 40px), чтобы форма ответа была видна целиком.
+   Класс `is-sheet-open` ставит web/js/shell-aside-sheet.js. */
+.app[data-aside="sheet"] .req__aside {
+  position: fixed; left: 0; right: 0; bottom: 0; top: auto;
+  height: var(--sheet-h);
+  max-height: none;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  z-index: var(--z-sticky);
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-nous);
+  transition: height var(--dur-base) var(--ease);
+}
+/* Реечная полоса слева (60 px) — лист начинается за ней, а не под ней. */
+.app[data-aside="sheet"].is-rail .req__aside { left: var(--sidebar-rail); }
+.app[data-aside="sheet"] .req__aside .req-aside__scope { display: none; }
+.app[data-aside="sheet"] .req__aside > .card,
+.app[data-aside="sheet"] .req__aside .req-side__card { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+/* Плашка «Нужен ваш ответ · N» над сводом при листе не нужна: ручка листа и
+   есть эта плашка, только снизу. */
+.app[data-aside="sheet"] .req-pinbar { display: none; }
+/* Лист развёрнут: фон не скроллится (R5 §7.5 — «фон не прокручивается»). */
+.app.is-sheet-open .view { overflow: hidden; }
+.app[data-aside="sheet"].is-sheet-open .req__aside {
+  height: 60dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+/* Ручка листа: одна строка, вся — цель нажатия (56 px по высоте). */
+.req-sheet__handle {
+  position: sticky; top: 0; z-index: 2; flex: none;
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%; height: var(--sheet-h); padding: 0 var(--space-4);
+  border: 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--card); color: var(--foreground);
+  font: inherit; font-size: var(--text-sm); font-weight: 600;
+  text-align: left; cursor: pointer;
+}
+.req-sheet__handle:hover { background: var(--ui-row-hover-background); }
+.req-sheet__handle:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.req-sheet__hint {
+  flex: 1 1 auto; min-width: 0; overflow: hidden;
+  color: var(--muted-foreground); font-weight: 400;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+.req-sheet__chev { flex: none; color: var(--ui-text-tertiary); transition: transform var(--dur-fast) var(--ease); }
+.app.is-sheet-open .req-sheet__chev { transform: rotate(180deg); }
+/* Место под лист: последний блок страницы не уезжает под ручку. Селектор
+   с [data-layout] — чтобы правило не перебивалось полями режима s/xs
+   (у них та же специфичность, и они идут позже в components.css). */
+.app[data-aside="sheet"][data-layout] .view { padding-bottom: calc(var(--sheet-h) + var(--space-6)); }
+/* W25.5: у нижней кромки — мягкое затухание к фону (28 px). Текст последней
+   строки не обрывается об ручку листа: он уходит в фон, а не под неё.
+   Только при листе (вид < 1100): в две колонки листа нет — и эффекта нет.
+   `position: fixed` внутри `.app__main` считается от него (container-type:
+   inline-size), поэтому полоса начинается ровно за рейкой меню. */
+.app[data-aside="sheet"] .app__main:has(.req__aside)::after {
+  content: '';
+  position: fixed; left: 0; right: 0; bottom: var(--sheet-h);
+  height: 28px; pointer-events: none;
+  z-index: calc(var(--z-sticky) - 1);
+  background: linear-gradient(to bottom, transparent, var(--background) 92%);
+}
+/* Лист развёрнут: он и так поверх содержания, затухание не нужно. */
+.app.is-sheet-open .app__main::after { display: none; }
+/* Вид < 700 (xs): лист ниже (52 px) — полоса встаёт на его высоту. */
+.app[data-layout="xs"][data-aside="sheet"] .app__main:has(.req__aside)::after { bottom: var(--sheet-h-xs); }
+/* Затемнение фона под развёрнутым листом: видно, что лист поверх содержания,
+   и понятно, куда нажать, чтобы вернуться. */
+.app.is-sheet-open::after {
+  content: ''; position: fixed; inset: 0; z-index: calc(var(--z-sticky) - 1);
+  background: color-mix(in srgb, #000 42%, transparent);
+}
+/* Вид < 900: лист на весь экран, чтобы вопрос и кнопки были видны целиком. */
+@container view (max-width: 899px) {
+  .app[data-aside="sheet"].is-sheet-open .req__aside {
+    height: calc(100dvh - 40px);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+}
+/* Вид < 700 (xs): лист 52 px, поля 12 px, крошка — только стрелка. */
+.app[data-layout="xs"][data-aside="sheet"] .req__aside { height: var(--sheet-h-xs); }
+.app[data-layout="xs"] .req-sheet__handle { height: var(--sheet-h-xs); padding: 0 var(--space-3); }
+.app[data-layout="xs"] .req-sheet__hint { display: none; }
+
+/* ── Адаптив (W21-R1: по ширине ВИДА, а не окна) ─────────────────────────── */
+/* Узкая правая колонка (280–330 px): строка «поле ответа + Отправить» — в
+   столбик, иначе поле сжимается до нечитаемого (жалоба «сжимается центр»). */
+@container reqaside (max-width: 330px) {
   .req-q__row { flex-wrap: wrap; }
   .req-q__row .req-q__input { flex: 1 1 100%; }
   .req-q__send { flex: 1 1 auto; }
 }
-@media (max-width: 899px) {
+@container view (max-width: 899px) {
   .req__title { font-size: var(--text-xl); }
   .req-answer { padding: var(--space-4); }
 }
-@media (max-width: 560px) {
-  .req__headrow { flex-direction: column; gap: var(--space-2); }
-  .req__headactions { padding-top: 0; }
+/* W25-L1 (R5 §9 п. 4): при виде < 700 строка свода должна остаться ≥ 45 знаков.
+   На 403 px это возможно только с кеглем 14,5 и полями 12: было 37 знаков. */
+.app[data-layout="xs"] .req-answer { padding: var(--space-3) var(--space-1); }
+.app[data-layout="xs"] .req-answer.card .req-answer__body .markdown,
+.app[data-layout="xs"] .req-answer.card .req-answer__body .tr-md {
+  font-size: var(--text-base);
+  line-height: 1.62;
+}
+.app[data-layout="xs"] .req__title { font-size: 17px; line-height: 1.3; }
+.app[data-layout="xs"] .req__meta { flex-wrap: nowrap; max-height: 20px; overflow: hidden; }
+.app[data-layout="xs"] .req__crumb-text { display: none; }
+.app[data-layout="xs"] .topbar { padding-left: var(--space-3); padding-right: var(--space-3); }
+.app[data-layout="xs"] .tabs { padding-left: var(--space-3); padding-right: var(--space-3); }
+@container view (max-width: 560px) {
+  /* W25-L1 (R5 §7.1): на 403 px шапка — ДВЕ строки: (назад · название · ⋯) и мета.
+     Столбик из трёх строк давал 134 px шапки и 284 px до содержания. */
+  .req__headrow { flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
+  .req__title { flex: 1 1 60%; }
+  .req__headactions { padding-top: 0; margin-left: auto; }
   .req__title { font-size: var(--text-lg); }
   .req__meta { gap: 4px 8px; }
   .req__meta-sep { display: none; }

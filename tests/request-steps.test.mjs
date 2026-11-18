@@ -2,7 +2,8 @@
  * request-steps.test.mjs — блок «Следующие шаги» и окно шага (WAVE14, пакет H, п. 12).
  *
  * Проверяем новую модель: шаг — план РУКОВОДИТЕЛЯ, галочек у пользователя нет.
- * Выполненные отделены («Сделано»), предстоящие — «Дальше»; клик по шагу
+ * Выполненные отделены («Сделано»), предстоящие — «Предстоит» (вкладка «Дальше»
+ * переименована в «От вас нужно», поэтому группа шагов называется иначе); клик по шагу
  * открывает окно, где «Согласен / Прокомментировать / Переместить / Убрать»
  * уходят руководителю КАК ОТВЕТ НА ЭТОТ ШАГ и показывают его реакцию.
  *
@@ -16,7 +17,7 @@ import assert from 'node:assert/strict';
 import { installFakeDom, uninstallFakeDom, FakeElement } from './fake-dom.mjs';
 import { createAside } from '../web/js/views/request-aside.js';
 import {
-  splitSteps, stepState, openStepsCount, isStepDone, STEPS_HINT,
+  splitSteps, stepState, openStepsCount, isStepDone, STEPS_HINT, stepNotice,
 } from '../web/js/views/request-steps.js';
 import { movePayload, stepWhy, stepOwner, stepReactionLine } from '../web/js/views/step-dialog.js';
 
@@ -112,11 +113,11 @@ function text(node) {
 
 const STEPS = [
   {
-    id: 'ns_1', text: 'Решить по составу команды: добавить biz-cfo', owner: 'biz-cfo',
+    id: 'ns_1', text: 'Решить по составу команды: добавить team-cfo', owner: 'team-cfo',
     due: '2026-11-07', state: 'open', can_agree: true, can_drop: true, history: [],
   },
   {
-    id: 'ns_2', text: 'Проверить аллергены на этикетке', owner: 'biz-lawyer',
+    id: 'ns_2', text: 'Проверить аллергены на этикетке', owner: 'team-lawyer',
     state: 'done', can_agree: false, can_drop: false,
     history: [{ at: 1, kind: 'state', label: 'сделано' }],
   },
@@ -157,7 +158,7 @@ function setup(opts = {}) {
       },
     },
     toast: (message, kind) => toasts.push({ message, kind }),
-    room: { id: 'cafe', members: [{ profile: 'biz-cfo', role: 'worker' }] },
+    room: { id: 'cafe', members: [{ profile: 'team-cfo', role: 'worker' }] },
     navigate() {},
   };
   const R = {
@@ -201,12 +202,12 @@ test('stepState: конфликт важнее служебного статус
 });
 
 test('movePayload: отправляем только то, что изменили', () => {
-  const step = { id: 'ns_1', due: '2026-11-07', owner: 'biz-cfo' };
-  assert.equal(movePayload({ due: '2026-11-07', owner: 'biz-cfo' }, step), null);
+  const step = { id: 'ns_1', due: '2026-11-07', owner: 'team-cfo' };
+  assert.equal(movePayload({ due: '2026-11-07', owner: 'team-cfo' }, step), null);
   assert.deepEqual(movePayload({ due: '2026-12-01' }, step),
     { action: 'step_move', step_id: 'ns_1', due: '2026-12-01' });
-  assert.deepEqual(movePayload({ owner: 'biz-lawyer' }, step),
-    { action: 'step_move', step_id: 'ns_1', owner: 'biz-lawyer' });
+  assert.deepEqual(movePayload({ owner: 'team-lawyer' }, step),
+    { action: 'step_move', step_id: 'ns_1', owner: 'team-lawyer' });
   assert.deepEqual(movePayload({ direction: 'up' }, step),
     { action: 'step_move', step_id: 'ns_1', direction: 'up' });
 });
@@ -217,7 +218,7 @@ test('stepWhy / stepOwner / stepReactionLine', () => {
   assert.equal(why.answer, 'Нет, никакого юриста не добавляем');
   assert.match(stepWhy({}).text, /источник/);
 
-  assert.equal(stepOwner({ owner: 'biz-cfo' }, { members: [{ profile: 'biz-cfo', role: 'worker' }] }).profile, 'biz-cfo');
+  assert.equal(stepOwner({ owner: 'team-cfo' }, { members: [{ profile: 'team-cfo', role: 'worker' }] }).profile, 'team-cfo');
   assert.equal(stepOwner({}).title, 'не назначен');
   assert.equal(stepOwner({ owner: 'mikhail' }).title, 'Михаил');
 
@@ -242,7 +243,7 @@ test('в блоке нет чекбоксов, есть подпись «пла�
     assert.equal(findAll(card, (n) => String(n.tagName).toLowerCase() === 'input').length, 0,
       'у пользователя нет галочек');
     assert.match(text(card), new RegExp(STEPS_HINT.slice(0, 24)));
-    assert.match(text(card), /Дальше/);
+    assert.match(text(card), /Предстоит/);
     const doneFold = byClass(card, 'req-steps__fold--done')[0];
     assert.ok(doneFold, 'выполненные шаги отделены');
     assert.match(text(doneFold), /Проверить аллергены/);
@@ -398,6 +399,61 @@ test('Escape закрывает окно шага', () => {
     assert.ok(overlay);
     overlay.dispatch('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });
     assert.equal(byClass(s.doc.body, 'stepdlg').length, 0);
+  } finally {
+    uninstallFakeDom();
+  }
+});
+
+/* ─────────────────────── W21-L1: строка «Шаг учтён» (недоделка U4) ───────── */
+
+test('stepNotice: «Шаг учтён» только после конечного исхода, без слова «учтено»', () => {
+  const at = 1762900000;
+  const applied = stepNotice({
+    reaction: { status: 'applied', at, text: 'Работа пересмотрена: карточки t_e9c6c2b2' },
+    reaction_label: 'учтено: работа изменена',
+  });
+  assert.ok(applied, 'после «учтено» строка должна быть');
+  assert.match(applied.notice, /^Шаг учтён( · \d\d:\d\d)?$/);
+  assert.equal(applied.rest, 'работа изменена', 'второго «учтено» в подписи нет');
+
+  const noChange = stepNotice({
+    reaction: { status: 'no_change', at }, reaction_label: 'учтено: менять не нужно',
+  });
+  assert.match(noChange.notice, /^Шаг учтён/);
+  assert.equal(noChange.rest, 'менять не нужно');
+
+  // Пока руководитель не ответил или только прочитал — «учтён» было бы неправдой.
+  assert.equal(stepNotice({ reaction: null, reaction_pending: true }), null);
+  assert.equal(stepNotice({ reaction: { status: 'received', at } }), null);
+  assert.equal(stepNotice({ reaction: { status: 'sent', at } }), null);
+  assert.equal(stepNotice({}), null);
+  // «шаг убран» / «срок изменён» — своя подпись, строку «учтён» не добавляем
+  assert.equal(stepNotice({ reaction: { status: 'removed', at } }), null);
+});
+
+test('в строке шага видно «Шаг учтён», а подпись реакции не повторяет «учтено»', () => {
+  const at = 1762900000;
+  const steps = [{
+    id: 'ns_1', text: 'Согласовать упаковку с поставщиком', owner: 'team-cfo',
+    state: 'open', can_agree: true, can_drop: true,
+    user_action: { kind: 'agree', at: at - 600, label: 'вы согласовали' },
+    reaction: { status: 'applied', at, text: 'Работа пересмотрена: карточки t_e9c6c2b2',
+      cards: ['t_e9c6c2b2'] },
+    reaction_label: 'учтено: работа изменена',
+    history: [],
+  }];
+  const s = setup({ steps });
+  try {
+    const row = byClass(s.host, 'req-step')[0];
+    const notices = byClass(row, 'req-step__notice');
+    assert.equal(notices.length, 1, 'строка «Шаг учтён» одна');
+    assert.match(text(notices[0]), /^Шаг учтён/);
+    assert.equal(byClass(notices[0], 'req-step__reaction-label').length, 1);
+    const labels = byClass(row, 'req-step__reaction-label').map(text).join(' | ');
+    assert.match(labels, /работа изменена/);
+    assert.doesNotMatch(labels, /учтено/i, 'слово «учтено» не дублируется');
+    // реакция руководителя по-прежнему видна (его слова и карточки)
+    assert.match(text(row), /Работа пересмотрена/);
   } finally {
     uninstallFakeDom();
   }

@@ -15,9 +15,30 @@ from mock_core import (ALLOWED_EXT, DENY_NAME_PARTS, FILE_ROOTS, MIME, MOCK, MOC
                        split_heartbeats)
 import mock_backlog
 import mock_demo as demo
+import mock_delos
 import mock_stt
+from mock_write import collapse_approvals   # W22-ST: строки-группы разрешений (одно правило)
 
 _LABEL_DASH = re.compile("\\s*[\u2014\u2013\u2015\u2012\u2212-]{1,2}\\s*")
+
+
+def phase_rules():
+    """Правила этапов — ТЕ ЖЕ, что у сервера (`server/phase_book.py`), без второго мнения.
+
+    Демо-мок живёт отдельно от сервера, но повторять «как решать этапы» нельзя:
+    два мнения разойдутся. Если серверных модулей рядом нет (мок запущен сам по
+    себе), поля предложения просто не отдаются — демо продолжает работать.
+    """
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+        server_dir = _Path(__file__).resolve().parent.parent / "server"
+        if str(server_dir) not in _sys.path:      # демо: те же правила этапов, что у сервера
+            _sys.path.insert(0, str(server_dir))
+        import phase_book as module      # noqa: WPS433 - намеренно ленивый импорт
+        return module
+    except Exception:  # noqa: BLE001 - демо важнее полноты
+        return None
 
 
 def split_label(text: str):
@@ -38,10 +59,79 @@ def split_label(text: str):
     return "", raw
 
 
+def _ru_count(n: int, one: str, few: str, many: str) -> str:
+    """«1 исправление», «2 исправления», «5 исправлений» — как в интерфейсе."""
+    num = abs(int(n or 0))
+    tail100, tail10 = num % 100, num % 10
+    if 11 <= tail100 <= 14:
+        word = many
+    elif tail10 == 1:
+        word = one
+    elif 2 <= tail10 <= 4:
+        word = few
+    else:
+        word = many
+    return "%d %s" % (num, word)
+
+
+# --- W24-N3: «Сегодня», дежурства и здоровье интеграций ---------------------
+# Фикстуры today.json / duties.json / health_integrations.json написаны с
+# абсолютными временами; демо должно выглядеть живым, поэтому мок сдвигает их на
+# «сейчас − generated_at». Форма ответа при этом ровно та, что в контракте
+# (docs/WAVE24-RULES.md §3): сдвигаются только значения, не поля.
+TIME_KEYS = frozenset(("generated_at", "last_visit_at", "since", "at", "started_at",
+                       "finished_at", "scheduled_for", "next_run_at"))
+DATE_KEYS = frozenset(("due",))
+EPOCH_MIN = 1_000_000_000          # всё меньше — не время (счётчики, дни), не трогаем
+
+
+def shift_times(value, delta_s: int, delta_days: int):
+    """Сдвинуть все времена/даты внутри структуры на delta (рекурсивно)."""
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            if key in TIME_KEYS and isinstance(item, int) and not isinstance(item, bool) and item >= EPOCH_MIN:
+                out[key] = item + delta_s
+            elif key in DATE_KEYS and isinstance(item, str) and len(item) == 10 and item[4] == "-":
+                out[key] = shift_date(item, delta_days)
+            else:
+                out[key] = shift_times(item, delta_s, delta_days)
+        return out
+    if isinstance(value, list):
+        return [shift_times(item, delta_s, delta_days) for item in value]
+    return value
+
+
+def shift_date(text: str, days: int) -> str:
+    """«2026-11-11» + N дней — по календарю сервера."""
+    try:
+        moment = time.mktime(time.strptime(text, "%Y-%m-%d"))
+    except (TypeError, ValueError):
+        return text
+    return time.strftime("%Y-%m-%d", time.localtime(moment + days * 86400))
+
+
+
 class MockRead:
     def get(self, path: str, query: dict) -> tuple:
         if path == "/api/health":
             return 200, self.health()
+        # W26-D4: существование файла для чипов-ссылок свода (демо: набор путей).
+        if path == "/api/files/info":
+            return 200, self.files_info(query)
+        # W24-N3: экран «Сегодня», дежурства и здоровье интеграций (контракт §3).
+        if path == "/api/today":
+            return 200, self.today()
+        if path == "/api/duties":
+            return 200, self.duties(query)
+        # W26-D5: дела — список комнаты/all и одно дело (форма из fixtures/delo.json)
+        if path == "/api/delos" or re.fullmatch(r"/api/rooms/[a-z][a-z0-9_-]{1,31}/delos", path):
+            return 200, mock_delos.payload(query, path)
+        m = re.fullmatch(r"/api/delos/(dl_[A-Za-z0-9]{2,24})", path)
+        if m:
+            return 200, mock_delos.one(m.group(1))
+        if path == "/api/health/integrations":
+            return 200, self.health_integrations()
         if path == "/api/stt/status":
             return 200, mock_stt.status()
         if path == "/api/stt/dictionary":
@@ -62,6 +152,9 @@ class MockRead:
             return 200, Raw(data, ctype, {"Cache-Control": "no-store"})
         if path == "/api/config":
             return 200, self.fixture("config.json")
+        if path == "/api/approvals/grants":
+            # W22-AP2: выданные разрешения участникам комнаты (демо — память).
+            return 200, {"items": self.approval_grants()}
         if path == "/api/models":
             return 200, self.catalog()               # каталог моделей (WAVE10 §19)
         if path == "/api/profiles":
@@ -95,8 +188,16 @@ class MockRead:
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})", path)
         if m:
             summary = self.room_summary(m.group(1))
-            return 200, {**self.with_models(self.room(m.group(1))), "counters": summary["counters"],
+            room = self.room(m.group(1))
+            rules = phase_rules()
+            return 200, {**self.with_models(room), "counters": summary["counters"],
                          "phase": summary["phase"],
+                         # W20 §1.7: предложение этапов и подпись состояния — в карточке комнаты.
+                         "phases": room.get("phases") or [],
+                         "phases_proposal": (rules.norm_proposal(room.get("phases_proposal"))
+                                             if rules else None),
+                         "phases_proposal_text": (rules.state_text(room.get("phases_proposal"))
+                                                  if rules else ""),
                          "dispatcher": {"ok": True, "state": "running", "warning": None}}
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/requests", path)
         if m:
@@ -107,9 +208,17 @@ class MockRead:
         m = re.fullmatch(r"/api/requests/(t_[0-9a-f]{8})", path)
         if m:
             return 200, self.request_detail(m.group(1), query)
+        # W20 §1.6: «Ход работы» запроса — лента событий агентов (демо на фикстуре)
+        m = re.fullmatch(r"/api/requests/(t_[0-9a-f]{8})/worklog", path)
+        if m:
+            return 200, self.worklog(m.group(1), query)
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/team", path)
         if m:
             return 200, self.team(m.group(1))
+        # W23-MG2: «Контроль моделей» — ожидаемая модель против последнего запуска.
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/model-check", path)
+        if m:
+            return 200, self.model_check(m.group(1))
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/roadmap", path)
         if m:
             return 200, self.roadmap(m.group(1))
@@ -163,6 +272,88 @@ class MockRead:
             return self.file_response(query)
         raise ApiError(404, "not_found", "Неизвестный эндпоинт", {"path": path})
 
+    @staticmethod
+    def _recent_start(ts, minutes: int = 11) -> int:
+        """Демо: давнюю отметку начала «освежаем» — карточка показывает «уже 11 мин»,
+        а не «20 дн»: в вымышленных данных даты могли разъехаться."""
+        value = int(ts or 0)
+        moment = now()
+        if value and moment - value > 45 * 60:
+            return moment - int(minutes) * 60
+        return value
+
+    # --- W24-N3: «Сегодня», дежурства, здоровье интеграций -------------------
+    def _shifted(self, name: str) -> dict:
+        """Фикстура со сдвинутыми на «сейчас» временами (демо всегда живое)."""
+        data = self.fixture(name)
+        base = int(data.get("generated_at") or 0)
+        delta = now() - base if base else 0
+        return shift_times(data, delta, int(round(delta / 86400.0)))
+
+    def today(self) -> dict:
+        """GET /api/today — то же поле в поле, что отдаёт сервер (контракт §3.1)."""
+        data = self._shifted("today.json")
+        data.pop("_comment", None)
+        seen = getattr(self, "today_seen_at", None)
+        if seen:
+            data["last_visit_at"] = seen
+        data["generated_at"] = now()
+        return data
+
+    def today_seen(self) -> dict:
+        """POST /api/today/seen — отметка захода (демо: в памяти, как на сервере).
+
+        Контракт §3.1: `{ok, last_visit_at}`; значение меняется не чаще раза в 60 с —
+        повторные отметки внутри минуты возвращают тот же момент.
+        """
+        moment = now()
+        current = getattr(self, "today_seen_at", None)
+        if not current:
+            current = int(self._shifted("today.json").get("last_visit_at") or 0) or None
+        if current is None or moment - current > 60:
+            self.today_seen_at = moment
+            current = moment
+        return {"ok": True, "last_visit_at": current}
+
+    # W26-D4: демо-набор существующих файлов (реальные пути не читаются).
+    DEMO_FILES = {
+        "C:/Работа/Проект Витрина/Макет витрины — финал.md",
+        "C:/Работа/Проект Витрина/План работ на год.md",
+        "C:/Работа/Проект Витрина/Исходники/Сетка блоков.csv",
+    }
+
+    def files_info(self, query: dict) -> dict:
+        from pathlib import PurePath
+        raw = (query.get("path") or [""])[0].strip()
+        if not raw:
+            raise ApiError(400, "bad_request", "Нужен параметр path", {"field": "path"})
+        name = PurePath(raw.replace("\\", "/")).name
+        if not raw.startswith("C:/"):
+            return {"ok": True, "exists": None, "path": raw, "name": name, "size": None,
+                    "reason": "outside_roots"}
+        exists = raw in self.DEMO_FILES
+        return {"ok": True, "exists": exists, "path": raw, "name": name,
+                "size": 1024 if exists else None}
+
+    def duties(self, query: dict) -> dict:
+        """GET /api/duties?room=<id|all> — дежурства (контракт §3.2)."""
+        data = self._shifted("duties.json")
+        data.pop("_comment", None)
+        room = (query.get("room") or ["all"])[0].strip() or "all"
+        items = list(data.get("items") or [])
+        if room not in ("all", "*"):
+            items = [item for item in items if room in (item.get("bound_rooms") or [])]
+        data["items"] = items
+        data["generated_at"] = now()
+        return data
+
+    def health_integrations(self) -> dict:
+        """GET /api/health/integrations — сводка проверок (контракт §3.3)."""
+        data = self._shifted("health_integrations.json")
+        data.pop("_comment", None)
+        data["generated_at"] = now()
+        return data
+
     def health(self) -> dict:
         data = self.fixture("health.json")
         data["app"]["port"] = self.port
@@ -179,11 +370,16 @@ class MockRead:
                      "answers": "answers", "decisions": "decisions", "stage": "stage",
                      "future_questions": "future_questions", "artifacts": "artifacts", "report": "report",
                      "tree": "tree", "timeline": "timeline", "thread": "thread", "warnings": "warnings",
-                     "critic": "critic", "heartbeats": "heartbeats"}
+                     "critic": "critic", "heartbeats": "heartbeats",
+                     # W22-AP2: запросы разрешения агентам — часть детали запроса.
+                     "approvals": "approvals",
+                     # W23-MG2: лента «Контроль моделей» — тоже часть детали.
+                     "model_guard": "model_guard"}
     DETAIL_CORE = ("id", "room", "title", "title_short", "title_source", "title_locked",
                    "status", "status_reason", "mode", "critic",
                    "created_at", "started_at", "finished_at", "duration_s", "progress", "assignee",
-                   "needs_you", "preview", "archived", "brief", "plan_link", "streams_summary")
+                   "needs_you", "preview", "archived", "brief", "plan_link", "streams_summary",
+                   "pinned", "pinned_at")
 
     def request_detail(self, rid: str, query: dict) -> dict:
         """Деталь запроса с `?include=heartbeat` и `?fields=…` (как бэкенд)."""
@@ -200,6 +396,28 @@ class MockRead:
         detail = self.detail(rid)
         # W17-R §1 (B-8): этапы запроса — те, что объявила КОМНАТА (как на сервере).
         detail["stage"] = self._stage_for_room(detail.get("room"), detail.get("stage"))
+        # W21-Q1 (B-45): живое состояние свода — клиент по `auto` решает, показывать
+        # ли кнопку досылки ответов. Настройки — комнаты, как на сервере.
+        self._ensure_svod_live(detail)
+        # W22-AP2: запросы разрешения агентам (демо); ждущий запрос держит «ждёт вас».
+        approvals = self._approvals_for(rid)
+        # W22-ST: одинаковые по причине блокировки — одна строка со счётчиком «×N»
+        # (то же правило, что `server/approvals._same_reason`; решение по строке
+        # закрывает все её запросы — см. mock_write, действие `approval`).
+        detail["approvals"] = [dict(a) for a in collapse_approvals(approvals)]
+        # W22-AP1: счётчик и «ждёт вас» — по тем же правилам, что на сервере:
+        # завершённая карточка ждёт человека, только если участник написал о блокировке.
+        # Считаем СТРОКИ (как сервер: строка-группа — одно решение), а не команды.
+        pending = [a for a in detail["approvals"] if a.get("state") == "pending"]
+        detail["approvals_pending"] = len(pending)
+        if any(a.get("card_state") not in ("done", "archived", "failed") or a.get("stopped")
+               for a in pending):
+            detail["needs_you"] = True
+        detail["model_guard"] = self.guard_events(str(detail.get("room") or ""))
+        # Демо: у идущих карточек показываем «уже N мин», а не месяцы.
+        for node in detail.get("tree") or []:
+            if isinstance(node, dict) and str(node.get("status")) in ("running", "review"):
+                node["started_at"] = self._recent_start(node.get("started_at"))
         timeline, heartbeats = split_heartbeats(detail.get("timeline") or [], "heartbeat" in include)
         detail["timeline"] = timeline
         detail["heartbeats"] = heartbeats
@@ -207,6 +425,13 @@ class MockRead:
             detail["title_short"] = short_title(detail.get("title") or detail.get("text") or "")
         detail.setdefault("title_source", "derived")
         detail.setdefault("title_locked", False)
+        # W20-U3 (P13): закрепление запроса — в демо живёт в памяти (`pin_overrides`).
+        try:
+            pin = self.pin_state(rid)
+            detail["pinned"], detail["pinned_at"] = pin["pinned"], pin["pinned_at"]
+        except Exception:  # noqa: BLE001 - без хранилища закреплений страница живёт
+            detail.setdefault("pinned", False)
+            detail.setdefault("pinned_at", None)
         detail.pop("questions", None)
         # W17-B §7 (B7-3): служебный вопрос «сколько раундов критика» задан настройками
         # комнаты — не показываем его и не держим на нём «ждёт тебя» (как сервер).
@@ -227,6 +452,163 @@ class MockRead:
             for key in [key for key in detail if key not in wanted]:
                 detail.pop(key, None)
         return detail
+
+    def _ensure_svod_live(self, detail: dict) -> None:
+        """`synthesis.live` у готового свода в демо (W21-Q1, B-45).
+
+        Клиент читает `live.auto` (показывать ли кнопку досылки ответов) и
+        `live.next_update_at` (когда ответы учтут). Как и на сервере, `auto` —
+        это НАСТРОЙКА КОМНАТЫ (`auto_svod`), а не свойство запроса: выключил
+        автообновление в настройках — кнопка досылки в демо появляется.
+        Остальные поля (state/text) фикстуры не трогаем.
+        """
+        syn = detail.get("synthesis")
+        if not isinstance(syn, dict) or syn.get("state") != "ready":
+            return
+        try:
+            room = self.room(str(detail.get("room") or "")) or {}
+        except Exception:  # noqa: BLE001 - комната вторична для страницы
+            room = {}
+        auto = room.get("auto_svod")
+        auto = True if auto is None else bool(auto)
+        gap = int(room.get("auto_svod_min_gap_s") or 600)
+        version = int(syn.get("version") or 0)
+        moment = now()
+        live = syn.get("live") if isinstance(syn.get("live"), dict) else None
+        if live:
+            live["auto"] = auto
+            if not auto:
+                live["next_update_at"] = None
+            elif not live.get("next_update_at"):
+                live["next_update_at"] = moment + gap
+            return
+        syn["live"] = {
+            "state": "fresh", "since_version": version,
+            "behind": {"answers": 0, "notes": 0, "decisions": 0, "cards": 0},
+            "last_event_at": None,
+            "next_update_at": moment + gap if auto else None,
+            "auto": auto,
+            "text": "Актуально на %s · версия %s" % (time.strftime("%H:%M", time.localtime(moment)), version),
+        }
+
+    # --- «Ход работы» (W20 §1.6) ---------------------------------------------
+    WORKLOG_LEVELS = ("thoughts", "steps")
+
+    def worklog(self, rid: str, query: dict) -> dict:
+        """Демо-лента «Хода работы»: вымышленные события из `fixtures/worklog_demo.json`.
+
+        Повторяет поведение сервера по контракту (docs/API.md §W20.2): режимы
+        full/brief/off, `level`, `limit`, курсор «что нового» (`since`) и «показать
+        раньше» (`before`). Курсор в демо — просто номер записи, для клиента он
+        непрозрачен так же, как настоящий.
+        """
+        detail = self.detail(rid)
+        # Законченный запрос: никто не работает, итог сторожа к нему уже не пишется
+        # (так же ведёт себя сервер: лента остаётся, живое состояние и итог — нет).
+        finished = str(detail.get("status") or "") in ("done", "failed")
+        room_id = str(detail.get("room") or "")
+        try:
+            room = self.room(room_id) if room_id else {}
+        except Exception:  # noqa: BLE001 - комната вторична для ленты
+            room = {}
+        mode = str(room.get("worklog_mode") or "full")
+        digest_min = room.get("digest_every_min")
+        digest_min = 2 if digest_min is None else int(digest_min)
+        level = (query.get("level") or [""])[0].strip().lower()
+        if level and level not in self.WORKLOG_LEVELS:
+            raise ApiError(400, "bad_request",
+                           "Уровень хода работы: «thoughts» или «steps»",
+                           {"field": "level", "value": level,
+                            "allowed": list(self.WORKLOG_LEVELS)})
+        raw_limit = (query.get("limit") or [""])[0].strip()
+        try:
+            limit = int(raw_limit) if raw_limit else 50
+        except (TypeError, ValueError):
+            raise ApiError(400, "bad_request", "limit: целое число 1…200", {"field": "limit"})
+        if limit < 1 or limit > 200:
+            raise ApiError(400, "bad_request", "limit: от 1 до 200",
+                           {"field": "limit", "value": raw_limit, "max": 200})
+        use_level = "steps" if mode in ("brief", "off") else (level or "thoughts")
+        stamp = now()
+        payload = {"request": rid, "room": room_id, "mode": mode, "level": use_level,
+                   "items": [], "cursor": "0", "before": "", "more": False, "live": [],
+                   "digest": None, "stuck": [], "generated_at": stamp, "warnings": []}
+        if mode == "off":
+            return payload
+        data = self.fixture("worklog_demo.json")
+        items = []
+        for raw in data.get("items") or []:
+            if not isinstance(raw, dict):
+                continue
+            kind = str(raw.get("kind") or "")
+            if mode == "brief" and kind in ("thought", "message"):
+                continue
+            if use_level == "steps" and kind == "thought":
+                continue
+            items.append({"id": raw.get("id"), "ts": stamp - int(raw.get("ago") or 0),
+                          "card_id": raw.get("card_id"), "profile": raw.get("profile") or "",
+                          "label": raw.get("label") or "", "role": raw.get("role") or "",
+                          "kind": kind, "text": raw.get("text") or "",
+                          "tool": raw.get("tool") or "", "ok": raw.get("ok")})
+        items.sort(key=lambda item: item["ts"])
+
+        def _index(value) -> int:
+            try:
+                return max(0, min(len(items), int(str(value or "0").strip() or 0)))
+            except (TypeError, ValueError):
+                return 0
+
+        since = (query.get("since") or [""])[0].strip()
+        before = (query.get("before") or [""])[0].strip()
+        if before:
+            point = _index(before)
+            older = items[:point]
+            payload["items"] = older[-limit:]
+            payload["more"] = len(older) > len(payload["items"])
+            payload["cursor"] = str(point)
+            # Курсор следующей страницы «раньше» — индекс самой старой отданной записи
+            # (W21-L1): клиент листает историю цепочкой, а не расширением окна.
+            page_start = point - len(payload["items"])
+            payload["before"] = str(page_start) if payload["more"] else ""
+        else:
+            start = _index(since) if since else max(0, len(items) - limit)
+            chunk = items[start:start + limit]
+            payload["items"] = chunk
+            payload["cursor"] = str(start + len(chunk))
+            # `more` — «за пределами страницы есть записи»: при первой странице это
+            # более РАННИЕ (их листают кнопкой «Показать раньше»), при опросе — новые.
+            payload["more"] = (start + len(chunk) < len(items)) if since else (start > 0)
+            # «Показать раньше» — от начала показанной страницы (первая страница: последние N).
+            if not since and start > 0:
+                payload["before"] = str(start)
+        live = []
+        for raw in data.get("live") or []:
+            if not isinstance(raw, dict):
+                continue
+            since_at = stamp - int(raw.get("since_ago") or 0)
+            live.append({"profile": raw.get("profile") or "", "label": raw.get("label") or "",
+                         "role": raw.get("role") or "", "card_id": raw.get("card_id"),
+                         "state": raw.get("state") or "working", "since": since_at,
+                         "last_action": raw.get("last_action") or "",
+                         "tool": raw.get("tool") or "",
+                         "tools": int(raw.get("tools") or 0),
+                         "messages": int(raw.get("messages") or 0),
+                         "stuck": bool(raw.get("stuck")),
+                         "stuck_text": raw.get("stuck_text") or ""})
+        payload["live"] = [] if finished else live
+        payload["stuck"] = [] if finished else [{"card_id": row["card_id"], "profile": row["profile"],
+                             "label": row["label"],
+                             "minutes": max(0, int((stamp - (row["since"] or stamp)) / 60)),
+                             "text": row["stuck_text"]} for row in live if row["stuck"]]
+        digest = data.get("digest")
+        if isinstance(digest, dict) and digest_min > 0 and not finished:
+            payload["digest"] = {"id": "d_demo_1", "at": stamp - int(digest.get("ago") or 0),
+                                 "text": digest.get("text") or "",
+                                 "minutes": int(digest.get("minutes") or 0),
+                                 "workers": digest.get("workers") or [],
+                                 "done": int(digest.get("done") or 0),
+                                 "total": int(digest.get("total") or 0)}
+        return payload
 
     def _stage_for_room(self, room_id, stage) -> dict:
         """Stage по этапам комнаты: чужие этапы из фикстуры не показываем.
@@ -252,6 +634,40 @@ class MockRead:
             current = active or (phases[0]["id"] if phases else None)
         return {"current": current, "phases": phases}
 
+    def reactions_of(self, rid: str) -> list:
+        """Реакции руководителя в запросе (W20-U4, P9) — из готовой фикстуры.
+
+        Форма элемента та же, что у сервера: ``{at, kind, text}``; ``kind`` — на что
+        отреагировали (ответ, шаг, решение). В демо отдельной доски нет, поэтому
+        источник — деталь запроса.
+        """
+        out = []
+        try:
+            detail = self.detail(rid)
+        except Exception:  # noqa: BLE001 - бейдж не важнее сводки
+            return out
+        for key, kind in (("open_questions", "answer"), ("next_steps", "step"),
+                          ("decisions", "decision")):
+            for item in detail.get(key) or []:
+                if not isinstance(item, dict):
+                    continue
+                reaction = item.get("reaction")
+                if not isinstance(reaction, dict):
+                    continue
+                at = int(reaction.get("at") or 0)
+                if not at and not reaction.get("status"):
+                    continue
+                out.append({"at": at, "kind": kind,
+                            "text": str(reaction.get("text") or reaction.get("label") or "")})
+        out.sort(key=lambda item: item["at"], reverse=True)
+        return out
+
+    def reactions_summary(self, rid: str) -> dict:
+        """``{count, last_at}`` по запросу — для сводки комнат и бейджа вкладки."""
+        items = self.reactions_of(rid)
+        return {"count": len(items),
+                "last_at": max([item["at"] for item in items], default=0)}
+
     def rooms_summary(self, query: dict) -> dict:
         """Счётчики и последние запросы всех комнат одним ответом (W17-B §1)."""
         raw = (query.get("requests") or ["3"])[0].strip()
@@ -271,17 +687,45 @@ class MockRead:
             if not include and room.get("archived"):
                 continue
             summaries = self.summaries(rid)
-            last = [{"id": item["id"], "room": rid, "title": item.get("title") or "",
-                     "title_short": item.get("title_short") or short_title(item.get("title") or ""),
-                     "title_source": item.get("title_source") or "derived",
-                     "title_locked": bool(item.get("title_locked")),
-                     "status": item.get("status"), "needs_you": bool(item.get("needs_you")),
-                     "created_at": item.get("created_at"), "finished_at": item.get("finished_at"),
-                     "preview": item.get("preview") or ""} for item in summaries[:per_room]]
+            # W20-U3 (P13): закреплённые запросы — сверху «Недавнего».
+            try:
+                summaries = sorted(summaries, key=lambda it: (bool(self.pin_state(it["id"])["pinned"]),
+                                                              int(it.get("created_at") or 0)),
+                                   reverse=True)
+            except Exception:  # noqa: BLE001 - без закреплений порядок прежний
+                pass
+            rows = []
+            for item in summaries[:per_room]:
+                pin = {"pinned": False, "pinned_at": None}
+                try:
+                    pin = self.pin_state(item["id"])
+                except Exception:  # noqa: BLE001 - флаг необязателен
+                    pass
+                rows.append({"id": item["id"], "room": rid, "title": item.get("title") or "",
+                             "title_short": item.get("title_short") or short_title(item.get("title") or ""),
+                             "title_source": item.get("title_source") or "derived",
+                             "title_locked": bool(item.get("title_locked")),
+                             "status": item.get("status"), "needs_you": bool(item.get("needs_you")),
+                             "created_at": item.get("created_at"), "finished_at": item.get("finished_at"),
+                             "preview": item.get("preview") or "",
+                             "pinned": bool(pin["pinned"]), "pinned_at": pin["pinned_at"]})
+            last = rows
             entry = dict(self.room_summary(rid))
-            entry.update({"requests_count": len(summaries),
-                          "last_at": max([item.get("created_at") or 0 for item in summaries], default=0) or None,
-                          "last": last})
+            # W20-U4 (P9): реакции руководителя по комнате — время и по запросам.
+            # «Прочитано» живёт в браузере, поэтому отдаём только факты (как сервер).
+            reaction_map = {}
+            for item in summaries:
+                info = self.reactions_summary(item["id"])
+                if info["count"]:
+                    reaction_map[item["id"]] = info
+            entry.update({
+                "reactions_unseen": sum(info["count"] for info in reaction_map.values()),
+                "reactions_total": sum(info["count"] for info in reaction_map.values()),
+                "last_reaction_at": max([info["last_at"] for info in reaction_map.values()], default=0) or None,
+                "reactions": reaction_map,
+                "requests_count": len(summaries),
+                "last_at": max([item.get("created_at") or 0 for item in summaries], default=0) or None,
+                "last": last})
             rooms.append(entry)
         if only and not rooms:
             raise ApiError(404, "not_found", "Комната не найдена", {"room": only})
@@ -376,19 +820,200 @@ class MockRead:
                         if m.get("profile") == member.get("profile")), None)
             if row is not None and "pinned" in row:
                 member["pinned"] = bool(row.get("pinned"))
+            # W23-MG2: «Остановить / Продолжить» в карточке участника — состояние
+            # карточки живёт в памяти мока (как реестр бэкенда), «Команда» его видит.
+            current = member.get("current")
+            if isinstance(current, dict) and str(current.get("status")) in ("running", "review"):
+                current["started_at"] = self._recent_start(current.get("started_at"))
+            states = getattr(self, "card_states", None) or {}
+            if isinstance(current, dict):
+                patch = states.get(str(current.get("task_id") or ""))
+                if isinstance(patch, dict):
+                    if patch.get("status"):
+                        current["status"] = patch["status"]
+                        # W23-MG2: остановленная карточка — «остановлено», а не «работает».
+                        member["state"] = "paused" if patch["status"] == "paused" else "working"
+                    current["stopped"] = patch.get("stopped")
         return data
+
+    # --- «Контроль моделей» (W23-MG2) ---------------------------------------
+
+    #: Демо-события сторожа моделей по комнатам: что остановили и что исправили.
+    #: Всё вымышлено: суммы и модели — демо, не факт проекта.
+    GUARD_DEMO = {
+        "fn": (
+            {"kind": "fixed", "card_id": "t_8c21ab77", "profile": "coder",
+             "expected": {"provider": "lokal", "model": "dilizhans-kompakt"},
+             "actual": {"provider": "oblako-a", "model": "dilizhans-ultra"},
+             "cost_usd": None, "ago": 5400,
+             "text": "Модель карточки исправлена до запуска: Дилижанс ультра (Облако-А) → "
+                     "локальная Дилижанс компакт"},
+            {"kind": "stopped", "card_id": "t_7b0c55a1", "profile": "coder",
+             "expected": {"provider": "lokal", "model": "dilizhans-kompakt"},
+             "actual": {"provider": "oblako-a", "model": "dilizhans-ultra"},
+             "cost_usd": 2.45, "ago": 900,
+             "text": "Запуск шёл на Дилижанс ультра (Облако-А) вместо локальной Дилижанс компакт — "
+                     "остановлено и перезапущено на Дилижанс компакт"},
+        ),
+    }
+
+    def guard_events(self, room_id: str) -> list:
+        """События контроля моделей комнаты (демо): от старых к новым, как в журнале."""
+        rows = self.GUARD_DEMO.get(str(room_id)) or ()
+        moment = now()
+        out = []
+        for row in rows:
+            item = dict(row)
+            item["at"] = moment - int(item.pop("ago", 0) or 0)
+            out.append(item)
+        return out
+
+    def guard_mode(self, room_id: str) -> str:
+        room = self.room(room_id)
+        mode = str(room.get("model_guard") or "").strip().lower()
+        return mode if mode in ("enforce", "warn") else "enforce"
+
+    @staticmethod
+    def _same_model(a: dict, b: dict) -> bool:
+        """Одна и та же модель: регистр и `провайдер:модель` не считаются."""
+        def norm(value):
+            raw = str(value or "").strip().lower()
+            if ":" in raw:
+                left, right = raw.split(":", 1)
+                if left and right and not right[:1].isdigit():
+                    raw = right
+            return raw
+        left, right = norm(a.get("model")), norm(b.get("model"))
+        if not left or not right or left != right:
+            return False
+        pa, pb = str(a.get("provider") or "").lower(), str(b.get("provider") or "").lower()
+        return not (pa and pb and pa != pb)
+
+    def model_check(self, room_id: str) -> dict:
+        """Сверка «куда собирается уйти запрос» — демо по данным /team и комнаты.
+
+        Ожидаемая модель: настройка комнаты (`agent_models`), иначе модель профиля
+        из каталога агентов. Фактическая — из `model_sent` последнего запуска.
+        «Ждёт запуска» (модель сменили позже) — не расхождение: W19-B-29.
+        """
+        room = self.room(room_id)
+        team = self.team(room_id)
+        defaults = (self.fx.get("models.json") or {}).get("agent_defaults") or {}
+        members = []
+        for item in team.get("members") or []:
+            profile = str(item.get("profile") or "")
+            picked = (room.get("agent_models") or {}).get(profile) or {}
+            if picked.get("model"):
+                expected = {"provider": str(picked.get("provider") or ""),
+                            "model": str(picked.get("model")), "source": "room"}
+            else:
+                fallback = defaults.get(profile) or {}
+                expected = ({"provider": str(fallback.get("provider") or ""),
+                             "model": str(fallback.get("model")), "source": "profile"}
+                            if fallback.get("model") else {"provider": "", "model": "", "source": "none"})
+            settings = item.get("model_settings") or {}
+            card_model = ({"provider": str(settings.get("provider") or ""),
+                           "model": str(settings.get("model") or ""),
+                           "source": str(settings.get("source") or "room")}
+                          if settings.get("model") else None)
+            sent = item.get("model_sent") or {}
+            last_run = None
+            if sent.get("model"):
+                last_run = {"provider": str(sent.get("provider") or ""),
+                            "model": str(sent.get("model")),
+                            "at": int(sent.get("at") or 0),
+                            "cost_usd": float(sent.get("cost_usd") or 0)}
+            ok = None
+            problem = None
+            if expected["model"]:
+                if not last_run:
+                    ok = None
+                elif sent.get("pending"):
+                    ok = True            # модель сменили позже запуска — ждём следующей карточки
+                else:
+                    ok = self._same_model(expected, last_run)
+                if ok is False:
+                    problem = "ожидалась %s (%s), запущено %s (%s)" % (
+                        expected["model"], expected["provider"] or "—",
+                        last_run["model"], last_run["provider"] or "—")
+            else:
+                problem = "модель участника не задана — контроль не вмешивается"
+            members.append({
+                "profile": profile,
+                "title": str(item.get("title") or profile),
+                "expected": expected,
+                "card_model": card_model,
+                "last_run": last_run,
+                "ok": ok,
+                "problem": problem,
+            })
+        events = self.guard_events(room_id)
+        fixed = sum(1 for ev in events if ev.get("kind") == "fixed")
+        stopped = sum(1 for ev in events if ev.get("kind") == "stopped")
+        saved = sum(float(ev.get("cost_usd") or 0) for ev in events if ev.get("kind") == "stopped")
+        open_now = sum(1 for m in members if m.get("ok") is False)
+        mode = self.guard_mode(room_id)
+        return {
+            "room": str(room.get("id") or room_id),
+            "members": members,
+            "guard": {"mode": mode, "open": open_now, "fixed_24h": fixed,
+                      "stopped_24h": stopped, "saved_usd_est": round(saved, 2),
+                      "text": ("Строгий контроль: " if mode == "enforce" else "Только предупреждения: ")
+                              + _ru_count(fixed, "исправление", "исправления", "исправлений")
+                              + " и " + _ru_count(stopped, "остановка", "остановки", "остановок")
+                              + " за сутки"},
+            "warnings": [],
+        }
+
 
     def roadmap(self, room_id: str) -> dict:
         """Карта проекта: этапы — свойство комнаты (W17-R B-8), не список в коде.
 
         В демо этапы есть только у комнаты, которая их задала (fixture
         `roadmap_cafe.json`). У остальных полоса этапов пустая — как в жизни.
+        Предложение этапов (W20 §1.7) отдаётся всегда, если оно есть у комнаты.
         """
         room = self.room(room_id)
+        rules = phase_rules()
+        proposal = rules.norm_proposal(room.get("phases_proposal")) if rules else None
+        extra = {"phases_proposal": proposal,
+                 "proposal_text": rules.state_text(room.get("phases_proposal")) if rules else ""}
         if room["id"] == "cafe":
-            return self.fixture("roadmap_cafe.json")
-        return {"room": room["id"], "updated_at": now(), "current": None,
-                "phases": [], "decisions": []}
+            base = self.fixture("roadmap_cafe.json")
+            stored = {p.get("id"): p for p in base.get("phases") or [] if isinstance(p, dict)}
+            # W20 §1.7: этапы комнаты — главный список. Правки человека (переименование,
+            # порядок, удаление) видны сразу; из фикстуры берём только статусы и
+            # пояснения к тем этапам, которые остались (их не переписываем).
+            declared = room.get("phases")
+            if not isinstance(declared, list) or not declared:
+                declared = base.get("phases") or []
+            phases = []
+            for item in declared:
+                if not isinstance(item, dict):
+                    continue
+                meta = dict(stored.get(item.get("id")) or {})
+                meta.update({"id": item.get("id"), "title": item.get("title")})
+                meta.setdefault("status", "next")
+                meta.setdefault("note", "")
+                phases.append(meta)
+            view = dict(base, **extra)
+            view["phases"] = phases
+            active = next((p["id"] for p in phases if p.get("status") in ("active", "blocked")), None)
+            current_id = active or (phases[0]["id"] if phases else None)
+            view["current"] = next((p for p in phases if p["id"] == current_id), None)
+            return view
+        # W20-FC §1.7: у комнаты без своей карты этапы всё равно есть — они лежат в
+        # самой комнате (принятые из предложения или добавленные человеком).
+        declared = room.get("phases") if isinstance(room.get("phases"), list) else []
+        phases = []
+        for item in declared:
+            if not isinstance(item, dict):
+                continue
+            phases.append({"id": item.get("id"), "title": item.get("title"),
+                           "status": "next", "note": "", "updated_at": now()})
+        return dict({"room": room["id"], "updated_at": now(),
+                     "current": phases[0] if phases else None,
+                     "phases": phases, "decisions": []}, **extra)
 
     def backlog_for(self, room_id: str, query: dict) -> dict:
         self.room(room_id)
@@ -412,6 +1037,30 @@ class MockRead:
             out["sections"] = view["sections"]
         if view.get("hidden_service"):
             out["hidden_service"] = view["hidden_service"]
+        # W20 §1.7: предложение этапов ждёт решения — строка в «От вас нужно» (в ответе, не в файле).
+        rules = phase_rules()
+        proposal = rules.norm_proposal(self.room(room_id).get("phases_proposal")) if rules else None
+        if proposal and proposal.get("state") == "proposed":
+            titles = [item.get("title") or "" for item in proposal.get("items") or []]
+            item = {"id": "phases_proposal", "kind": "phases_proposal", "status": "open",
+                    "text": "Руководитель предлагает этапы проекта: " + ", ".join(titles[:4])
+                            + ("…" if len(titles) > 4 else ""),
+                    "why": "Примите все, выберите нужные или отклоните — этапы останутся вашими.",
+                    "source_title": self.room(room_id).get("title") or room_id,
+                    "source_request": None, "owner": self.room(room_id).get("orchestrator"),
+                    "due": None, "created_at": int(proposal.get("at") or 0),
+                    "updated_at": int(proposal.get("at") or 0),
+                    "count": len(titles), "titles": titles,
+                    "by": str(proposal.get("by") or ""),
+                    "proposal_text": rules.state_text(proposal)}
+            out["proposal_item"] = item
+            out["items"] = [item] + out["items"]
+            if out.get("sections"):
+                out["sections"] = dict(out["sections"],
+                                       inbox=[item] + list(out["sections"].get("inbox") or []),
+                                       proposal=[item])
+        else:
+            out["proposal_item"] = None
         return out
 
     def journal(self, room_id: str, query: dict) -> dict:

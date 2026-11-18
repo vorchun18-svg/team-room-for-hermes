@@ -80,7 +80,7 @@
   {
    "id": "ns_2",
    "text": "Проверить коридор валютной оговорки 5,10–5,60 на данных за 24 месяца и посчитать, сколько раз цена пересматривалась бы за прошлый год при таком коридоре и при расширенном до 4,90–5,80.",
-   "owner": "biz-cfo",
+   "owner": "team-cfo",
    "due": "2026-11-11",
    "state": "asked",
    "state_label": "в работе",
@@ -110,7 +110,7 @@
   {
    "id": "ns_4",
    "text": "Сократить срок уведомления об изменении объёма партии с 45 календарных дней до 20 рабочих и добавить право уменьшить партию на 20% без санкций — сейчас любое изменение объёма превращается в предмет торга.",
-   "owner": "biz-ops",
+   "owner": "team-ops",
    "due": "2026-11-12",
    "state": "open",
    "state_label": "предстоит",
@@ -140,7 +140,7 @@
   {
    "id": "ns_6",
    "text": "Проверить приложение с спецификацией партий: объёмы, даты, единицы измерения (штуки против коробов), кратность упаковки и вес — в текущей версии единицы измерения не совпадают с производственной заявкой.",
-   "owner": "biz-ops",
+   "owner": "team-ops",
    "due": "2026-11-13",
    "state": "open",
    "state_label": "предстоит",
@@ -200,7 +200,7 @@
   {
    "id": "ns_10",
    "text": "Пересчитать экономику партии после правок: цена, курс, штрафы, простой — и сравнить с альтернативным поставщиком из Заозёрский район, который просит на 6% дороже, но даёт срок 21 день.",
-   "owner": "biz-cfo",
+   "owner": "team-cfo",
    "due": "2026-11-19",
    "state": "open",
    "state_label": "предстоит",
@@ -230,7 +230,7 @@
   {
    "id": "ns_12",
    "text": "Собрать исходники в одну папку и переименовать по схеме «дата_тип_версия», чтобы следующая проверка не начиналась с поиска файлов по диску.",
-   "owner": "biz-ops",
+   "owner": "team-ops",
    "due": "2026-11-05",
    "state": "done",
    "state_label": "сделано",
@@ -575,7 +575,7 @@
  ],
  "artifacts": [
   {
-   "path": "D:/Проекты/Vault/Projects/Business areas/Лето/05-Strategy/brand-package-2026-10-28.md",
+   "path": "C:/Проекты/Vault/Projects/Business areas/Лето/05-Strategy/brand-package-2026-10-28.md",
    "title": "Пакет для подачи в Роспатент",
    "kind": "md",
    "exists": false,
@@ -641,7 +641,7 @@
     "t_10e9f0a1"
    ],
    "title": "Экономика партии: курс, штрафы, простой",
-   "assignee": "biz-cfo",
+   "assignee": "team-cfo",
    "role": "worker",
    "status": "done",
    "started_at": 1793857446,
@@ -651,7 +651,7 @@
    "runs": [
     {
      "id": 902,
-     "profile": "biz-cfo",
+     "profile": "team-cfo",
      "status": "done",
      "outcome": "completed",
      "started_at": 1793857446,
@@ -670,7 +670,7 @@
     "t_10e9f0a1"
    ],
    "title": "Проверка спецификации партий и единиц измерения",
-   "assignee": "biz-ops",
+   "assignee": "team-ops",
    "role": "worker",
    "status": "blocked",
    "started_at": 1793858446,
@@ -678,7 +678,7 @@
    "summary_md": "Не совпадают единицы измерения: у поставщика коробы, у производства штуки. Нужна спецификация в штуках и кратность упаковки.",
    "comments": [
     {
-     "author": "biz-ops",
+     "author": "team-ops",
      "text": "Без решения по единицам измерения дальше считать нельзя.",
      "at": 1793870446
     }
@@ -686,7 +686,7 @@
    "runs": [
     {
      "id": 903,
-     "profile": "biz-ops",
+     "profile": "team-ops",
      "status": "blocked",
      "outcome": "blocked",
      "started_at": 1793858446,
@@ -705,7 +705,7 @@
     "t_10e9f0a1"
    ],
    "title": "Проверка свода критиком",
-   "assignee": "biz-critic",
+   "assignee": "team-critic",
    "role": "critic",
    "status": "done",
    "started_at": 1793933246,
@@ -715,7 +715,7 @@
    "runs": [
     {
      "id": 904,
-     "profile": "biz-critic",
+     "profile": "team-critic",
      "status": "done",
      "outcome": "completed",
      "started_at": 1793933246,
@@ -741,28 +741,28 @@
    "at": 1793162960,
    "kind": "claimed",
    "task_id": "t_5c8e4a03",
-   "actor": "biz-marketing",
+   "actor": "team-marketing",
    "text": "Марина готовит пакет Роспатент"
   },
   {
    "at": 1793163660,
    "kind": "completed",
    "task_id": "t_5c8e4a05",
-   "actor": "biz-cfo",
+   "actor": "team-cfo",
    "text": "Смета готова"
   },
   {
    "at": 1793163700,
    "kind": "completed",
    "task_id": "t_5c8e4a04",
-   "actor": "biz-lawyer",
+   "actor": "team-lawyer",
    "text": "Риск R5 оценён"
   },
   {
    "at": 1793163720,
    "kind": "blocked",
    "task_id": "t_5c8e4a03",
-   "actor": "biz-marketing",
+   "actor": "team-marketing",
    "text": "Нужен go/no-go Михаила по классам и таксе"
   }
  ],
@@ -782,7 +782,7 @@
    "id": "c2",
    "at": 1793158060,
    "author_kind": "agent",
-   "author": "biz-director",
+   "author": "team-director",
    "author_label": "Глеб · руководитель комнаты",
    "text": "Принял; передал Антону — классы и такса, Илье — объём защиты по линейке. Своду нужен твой выбор, вопрос внизу.",
    "task_id": "t_10e9f0a1",
@@ -792,7 +792,7 @@
    "id": "c3",
    "at": 1793158200,
    "author_kind": "agent",
-   "author": "biz-lawyer",
+   "author": "team-lawyer",
    "author_label": "Антон · исполнитель",
    "text": "Класс 30 — 4 400 ₽ со скидкой для ИП, класс 30+43 — 8 800 ₽. Подача необратима, поэтому решение за Михаилом.",
    "task_id": "t_10e9f0a1",

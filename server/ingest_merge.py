@@ -139,10 +139,15 @@ def _merge_decisions(cfg, room_id: str, root_id: str, at: int, decisions: list[d
                 added.append(rec)
                 continue
             new_status = old.get("status")
-            if raw["status"] == "accepted" and new_status == "proposed":
+            # W25 M1: закрывающий статус сильнее открытого — решение, снятое владельцем
+            # (`dismissed`) или отменённое новой версией свода (`superseded`), больше не
+            # «принимается» обратным ходом. Раньше из accepted нельзя было выйти, и
+            # отменённое решение жило в decisions.json как действующее (R4 §3 п.1).
+            if raw["status"] in ("rejected", "dismissed", "superseded") \
+                    and new_status in ("proposed", "accepted"):
+                new_status = raw["status"]
+            elif raw["status"] == "accepted" and new_status == "proposed":
                 new_status = "accepted"
-            elif raw["status"] == "rejected" and new_status in ("proposed", "accepted"):
-                new_status = "rejected"
             updates = {}
             if new_status != old.get("status"):
                 updates["status"] = new_status

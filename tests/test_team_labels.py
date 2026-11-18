@@ -28,7 +28,7 @@ from server import config, profile_info, rooms  # noqa: E402
 from server.routes_read import ReadRoutes            # noqa: E402
 
 LEAD = "default"
-CRITIC = "biz-critic"
+CRITIC = "team-critic"
 WORKER = "lawyer"
 
 

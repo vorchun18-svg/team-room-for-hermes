@@ -264,21 +264,21 @@
           "date": "2026-10-28",
           "title": "Расчёт собран",
           "md": "Себестоимость и комиссии сведены в таблицу.",
-          "owner": "biz-cfo",
+          "owner": "team-cfo",
           "status": "done"
         },
         {
           "date": "2026-11-05",
           "title": "Котировки упаковки",
           "md": "Ожидаем ответы 10 поставщиков в городе.",
-          "owner": "biz-ops",
+          "owner": "team-ops",
           "status": "active"
         },
         {
           "date": "2026-11-15",
           "title": "Проверка на тестовой партии",
           "md": "20 наборов, замер факта против расчёта.",
-          "owner": "biz-director",
+          "owner": "team-director",
           "status": "next"
         }
       ]

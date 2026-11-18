@@ -49,7 +49,7 @@ from server.http_util import ApiError         # noqa: E402
 from tests.helpers import Sandbox, SimAgents  # noqa: E402
 
 ROOM = "cafe"
-LEAD = "biz-director"
+LEAD = "team-director"
 
 QUESTION = "Добавляем ли биз-финансиста в команду под Россию?"
 DECISION = "Стартовать с набора из 6 месяцев, а не из 12"
@@ -284,7 +284,7 @@ class DecisionActionsTests(_Base):
         self.assertFalse(decision["open"])
 
     def test_backlog_item_closes_without_touching_data(self):
-        """Принятое/отклонённое уходит из «Дальше» по данным реестра (overlay чтения)."""
+        """Принятое/отклонённое уходит из «От вас нужно» по данным реестра (overlay чтения)."""
         rid = self.rid()
         first, second = self.decision_ids(rid)
         self.decide(rid, first, "accept")
@@ -390,7 +390,7 @@ class ContractTests(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory(prefix="tr-dec-contract-") as tmp:
             cfg = self.FakeCfg(Path(tmp))
-            room = {"id": "cafe", "title": "Лето", "orchestrator": "biz-director", "members": []}
+            room = {"id": "cafe", "title": "Лето", "orchestrator": "team-director", "members": []}
             body = contract_mod.build_contract_block(room, "request", cfg)
         self.assertIn("reaction:", body)
         self.assertIn("outcome", body)

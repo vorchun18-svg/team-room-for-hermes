@@ -94,16 +94,16 @@ const CATALOG = {
 const ROOM = {
   id: 'cafe',
   title: 'Лето',
-  orchestrator: 'biz-director',
-  critic: 'biz-critic',
+  orchestrator: 'team-director',
+  critic: 'team-critic',
   members: [
     {
-      profile: 'biz-director', role: 'orchestrator',
+      profile: 'team-director', role: 'orchestrator',
       model_settings: { provider: 'ollama-cloud', model: 'qwen3.6:35b', reasoning: 'medium', source: 'agent' },
       agent_default: { provider: 'ollama-cloud', model: 'qwen3.6:35b', reasoning: 'medium' },
     },
     {
-      profile: 'biz-cfo', role: 'worker',
+      profile: 'team-cfo', role: 'worker',
       // В комнате уже поменяли: провайдер перестал быть настроенным.
       model_settings: { provider: 'openai', model: 'gpt-5', reasoning: 'none', source: 'room' },
       agent_default: { provider: 'anthropic', model: 'claude-sonnet-4.5', reasoning: 'high' },
@@ -163,7 +163,13 @@ test('только настроенные провайдеры; подписи �
   assert.equal(providers.some((p) => p.id === 'openai'), false, 'без ключа провайдера не показываем');
   assert.equal(modelLabelOf(CATALOG, 'ollama-cloud', 'qwen3.6:35b'), 'Qwen 3.6');
   assert.equal(defaultsText(CATALOG, { provider: 'anthropic', model: 'claude-sonnet-4.5', reasoning: 'high' }),
-    'по умолчанию: Anthropic · Claude Sonnet 4.5 · высокое');
+    'по умолчанию (из настроек агента): Anthropic · Claude Sonnet 4.5 · высокое');
+  // W20 §1.5: профиль модель не задаёт — общая настройка Hermes с пометкой.
+  assert.equal(defaultsText(CATALOG, { provider: 'ollama-cloud', model: 'qwen3.6:35b',
+    reasoning: 'medium', source: 'global' }),
+  'по умолчанию (из настроек агента): Ollama (облако) · Qwen 3.6 · среднее'
+    + ' — из общих настроек Hermes');
+  assert.equal(defaultsText(CATALOG, {}), 'по умолчанию (из настроек агента): модель не задана');
 });
 
 test('фильтр моделей: без ввода — выбранный провайдер, с вводом — группы по провайдерам', () => {
@@ -182,10 +188,11 @@ test('фильтр моделей: без ввода — выбранный пр
 });
 
 test('настройки участника и умолчания агента', () => {
-  const settings = modelSettingsOf(ROOM, 'biz-cfo');
+  const settings = modelSettingsOf(ROOM, 'team-cfo');
   assert.deepEqual(settings, { provider: 'openai', model: 'gpt-5', reasoning: 'none', source: 'room' });
-  assert.deepEqual(agentDefaultOf(ROOM, 'biz-cfo'), {
+  assert.deepEqual(agentDefaultOf(ROOM, 'team-cfo'), {
     provider: 'anthropic', model: 'claude-sonnet-4.5', reasoning: 'high',
+    source: 'profile', note: '',
   });
   // нет записи в комнате — действует настройка агента
   const plain = modelSettingsOf({ members: [{ profile: 'x', agent_default: { provider: 'a', model: 'm', reasoning: 'low' } }] }, 'x');
@@ -201,11 +208,11 @@ test('рендер: строка на каждого участника, без 
   const ui = await mountAgentModel(host, ctx, { room: ROOM, catalog: CATALOG, mode: 'draft' });
 
   const text = host.textContent;
-  for (const who of ['biz-director', 'biz-cfo']) assert.ok(text.includes(who), 'нет участника ' + who);
+  for (const who of ['team-director', 'team-cfo']) assert.ok(text.includes(who), 'нет участника ' + who);
   assert.match(text, /Модель/);
   assert.match(text, /Размышление/);
   assert.match(text, /Усилия/);
-  assert.match(text, /по умолчанию: Ollama \(облако\) · Qwen 3\.6 · среднее/);
+  assert.match(text, /по умолчанию \(из настроек агента\): Ollama \(облако\) · Qwen 3\.6 · среднее/);
   assert.match(text, /изменено для этой комнаты/, 'метка у участника с настройкой комнаты');
 
   // технические id провайдеров и профилей — только в подсказках
@@ -213,7 +220,7 @@ test('рендер: строка на каждого участника, без 
     .filter((c) => c.nodeType === 3).map((c) => c.data).join('')).join(' ');
   assert.equal(/ollama-cloud|anthropic|openai/.test(visible), false,
     'id провайдеров не должны попадать в видимый текст');
-  assert.equal(/biz-director|biz-cfo/.test(visible.replace(/biz-(director|cfo)/g, '')), false);
+  assert.equal(/team-director|team-cfo/.test(visible.replace(/team-(director|cfo)/g, '')), false);
 
   // про стоимость не предупреждаем — этого не просили
   assert.equal(/дорог|стоимост|расход|лимит|цене|дешев/i.test(text), false);
@@ -221,15 +228,15 @@ test('рендер: строка на каждого участника, без 
   // в комнате три человека: руководитель, критик и исполнитель из состава
   const rows = byClass(host, 'agent-model__row');
   assert.equal(rows.length, 3);
-  assert.ok(text.includes('biz-critic'), 'критик тоже участник');
-  assert.equal(ui.rowFor('biz-director').chipText().startsWith('модель: Qwen 3.6'), true);
+  assert.ok(text.includes('team-critic'), 'критик тоже участник');
+  assert.equal(ui.rowFor('team-director').chipText().startsWith('модель: Qwen 3.6'), true);
 });
 
 test('редактор участника: провайдер, список моделей, выбор', async () => {
   installDom();
   const host = new FakeElement('div');
   const ui = await mountAgentModel(host, ctx, { room: ROOM, catalog: CATALOG, mode: 'draft' });
-  const row = ui.rowFor('biz-director');
+  const row = ui.rowFor('team-director');
 
   row.open();
   const selects = walk(row.element, (n) => n.tagName === 'select');
@@ -267,7 +274,7 @@ test('клавиатура: ↑ ↓ Enter Esc', async () => {
   installDom();
   const host = new FakeElement('div');
   const ui = await mountAgentModel(host, ctx, { room: ROOM, catalog: CATALOG, mode: 'draft' });
-  const row = ui.rowFor('biz-director');
+  const row = ui.rowFor('team-director');
   row.open();
   row.setQuery('');
 
@@ -296,7 +303,7 @@ test('размышление выключено = none, усилия возвр�
   installDom();
   const host = new FakeElement('div');
   const ui = await mountAgentModel(host, ctx, { room: ROOM, catalog: CATALOG, mode: 'draft' });
-  const row = ui.rowFor('biz-director');
+  const row = ui.rowFor('team-director');
   row.open();
 
   assert.equal(row.reasoning(), 'medium');
@@ -330,59 +337,59 @@ test('«Вернуть по умолчанию» снимает изменени
     room: ROOM, catalog: CATALOG, mode: 'draft',
     onChange: (profile, value) => seen.push([profile, value]),
   });
-  const row = ui.rowFor('biz-cfo');
+  const row = ui.rowFor('team-cfo');
   row.open();
   assert.equal(row.state().changed, true);
   assert.equal(row.provider(), 'openai', 'показан провайдер, которого больше нет в каталоге');
   assert.match(row.element.textContent, /Провайдер больше не настроен/);
-  assert.deepEqual(ui.value()['biz-cfo'], { provider: 'openai', model: 'gpt-5', reasoning: 'none' });
+  assert.deepEqual(ui.value()['team-cfo'], { provider: 'openai', model: 'gpt-5', reasoning: 'none' });
 
   row.reset();
   assert.equal(row.provider(), 'anthropic');
   assert.equal(row.model(), 'claude-sonnet-4.5');
   assert.equal(row.reasoning(), 'high');
   assert.equal(row.state().changed, false);
-  assert.equal(ui.value()['biz-cfo'], undefined, 'по умолчанию в комнату не пишем');
-  assert.deepEqual(seen.pop(), ['biz-cfo', null]);
+  assert.equal(ui.value()['team-cfo'], undefined, 'по умолчанию в комнату не пишем');
+  assert.deepEqual(seen.pop(), ['team-cfo', null]);
 });
 
 test('значение уходит в комнату только для изменённых участников', async () => {
   installDom();
   const host = new FakeElement('div');
   const ui = await mountAgentModel(host, ctx, { room: ROOM, catalog: CATALOG, mode: 'draft' });
-  ui.rowFor('biz-director').open();
-  ui.rowFor('biz-director').setProvider('anthropic');
-  ui.rowFor('biz-director').setQuery('claude');
-  ui.rowFor('biz-director').choose(0);
-  ui.rowFor('biz-director').setThinking(false);
+  ui.rowFor('team-director').open();
+  ui.rowFor('team-director').setProvider('anthropic');
+  ui.rowFor('team-director').setQuery('claude');
+  ui.rowFor('team-director').choose(0);
+  ui.rowFor('team-director').setThinking(false);
   assert.deepEqual(ui.value(), {
-    'biz-director': { provider: 'anthropic', model: 'claude-sonnet-4.5', reasoning: 'none' },
-    'biz-cfo': { provider: 'openai', model: 'gpt-5', reasoning: 'none' },
+    'team-director': { provider: 'anthropic', model: 'claude-sonnet-4.5', reasoning: 'none' },
+    'team-cfo': { provider: 'openai', model: 'gpt-5', reasoning: 'none' },
   });
-  assert.equal(ui.value()['biz-critic'], undefined, 'нетронутый участник в комнату не уходит');
+  assert.equal(ui.value()['team-critic'], undefined, 'нетронутый участник в комнату не уходит');
 });
 
 test('состав изменился — редактор следует (refresh)', async () => {
   installDom();
   const host = new FakeElement('div');
-  let people = [{ profile: 'biz-director', role: 'orchestrator' }];
+  let people = [{ profile: 'team-director', role: 'orchestrator' }];
   const ui = await mountAgentModel(host, ctx, {
     room: ROOM, catalog: CATALOG, mode: 'draft', participants: () => people,
   });
-  ui.rowFor('biz-director').setQuery('claude');
-  ui.rowFor('biz-director').choose(0);
+  ui.rowFor('team-director').setQuery('claude');
+  ui.rowFor('team-director').choose(0);
 
   people = [
-    { profile: 'biz-director', role: 'orchestrator' },
-    { profile: 'biz-cfo', role: 'worker' },
+    { profile: 'team-director', role: 'orchestrator' },
+    { profile: 'team-cfo', role: 'worker' },
   ];
   ui.refresh();
-  assert.equal(ui.rowFor('biz-cfo') !== null, true);
-  assert.equal(ui.rowFor('biz-director').model(), 'claude-sonnet-4.5', 'выбор не потерялся');
+  assert.equal(ui.rowFor('team-cfo') !== null, true);
+  assert.equal(ui.rowFor('team-director').model(), 'claude-sonnet-4.5', 'выбор не потерялся');
 
-  people = [{ profile: 'biz-cfo', role: 'worker' }];
+  people = [{ profile: 'team-cfo', role: 'worker' }];
   ui.refresh();
-  assert.deepEqual(Object.keys(ui.value()), ['biz-cfo']);
+  assert.deepEqual(Object.keys(ui.value()), ['team-cfo']);
 });
 
 /* ───────────────────────────────────────────── вкладка «Команда»: сохранение */
@@ -397,17 +404,17 @@ test('«Применить»: PUT и понятный ответ; «Переза
   const asked = [];
   const confirm = async (o) => { asked.push(o); return true; };
   const ui = await mountAgentModel(host, { api, confirm }, {
-    room: ROOM, catalog: CATALOG, mode: 'live', profile: 'biz-director',
+    room: ROOM, catalog: CATALOG, mode: 'live', profile: 'team-director',
     member: ROOM.members[0],
   });
-  const row = ui.rowFor('biz-director');
+  const row = ui.rowFor('team-director');
   row.setProvider('anthropic');
   row.setQuery('claude');
   row.choose(0);
 
   await row.save();
   const put = api.calls.find((c) => c[0] === 'PUT');
-  assert.equal(put[1], '/api/rooms/cafe/agents/biz-director/model');
+  assert.equal(put[1], '/api/rooms/cafe/agents/team-director/model');
   assert.deepEqual(put[2], { provider: 'anthropic', model: 'claude-sonnet-4.5', reasoning: 'medium' });
   assert.match(row.statusText(), /^Сохранено\. Следующая задача уже пойдёт на новой модели/);
   assert.match(row.statusText(), /3 задачи в работе доделают на старой/);
@@ -421,7 +428,7 @@ test('«Применить»: PUT и понятный ответ; «Переза
   assert.equal(asked.length, 1, 'B-26: перед перезапуском спрашиваем подтверждение');
   assert.match(asked[0].text, /Текущая работа будет прервана/);
   const post = api.calls.find((c) => c[0] === 'POST');
-  assert.equal(post[1], '/api/rooms/cafe/agents/biz-director/restart');
+  assert.equal(post[1], '/api/rooms/cafe/agents/team-director/restart');
   assert.match(row.statusText(), /Перезапущено: 2 задачи/);
   assert.equal(row.state().pending, 0);
 });
@@ -434,10 +441,10 @@ test('B-26: отказ в подтверждении не перезапуска
   });
   const host = new FakeElement('div');
   const ui = await mountAgentModel(host, { api, confirm: async () => false }, {
-    room: ROOM, catalog: CATALOG, mode: 'live', profile: 'biz-director',
+    room: ROOM, catalog: CATALOG, mode: 'live', profile: 'team-director',
     member: ROOM.members[0],
   });
-  const row = ui.rowFor('biz-director');
+  const row = ui.rowFor('team-director');
   row.setProvider('anthropic');
   row.setQuery('claude');
   row.choose(0);
@@ -452,9 +459,9 @@ test('нет задач в работе — одна фраза, без кноп
   const api = fakeApi();
   const host = new FakeElement('div');
   const ui = await mountAgentModel(host, { api }, {
-    room: ROOM, catalog: CATALOG, mode: 'live', profile: 'biz-director',
+    room: ROOM, catalog: CATALOG, mode: 'live', profile: 'team-director',
   });
-  const row = ui.rowFor('biz-director');
+  const row = ui.rowFor('team-director');
   row.setProvider('anthropic');
   row.setQuery('claude');
   row.choose(0);
@@ -468,10 +475,10 @@ test('«Вернуть по умолчанию» на вкладке «Кома�
   const api = fakeApi();
   const host = new FakeElement('div');
   const ui = await mountAgentModel(host, { api }, {
-    room: ROOM, catalog: CATALOG, mode: 'live', profile: 'biz-cfo',
+    room: ROOM, catalog: CATALOG, mode: 'live', profile: 'team-cfo',
     member: ROOM.members[1],
   });
-  const row = ui.rowFor('biz-cfo');
+  const row = ui.rowFor('team-cfo');
   row.reset();
   await Promise.resolve();
   const put = api.calls.find((c) => c[0] === 'PUT');
@@ -488,9 +495,9 @@ test('ошибка сети: по-русски, значение не теряе
   });
   const host = new FakeElement('div');
   const ui = await mountAgentModel(host, { api }, {
-    room: ROOM, catalog: CATALOG, mode: 'live', profile: 'biz-director',
+    room: ROOM, catalog: CATALOG, mode: 'live', profile: 'team-director',
   });
-  const row = ui.rowFor('biz-director');
+  const row = ui.rowFor('team-director');
   row.setProvider('anthropic');
   row.setQuery('claude');
   row.choose(0);
@@ -507,8 +514,8 @@ test('каталог не пришёл: подсказка вместо пуст
   const ui = await mountAgentModel(host, { api }, { room: ROOM, mode: 'draft' });
   assert.match(host.textContent, /Список моделей недоступен/);
   // по умолчанию агента всё равно показываем
-  assert.match(host.textContent, /по умолчанию:/);
-  assert.equal(ui.rowFor('biz-director') !== null, true);
+  assert.match(host.textContent, /по умолчанию \(из настроек агента\):/);
+  assert.equal(ui.rowFor('team-director') !== null, true);
 });
 
 /* ─────────────────────────────────────── строка на вкладке «Команда» + диалог */
@@ -516,7 +523,7 @@ test('каталог не пришёл: подсказка вместо пуст
 test('строка «модель: …» + «Изменить» открывает тот же редактор', async () => {
   installDom();
   const calls = [];
-  const line = agentModelLine(ROOM, 'biz-cfo', ROOM.members[1], {
+  const line = agentModelLine(ROOM, 'team-cfo', ROOM.members[1], {
     catalog: CATALOG, onEdit: (profile) => calls.push(profile),
   });
   assert.match(line.textContent, /модель: GPT-5/);
@@ -526,10 +533,10 @@ test('строка «модель: …» + «Изменить» открывае
   assert.match(chip.getAttribute('title'), /изменено для этой комнаты/);
   const btn = byClass(line, 'agent-model__line-btn')[0];
   btn.dispatch('click', { type: 'click', target: btn });
-  assert.deepEqual(calls, ['biz-cfo']);
+  assert.deepEqual(calls, ['team-cfo']);
 
   // у участника без записи в комнате — «как у агента» и нейтральный чип
-  const plain = agentModelLine(ROOM, 'biz-director', ROOM.members[0], { catalog: CATALOG });
+  const plain = agentModelLine(ROOM, 'team-director', ROOM.members[0], { catalog: CATALOG });
   assert.match(plain.textContent, /модель: Qwen 3\.6/);
   assert.equal(String(byClass(plain, 'agent-model__line-chip')[0].className).includes('chip--accent'), false);
 });
@@ -538,7 +545,7 @@ test('диалог редактора: заголовок, «Применить�
   installDom();
   const api = fakeApi();
   const done = openAgentModelEditor({ api }, {
-    room: ROOM, profile: 'biz-director', member: ROOM.members[0], catalog: CATALOG,
+    room: ROOM, profile: 'team-director', member: ROOM.members[0], catalog: CATALOG,
   });
   await new Promise((r) => setTimeout(r, 0));
   const overlay = globalThis.document.body.childNodes.find((n) => n.nodeType === 1);

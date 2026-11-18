@@ -64,7 +64,7 @@
   display: inline-flex; align-items: center; gap: 5px; min-width: 0;
   font-size: var(--text-sm); color: var(--ui-text-secondary);
 }
-.rooms-card__director .avatar { width: 18px; height: 18px; font-size: 9px; }
+.rooms-card__director .avatar { width: 18px; height: 18px; font-size: var(--text-2xs); }
 
 .rooms-card__team { display: flex; align-items: center; min-height: 20px; min-width: 0; }
 .rooms-card__team .avatar + .avatar { margin-left: -6px; }
@@ -140,6 +140,12 @@
 .roomdlg__files-empty { font-size: var(--text-sm); color: var(--muted-foreground); }
 .roomdlg__file-row { gap: var(--space-2); }
 .roomdlg__file-row .input { flex: 1 1 auto; min-width: 0; }
+/* W20-FA §1.1 (B-36): «живой свод» во вкладке «Работа» — две настройки в ряд. */
+.roomdlg__svod { border-top: 1px solid var(--border-soft); padding-top: var(--space-3); }
+.roomdlg__svod-when { display: flex; align-items: flex-end; flex-wrap: wrap; gap: var(--space-3); }
+.roomdlg__svod-when .roomdlg__field-mini { flex: 0 1 12rem; min-width: 8rem; }
+.roomdlg__svod-when .select { width: 100%; }
+.roomdlg__svod-when .select:disabled { opacity: 0.6; }
 
 .roomdlg__hint { font-size: var(--text-sm); color: var(--muted-foreground); }
 .roomdlg__hint code { font-size: 0.95em; }

@@ -66,25 +66,25 @@ const PLAN = {
   streams: [
     {
       id: 's1', title: 'Договор с поставщиком', goal: 'Подписать договор на упаковку',
-      owner: 'biz-lawyer', members: ['biz-lawyer', 'biz-ops'], depends_on: [],
+      owner: 'team-lawyer', members: ['team-lawyer', 'team-ops'], depends_on: [],
       due: '2026-11-15', status: 'done', request_id: 't_s1aaa', reason: '',
       created_by: 'manager',
     },
     {
       id: 's2', title: 'Партия пробной упаковки', goal: 'Получить образцы к 5 ноября',
-      owner: 'biz-ops', members: ['biz-ops'], depends_on: ['s1'],
+      owner: 'team-ops', members: ['team-ops'], depends_on: ['s1'],
       due: '2026-11-05', status: 'running', request_id: 't_s2bbb',
       reason: 'руководитель разбил работу: договор нужен раньше партии', created_by: 'manager',
     },
     {
       id: 's3', title: 'Витрина и фото', goal: 'Снять и оформить 6 карточек',
-      owner: 'biz-marketing', members: ['biz-marketing', 'biz-runner'], depends_on: ['s1'],
+      owner: 'team-marketing', members: ['team-marketing', 'team-runner'], depends_on: ['s1'],
       due: null, status: 'waiting_quota', request_id: null,
       reason: 'добавили вручную', created_by: 'mikhail',
     },
     {
       id: 's4', title: 'Цены для маркетплейса', goal: 'Смета и наценка',
-      owner: 'biz-cfo', members: [], depends_on: [], due: '2026-12-01',
+      owner: 'team-cfo', members: [], depends_on: [], due: '2026-12-01',
       status: 'proposed', request_id: null, reason: '', created_by: 'manager',
     },
   ],
@@ -148,9 +148,9 @@ test('карточка показывает название, цель, отве
     assert.equal(card.getAttribute('data-stream'), 's2');
     assert.equal(byClass(card, 'ps-card__title')[0].textContent, 'Партия пробной упаковки');
     assert.equal(byClass(card, 'ps-card__goal')[0].textContent, 'Получить образцы к 5 ноября');
-    // Ответственный — по-русски: без карты людей это роль, а не biz-ops.
+    // Ответственный — по-русски: без карты людей это роль, а не team-ops.
     assert.match(text(byClass(card, 'ps-card__meta')[0]), /Исполнитель/, 'ответственный виден по-русски');
-    assert.doesNotMatch(text(card), /biz-/, 'технический профиль в тексте карточки не показываем');
+    assert.doesNotMatch(text(card), /team-/, 'технический профиль в тексте карточки не показываем');
     assert.match(text(byClass(card, 'ps-card__members')[0]), /1 участник/);
     assert.match(text(card), /до 5 нояб\./, 'срок по-русски');
   } finally {
@@ -287,24 +287,24 @@ test('ответственный: имя из /team, иначе роль; про
   try {
     // people — как ответ /api/rooms/{r}/team: имя профиля и роль в комнате.
     const people = peopleIndex([
-      { profile: 'biz-ops', title: 'Операции', role: 'worker' },
-      { profile: 'biz-director', title: '', role: 'orchestrator' },
+      { profile: 'team-ops', title: 'Операции', role: 'worker' },
+      { profile: 'team-director', title: '', role: 'orchestrator' },
     ]);
     const root = render({ people });
-    const card = cardsOf(root)[1]; // s2, owner biz-ops
+    const card = cardsOf(root)[1]; // s2, owner team-ops
     const meta = byClass(card, 'ps-card__meta')[0];
     assert.match(text(meta), /Операции/, 'показано человеческое имя профиля');
-    assert.doesNotMatch(text(card), /biz-ops/, 'профиль не виден в тексте');
+    assert.doesNotMatch(text(card), /team-ops/, 'профиль не виден в тексте');
     const owner = byClass(card, 'profile-label')[0];
-    assert.match(String(owner.getAttribute('title') || ''), /biz-ops/, 'профиль — в подсказке');
+    assert.match(String(owner.getAttribute('title') || ''), /team-ops/, 'профиль — в подсказке');
 
     // Профиль без имени в /team — показываем роль, а не огрызок id.
-    assert.deepEqual(ownerLabelOf({ owner: 'biz-director' }, people),
-      { name: 'Руководитель комнаты', hint: 'biz-director' });
+    assert.deepEqual(ownerLabelOf({ owner: 'team-director' }, people),
+      { name: 'Руководитель комнаты', hint: 'team-director' });
     assert.deepEqual(ownerLabelOf({ owner: 'ghost' }, people), { name: 'Исполнитель', hint: 'ghost' });
     // Явная подпись от сервера важнее: owner_label.
-    assert.deepEqual(ownerLabelOf({ owner: 'biz-ops', owner_label: 'Операции и склад' }, people),
-      { name: 'Операции и склад', hint: 'biz-ops' });
+    assert.deepEqual(ownerLabelOf({ owner: 'team-ops', owner_label: 'Операции и склад' }, people),
+      { name: 'Операции и склад', hint: 'team-ops' });
     assert.equal(ownerLabelOf({ owner: '' }, people), null);
   } finally {
     uninstallFakeDom();
@@ -314,11 +314,11 @@ test('ответственный: имя из /team, иначе роль; про
 test('участники части работы — по именам, без системных id', () => {
   installFakeDom();
   try {
-    const root = render({ people: [{ profile: 'biz-runner', title: 'Раннер', role: 'utility' }] });
-    const card = cardsOf(root)[2]; // s3, участники biz-marketing и biz-runner
+    const root = render({ people: [{ profile: 'team-runner', title: 'Раннер', role: 'utility' }] });
+    const card = cardsOf(root)[2]; // s3, участники team-marketing и team-runner
     const members = byClass(card, 'ps-card__members')[0];
     assert.match(String(members.getAttribute('title') || ''), /Раннер/);
-    assert.doesNotMatch(text(members), /biz-/);
+    assert.doesNotMatch(text(members), /team-/);
   } finally {
     uninstallFakeDom();
   }
@@ -481,7 +481,7 @@ test('диалог «Изменить»: поля заполнены, микро
   const doc = installFakeDom();
   doc.body = doc.createElement('body');
   try {
-    const promise = openStreamEditor({ mode: 'edit', stream: PLAN.streams[1], members: ['biz-ops'] });
+    const promise = openStreamEditor({ mode: 'edit', stream: PLAN.streams[1], members: ['team-ops'] });
     const dialog = byClass(doc.body, 'ps-dialog')[0];
     assert.ok(dialog, 'диалог смонтирован');
     assert.equal(byClass(dialog, 'dialog__title')[0].textContent, 'Изменить часть работы');
@@ -498,9 +498,9 @@ test('диалог «Изменить»: поля заполнены, микро
     const values = await promise;
     assert.equal(values.title, 'Партия пробной упаковки');
     assert.equal(values.goal, 'Получить образцы к 5 ноября');
-    assert.equal(values.owner, 'biz-ops');
+    assert.equal(values.owner, 'team-ops');
     assert.equal(values.due, '2026-11-05');
-    assert.deepEqual(values.members, ['biz-ops'], 'участники — как в части работы');
+    assert.deepEqual(values.members, ['team-ops'], 'участники — как в части работы');
   } finally {
     uninstallFakeDom();
   }
@@ -510,7 +510,7 @@ test('диалог «Добавить» не сохраняет пустое н�
   const doc = installFakeDom();
   doc.body = doc.createElement('body');
   try {
-    const promise = openStreamEditor({ mode: 'add', members: ['biz-ops'] });
+    const promise = openStreamEditor({ mode: 'add', members: ['team-ops'] });
     const dialog = byClass(doc.body, 'ps-dialog')[0];
     assert.equal(byClass(dialog, 'dialog__title')[0].textContent, 'Добавить часть работы');
     buttonWith(dialog, 'Добавить').dispatch('click', { type: 'click' });

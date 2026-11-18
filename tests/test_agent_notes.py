@@ -45,6 +45,7 @@ import server.rooms as rooms_mod               # noqa: E402
 import server.vault_mirror as mirror           # noqa: E402
 from server.http_util import ApiError          # noqa: E402
 from tests.helpers import Sandbox, SimAgents   # noqa: E402
+from tests import ci_marks                       # noqa: E402
 
 ROOM = "cafe"
 MARKER = notes_mod.MARKER_PREFIX
@@ -172,41 +173,41 @@ class _Base(unittest.TestCase):
 class ValidateTests(_Base):
     def test_profile_must_be_in_room(self):
         with self.assertRaises(notes_mod.NotesError) as ctx:
-            notes_mod.validate({"coder": "делай так"}, members=["biz-lawyer"])
+            notes_mod.validate({"coder": "делай так"}, members=["team-lawyer"])
         self.assertEqual(ctx.exception.code, "bad_request")
         self.assertIn("в составе", str(ctx.exception))
 
     def test_limit_8000(self):
-        notes, warnings = notes_mod.validate({"biz-lawyer": "а" * 8000}, members=["biz-lawyer"])
-        self.assertEqual(len(notes["biz-lawyer"]["text"]), 8000)
+        notes, warnings = notes_mod.validate({"team-lawyer": "а" * 8000}, members=["team-lawyer"])
+        self.assertEqual(len(notes["team-lawyer"]["text"]), 8000)
         self.assertEqual(warnings, [])
         with self.assertRaises(notes_mod.NotesError):
-            notes_mod.validate({"biz-lawyer": "а" * 8001}, members=["biz-lawyer"])
+            notes_mod.validate({"team-lawyer": "а" * 8001}, members=["team-lawyer"])
 
     def test_empty_text_clears(self):
-        notes, _w = notes_mod.validate({"biz-lawyer": "   "}, members=["biz-lawyer"])
+        notes, _w = notes_mod.validate({"team-lawyer": "   "}, members=["team-lawyer"])
         self.assertEqual(notes, {})
 
     def test_secret_is_warning_not_block(self):
         notes, warnings = notes_mod.validate(
-            {"biz-lawyer": "ключ sk-abcdefghijklmnop1234 и password=hunter2"},
-            members=["biz-lawyer"],
+            {"team-lawyer": "ключ sk-abcdefghijklmnop1234 и password=hunter2"},
+            members=["team-lawyer"],
         )
-        self.assertIn("biz-lawyer", notes, "указание должно сохраниться")
+        self.assertIn("team-lawyer", notes, "указание должно сохраниться")
         self.assertTrue(warnings, "про секрет нужно предупредить")
         self.assertTrue(any("ключ" in w.lower() or "пароль" in w.lower() for w in warnings))
         self.assertNotIn("hunter2", " ".join(warnings), "секрет в предупреждении маскируется")
 
     def test_render_block_limit(self):
-        room = {"id": "cafe", "title": "Лето", "orchestrator": "biz-director",
-                "members": [{"profile": "biz-lawyer", "role": "worker"},
-                            {"profile": "biz-cfo", "role": "worker"}],
-                "agent_notes": {"biz-lawyer": {"text": "я" * 4000, "updated_at": 1},
-                                "biz-cfo": {"text": "Отвечай цифрами", "updated_at": 1}}}
+        room = {"id": "cafe", "title": "Лето", "orchestrator": "team-director",
+                "members": [{"profile": "team-lawyer", "role": "worker"},
+                            {"profile": "team-cfo", "role": "worker"}],
+                "agent_notes": {"team-lawyer": {"text": "я" * 4000, "updated_at": 1},
+                                "team-cfo": {"text": "Отвечай цифрами", "updated_at": 1}}}
         block = notes_mod.render_block(self.cfg, room, 3000)
         self.assertLessEqual(len(block), 3000)
         self.assertIn("Особые указания участникам этой комнаты", block)
-        self.assertIn("biz-cfo", block)
+        self.assertIn("team-cfo", block)
         self.assertIn("Руководитель при раздаче подзадач", block)
         self.assertIn("…", block)
 
@@ -221,14 +222,14 @@ class ApiTests(_Base):
         self.assertIn("agent_notes", body)
         self.assertEqual(body["agent_notes"], {})
 
-        status, payload, _h = self.put("biz-lawyer", "Всегда проверяй по закону X")
+        status, payload, _h = self.put("team-lawyer", "Всегда проверяй по закону X")
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["text"], "Всегда проверяй по закону X")
-        self.assertIn("biz-lawyer", payload["agent_notes"])
+        self.assertIn("team-lawyer", payload["agent_notes"])
 
         body = self.room_of_api()
-        self.assertEqual(body["agent_notes"]["biz-lawyer"]["text"], "Всегда проверяй по закону X")
-        self.assertGreater(body["agent_notes"]["biz-lawyer"]["updated_at"], 0)
+        self.assertEqual(body["agent_notes"]["team-lawyer"]["text"], "Всегда проверяй по закону X")
+        self.assertGreater(body["agent_notes"]["team-lawyer"]["updated_at"], 0)
 
     def test_put_foreign_profile_is_400(self):
         status, payload, _h = self.put("coder", "делай так")
@@ -236,33 +237,33 @@ class ApiTests(_Base):
         self.assertIn("состав", json.dumps(payload, ensure_ascii=False))
 
     def test_put_too_long_is_400(self):
-        status, payload, _h = self.put("biz-lawyer", "а" * 8001)
+        status, payload, _h = self.put("team-lawyer", "а" * 8001)
         self.assertEqual(status, 400, payload)
 
     def test_put_empty_clears(self):
-        self.put("biz-lawyer", "Коротко и цифрами")
-        status, payload, _h = self.put("biz-lawyer", "")
+        self.put("team-lawyer", "Коротко и цифрами")
+        status, payload, _h = self.put("team-lawyer", "")
         self.assertEqual(status, 200)
         self.assertTrue(payload["cleared"])
         self.assertEqual(self.room_of_api()["agent_notes"], {})
 
     def test_put_secret_returns_warning(self):
-        status, payload, _h = self.put("biz-lawyer", "токен: sk-abcdefghijklmnop1234")
+        status, payload, _h = self.put("team-lawyer", "токен: sk-abcdefghijklmnop1234")
         self.assertEqual(status, 200)
         self.assertTrue(payload["warnings"])
-        self.assertEqual(self.room_of_api()["agent_notes"]["biz-lawyer"]["text"],
+        self.assertEqual(self.room_of_api()["agent_notes"]["team-lawyer"]["text"],
                          "токен: sk-abcdefghijklmnop1234")
 
     def test_create_room_with_notes(self):
         payload = {
             "title": "Комната с указаниями", "id": "notes-room", "board": "team",
-            "orchestrator": "biz-director",
-            "members": [{"profile": "biz-lawyer", "role": "worker"}],
-            "agent_notes": {"biz-lawyer": "Всегда проверяй по закону X"},
+            "orchestrator": "team-director",
+            "members": [{"profile": "team-lawyer", "role": "worker"}],
+            "agent_notes": {"team-lawyer": "Всегда проверяй по закону X"},
         }
         status, body, _h = self.app.dispatch("POST", "/api/rooms", {}, payload)
         self.assertEqual(status, 201, body)
-        self.assertEqual(body["agent_notes"]["biz-lawyer"]["text"], "Всегда проверяй по закону X")
+        self.assertEqual(body["agent_notes"]["team-lawyer"]["text"], "Всегда проверяй по закону X")
 
         bad = dict(payload, id="notes-room-2", agent_notes={"coder": "чужой"})
         with self.assertRaises(ApiError) as ctx:
@@ -273,11 +274,11 @@ class ApiTests(_Base):
         try:
             status, body, _h = self.app.dispatch(
                 "PATCH", "/api/rooms/%s" % ROOM, {},
-                {"agent_notes": {"biz-cfo": {"text": "Только цифры"}}})
+                {"agent_notes": {"team-cfo": {"text": "Только цифры"}}})
         except ApiError as exc:
             self.fail("PATCH с указаниями не должен падать: %s" % exc)
         self.assertEqual(status, 200)
-        self.assertEqual(body["agent_notes"]["biz-cfo"]["text"], "Только цифры")
+        self.assertEqual(body["agent_notes"]["team-cfo"]["text"], "Только цифры")
 
 
 class ContextPackTests(_Base):
@@ -286,12 +287,12 @@ class ContextPackTests(_Base):
         self.clear_notes()
 
     def test_section_appears_and_respects_limits(self):
-        self.put("biz-lawyer", "Всегда проверяй по закону X")
-        self.put("biz-cfo", "Отвечай коротко и только цифрами")
+        self.put("team-lawyer", "Всегда проверяй по закону X")
+        self.put("team-cfo", "Отвечай коротко и только цифрами")
         room = self.room()
         block = context_pack.build_context_block(self.cfg, room, "Проверь договор аренды")
         self.assertIn("Особые указания участникам этой комнаты", block)
-        self.assertIn("исполнитель (biz-lawyer): Всегда проверяй по закону X", block)
+        self.assertIn("исполнитель (team-lawyer): Всегда проверяй по закону X", block)
         self.assertIn("Указания комнаты дополняют твою роль", block)
         self.assertLessEqual(len(block), context_pack.MAX_BLOCK_CHARS)
 
@@ -301,7 +302,7 @@ class ContextPackTests(_Base):
         self.assertNotIn("Особые указания участникам этой комнаты", block)
 
     def test_long_note_truncated_with_hint(self):
-        self.put("biz-lawyer", "правило " * 800)           # 6 400 знаков: обрезка с пометкой
+        self.put("team-lawyer", "правило " * 800)           # 6 400 знаков: обрезка с пометкой
         room = self.room()
         block = context_pack.build_context_block(self.cfg, room, "Договор")
         self.assertIn("полный текст", block)
@@ -309,6 +310,7 @@ class ContextPackTests(_Base):
         self.assertLessEqual(len(block), context_pack.MAX_BLOCK_CHARS)
 
 
+@unittest.skipUnless(ci_marks.has_real_profiles(), ci_marks.WHY_NO_PROFILES)
 class SecretsMaskTests(_Base):
     """Единая маска: Vault, CONTEXT.md, комментарии и карточка не выдают секрет (волна 9)."""
 
@@ -336,19 +338,19 @@ class SecretsMaskTests(_Base):
         self.assertIn("Bearer [скрыто]", masked)
 
     def test_render_block_masks(self):
-        self.put("biz-lawyer", self.SECRET)
+        self.put("team-lawyer", self.SECRET)
         block = notes_mod.render_block(self.cfg, self.room(), 3000)
         self.assert_masked(block)
 
     def test_context_pack_masks(self):
-        self.put("biz-lawyer", self.SECRET)
+        self.put("team-lawyer", self.SECRET)
         block = context_pack.build_context_block(self.cfg, self.room(), "Проверь договор")
         self.assert_masked(block)
 
     def test_vault_files_mask_but_registry_keeps_text(self):
-        self.put("biz-lawyer", self.SECRET)
+        self.put("team-lawyer", self.SECRET)
         room = self.room()
-        self.assertEqual(room["agent_notes"]["biz-lawyer"]["text"], self.SECRET,
+        self.assertEqual(room["agent_notes"]["team-lawyer"]["text"], self.SECRET,
                          "в реестре комнаты текст хранится как есть")
         res = mirror.sync_room(self.cfg, ROOM)
         notes_text = Path(res["notes_path"]).read_text(encoding="utf-8")
@@ -357,9 +359,9 @@ class SecretsMaskTests(_Base):
         self.assert_masked(context_text)
 
     def test_comment_is_masked(self):
-        self.put("biz-lawyer", self.SECRET)
-        root = self.sa.card("Корень с секретом", "biz-director", status="todo", tenant="room:cafe")
-        self.sa.decompose(root, [{"title": "Срез", "assignee": "biz-lawyer"}])
+        self.put("team-lawyer", self.SECRET)
+        root = self.sa.card("Корень с секретом", "team-director", status="todo", tenant="room:cafe")
+        self.sa.decompose(root, [{"title": "Срез", "assignee": "team-lawyer"}])
         res = notes_mod.ensure_comments(self.cfg, self.room(), root)
         self.assertTrue(res["written"], res)
         bodies = [b for b in
@@ -377,12 +379,12 @@ class VaultMirrorTests(_Base):
         self.clear_notes()
 
     def test_context_md_and_notes_file(self):
-        self.put("biz-lawyer", "Всегда проверяй по закону X")
+        self.put("team-lawyer", "Всегда проверяй по закону X")
         res = mirror.sync_room(self.cfg, ROOM)
         context_path = Path(res["context_path"])
         text = context_path.read_text(encoding="utf-8")
         self.assertIn("## Особые указания", text)
-        self.assertIn("biz-lawyer", text)
+        self.assertIn("team-lawyer", text)
         notes_path = Path(res["notes_path"])
         self.assertTrue(notes_path.is_file(), notes_path)
         notes_text = notes_path.read_text(encoding="utf-8")
@@ -393,7 +395,7 @@ class VaultMirrorTests(_Base):
                         notes_path)
 
     def test_manual_text_outside_markers_survives(self):
-        self.put("biz-cfo", "Отвечай цифрами")
+        self.put("team-cfo", "Отвечай цифрами")
         res = mirror.sync_room(self.cfg, ROOM)
         path = Path(res["notes_path"])
         path.write_text(path.read_text(encoding="utf-8") + "\nМоя заметка руками.\n", encoding="utf-8")
@@ -401,6 +403,7 @@ class VaultMirrorTests(_Base):
         self.assertIn("Моя заметка руками.", path.read_text(encoding="utf-8"))
 
 
+@unittest.skipUnless(ci_marks.has_real_profiles(), ci_marks.WHY_NO_PROFILES)
 class CommentsTests(_Base):
     """Автокомментарии: по одной строке на карточку, идемпотентно, «обновлено»."""
 
@@ -410,7 +413,7 @@ class CommentsTests(_Base):
 
     def _tree(self, assignees: list[str]) -> str:
         """Своё дерево на тест: комментарии соседних тестов не мешают счёту."""
-        root = self.sa.card("Корень запроса", "biz-director", status="todo", tenant="room:cafe")
+        root = self.sa.card("Корень запроса", "team-director", status="todo", tenant="room:cafe")
         self.sa.decompose(root, [{"title": "Срез %d" % i, "assignee": who}
                                  for i, who in enumerate(assignees)])
         return root
@@ -420,8 +423,8 @@ class CommentsTests(_Base):
         return [str(r["body"]) for r in rows]
 
     def test_one_line_per_card_and_idempotent(self):
-        root = self._tree(["biz-lawyer", "biz-lawyer", "biz-cfo"])
-        self.put("biz-lawyer", "Всегда проверяй по закону X")
+        root = self._tree(["team-lawyer", "team-lawyer", "team-cfo"])
+        self.put("team-lawyer", "Всегда проверяй по закону X")
 
         first = notes_mod.ensure_comments(self.cfg, self.room(), root)
         self.assertGreaterEqual(len(first["written"]), 2)
@@ -434,7 +437,7 @@ class CommentsTests(_Base):
             self.assertEqual(len(bodies), 1, bodies)
             self.assertNotIn("\n", bodies[0], "указание — одной строкой")
             self.assertIn("Всегда проверяй по закону X", bodies[0])
-            self.assertIn(notes_mod.comment_hash("biz-lawyer", "Всегда проверяй по закону X"),
+            self.assertIn(notes_mod.comment_hash("team-lawyer", "Всегда проверяй по закону X"),
                           bodies[0])
 
         second = notes_mod.ensure_comments(self.cfg, self.room(), root)
@@ -443,12 +446,12 @@ class CommentsTests(_Base):
                          "повторный проход не должен звать CLI")
 
     def test_changed_text_writes_updated_marker(self):
-        root = self._tree(["biz-lawyer"])
-        self.put("biz-lawyer", "Отвечай коротко")
+        root = self._tree(["team-lawyer"])
+        self.put("team-lawyer", "Отвечай коротко")
         first = notes_mod.ensure_comments(self.cfg, self.room(), root)
         self.assertTrue(first["written"])
 
-        self.put("biz-lawyer", "Отвечай коротко и только цифрами")
+        self.put("team-lawyer", "Отвечай коротко и только цифрами")
         second = notes_mod.ensure_comments(self.cfg, self.room(), root)
         self.assertTrue(second["written"], "смена текста — новый комментарий")
 
@@ -460,14 +463,14 @@ class CommentsTests(_Base):
         self.assertIn("только цифрами", latest)
 
     def test_other_assignees_untouched(self):
-        root = self._tree(["biz-cfo"])
-        self.put("biz-lawyer", "Всегда проверяй по закону X")
+        root = self._tree(["team-cfo"])
+        self.put("team-lawyer", "Всегда проверяй по закону X")
         res = notes_mod.ensure_comments(self.cfg, self.room(), root)
         self.assertEqual(res["written"], [])
         self.assertEqual(self.shim.calls, [])
 
     def test_no_notes_no_cli(self):
-        root = self._tree(["biz-lawyer"])
+        root = self._tree(["team-lawyer"])
         res = notes_mod.ensure_comments(self.cfg, self.room(), root)
         self.assertEqual(res, {"written": [], "skipped": 0, "errors": []})
         self.assertEqual(self.shim.calls, [])

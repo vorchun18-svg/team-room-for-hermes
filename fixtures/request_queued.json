@@ -23,7 +23,7 @@
     "total": 0,
     "percent": 0
   },
-  "assignee": "biz-director",
+  "assignee": "team-director",
   "needs_you": false,
   "preview": "Сравни «Едок» и «Развоз» для первых 100 наборов. Срок — до пятницы.",
   "archived": false,
@@ -46,7 +46,7 @@
     {
       "id": "ns_1",
       "text": "Разложить запрос на четыре ветки и назначить исполнителей",
-      "owner": "biz-director",
+      "owner": "team-director",
       "due": null,
       "state": "open"
     }
@@ -107,7 +107,7 @@
       "id": "t_2a6f5c93",
       "parent_ids": [],
       "title": "Каналы продаж: Едок или Развоз",
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "role": "root",
       "status": "triage",
       "started_at": null,

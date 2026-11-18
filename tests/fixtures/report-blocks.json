@@ -298,20 +298,20 @@
      "date": "2026-09-12",
      "title": "Дегустация и фиксация рецептур",
      "status": "done",
-     "owner": "biz-ops",
+     "owner": "team-ops",
      "md": "Принято 12 позиций, 3 отложены из-за стоимости ингредиентов."
     },
     {
      "date": "2026-10-02",
      "title": "Запуск Instagram-витрины",
      "status": "done",
-     "owner": "biz-marketing"
+     "owner": "team-marketing"
     },
     {
      "date": "2026-10-21",
      "title": "Сверка с PagSeguro за сентябрь",
      "status": "done",
-     "owner": "biz-cfo",
+     "owner": "team-cfo",
      "md": "Расхождение 0,4% — в пределах допустимого."
     },
     {
@@ -325,7 +325,7 @@
      "date": "2026-12-01",
      "title": "Старт продаж поп-апа",
      "status": "blocked",
-     "owner": "biz-runner",
+     "owner": "team-runner",
      "md": "Зависит от предыдущего шага."
     }
    ]
@@ -482,24 +482,24 @@
     {
      "text": "Закрыть договор с курьером на декабрь",
      "done": false,
-     "owner": "biz-runner",
+     "owner": "team-runner",
      "due": "2026-11-12"
     },
     {
      "text": "Сверка PagSeguro за октябрь",
      "done": true,
-     "owner": "biz-cfo",
+     "owner": "team-cfo",
      "due": "2026-11-08"
     },
     {
      "text": "Обновить карточки marketplace",
      "done": true,
-     "owner": "biz-marketing"
+     "owner": "team-marketing"
     },
     {
      "text": "Посчитать сценарий «без поп-апа»",
      "done": false,
-     "owner": "biz-cfo",
+     "owner": "team-cfo",
      "due": "2026-11-20"
     }
    ]

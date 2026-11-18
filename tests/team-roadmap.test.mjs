@@ -153,7 +153,7 @@ test('sortMembers: директор, исполнители, критик', () =
 test('memberModel соединяет участника с профилем', () => {
   const team = fixture('team_cafe.json');
   const profiles = fixture('profiles.json');
-  const director = team.members.find((m) => m.profile === 'biz-director');
+  const director = team.members.find((m) => m.profile === 'team-director');
   const model = memberModel(director, profiles, NOW);
 
   assert.equal(model.name, 'Руководитель проекта');
@@ -177,7 +177,7 @@ test('memberModel соединяет участника с профилем', ()
   assert.deepEqual(model.counts, { done: 3, blocked: 0, active: 1 });
   assert.equal(model.model, '', 'модели в фикстурах нет — поле пустое, а не выдуманное');
 
-  const lawyer = memberModel(team.members.find((m) => m.profile === 'biz-lawyer'), profiles, NOW);
+  const lawyer = memberModel(team.members.find((m) => m.profile === 'team-lawyer'), profiles, NOW);
   assert.equal(lawyer.roleEditable, true);
   assert.equal(lawyer.pinned, true);
   assert.equal(lawyer.stateLabel, 'свободен');
@@ -203,7 +203,7 @@ test('availableProfiles исключает тех, кто уже в комнат
   const profiles = fixture('profiles.json');
   const room = fixture('room_cafe.json');
   const free = availableProfiles(profiles, team, room).map((p) => p.profile);
-  const taken = ['biz-director', 'biz-lawyer', 'biz-ops', 'biz-strategy', 'biz-marketing', 'biz-cfo', 'biz-runner', 'biz-critic'];
+  const taken = ['team-director', 'team-lawyer', 'team-ops', 'team-strategy', 'team-marketing', 'team-cfo', 'team-runner', 'team-critic'];
   const expected = profiles.items.map((p) => p.profile).filter((p) => !taken.includes(p));
   assert.deepEqual(free.sort(), expected.sort(), 'свободны ровно те, кого нет в комнате');
   assert.ok(free.includes('coder') && free.includes('lawyer') && free.includes('surveyor'));
@@ -299,7 +299,7 @@ test('decisionGroups: группировка, фильтр и поиск', () =>
   assert.equal(byWhy.shown, 1);
   assert.match(byWhy.groups[0].items[0].text, /Telegram/);
 
-  const byOwner = decisionGroups(roadmap.decisions, { q: 'biz-marketing' });
+  const byOwner = decisionGroups(roadmap.decisions, { q: 'team-marketing' });
   assert.equal(byOwner.shown, 1);
 
   const empty = decisionGroups(roadmap.decisions, { q: 'нет такого' });
@@ -314,7 +314,7 @@ test('mirrorPathOf: roadmap → room → context_files', () => {
   assert.equal(mirrorPathOf({ mirror_path: 'C:/Vault/Rooms/cafe/STATE.md' }, null), 'C:/Vault/Rooms/cafe/STATE.md');
   assert.equal(
     mirrorPathOf({}, room),
-    'D:/Проекты/Vault/Projects/Rooms/cafe/STATE.md',
+    'C:/Проекты/Vault/Projects/Rooms/cafe/STATE.md',
     'путь берётся из файлов контекста комнаты',
   );
   assert.equal(mirrorPathOf({ mirror_path: '  ' }, { context_files: [] }), null);
@@ -341,11 +341,11 @@ test('canConsolidate и isEmptyRoadmap', () => {
 });
 
 test('withRoomRoles: подпись руководителя — из room.orchestrator (Д1)', () => {
-  const room = { orchestrator: 'biz-director', critic: 'biz-critic' };
+  const room = { orchestrator: 'team-director', critic: 'team-critic' };
   const members = [
-    { profile: 'biz-director', role: 'worker' },
-    { profile: 'biz-critic', role: 'worker' },
-    { profile: 'biz-ops', role: 'worker' },
+    { profile: 'team-director', role: 'worker' },
+    { profile: 'team-critic', role: 'worker' },
+    { profile: 'team-ops', role: 'worker' },
   ];
   const out = withRoomRoles(members, room);
   assert.equal(out[0].role, 'orchestrator');

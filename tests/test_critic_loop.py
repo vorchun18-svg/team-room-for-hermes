@@ -36,8 +36,8 @@ ANSWER_MD = "## Ответ\n\nМаржа 46%, точка безубыточно�
 
 def make_room(**over):
     room = {"id": "cafe", "title": "Лето", "board": "team", "tenant": "room:cafe",
-            "orchestrator": "biz-director", "critic": "biz-critic",
-            "members": [{"profile": "biz-lawyer", "role": "worker", "note": ""}],
+            "orchestrator": "team-director", "critic": "team-critic",
+            "members": [{"profile": "team-lawyer", "role": "worker", "note": ""}],
             "context_files": [], "critic_pass": True}
     room.update(over)
     return room
@@ -55,7 +55,7 @@ def node(task_id, status, *, assignee=None, role="worker", metadata=None, summar
             "metadata": metadata or {}, "summary_md": summary, "parent_ids": list(parents)}
 
 
-def make_detail(root_status="done", *, assignee="biz-director", children=(), answer=ANSWER_MD,
+def make_detail(root_status="done", *, assignee="team-director", children=(), answer=ANSWER_MD,
                 state="ready", critic_info=None, timeline=None, text=REQUEST_TEXT):
     tree = [node(ROOT_ID, root_status, assignee=assignee, role="root")]
     tree.extend(children)
@@ -80,12 +80,12 @@ class PlanTest(unittest.TestCase):
         actions = self.plan()
         self.assertEqual(kinds(actions), ["create_critic"])
         action = actions[0]
-        self.assertEqual(action["assignee"], "biz-critic")
+        self.assertEqual(action["assignee"], "team-critic")
         self.assertEqual(action["parent_id"], ROOT_ID)
         self.assertEqual(action["round"], 1)
 
     def test_root_not_done_no_critic(self):
-        self.assertEqual(self.plan(detail=make_detail("todo", assignee="biz-director")), [])
+        self.assertEqual(self.plan(detail=make_detail("todo", assignee="team-director")), [])
 
     def test_synthesis_pending_no_critic(self):
         self.assertEqual(self.plan(detail=make_detail(state="pending")), [])
@@ -97,22 +97,22 @@ class PlanTest(unittest.TestCase):
 
     def test_no_second_critic_while_first_works(self):
         record = make_record(extra_cards=[{"id": CRITIC_ID, "kind": "critic", "round": 1, "at": 5}])
-        detail = make_detail(children=[node(CRITIC_ID, "todo", assignee="biz-critic")])
+        detail = make_detail(children=[node(CRITIC_ID, "todo", assignee="team-critic")])
         self.assertEqual(self.plan(record=record, detail=detail), [])
-        detail_run = make_detail(children=[node(CRITIC_ID, "running", assignee="biz-critic")])
+        detail_run = make_detail(children=[node(CRITIC_ID, "running", assignee="team-critic")])
         self.assertEqual(self.plan(record=record, detail=detail_run), [])
 
     # --- вердикты ------------------------------------------------------------
     def test_approve_does_nothing(self):
         record = make_record(extra_cards=[{"id": CRITIC_ID, "kind": "critic", "round": 1, "at": 5}])
-        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="biz-critic",
+        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="team-critic",
                                             metadata={"verdict": "approve"})])
         self.assertEqual(self.plan(record=record, detail=detail), [])
 
     def test_revise_creates_one_revision(self):
         issues = [{"where": "Срез 02-CFO", "problem": "нет роста какао", "fix": "пересчитать"}]
         record = make_record(extra_cards=[{"id": CRITIC_ID, "kind": "critic", "round": 1, "at": 5}])
-        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="biz-critic",
+        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="team-critic",
                                             metadata={"verdict": "revise", "issues": issues})])
         actions = self.plan(record=record, detail=detail)
         self.assertEqual(kinds(actions), ["create_revision"])
@@ -126,7 +126,7 @@ class PlanTest(unittest.TestCase):
             {"id": REVISION_ID, "kind": "revision", "round": 1, "at": 6}])
         detail = make_detail(children=[
             node(CRITIC_ID, "done", metadata={"verdict": "revise"}),
-            node(REVISION_ID, "todo", assignee="biz-director")])
+            node(REVISION_ID, "todo", assignee="team-director")])
         self.assertEqual(self.plan(record=record, detail=detail), [])
 
     def test_revision_done_starts_next_round(self):
@@ -135,7 +135,7 @@ class PlanTest(unittest.TestCase):
             {"id": REVISION_ID, "kind": "revision", "round": 1, "at": 6}])
         detail = make_detail(children=[
             node(CRITIC_ID, "done", metadata={"verdict": "revise"}),
-            node(REVISION_ID, "done", assignee="biz-director", summary="Версия 2")])
+            node(REVISION_ID, "done", assignee="team-director", summary="Версия 2")])
         actions = self.plan(record=record, detail=detail)
         self.assertEqual(kinds(actions), ["create_critic"])
         self.assertEqual(actions[0]["round"], 2)
@@ -146,7 +146,7 @@ class PlanTest(unittest.TestCase):
             {"id": REVISION_ID, "kind": "revision", "round": 1, "at": 6}])
         detail = make_detail(children=[
             node(CRITIC_ID, "done", metadata={"verdict": "revise"}),
-            node(REVISION_ID, "done", assignee="biz-director", summary="Версия 2")])
+            node(REVISION_ID, "done", assignee="team-director", summary="Версия 2")])
         self.assertEqual(kinds(self.plan(record=record, detail=detail)), ["mark_ingest"])
 
     def test_max_rounds_is_clamped_to_two(self):
@@ -155,7 +155,7 @@ class PlanTest(unittest.TestCase):
             {"id": REVISION_ID, "kind": "revision", "round": 1, "at": 6}])
         detail = make_detail(children=[
             node(CRITIC_ID, "done", metadata={"verdict": "revise"}),
-            node(REVISION_ID, "done", assignee="biz-director", summary="Версия 2")])
+            node(REVISION_ID, "done", assignee="team-director", summary="Версия 2")])
         actions = self.plan(record=record, detail=detail)
         self.assertEqual(kinds(actions), ["create_critic"])
         self.assertEqual(actions[0]["round"], 2)
@@ -164,7 +164,7 @@ class PlanTest(unittest.TestCase):
         record = make_record(extra_cards=[{"id": CRITIC_ID, "kind": "critic", "round": 1, "at": 5}])
         info = {"task_id": CRITIC_ID, "verdict": "revise", "round": 1,
                 "issues": [{"where": "шаг 2", "problem": "нет срока", "fix": "указать"}]}
-        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="biz-critic")],
+        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="team-critic")],
                              critic_info=info)
         actions = self.plan(record=record, detail=detail)
         self.assertEqual(kinds(actions), ["create_revision"])
@@ -182,7 +182,7 @@ class PlanTest(unittest.TestCase):
 
     def test_verdict_from_summary_fallback(self):
         record = make_record(extra_cards=[{"id": CRITIC_ID, "kind": "critic", "round": 1, "at": 5}])
-        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="biz-critic",
+        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="team-critic",
                                             summary="Вердикт: revise. Пересчитать маржу.")])
         self.assertEqual(kinds(self.plan(record=record, detail=detail)), ["create_revision"])
 
@@ -197,7 +197,7 @@ class PlanTest(unittest.TestCase):
             {"id": REVISION_ID, "kind": "revision", "round": 1, "at": 6}])
         detail = make_detail(children=[
             node(CRITIC_ID, "done", metadata={"verdict": "revise"}),
-            node(REVISION_ID, "done", assignee="biz-director", summary="Версия 2")],
+            node(REVISION_ID, "done", assignee="team-director", summary="Версия 2")],
             critic_info={"enabled": True, "round": 1, "max_rounds": 2, "verdict": None,
                          "issues": [], "task_id": None})
         actions = self.plan(record=record, detail=detail)
@@ -211,8 +211,8 @@ class PlanTest(unittest.TestCase):
     # --- директор комнаты ----------------------------------------------------
     def test_retarget_root_once(self):
         room = make_room(orchestrator="default")
-        detail = make_detail("todo", assignee="biz-director",
-                             children=[node("t_child1", "ready", assignee="biz-lawyer")])
+        detail = make_detail("todo", assignee="team-director",
+                             children=[node("t_child1", "ready", assignee="team-lawyer")])
         actions = self.plan(room=room, detail=detail)
         self.assertEqual(kinds(actions), ["retarget_root"])
         self.assertEqual(actions[0]["profile"], "default")
@@ -220,19 +220,19 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(again, [])
 
     def test_retarget_skips_correct_assignee(self):
-        room = make_room(orchestrator="biz-director")
-        detail = make_detail("todo", assignee="biz-director",
+        room = make_room(orchestrator="team-director")
+        detail = make_detail("todo", assignee="team-director",
                              children=[node("t_child1", "ready")])
         self.assertEqual(self.plan(room=room, detail=detail), [])
 
     def test_retarget_not_before_decomposition(self):
         room = make_room(orchestrator="default")
-        detail = make_detail("todo", assignee="biz-director", children=[], timeline=[])
+        detail = make_detail("todo", assignee="team-director", children=[], timeline=[])
         self.assertEqual(self.plan(room=room, detail=detail), [])
 
     def test_retarget_ignores_done_root(self):
         room = make_room(orchestrator="default")
-        detail = make_detail("done", assignee="biz-director",
+        detail = make_detail("done", assignee="team-director",
                              children=[node(CRITIC_ID, "done", metadata={"verdict": "approve"})],
                              state="pending")
         self.assertEqual(self.plan(room=room, detail=detail), [])
@@ -307,7 +307,7 @@ class RunStepTest(unittest.TestCase):
         call = self.engine.calls[0]
         self.assertEqual(call["kind"], "critic")
         self.assertEqual(call["parent_id"], ROOT_ID)
-        self.assertEqual(call["assignee"], "biz-critic")
+        self.assertEqual(call["assignee"], "team-critic")
         self.assertIn(REQUEST_TEXT, call["body"])
         self.assertIn(ANSWER_MD, call["body"])
         self.assertIn("verdict", call["body"])
@@ -317,7 +317,7 @@ class RunStepTest(unittest.TestCase):
     def test_create_revision_with_issues(self):
         issues = [{"where": "Срез CFO", "problem": "старая себестоимость", "fix": "пересчитать"}]
         record = make_record(extra_cards=[{"id": CRITIC_ID, "kind": "critic", "round": 1, "at": 5}])
-        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="biz-critic",
+        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="team-critic",
                                             metadata={"verdict": "revise", "issues": issues})])
         results = critic_loop.run_step(self.cfg, make_room(), record, detail)
         self.assertEqual([r["kind"] for r in results], ["create_revision"])
@@ -325,7 +325,7 @@ class RunStepTest(unittest.TestCase):
         call = self.engine.calls[0]
         self.assertEqual(call["kind"], "revision")
         self.assertEqual(call["parent_id"], CRITIC_ID)
-        self.assertEqual(call["assignee"], "biz-director")
+        self.assertEqual(call["assignee"], "team-director")
         self.assertIn("ЗАМЕЧАНИЯ КРИТИКА", call["body"])
         self.assertIn("пересчитать", call["body"])
         self.assertEqual(self.registry.cards[0]["kind"], "revision")
@@ -342,7 +342,7 @@ class RunStepTest(unittest.TestCase):
     def test_manual_revision_with_user_note(self):
         """Ручная «На доработку»: замечание Михаила в теле, доработка в реестре."""
         record = make_record(extra_cards=[{"id": CRITIC_ID, "kind": "critic", "round": 1, "at": 5}])
-        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="biz-critic",
+        detail = make_detail(children=[node(CRITIC_ID, "done", assignee="team-critic",
                                             metadata={"verdict": "revise", "issues": []})],
                               critic_info={"enabled": True, "round": 1, "max_rounds": 1,
                                            "state": "revised", "verdict": "revise", "issues": [],
@@ -364,7 +364,7 @@ class RunStepTest(unittest.TestCase):
 
     def test_retarget_writes_flag(self):
         room = make_room(orchestrator="default")
-        detail = make_detail("todo", assignee="biz-director",
+        detail = make_detail("todo", assignee="team-director",
                              children=[node("t_child1", "ready")])
         results = critic_loop.run_step(self.cfg, room, make_record(), detail)
         self.assertEqual([r["kind"] for r in results], ["retarget_root"])
@@ -427,14 +427,14 @@ class SandboxIntegrationTest(unittest.TestCase):
     def test_critic_then_revision_cards_created(self):
         tree = self.sb.state("done_modern")
         root_id = tree["root_id"]
-        room = make_room(orchestrator="biz-director", critic="biz-critic")
+        room = make_room(orchestrator="team-director", critic="team-critic")
         record = {"root_id": root_id, "slug": tree["slug"], "text": REQUEST_TEXT,
                   "critic": True, "extra_cards": [], "retargeted": True, "max_rounds": 1}
         registry = FakeRegistry()
         critic_loop.set_registry(registry)
         try:
             detail = {"status": "done", "text": REQUEST_TEXT,
-                      "tree": [node(root_id, "done", assignee="biz-director", role="root")],
+                      "tree": [node(root_id, "done", assignee="team-director", role="root")],
                       "critic": None, "timeline": [{"kind": "decomposed"}],
                       "synthesis": {"state": "ready", "text_md": ANSWER_MD}}
             first = critic_loop.run_step(self.cfg, room, record, detail)
@@ -443,7 +443,7 @@ class SandboxIntegrationTest(unittest.TestCase):
             critic_id = first[0]["task_id"]
             row = self.sb.one("SELECT status, assignee, tenant, body FROM tasks WHERE id=?",
                               (critic_id,))
-            self.assertEqual(row["assignee"], "biz-critic")
+            self.assertEqual(row["assignee"], "team-critic")
             self.assertEqual(row["tenant"], "room:cafe")
             self.assertIn(row["status"], ("todo", "ready"))  # родитель done — карточка ждёт диспетчера
             self.assertIn(REQUEST_TEXT.replace("\r\n", "\n"), row["body"])
@@ -460,7 +460,7 @@ class SandboxIntegrationTest(unittest.TestCase):
                                                ensure_ascii=False))
             record["extra_cards"] = registry.cards[:]
             detail2 = self._detail(critic_node=node(
-                critic_id, "done", assignee="biz-critic",
+                critic_id, "done", assignee="team-critic",
                 metadata={"verdict": "revise",
                           "issues": [{"where": "CFO", "problem": "старая себестоимость",
                                       "fix": "пересчитать с какао"}]}))
@@ -470,7 +470,7 @@ class SandboxIntegrationTest(unittest.TestCase):
             revision_id = second[0]["task_id"]
             revision = self.sb.one("SELECT assignee, tenant, body FROM tasks WHERE id=?",
                                    (revision_id,))
-            self.assertEqual(revision["assignee"], "biz-director")
+            self.assertEqual(revision["assignee"], "team-director")
             self.assertEqual(revision["tenant"], "room:cafe")
             self.assertIn("пересчитать с какао", revision["body"])
             self.assertIn(contract.CONTRACT_OPEN, revision["body"])

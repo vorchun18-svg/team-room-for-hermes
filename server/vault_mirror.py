@@ -21,7 +21,33 @@ from pathlib import Path
 
 from .ingest_common import MONTHS_NOM, STATUS_RU, _as_int, _clean
 from .config import safe_dir_name
+from . import decision_registry as dec_reg
 from . import registry
+
+
+def _room_decisions(cfg, room_id: str, state: dict) -> list[dict]:
+    """Действующие и предложенные решения комнаты — из РЕЕСТРА (W25 M1).
+
+    Паспорт комнаты больше не читает ``decisions.json`` напрямую: там статус
+    решения перезаписывался и отменённое решение оставалось «принятым» (R4 §3
+    п.1). Источник правды — ``memory/registry.jsonl``; если реестра ещё нет
+    (старая комната), он один раз собирается из ``decisions.json``
+    (идемпотентная миграция с резервной копией). Ошибка реестра не роняет
+    паспорт: тогда работает прежний путь по ``state['decisions']``.
+    """
+    try:
+        data = dec_reg.current(cfg, room_id)
+        if not data and (state.get("decisions") or []):
+            dec_reg.migrate_from_decisions(cfg, room_id, state.get("decisions"))
+            data = dec_reg.current(cfg, room_id)
+        if data:
+            items = [dict(row) for row in data.values()]
+            items.sort(key=lambda row: (-_as_int(row.get("at")), str(row.get("id") or "")))
+            return items
+    except Exception:  # noqa: BLE001 - паспорт важнее строгого источника
+        pass
+    return [d for d in (state.get("decisions") or []) if isinstance(d, dict)]
+
 
 def _fmt_date(ts) -> str:
     ts = _as_int(ts)
@@ -69,7 +95,7 @@ def _link(cfg, room_id: str, root_id: str) -> str:
 def _state_md(cfg, room_id: str, title: str, state: dict) -> str:
     roadmap = state.get("roadmap") or {}
     backlog = state.get("backlog") or {}
-    decisions = state.get("decisions") or []
+    decisions = _room_decisions(cfg, room_id, state)
     requests = registry.list_requests(cfg, room_id, 10)
     latest = _latest_at(state)
     lines = [f"# {title} — состояние проекта", ""]
@@ -98,6 +124,7 @@ def _state_md(cfg, room_id: str, title: str, state: dict) -> str:
     lines += ["## Решения", ""]
     accepted = [d for d in decisions if d.get("status") == "accepted"]
     proposed = [d for d in decisions if d.get("status") == "proposed"]
+    muted = [d for d in decisions if d.get("status") in ("dismissed", "superseded", "rejected")]
     if not accepted and not proposed:
         lines.append("Решений пока нет.")
     for label, group in (("Принято", accepted), ("Предложено", proposed)):
@@ -107,8 +134,13 @@ def _state_md(cfg, room_id: str, title: str, state: dict) -> str:
                 why = f" — почему: {_clean(decision['why'])}" if decision.get("why") else ""
                 source = decision.get("source_request")
                 ref = f" ({_link(cfg, room_id, str(source))})" if source else ""
-                lines.append(f"- {_clean(decision.get('text'))}{why}{ref}")
+                did = str(decision.get("id") or "")
+                mark = f"`{did}` — " if did else ""
+                lines.append(f"- {mark}{_clean(decision.get('text'))}{why}{ref}")
             lines.append("")
+    if muted:
+        lines += ["Снято, отклонено или устарело (%d) — в работе не участвуют: см. "
+                  "`Решения/реестр.md`." % len(muted), ""]
 
     inbox = (backlog.get("sections") or {}).get("inbox") or []
     lines += ["## Ждёт Михаила", ""]
@@ -573,7 +605,7 @@ def _request_sections(cfg, room: dict, root_id: str, detail: dict) -> list:
     blocks.append(("answer", "\n".join(answer).strip()))
 
     steps = [s for s in (detail.get("next_steps") or []) if isinstance(s, dict)]
-    nxt = ["## Дальше", ""]
+    nxt = ["## От вас нужно", ""]
     if not steps:
         nxt.append("Шагов пока нет.")
     for step in steps:
@@ -622,7 +654,8 @@ def _request_sections(cfg, room: dict, root_id: str, detail: dict) -> list:
         decisions.append(line)
     blocks.append(("decisions", "\n".join(decisions)))
 
-    artifacts = ["## Артефакты", ""]
+    # W26-D3: раздел заметки называется «Файлы» (было «Артефакты»).
+    artifacts = ["## Файлы", ""]
     project_dir = str(room.get("project_dir") or "").strip()
     if project_dir:
         artifacts += ["**Папка проекта:** %s" % _md_link(project_dir, project_dir), ""]
@@ -949,16 +982,25 @@ def _context_blocks(cfg, room: dict, state: dict, requests: list, include_glossa
     # Особые указания участникам этой комнаты (WAVE9 §9): в карточку и в CONTEXT.md.
     blocks.append(("agent_notes", _notes_section(room)))
 
-    decisions = [d for d in (state.get("decisions") or []) if isinstance(d, dict)]
-    decisions.sort(key=lambda d: (_as_int(d.get("at")) or _as_int(d.get("updated_at")) or 0), reverse=True)
-    body = ["## Решения (последние 30)", ""]
-    if not decisions:
-        body.append("_Решений пока нет._")
-    for decision in decisions[:30]:
-        label = {"accepted": "принято", "proposed": "предложено",
-                 "rejected": "отклонено"}.get(str(decision.get("status") or ""), "")
-        body.append("- %s%s" % (_clean(decision.get("text")),
-                                (" — *%s*" % label) if label else ""))
+    decisions = _room_decisions(cfg, room_id, state)
+    decisions = [d for d in decisions if str(d.get("status") or "") in
+                 ("accepted", "proposed", "rejected", "dismissed", "superseded")]
+    body = ["## Решения (последние 30 действующих и открытых)", ""]
+    live = [d for d in decisions if str(d.get("status") or "") in ("accepted", "proposed")]
+    if not live:
+        body.append("_Действующих решений пока нет._")
+    for decision in live[:30]:
+        label = {"accepted": "принято", "proposed": "предложено"}.get(
+            str(decision.get("status") or ""), "")
+        did = str(decision.get("id") or "")
+        body.append("- %s%s%s" % (("`%s` — " % did) if did else _clean(decision.get("text")),
+                                  _clean(decision.get("text")) if did else "",
+                                  (" — *%s*" % label) if label else ""))
+    muted = [d for d in decisions if str(d.get("status") or "") in
+             ("rejected", "dismissed", "superseded")]
+    if muted:
+        body += ["", "_Снято/устарело: %d — в работе не участвуют (см. реестр)._"
+                 % len(muted)]
     blocks.append(("decisions", "\n".join(body)))
 
     backlog = state.get("backlog") or {}

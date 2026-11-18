@@ -30,20 +30,38 @@ PATCH_FIELDS = {"title", "icon", "orchestrator", "critic", "context_files", "pro
                 "mode_default", "critic_pass", "max_rounds",
                 "launch_mode", "max_parallel_streams", "project_mode", "agent_notes",
                 "agent_models",
+                # W20-S1 §1.1: живой свод — переключатель, «тишина» и потолок частоты.
+                "auto_svod", "auto_svod_quiet_s", "auto_svod_min_gap_s",
+                # W20-W1 §1.6 «Ход работы»: подробность ленты и частота промежуточного итога.
+                "worklog_mode", "digest_every_min",
+                # W23 §2.3 «Контроль моделей»: строго (исправляем сами) | только предупреждать.
+                "model_guard",
                 # W17-R §1 (B-8): этапы проекта — свойство комнаты, правятся в её настройках.
-                "phases"}
+                "phases",
+                # W24 §3.2: дежурства комнаты — только привязка id заданий Hermes.
+                "duties"}
 ACTION_ALLOWED = ("dispatch", "comment", "answer", "unblock", "reassign", "rework", "retry",
                   "archive", "clone", "decompose", "critique", "revise",
                   # W14-D §2/§4: «Напомнить руководителю» и «Убрать» шаг
                   # W14-H §12: действия по шагу — согласен / прокомментировать / переместить
                   # W17-B §3: «Отправить руководителю накопленные ответы» (только по клику)
                   # W19-D2 §1 (B-20): действие над решением «предложено»
+                  # W20-S1 §1.1: «Обновить сейчас» — версия свода по кнопке
+                  # W20-D1 §1.2 (B-38): «Это не вопрос» — снятие вопроса/кандидата
+                  # W22-AP1 §2.2: «разрешить один раз / всегда / запретить» блокировку
                   "answer_remind", "step_drop", "step_agree", "step_comment", "step_move",
-                  "answers_resend", "decision")
+                  "answers_resend", "decision", "svod_refresh", "question_dismiss",
+                  "approval",
+                  # W23-MG1 §2.8: действия над ОДНОЙ карточкой — остановить, продолжить,
+                  # сменить модель (как кнопки остановки в самом Hermes).
+                  "card_stop", "card_resume", "card_model")
 ACTION_REQUIRED = {"answer": ("question_id",), "reassign": ("task_id", "profile"),
                    "answer_remind": ("question_id",), "step_drop": ("step_id",),
                    "step_agree": ("step_id",), "step_comment": ("step_id",),
-                   "step_move": ("step_id",), "decision": ("decision_id",)}
+                   "step_move": ("step_id",), "decision": ("decision_id",),
+                   "question_dismiss": ("question_id",),
+                   "card_stop": ("task_id",), "card_resume": ("task_id",),
+                   "card_model": ("task_id", "model")}
 ACTION_TEXT = {"comment", "answer", "rework", "revise", "step_comment"}
 # D1: строгие формы значений, которые уходят в argv CLI (см. docs/critic/wave4-backend.md §2.1)
 TASK_ID_RE = re.compile(r"^t_[0-9a-f]{8}$")

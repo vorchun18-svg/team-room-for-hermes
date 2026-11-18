@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
 import server.app as app_mod                      # noqa: E402
 from server import config, project_dir            # noqa: E402
 from tests.helpers import Sandbox, snapshot_real_db  # noqa: E402
+from tests import ci_marks                       # noqa: E402
 
 B = chr(92)
 HERMES_MSG = "Папка внутри служебных каталогов Hermes — выберите другую"
@@ -92,8 +93,8 @@ class RoomFolderApi(unittest.TestCase):
 
     def room_body(self, title, project_dir_value=""):
         return {"title": title, "icon": "project", "board": "team",
-                "orchestrator": "biz-director", "critic": None,
-                "members": [{"profile": "biz-ops", "role": "worker"}],
+                "orchestrator": "team-director", "critic": None,
+                "members": [{"profile": "team-ops", "role": "worker"}],
                 "context_files": [], "project_dir": project_dir_value,
                 "critic_pass": False, "max_rounds": 1}
 
@@ -119,6 +120,7 @@ class RoomFolderApi(unittest.TestCase):
         self.assertTrue(data["exists"])
         self.assertFalse(data["will_create"])
 
+    @unittest.skipUnless(ci_marks.has_hermes_machine(), ci_marks.WHY_NO_HERMES_MACHINE)
     def test_check_dir_hermes_forbidden_russian(self):
         data = self.call("POST", "/api/rooms/check-dir",
                          {"path": str(Path(self.cfg.hermes_home) / "projects" / "x")})["json"]
@@ -163,6 +165,7 @@ class RoomFolderApi(unittest.TestCase):
         self.assertEqual(res["status"], 201)
         self.assertEqual(res["json"]["project_dir"], "")
 
+    @unittest.skipUnless(ci_marks.has_hermes_machine(), ci_marks.WHY_NO_HERMES_MACHINE)
     def test_create_room_bad_folder_is_400_russian(self):
         for bad, fragment in ((str(Path(self.cfg.hermes_home) / "x"), HERMES_MSG),
                               (str(Path(self.cfg.data_dir) / "x"), "данных приложения"),
@@ -194,6 +197,7 @@ class RoomFolderApi(unittest.TestCase):
         self.assertEqual(res["status"], 200)
         self.assertEqual(res["json"]["project_dir"], "")
 
+    @unittest.skipUnless(ci_marks.has_hermes_machine(), ci_marks.WHY_NO_HERMES_MACHINE)
     def test_patch_bad_folder_is_400_and_keeps_old(self):
         target = self.base / "проекты" / "Держим"
         created = self.call("POST", "/api/rooms", self.room_body("Правка с ошибкой", str(target)))["json"]

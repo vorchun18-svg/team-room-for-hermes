@@ -23,7 +23,7 @@
     "total": 3,
     "percent": 66
   },
-  "assignee": "biz-director",
+  "assignee": "team-director",
   "needs_you": true,
   "preview": "Подготовь подачу в Роспатент и скажи, сколько это стоит. Срок — до пятницы.",
   "archived": false,
@@ -53,7 +53,7 @@
     {
       "id": "ns_2",
       "text": "После решения — оплатить таксу и подать заявку",
-      "owner": "biz-marketing",
+      "owner": "team-marketing",
       "due": "2026-11-03",
       "state": "open"
     }
@@ -69,7 +69,7 @@
     },
     {
       "id": "q_2",
-      "text": "Добавляем ли в команду ещё одного участника — биз-финансиста (biz-cfo)?",
+      "text": "Добавляем ли в команду ещё одного участника — биз-финансиста (team-cfo)?",
       "for": "mikhail",
       "answered": true,
       "answer": "Нет, никакого финансиста не добавляем: команда заточена на Россию, лишний участник только замедлит.",
@@ -78,7 +78,7 @@
       "answer_label": "учтено: работа пересмотрена",
       "needs_explanation": false,
       "reaction": {
-        "text": "Принято: biz-cfo не добавляем, шаг по составу команды снят.",
+        "text": "Принято: team-cfo не добавляем, шаг по составу команды снят.",
         "at": 1793161660,
         "status": "applied",
         "cards": [
@@ -189,7 +189,7 @@
   "future_questions": [],
   "artifacts": [
     {
-      "path": "D:/Проекты/Vault/Projects/Business areas/Лето/05-Strategy/brand-package-2026-10-28.md",
+      "path": "C:/Проекты/Vault/Projects/Business areas/Лето/05-Strategy/brand-package-2026-10-28.md",
       "title": "Пакет для подачи в Роспатент",
       "kind": "md",
       "exists": false,
@@ -207,7 +207,7 @@
       "id": "t_5c8e4a02",
       "parent_ids": [],
       "title": "Бренд: подача в Роспатент — go/no-go",
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "role": "root",
       "status": "todo",
       "started_at": 1793162930,
@@ -226,7 +226,7 @@
         "t_5c8e4a02"
       ],
       "title": "Подготовить подачу в Роспатент",
-      "assignee": "biz-marketing",
+      "assignee": "team-marketing",
       "role": "worker",
       "status": "blocked",
       "started_at": 1793162960,
@@ -235,7 +235,7 @@
       "metadata": {},
       "comments": [
         {
-          "author": "biz-marketing",
+          "author": "team-marketing",
           "text": "Без решения Михаила подать не могу: такса необратима.",
           "at": 1793163620
         }
@@ -243,7 +243,7 @@
       "runs": [
         {
           "id": 89,
-          "profile": "biz-marketing",
+          "profile": "team-marketing",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793162960,
@@ -262,7 +262,7 @@
         "t_5c8e4a02"
       ],
       "title": "Проверить риск чужой подачи",
-      "assignee": "biz-lawyer",
+      "assignee": "team-lawyer",
       "role": "worker",
       "status": "done",
       "started_at": 1793162970,
@@ -273,7 +273,7 @@
       "runs": [
         {
           "id": 90,
-          "profile": "biz-lawyer",
+          "profile": "team-lawyer",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793162970,
@@ -291,7 +291,7 @@
         "t_5c8e4a02"
       ],
       "title": "Смета подачи: классы и таксы",
-      "assignee": "biz-cfo",
+      "assignee": "team-cfo",
       "role": "worker",
       "status": "done",
       "started_at": 1793162980,
@@ -302,7 +302,7 @@
       "runs": [
         {
           "id": 91,
-          "profile": "biz-cfo",
+          "profile": "team-cfo",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793162980,
@@ -328,28 +328,28 @@
       "at": 1793162960,
       "kind": "claimed",
       "task_id": "t_5c8e4a03",
-      "actor": "biz-marketing",
+      "actor": "team-marketing",
       "text": "Марина готовит пакет Роспатент"
     },
     {
       "at": 1793163660,
       "kind": "completed",
       "task_id": "t_5c8e4a05",
-      "actor": "biz-cfo",
+      "actor": "team-cfo",
       "text": "Смета готова"
     },
     {
       "at": 1793163700,
       "kind": "completed",
       "task_id": "t_5c8e4a04",
-      "actor": "biz-lawyer",
+      "actor": "team-lawyer",
       "text": "Риск R5 оценён"
     },
     {
       "at": 1793163720,
       "kind": "blocked",
       "task_id": "t_5c8e4a03",
-      "actor": "biz-marketing",
+      "actor": "team-marketing",
       "text": "Нужен go/no-go Михаила по классам и таксе"
     }
   ],
@@ -369,7 +369,7 @@
       "id": "c2",
       "at": 1793158060,
       "author_kind": "agent",
-      "author": "biz-director",
+      "author": "team-director",
       "author_label": "Глеб · руководитель комнаты",
       "text": "Принял; передал Антону — классы и такса, Илье — объём защиты по линейке. Своду нужен твой выбор, вопрос внизу.",
       "task_id": "t_5c8e4a02",
@@ -379,7 +379,7 @@
       "id": "c3",
       "at": 1793158200,
       "author_kind": "agent",
-      "author": "biz-lawyer",
+      "author": "team-lawyer",
       "author_label": "Антон · исполнитель",
       "text": "Класс 30 — 4 400 ₽ со скидкой для ИП, класс 30+43 — 8 800 ₽. Подача необратима, поэтому решение за Михаилом.",
       "task_id": "t_5c8e4a02",

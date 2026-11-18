@@ -237,6 +237,18 @@
   font-weight: 600;
 }
 
+/* W21-L1 (U4): строка «Шаг учтён · 13:48» — рядом с подписью реакции, не вместо неё.
+   Иконка и текст в одну строку; классы реакции дают место в сетке шага. */
+.req-steps .req-step__notice {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.req-steps .req-step__notice .codicon { flex: none; color: var(--ok-ink, var(--ui-text-secondary)); }
+
+.req-steps .req-step__notice-text { min-width: 0; overflow-wrap: anywhere; }
+
 .req-step__warn {
   display: flex;
   align-items: center;
@@ -443,7 +455,7 @@
   color: var(--danger-ink);
 }
 
-/* ── шаг во вкладке «Дальше»: кликабельная строка вместо галочки (п. 12) ──── */
+/* ── шаг во вкладке «От вас нужно»: кликабельная строка вместо галочки (п. 12) ──── */
 
 /* Сетка прежней строки была под чекбокс: первая колонка больше не нужна. */
 .step-row {

@@ -7,7 +7,7 @@
  * лимитов, «Новая запись», «Закрепить», «Удалить», «Сократить», «Журнал».
  *
  *   import { openNotesEditor, notesLink } from './notes-editor.js';
- *   openNotesEditor({ ctx, roomId: 'cafe', profile: 'biz-cfo', label: 'Анна · финансы (CFO)' });
+ *   openNotesEditor({ ctx, roomId: 'cafe', profile: 'team-cfo', label: 'Анна · финансы (CFO)' });
  *
  * Контракт для пакета E (карточка участника):
  *   const link = notesLink(ctx, { roomId, profile, label, room, onChange });

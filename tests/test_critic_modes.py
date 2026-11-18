@@ -45,8 +45,8 @@ ISSUE_B = {"where": "Шаги", "problem": "нет сроков", "fix": "про
 
 def make_room(**over):
     room = {"id": "cafe", "title": "Лето", "board": "team", "tenant": "room:cafe",
-            "orchestrator": "biz-director", "critic": "biz-critic",
-            "members": [{"profile": "biz-lawyer", "role": "worker", "note": ""}],
+            "orchestrator": "team-director", "critic": "team-critic",
+            "members": [{"profile": "team-lawyer", "role": "worker", "note": ""}],
             "context_files": [], "critic_pass": True, "critic_mode": "until_approved",
             "max_rounds": 1, "critic_round_cap": 12}
     room.update(over)
@@ -67,7 +67,7 @@ def node(task_id, status, *, assignee=None, role="worker", metadata=None, summar
             "error": error}
 
 
-def make_detail(root_status="done", *, assignee="biz-director", children=(), answer=ANSWER_MD,
+def make_detail(root_status="done", *, assignee="team-director", children=(), answer=ANSWER_MD,
                 state="ready", critic_info=None, timeline=None, text=REQUEST_TEXT):
     tree = [node(ROOT_ID, root_status, assignee=assignee, role="root")]
     tree.extend(children)
@@ -144,7 +144,7 @@ class ModePlanTest(unittest.TestCase):
                                 detail if detail is not None else make_detail(), now)
 
     def critic_round(self, number, verdict, issues=(), *, status="done"):
-        return node(CRITIC_ID, status, assignee="biz-critic",
+        return node(CRITIC_ID, status, assignee="team-critic",
                     metadata={"verdict": verdict, "issues": list(issues)})
 
     def cards(self, *rounds):
@@ -175,7 +175,7 @@ class ModePlanTest(unittest.TestCase):
                              extra_cards=self.cards((1, "revise")))
         detail = make_detail(children=[
             node(CRITIC_ID, "done", metadata={"verdict": "revise", "issues": [ISSUE_A]}),
-            node(REVISION_ID, "done", assignee="biz-director", summary="Версия 2")])
+            node(REVISION_ID, "done", assignee="team-director", summary="Версия 2")])
         actions = self.plan(record=record, detail=detail)
         self.assertEqual(kinds(actions), ["create_critic"])
         self.assertEqual(actions[0]["round"], 2)
@@ -198,7 +198,7 @@ class ModePlanTest(unittest.TestCase):
         detail = make_detail(children=[
             node("t_crit003", "done", metadata={"verdict": "revise",
                                                 "issues": [ISSUE_A, ISSUE_B]}),
-            node("t_rev0003", "done", assignee="biz-director", summary="Версия 4")])
+            node("t_rev0003", "done", assignee="team-director", summary="Версия 4")])
         actions = self.plan(record=record, detail=detail)
         self.assertEqual(kinds(actions), ["stop_no_progress"])
         self.assertEqual(actions[0]["stop"]["kind"], "no_progress")
@@ -213,7 +213,7 @@ class ModePlanTest(unittest.TestCase):
             (1, "revise"), (2, "revise"), (3, "revise")))
         detail = make_detail(children=[
             node("t_crit003", "done", metadata={"verdict": "revise", "issues": [ISSUE_A]}),
-            node("t_rev0003", "done", assignee="biz-director", summary="Версия 4")])
+            node("t_rev0003", "done", assignee="team-director", summary="Версия 4")])
         self.assertEqual(kinds(self.plan(record=record, detail=detail)), ["create_critic"])
 
     def test_different_issues_do_not_stall(self):
@@ -224,7 +224,7 @@ class ModePlanTest(unittest.TestCase):
             (1, "revise"), (2, "revise"), (3, "revise")))
         detail = make_detail(children=[
             node("t_crit003", "done", metadata={"verdict": "revise", "issues": [ISSUE_A]}),
-            node("t_rev0003", "done", assignee="biz-director", summary="Версия 4")])
+            node("t_rev0003", "done", assignee="team-director", summary="Версия 4")])
         self.assertEqual(kinds(self.plan(record=record, detail=detail)), ["create_critic"])
 
     def test_two_rounds_are_not_enough_for_stall(self):
@@ -233,7 +233,7 @@ class ModePlanTest(unittest.TestCase):
             (1, "revise"), (2, "revise")))
         detail = make_detail(children=[
             node("t_crit002", "done", metadata={"verdict": "revise", "issues": [ISSUE_A]}),
-            node("t_rev0002", "done", assignee="biz-director", summary="Версия 3")])
+            node("t_rev0002", "done", assignee="team-director", summary="Версия 3")])
         self.assertEqual(kinds(self.plan(record=record, detail=detail)), ["create_critic"])
 
     # --- страховка «мягкий потолок» -----------------------------------------
@@ -245,7 +245,7 @@ class ModePlanTest(unittest.TestCase):
             (1, "revise"), (2, "revise"), (3, "revise"), (4, "revise")))
         detail = make_detail(children=[
             node("t_crit004", "done", metadata={"verdict": "revise", "issues": [ISSUE_A]}),
-            node("t_rev0004", "done", assignee="biz-director", summary="Версия 5")])
+            node("t_rev0004", "done", assignee="team-director", summary="Версия 5")])
         actions = self.plan(room=room, record=record, detail=detail)
         self.assertEqual(kinds(actions), ["stop_cap"])
         self.assertEqual(actions[0]["stop"]["cap"], 4)
@@ -256,14 +256,14 @@ class ModePlanTest(unittest.TestCase):
                              extra_cards=self.cards((1, "revise")))
         detail = make_detail(children=[
             node(CRITIC_ID, "done", metadata={"verdict": "revise", "issues": [ISSUE_A]}),
-            node(REVISION_ID, "done", assignee="biz-director", summary="Версия 2")])
+            node(REVISION_ID, "done", assignee="team-director", summary="Версия 2")])
         self.assertEqual(kinds(self.plan(room=room, record=record, detail=detail)),
                          ["create_critic"])
 
     # --- страховка «лимит провайдера» ---------------------------------------
     def test_rate_limit_pauses_then_retries(self):
         record = make_record(extra_cards=[{"id": CRITIC_ID, "kind": "critic", "round": 1, "at": 5}])
-        failed = node(CRITIC_ID, "failed", assignee="biz-critic",
+        failed = node(CRITIC_ID, "failed", assignee="team-critic",
                       error={"code": "failed", "message": "HTTP 429 Too Many Requests"})
         detail = make_detail(children=[failed])
         first = self.plan(record=record, detail=detail, now=1000)
@@ -306,7 +306,7 @@ class ModePlanTest(unittest.TestCase):
         record = make_record(critic_mode="rounds", max_rounds=1, extra_cards=self.cards((1, "revise")))
         detail = make_detail(children=[
             node(CRITIC_ID, "done", metadata={"verdict": "revise", "issues": [ISSUE_A]}),
-            node(REVISION_ID, "done", assignee="biz-director", summary="Версия 2")])
+            node(REVISION_ID, "done", assignee="team-director", summary="Версия 2")])
         self.assertEqual(kinds(self.plan(room=room, record=record, detail=detail)),
                          ["mark_ingest"])
 
@@ -316,7 +316,7 @@ class ModePlanTest(unittest.TestCase):
                              extra_cards=self.cards((1, "revise")))
         detail = make_detail(children=[
             node(CRITIC_ID, "done", metadata={"verdict": "revise", "issues": [ISSUE_A]}),
-            node(REVISION_ID, "done", assignee="biz-director", summary="Версия 2")])
+            node(REVISION_ID, "done", assignee="team-director", summary="Версия 2")])
         self.assertEqual(kinds(self.plan(room=room, record=record, detail=detail)),
                          ["create_critic"])
 
@@ -444,7 +444,7 @@ class RunStepModeTest(unittest.TestCase):
             {"id": "t_rev0003", "kind": "revision", "round": 3, "at": 31}])
         detail = make_detail(children=[
             node("t_crit003", "done", metadata={"verdict": "revise", "issues": [ISSUE_A]}),
-            node("t_rev0003", "done", assignee="biz-director", summary="Версия 4")])
+            node("t_rev0003", "done", assignee="team-director", summary="Версия 4")])
         results = critic_loop.run_step(self.cfg, make_room(), record, detail)
         self.assertEqual([r["kind"] for r in results], ["stop_no_progress"])
         self.assertTrue(results[0]["ok"])
@@ -540,7 +540,7 @@ class SandboxCycleTest(unittest.TestCase):
         critic_loop.set_registry(registry)
         try:
             detail = {"status": "done", "text": REQUEST_TEXT,
-                      "tree": [node(root_id, "done", assignee="biz-director", role="root")],
+                      "tree": [node(root_id, "done", assignee="team-director", role="root")],
                       "critic": None, "timeline": [{"kind": "decomposed"}],
                       "synthesis": {"state": "ready", "text_md": ANSWER_MD}}
             self.assertTrue(critic_loop.delivery_hold(room, record, detail))
@@ -553,8 +553,8 @@ class SandboxCycleTest(unittest.TestCase):
                                                ensure_ascii=False))
             record["extra_cards"] = registry.cards[:]
             detail2 = {"status": "done", "text": REQUEST_TEXT,
-                       "tree": [node(root_id, "done", assignee="biz-director", role="root"),
-                                node(critic1, "done", assignee="biz-critic",
+                       "tree": [node(root_id, "done", assignee="team-director", role="root"),
+                                node(critic1, "done", assignee="team-critic",
                                      metadata={"verdict": "revise", "issues": [ISSUE_A]})],
                        "critic": None, "timeline": [{"kind": "decomposed"}],
                        "synthesis": {"state": "ready", "text_md": ANSWER_MD}}
@@ -569,10 +569,10 @@ class SandboxCycleTest(unittest.TestCase):
                                        if e][-1]
 
             detail3 = {"status": "done", "text": REQUEST_TEXT,
-                       "tree": [node(root_id, "done", assignee="biz-director", role="root"),
-                                node(critic1, "done", assignee="biz-critic",
+                       "tree": [node(root_id, "done", assignee="team-director", role="root"),
+                                node(critic1, "done", assignee="team-critic",
                                      metadata={"verdict": "revise", "issues": [ISSUE_A]}),
-                                node(revision1, "done", assignee="biz-director",
+                                node(revision1, "done", assignee="team-director",
                                      summary="Версия 2: маржа пересчитана.")],
                        "critic": None, "timeline": [{"kind": "decomposed"}],
                        "synthesis": {"state": "ready", "text_md": ANSWER_MD}}
@@ -582,7 +582,7 @@ class SandboxCycleTest(unittest.TestCase):
             critic2 = third[0]["task_id"]
             self.assertNotEqual(critic2, critic1)
             row = self.sb.one("SELECT title, assignee FROM tasks WHERE id=?", (critic2,))
-            self.assertEqual(row["assignee"], "biz-critic")
+            self.assertEqual(row["assignee"], "team-critic")
             self.assertIn("раунд 2", row["title"])
 
             self._cli("complete", critic2, "--summary", "Вердикт: approve.",
@@ -590,12 +590,12 @@ class SandboxCycleTest(unittest.TestCase):
                                                ensure_ascii=False))
             record["extra_cards"] = registry.cards[:]
             detail4 = {"status": "done", "text": REQUEST_TEXT,
-                       "tree": [node(root_id, "done", assignee="biz-director", role="root"),
-                                node(critic1, "done", assignee="biz-critic",
+                       "tree": [node(root_id, "done", assignee="team-director", role="root"),
+                                node(critic1, "done", assignee="team-critic",
                                      metadata={"verdict": "revise", "issues": [ISSUE_A]}),
-                                node(revision1, "done", assignee="biz-director",
+                                node(revision1, "done", assignee="team-director",
                                      summary="Версия 2: маржа пересчитана."),
-                                node(critic2, "done", assignee="biz-critic",
+                                node(critic2, "done", assignee="team-critic",
                                      metadata={"verdict": "approve", "issues": []})],
                        "critic": None, "timeline": [{"kind": "decomposed"}],
                        "synthesis": {"state": "ready", "text_md": ANSWER_MD}}

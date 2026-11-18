@@ -522,11 +522,40 @@ def _port_check(cfg, port) -> dict:
                  _doc("Открыть документацию", "8-типичные-проблемы"))
 
 
+def _autostart_fix() -> dict:
+    """Кнопка «Включить автозапуск» — только если есть чем запускать сервер.
+
+    Ничего не пишет: `autostart.plan()` лишь проверяет наличие
+    `bin/team-room-server.cmd|sh` и собирает план. Нет файла запуска (или
+    система не та) — кнопки не будет, останется ссылка на документацию.
+    """
+    try:
+        try:
+            from . import autostart as autostart_mod
+        except ImportError:  # pragma: no cover
+            import autostart as autostart_mod  # type: ignore
+        todo = autostart_mod.plan(app_dir=Path(str(getattr(config, "APP_DIR", "."))))
+    except Exception:  # noqa: BLE001 — нет файла запуска/песочница: действие не предлагаем
+        return {}
+    how = str(todo.get("how") or "")
+    confirm = ("Сервер будет подниматься сам при входе в систему%s. Окно не появится — "
+               "сервер слушает только этот компьютер. Отключить можно установщиком."
+               % ((" (%s)" % how) if how else ""))
+    return {"kind": "action", "label": "Включить автозапуск", "value": "autostart.enable",
+            "confirm": confirm}
+
+
 def _autostart_check() -> dict:
     entry = _autostart_entry()
     if entry:
         return _item("autostart", "Автозапуск", "ok", entry,
                      "Сервер поднимается сам при входе в систему и пишет журнал в data/logs.")
+    fix = _autostart_fix()
+    if fix:
+        return _item("autostart", "Автозапуск", "off", "не настроен",
+                     "Сейчас приложение запускается вручную (start-team-room.cmd). Можно "
+                     "включить автозапуск кнопкой — сервер будет подниматься сам при входе "
+                     "в систему.", fix)
     return _item("autostart", "Автозапуск", "off", "не настроен",
                  "Приложение запускается вручную (start-team-room.cmd). Автозапуск — по желанию, "
                  "установщик ставит его отдельным шагом.",
@@ -598,6 +627,39 @@ def _num(value: float) -> str:
     return ("%.1f" % float(value)).replace(".", ",")
 
 
+def _model_guard_check(cfg, room=None) -> dict:
+    """Пункт «Контроль моделей» (W23-MG1 §2.6): считается `server/model_guard.py`.
+
+    Модуля нет или он упал — честный `warn` с текстом, а не молчание: пункт нужен
+    именно для того, чтобы человек увидел, что контроль не работает.
+    """
+    try:
+        try:
+            from . import model_guard as guard
+        except ImportError:  # pragma: no cover - плоский импорт
+            import model_guard as guard  # type: ignore
+        rooms = None
+        if not isinstance(room, dict):
+            try:
+                try:
+                    from . import rooms as rooms_mod
+                except ImportError:  # pragma: no cover
+                    import rooms as rooms_mod  # type: ignore
+                rooms = rooms_mod.list_rooms(cfg) or []
+            except Exception:  # noqa: BLE001 - без комнат проверять нечего
+                rooms = []
+        item = guard.diag_item(cfg, room, rooms=rooms)
+        return _item(str(item.get("id") or "model_guard"),
+                     str(item.get("title") or "Контроль моделей"),
+                     str(item.get("status") or "warn"), value=str(item.get("value") or ""),
+                     hint=str(item.get("hint") or ""), details=item.get("details") or [])
+    except Exception as exc:  # noqa: BLE001 - проверка не должна ронять весь отчёт
+        return _item("model_guard", "Контроль моделей", "warn",
+                     value="Проверка недоступна",
+                     hint="Модуль контроля моделей не загрузился",
+                     details=[str(exc)[:200]])
+
+
 # ------------------------------------------------------------------ сводка
 
 def summarize(checks) -> dict:
@@ -628,6 +690,7 @@ def report(cfg, *, port=None, board: str = "team", room: dict | None = None,
     ]
     if isinstance(room, dict):
         checks.append(_project_check(room))
+    checks.append(_model_guard_check(cfg, room))
     checks += [
         _port_check(cfg, port),
         _autostart_check(),

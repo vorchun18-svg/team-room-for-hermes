@@ -158,7 +158,7 @@ def owner_label(room: dict, profile, limit: int = OWNER_LABEL_MAX) -> str:
     """Русская подпись исполнителя для интерфейса: «Операции», «Юрист», «руководитель комнаты».
 
     Порядок источников: описание участника в комнате («Юрист: ИП, СЭС» → «Юрист»),
-    роль в составе, словарь профессий по слагу профиля. Техническое имя (`biz-ops`)
+    роль в составе, словарь профессий по слагу профиля. Техническое имя (`team-ops`)
     наружу не выводим — оно остаётся в поле ``owner``.
     """
     raw = _text(profile, 64)
@@ -679,6 +679,16 @@ def _brief_title(cfg, room: dict, brief) -> str:
     return _text((summary or {}).get("title"), TITLE_MAX)
 
 
+def _contract_rule() -> str:
+    """Блок «Как оформлять итог» из контракта (W24-N1): ленивый импорт, без циклов."""
+    try:
+        from . import contract as mod
+    except ImportError:  # pragma: no cover - плоский импорт
+        import contract as mod  # type: ignore
+    rule = getattr(mod, "summary_format_rule", None)
+    return str(rule()).strip() if callable(rule) else ""
+
+
 def _stream_body(cfg, plan: dict, stream: dict, room: dict) -> str:
     """Тело под-запроса: цель направления, ссылка на бриф, карта, участники."""
     lines = ["# Направление: %s" % (stream.get("title") or "Без названия"), "",
@@ -715,6 +725,14 @@ def _stream_body(cfg, plan: dict, stream: dict, room: dict) -> str:
     lines += ["", "Работай в рамках этого направления; итог верни как обычно (summary, stage, next_steps).",
               "Если делишь работу на подзадачи — в тело каждой карточки перенеси суть, решения и "
               "ограничения направления: служебный блок контекста комнаты исполнитель подзадачи не видит."]
+    # W24-N1 §2.5: формат итога — и в карточках исполнителей тоже (их тело собирает
+    # приложение), иначе длинные «наскальные» абзацы возвращаются с другой стороны.
+    try:
+        rule = _contract_rule()
+        if rule:
+            lines += ["", rule]
+    except Exception:  # noqa: BLE001 - формат не должен ломать запуск направления
+        pass
     service = []
     if brief:
         service.append("бриф %s" % brief)

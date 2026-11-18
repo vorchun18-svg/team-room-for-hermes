@@ -1,5 +1,5 @@
 /**
- * backlog.js — комната, вкладка «Дальше».
+ * backlog.js — комната, вкладка «От вас нужно».
  *
  * Сверху вниз: «Ждут вашего решения» (blocked-карточки, вопросы, решения),
  * «Следующие шаги» (чекбокс, срок, .ics), «Будущие вопросы» и повестка на
@@ -12,7 +12,7 @@ import { icon } from '../icons.js';
 import { poll as pollApi } from '../api.js';
 import {
   ensureCss, emptyState, skeleton, errorBanner, sectionHeader,
-  segmented, dueBadge, statusChip, lsGet, lsSet,
+  segmented, dueBadge, statusChip, lsGet, lsSet, confirmDialog,
 } from '../ui.js';
 import {
   partitionBacklog, blockedCards, inboxCount, inboxSummary, backlogQuestionId,
@@ -31,6 +31,12 @@ import {
   filterBar,
 } from './backlog-parts.js';
 import { openStepDialog } from './step-dialog.js';
+// W22-AP2: «Разрешение» — отдельный вид элемента «От вас нужно».
+import { approvalCard, collectApprovals } from './approvals.js';
+// W20-FC §1.7 (F-2): предложение этапов — та же плашка/редактор, что на карте.
+import {
+  decidePhases, decisionToast, openPhasesEditor, phasesCountText, proposalErrorText,
+} from './phases-editor.js';
 
 const POLL_MS = 5000;
 
@@ -65,6 +71,8 @@ export async function mount(el, ctx) {
   ensureCss('css/shell-titles.css');
   // W14-H §12: шаг — кликабельная строка и окно шага (стили общие со страницей запроса).
   ensureCss('css/view-steps.css');
+  // W20-FC §1.7: строка «Руководитель предлагает этапы» и её решения.
+  ensureCss('css/phases-editor.css');
 
   const roomId = String((ctx.route && ctx.route.roomId) || (ctx.room && ctx.room.id) || '');
   if (!roomId) {
@@ -90,12 +98,16 @@ export async function mount(el, ctx) {
     data: null,
     requests: [],
     blocked: [],
+    // W22-AP2: запросы разрешений агентам (ждущие), из деталей запросов.
+    approvals: [],
     needsKey: '',
     answered: new Set(),
     busy: new Set(),
     groupMode: lsGet('backlog.group', 'source') === 'due' ? 'due' : 'source',
     showClosed: !!lsGet('backlog.closed', false),
     requestFilter,
+    // W20-FC §1.7: решение по предложению этапов идёт, кнопки не дёргаются дважды.
+    proposalBusy: false,
   };
   const signatures = new Map();
   let disposed = false;
@@ -267,13 +279,111 @@ export async function mount(el, ctx) {
       h('div', { class: 'inbox-list' }, rows));
   }
 
+  /**
+   * W20-FC §1.7: строка предложения этапов (`proposal_item` из API «От вас нужно»).
+   * Это не запись бэклога — закрыть статусом её нельзя, только решением:
+   * принять все, поправить в редакторе или отклонить. Полный набор с выбором
+   * отдельных этапов — на карте проекта (плашка над «Где мы сейчас»).
+   */
+  async function decideProposal(action) {
+    if (state.proposalBusy) return;
+    if (action === 'reject') {
+      const ok = await confirmDialog({
+        title: 'Отклонить предложение этапов?',
+        text: 'Этапы комнаты останутся как есть. Попросить этапы заново можно кнопкой '
+          + '«Предложить этапы» на карте проекта.',
+        confirmLabel: 'Отклонить',
+        cancelLabel: 'Оставить',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    state.proposalBusy = true;
+    paintInbox();
+    try {
+      const res = await decidePhases({ api, roomId, action });
+      toast(decisionToast(res), 'ok');
+    } catch (err) {
+      toast(proposalErrorText(err), 'danger');
+    } finally {
+      state.proposalBusy = false;
+      await load({ silent: true });
+    }
+  }
+
+  async function editProposal() {
+    if (state.proposalBusy) return;
+    const saved = await openPhasesEditor({ api, roomId, toast });
+    if (saved) await load({ silent: true });
+  }
+
+  function proposalRow(item) {
+    const busy = state.proposalBusy;
+    const count = Number(item.count) || (Array.isArray(item.titles) ? item.titles.length : 0);
+    return inboxRow({
+      kind: 'phases',
+      iconName: 'map',
+      title: count ? 'Этапы проекта — ' + phasesCountText(count) : 'Этапы проекта',
+      text: item.text,
+      hint: item.why
+        || 'Этапы допишутся в конец списка — ваши этапы и их порядок не изменятся.',
+      source: h('a', {
+        class: 'inbox-row__link small',
+        href: `#/room/${encodeURIComponent(roomId)}/roadmap`,
+        title: 'Открыть карту проекта: там можно принять отдельные этапы или поправить список',
+      }, 'На карте проекта'),
+      due: null,
+      actions: h('div', { class: 'row row--tight row--wrap' },
+        h('button', {
+          class: 'btn btn--primary btn--sm', type: 'button', disabled: busy,
+          onclick: () => decideProposal('accept'),
+        }, icon('check-all', { size: 12 }), 'Принять все'),
+        h('button', {
+          class: 'btn btn--secondary btn--sm', type: 'button', disabled: busy,
+          onclick: () => editProposal(),
+        }, icon('edit', { size: 12 }), 'Изменить'),
+        h('button', {
+          class: 'btn btn--ghost btn--sm', type: 'button', disabled: busy,
+          onclick: () => decideProposal('reject'),
+        }, 'Отклонить')),
+      form: null,
+    });
+  }
+
+  /**
+   * W22-AP2: решение по запросу разрешения прямо из «От вас нужно» —
+   * то же действие `approval`, что на странице запроса. Строка убирается
+   * сразу: ждущих разрешений по этому id больше нет.
+   */
+  async function decideApproval(a, decision) {
+    const res = await api.post(`/api/requests/${encodeURIComponent(a.request_id)}/actions`, {
+      action: 'approval', approval_id: String(a.id || ''), decision,
+    });
+    state.approvals = state.approvals.filter((x) => String(x.id) !== String(a.id));
+    load({ silent: true });
+    return res;
+  }
+
   function buildInbox() {
     const parts = partitionBacklog(visibleItems());
     const questions = parts.questions.filter((q) => !isAnswered(q));
     const decisions = parts.decisions.filter((d) => !state.answered.has(d.id));
     const blocked = state.blocked.filter((b) => !state.answered.has(b.task_id)
       && (!state.requestFilter || String(b.request_id) === state.requestFilter));
-    const total = inboxCount({ questions, decisions, blocked });
+    // W22-AP2: запросы разрешений по этому охвату (все / только этот запрос).
+    const approvals = state.approvals.filter((a) => !state.requestFilter
+      || String(a.request_id) === state.requestFilter);
+    // Строка предложения этапов видна и считается: иначе «Ждут вашего решения»
+    // показал бы «ничего не ждёт», хотя решение как раз ждёт.
+    const proposalItem = state.data && state.data.proposal_item;
+    const total = inboxCount({ questions, decisions, blocked, approvals }) + (proposalItem ? 1 : 0);
+
+    const rowsApprovals = approvals.map((a) => approvalCard(a, {
+      roomId,
+      requestHref: a.request_id ? requestHref(roomId, a.request_id) : '',
+      toast,
+      onDecide: (decision) => decideApproval(a, decision),
+    }));
 
     const rowsBlocked = blocked.map((card) => inboxRow({
       kind: 'blocked',
@@ -390,6 +500,9 @@ export async function mount(el, ctx) {
     }));
 
     const groups = [
+      inboxGroup('Этапы проекта', proposalItem ? [proposalRow(proposalItem)] : []),
+      // W22-AP2: разрешения — первыми: без них участник стоит.
+      inboxGroup('Разрешения', rowsApprovals),
       inboxGroup('Заблокированные задачи', rowsBlocked),
       inboxGroup('Вопросы', rowsQuestions),
       inboxGroup('Предложения решений', rowsDecisions),
@@ -415,7 +528,7 @@ export async function mount(el, ctx) {
           : null,
         h('div', { class: 'inbox-groups' }, groups));
 
-    const summary = inboxSummary({ questions, blocked, decisions });
+    const summary = inboxSummary({ questions, blocked, decisions, approvals });
     const scopeSwitch = state.requestFilter
       ? segmented({
         options: [
@@ -430,11 +543,12 @@ export async function mount(el, ctx) {
       countHeader('Ждут вашего решения', summary.total, COUNT_FORMS.case, total
         ? h('span', { class: 'chip chip--warn' }, icon('bell', { size: 11 }), 'нужен ответ')
         : null,
-      'Считаются вопросы без вашего ответа, заблокированные задачи и предложенные решения.'),
+      'Считаются вопросы без вашего ответа, запросы разрешений агентам, заблокированные задачи и предложенные решения.'),
       summary.text ? h('div', { class: 'inbox__breakdown small muted' }, summary.text) : null,
       scopeSwitch);
     // Одно число для вкладки, сайдбара и заголовка окна (D4).
-    setInboxCounts(roomId, { questions: summary.questions, blocked: summary.blocked, decisions: summary.decisions });
+    setInboxCounts(roomId, { questions: summary.questions, blocked: summary.blocked,
+      decisions: summary.decisions, approvals: summary.approvals });
 
     return h('section', { class: 'card card--flush backlog__card inbox' },
       head,
@@ -443,13 +557,16 @@ export async function mount(el, ctx) {
 
   function paintInbox() {
     const parts = partitionBacklog(visibleItems());
+    const proposal = state.data && state.data.proposal_item;
     const signature = sigOf(parts.questions, 'q') + sigOf(parts.decisions, 'd')
-      + sigOf(state.blocked, 'b') + [...state.answered].sort().join(',') + [...state.busy].sort().join(',')
-      + '#' + parts.steps.length;
+      + sigOf(state.blocked, 'b') + sigOf(state.approvals, 'a')
+      + [...state.answered].sort().join(',') + [...state.busy].sort().join(',')
+      + '#' + parts.steps.length + '|p' + (proposal ? String(proposal.updated_at || proposal.count || 1) : '')
+      + String(state.proposalBusy);
     paint('inbox', inboxHost, buildInbox(), signature);
   }
 
-  /** Шаг «Дальше»: не чекбокс, а кликабельная строка — окно действий (W14-H §12). */
+  /** Шаг «От вас нужно»: не чекбокс, а кликабельная строка — окно действий (W14-H §12). */
   function stepRow(item) {
     const busy = state.busy.has(item.id);
     const done = item.status === 'done';
@@ -483,7 +600,7 @@ export async function mount(el, ctx) {
         icsLink(roomId, item.id, 'В календарь: ' + item.text)));
   }
 
-  /** Окно шага из «Дальше»: шаг лежит в запросе-источнике. */
+  /** Окно шага из «От вас нужно»: шаг лежит в запросе-источнике. */
   function openStep(item) {
     const rid = String(item.source_request || '').trim();
     const localId = String(item.id || '').includes(':') ? String(item.id).split(':').pop() : String(item.id || '');
@@ -764,6 +881,7 @@ export async function mount(el, ctx) {
         .map((s) => String(s.id));
       const key = needsIds.join(',');
       let blocked = state.blocked;
+      let approvals = state.approvals;
       if (key !== state.needsKey || (needsIds.length && Date.now() - detailsAt > 15000)) {
         detailsAt = Date.now();
         const details = [];
@@ -773,6 +891,8 @@ export async function mount(el, ctx) {
           } catch { /* одна задача не должна ломать inbox */ }
         }
         blocked = blockedCards(details);
+        // W22-AP2: запросы разрешений — из тех же деталей (`detail.approvals`).
+        approvals = collectApprovals(details);
       }
       if (disposed || seq !== loadSeq) return;
 
@@ -780,6 +900,7 @@ export async function mount(el, ctx) {
       state.requests = requests;
       state.needsKey = key;
       state.blocked = blocked.filter((c) => !state.answered.has(c.task_id));
+      state.approvals = approvals;
       state.error = null;
       state.offline = false;
       dropSkeletons();

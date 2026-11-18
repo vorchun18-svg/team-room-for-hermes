@@ -223,17 +223,71 @@ class FilesTest(unittest.TestCase):
         self.assertEqual(status, 413)
         self.assertIn("50 МБ", body.decode("utf-8"))
 
-    # --- проводник ---
+    # --- «Показать в папке» (explorer /select,"путь") и «Открыть» ---
     def test_reveal_allowed_path(self):
         p = self.make("note.md", "# x")
         with mock.patch.object(files.subprocess, "Popen") as popen:
             self.assertTrue(files.reveal(self.cfg, str(p)))
         popen.assert_called_once()
-        args = popen.call_args[0][0]
-        self.assertEqual(args[0], "explorer")
-        self.assertTrue(args[1].startswith("/select,"))
-        self.assertTrue(args[1].endswith(str(p.resolve())))
+        line = popen.call_args[0][0]
+        # Одна строка, а не список аргументов: кавычки стоят вокруг ПУТИ.
+        self.assertEqual(line, 'explorer /select,"%s"' % p.resolve())
+        self.assertEqual(line.count('"'), 2)
         self.assertTrue(popen.call_args[1].get("close_fds"))
+
+    def test_reveal_quotes_path_with_space_cyrillic_and_dash(self):
+        """W26-D3 §7 «Ошибка 1»: путь с пробелом, кириллицей и «—» не должен ломаться.
+
+        Прежняя форма (`["explorer", "/select,<путь>"]`) склеивалась
+        `list2cmdline` в `explorer "/select,C:\\…\\файл.md"` — проводник такую
+        строку не понимает и открывает «Документы».
+        """
+        name = "2026-11-18 Каладжинское 2 — итог.md"
+        p = self.make(name, "# итог")
+        with mock.patch.object(files.subprocess, "Popen") as popen:
+            self.assertTrue(files.reveal(self.cfg, str(p)))
+        line = popen.call_args[0][0]
+        self.assertTrue(line.startswith('explorer /select,"'), line)
+        self.assertTrue(line.endswith('"'), line)
+        self.assertIn(name, line)
+        self.assertNotIn('explorer "/select', line)
+
+    def test_reveal_falls_back_to_folder_when_popen_fails(self):
+        p = self.make("note.md", "# x")
+        with mock.patch.object(files.subprocess, "Popen", side_effect=OSError("boom")):
+            with mock.patch.object(files.proc, "open_path", return_value=True) as opened:
+                self.assertTrue(files.reveal(self.cfg, str(p)))
+        opened.assert_called_once_with(p.resolve().parent)
+
+    def test_launch_opens_file_with_default_program(self):
+        p = self.make("Письмо поставщику — ответ.docx", "x")
+        with mock.patch.object(files.proc, "open_path", return_value=True) as opened:
+            self.assertTrue(files.launch(self.cfg, str(p)))
+        opened.assert_called_once_with(p.resolve())
+
+    def test_launch_swallows_open_path_failure(self):
+        p = self.make("note.md", "# x")
+        with mock.patch.object(files.proc, "open_path", return_value=False) as opened:
+            self.assertFalse(files.launch(self.cfg, str(p)))
+        opened.assert_called_once()
+
+    def test_launch_and_reveal_refuse_forbidden_paths(self):
+        outside = Path(self.outside) / "secret.md"
+        outside.write_text("x", encoding="utf-8")
+        exe = self.make("run.exe", "MZ")
+        with mock.patch.object(files.proc, "open_path") as opened, \
+                mock.patch.object(files.subprocess, "Popen") as popen:
+            for fn in (files.launch, files.reveal):
+                self.assertFalse(fn(self.cfg, str(outside)))
+                self.assertFalse(fn(self.cfg, str(exe)))
+                self.assertFalse(fn(self.cfg, str(exe) + "::$DATA"))
+                self.assertFalse(fn(self.cfg, ""))
+        opened.assert_not_called()
+        popen.assert_not_called()
+
+    def test_select_command_is_single_line_with_path_quotes(self):
+        line = files.select_command(r"C:\TeamRoom\Vault\Проекты\Отчёт 2026 — финал.md")
+        self.assertEqual(line, 'explorer /select,"C:\\TeamRoom\\Vault\\Проекты\\Отчёт 2026 — финал.md"')
 
     def test_reveal_forbidden_path(self):
         p = Path(self.outside) / "secret.md"
@@ -245,8 +299,13 @@ class FilesTest(unittest.TestCase):
         popen.assert_not_called()
 
     def test_reveal_swallows_popen_errors(self):
+        """Проводник не запустился и папку открыть не удалось — тихое False, без исключения.
+
+        Реальный `os.startfile`/`explorer` в тестах не вызывается: подменены оба.
+        """
         p = self.make("note.md", "# x")
-        with mock.patch.object(files.subprocess, "Popen", side_effect=OSError("boom")):
+        with mock.patch.object(files.subprocess, "Popen", side_effect=OSError("boom")), \
+                mock.patch.object(files.proc, "open_path", return_value=False):
             self.assertFalse(files.reveal(self.cfg, str(p)))
 
     # --- вспомогательное ---

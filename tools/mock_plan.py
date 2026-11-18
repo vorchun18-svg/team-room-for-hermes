@@ -233,13 +233,13 @@ def draft_streams(room: dict) -> list:
     if room.get("id") == "cafe":
         rows = [
             ("Рецептура и технология", "Утвердить состав набора из 6 моти, граммовки и сроки хранения.",
-             who("biz-ops"), [who("biz-ops")], [], "2026-11-08"),
+             who("team-ops"), [who("team-ops")], [], "2026-11-08"),
             ("Упаковка и бренд", "Форма коробки, поставщик, MOQ и логотип под печать.",
-             who("biz-ops"), [who("biz-ops"), who("biz-marketing")], [], "2026-11-20"),
+             who("team-ops"), [who("team-ops"), who("team-marketing")], [], "2026-11-20"),
             ("Цена и юнит-экономика", "Себестоимость набора и минимальная цена с маржой 35%.",
-             who("biz-cfo"), [who("biz-cfo")], ["s1"], "2026-11-27"),
+             who("team-cfo"), [who("team-cfo")], ["s1"], "2026-11-27"),
             ("Продажи и доставка", "Каналы (Едок, Развоз, WhatsApp) и доставка по Заозёрью.",
-             who("biz-marketing"), [who("biz-marketing"), who("biz-runner")], ["s2"], "2026-12-05"),
+             who("team-marketing"), [who("team-marketing"), who("team-runner")], ["s2"], "2026-12-05"),
         ]
     elif room.get("id") == "fn":
         rows = [

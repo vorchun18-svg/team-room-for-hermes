@@ -44,8 +44,9 @@ const tabRoute = (tab, query = {}) => ({
 
 test('параметр фильтра называется request (согласовано с BACKLOG-FIX)', () => {
   assert.equal(REQUEST_PARAM, 'request');
-  assert.equal(WHOLE_ROOM_LABEL, 'вся комната');
-  assert.equal(FILTER_LABEL, 'Только этот запрос');
+  // W20-U1 (P7/P8): слова охвата — из одного словаря («Вся комната / Этот запрос»).
+  assert.equal(WHOLE_ROOM_LABEL, 'Вся комната');
+  assert.equal(FILTER_LABEL, 'Этот запрос');
 });
 
 test('крошки: страница запроса — комната, затем «Запрос «…»»', () => {
@@ -66,7 +67,7 @@ test('крошки: без названия запроса — просто «З
   assert.ok(!/t_[0-9a-f]+/.test(items[1].text));
 });
 
-test('крошки: у вкладок комнаты бейдж «вся комната»', () => {
+test('крошки: у вкладок комнаты бейдж «Вся комната» (слово из словаря)', () => {
   const items = crumbItems({
     route: tabRoute('reports'),
     roomTitle: 'Лето',
@@ -75,7 +76,8 @@ test('крошки: у вкладок комнаты бейдж «вся ком�
   assert.equal(items.length, 2);
   assert.equal(items[0].href, '#/room/cafe/composer');
   assert.equal(items[1].text, 'Отчёты');
-  assert.equal(items[1].badge, 'вся комната');
+  assert.equal(items[1].badge, WHOLE_ROOM_LABEL);
+  assert.equal(items[1].badge, 'Вся комната');
   assert.equal(items[1].current, true);
 });
 
@@ -166,7 +168,7 @@ if (typeof FakeElement.prototype.removeChild !== 'function') {
   };
 }
 
-test('чип «Только этот запрос ✕»: клик снимает фильтр', () => {
+test('чип «Этот запрос ✕»: клик снимает фильтр', () => {
   const dom = installFakeDom();
   try {
     let cleared = 0;

@@ -152,7 +152,7 @@ class MockServerTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual([r["id"] for r in data["rooms"]], ["cafe", "fn", "long"])
         cafe = data["rooms"][0]
-        self.assertEqual(cafe["critic"], "biz-critic")
+        self.assertEqual(cafe["critic"], "team-critic")
         self.assertEqual(cafe["max_rounds"], 1)
         self.assertEqual(cafe["phase"]["id"], "legal")
         fn = data["rooms"][1]
@@ -465,14 +465,14 @@ class MockServerTest(unittest.TestCase):
 
     def test_reassign_rework_retry(self):
         status, _, data = self.json("/api/requests/t_9f3c2a10/actions", "POST",
-                                    {"action": "reassign", "task_id": "t_9f3c2a13", "profile": "biz-lawyer"})
+                                    {"action": "reassign", "task_id": "t_9f3c2a13", "profile": "team-lawyer"})
         self.assertEqual(status, 200)
-        self.assertEqual(data["task"]["assignee"], "biz-lawyer")
+        self.assertEqual(data["task"]["assignee"], "team-lawyer")
         self.assertFalse(data["task"]["outside_room"])
         status, _, err = self.json("/api/requests/t_9f3c2a10/actions", "POST",
                                    {"action": "reassign", "task_id": "t_9f3c2a13", "profile": "nobody"})
         self.assertEqual(status, 400)
-        self.assertIn("biz-lawyer", err["error"]["detail"]["available"])
+        self.assertIn("team-lawyer", err["error"]["detail"]["available"])
         status, _, data = self.json("/api/requests/t_3b7e9d11/actions", "POST", {"action": "retry"})
         self.assertEqual(status, 200)
         self.assertEqual(data["retried"], ["t_3b7e9d13"])
@@ -740,7 +740,7 @@ class MockServerTest(unittest.TestCase):
             self.assertEqual(data["error"]["detail"]["field"], field, (path, body))
         status, _, data = self.json("/api/rooms", "POST", {"title": "Без директора в ростере", "orchestrator": "nobody"})
         self.assertEqual(status, 400)
-        self.assertIn("biz-director", data["error"]["detail"]["available"])
+        self.assertIn("team-director", data["error"]["detail"]["available"])
 
     def test_journal_limit_range(self):
         self.assertEqual(self.json("/api/rooms/cafe/journal?limit=500")[0], 400)
@@ -968,7 +968,10 @@ class MockServerTest(unittest.TestCase):
         self.assertEqual(mock.PHASES_PLAIN[-1][0], 30.0)
 
     # --- волна 8: диалог по запросу, папка проекта, бэклог -----------------
+    # W20-S1 (B-36): у сообщений Михаила появилась подпись доставки (`delivery`),
+    # у остальных записей ленты её нет — поэтому набор ключей проверяем по видам.
     THREAD_KEYS = {"id", "at", "author_kind", "author", "author_label", "text", "task_id", "kind"}
+    MESSAGE_KEYS = THREAD_KEYS | {"delivery"}
 
     def test_thread_of_working_request(self):
         data = self.detail("t_9f3c2a10")
@@ -976,7 +979,8 @@ class MockServerTest(unittest.TestCase):
         self.assertGreaterEqual(len(items), 5)
         self.assertLessEqual(len(items), 6)
         for item in items:
-            self.assertEqual(set(item), self.THREAD_KEYS, item)
+            expected = self.MESSAGE_KEYS if item["kind"] == "message" else self.THREAD_KEYS
+            self.assertEqual(set(item), expected, item)
             self.assertIn(item["author_kind"], ("mikhail", "agent", "system"))
             self.assertIn(item["kind"], ("message", "comment", "event"))
             self.assertIsInstance(item["at"], int)
@@ -1011,7 +1015,7 @@ class MockServerTest(unittest.TestCase):
         for key in ("message", "thread", "routed_to", "merged"):
             self.assertIn(key, res)
         self.assertFalse(res["merged"])
-        self.assertEqual(res["routed_to"], "biz-director")
+        self.assertEqual(res["routed_to"], "team-director")
         self.assertEqual(res["message"]["author_kind"], "mikhail")
         self.assertEqual(res["message"]["kind"], "message")
         self.assertEqual(res["thread"][-1]["id"], res["message"]["id"])
@@ -1083,11 +1087,11 @@ class MockServerTest(unittest.TestCase):
             self.assertEqual(status, 200, data)
             return data
 
-        ok = check(r"D:\Проекты\Новая комната")
+        ok = check(r"C:\Проекты\Новая комната")
         self.assertTrue(ok["allowed"])
         self.assertFalse(ok["exists"])
         self.assertTrue(ok["will_create"])
-        self.assertEqual(ok["normalized"], r"D:\Проекты\Новая комната")
+        self.assertEqual(ok["normalized"], r"C:\Проекты\Новая комната")
         self.assertEqual(ok["warnings"], [])
         self.assertFalse(os.path.exists(ok["normalized"]), "мок не создаёт папки на диске")
 
@@ -1095,15 +1099,15 @@ class MockServerTest(unittest.TestCase):
         for bad, reason in (("C:\\", "system_root"), (r"C:\Windows\System32", "system_root"),
                             (r"C:\Program Files\Лето", "system_root"), (local, "app_data"),
                             ("Отчёты", "relative"), (r"\\server\share\dir", "network"),
-                            (r"D:\Проекты\..\Windows", "traversal"),
-                            (r"D:\Проекты\CON", "reserved")):
+                            (r"C:\Проекты\..\Windows", "traversal"),
+                            (r"C:\Проекты\CON", "reserved")):
             data = check(bad)
             self.assertFalse(data["allowed"], bad)
             self.assertEqual(data["reason"], reason, bad)
             self.assertTrue(data["message"])
             self.assertFalse(data["will_create"])
 
-        vault = check(r"D:\Проекты\Vault\Комната")
+        vault = check(r"C:\Проекты\Vault\Комната")
         self.assertTrue(vault["allowed"])
         self.assertTrue(vault["warnings"], "папка внутри Vault — предупреждение")
         self.assertEqual(self.json("/api/rooms/check-dir", "POST", {})[0], 400)
@@ -1111,7 +1115,7 @@ class MockServerTest(unittest.TestCase):
 
     def test_room_project_dir_saved_but_not_created(self):
         _, _, room = self.json("/api/rooms/cafe")
-        self.assertEqual(room["project_dir"], r"D:\Проекты\Лето")
+        self.assertEqual(room["project_dir"], r"C:\Проекты\Лето")
         target = r"C:\TeamRoom\Projects\Лето-демо"
         status, _, patched = self.json("/api/rooms/cafe", "PATCH", {"project_dir": target})
         self.assertEqual(status, 200)
@@ -1122,9 +1126,9 @@ class MockServerTest(unittest.TestCase):
         self.assertIn("системная", err["error"]["message"])
         status, _, created = self.json("/api/rooms", "POST",
                                        {"title": "Демо-папка", "orchestrator": "default",
-                                        "project_dir": r"D:\Проекты\Демо-папка"})
+                                        "project_dir": r"C:\Проекты\Демо-папка"})
         self.assertEqual(status, 201)
-        self.assertEqual(created["project_dir"], r"D:\Проекты\Демо-папка")
+        self.assertEqual(created["project_dir"], r"C:\Проекты\Демо-папка")
         self.assertEqual(self.json("/api/rooms", "POST",
                                    {"title": "Плохая папка", "orchestrator": "default",
                                     "project_dir": "Отчёты"})[0], 400)
@@ -1272,7 +1276,7 @@ class MockServerTest(unittest.TestCase):
         self.assertTrue(any("Михаил изменил" in e["text"] for e in res["plan"]["log"]))
 
         status, _, added = self.json("/api/rooms/cafe/plan/streams", "POST",
-                                     {"title": "Сертификация Роспотребнадзор", "owner": "biz-lawyer",
+                                     {"title": "Сертификация Роспотребнадзор", "owner": "team-lawyer",
                                       "depends_on": ["s1"]})
         self.assertEqual(status, 201)
         new = added["stream"]
@@ -1293,14 +1297,14 @@ class MockServerTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("не участвует в комнате", err["error"]["message"])
         status, _, err = self.json("/api/rooms/cafe/plan/streams", "POST",
-                                   {"title": "Цикл", "owner": "biz-ops", "depends_on": ["s99"]})
+                                   {"title": "Цикл", "owner": "team-ops", "depends_on": ["s99"]})
         self.assertEqual(status, 400)
         self.assertIn("такого направления нет", err["error"]["message"])
         # s3 уже зависит от s1 — обратная зависимость даёт цикл
         status, _, err = self.json("/api/rooms/cafe/plan/streams/s1", "PATCH", {"depends_on": ["s3"]})
         self.assertEqual(status, 400)
         self.assertIn("Цикл зависимостей", err["error"]["message"])
-        self.assertEqual(self.json(path, "POST", {"title": "  ", "owner": "biz-ops"})[0], 400)
+        self.assertEqual(self.json(path, "POST", {"title": "  ", "owner": "team-ops"})[0], 400)
         status, _, err = self.json("/api/rooms/cafe/plan/streams/s2", "PATCH", {"status": "running"})
         self.assertEqual(status, 400)
         self.assertIn("Запустить", err["error"]["message"])
@@ -1309,10 +1313,10 @@ class MockServerTest(unittest.TestCase):
         plan = self.plan("cafe")["plan"]
         while len(plan["streams"]) < 8:
             status, _, res = self.json(path, "POST", {"title": "Направление %d" % len(plan["streams"]),
-                                                      "owner": "biz-ops"})
+                                                      "owner": "team-ops"})
             self.assertEqual(status, 201, res)
             plan = res["plan"]
-        status, _, err = self.json(path, "POST", {"title": "Девятое", "owner": "biz-ops"})
+        status, _, err = self.json(path, "POST", {"title": "Девятое", "owner": "team-ops"})
         self.assertEqual(status, 400)
         self.assertIn("не больше 8", err["error"]["message"])
 
@@ -1370,33 +1374,33 @@ class MockServerTest(unittest.TestCase):
 
     def test_agent_notes_round_trip(self):
         room = self.json("/api/rooms/cafe")[2]
-        self.assertEqual(set(room["agent_notes"]), {"biz-ops", "biz-cfo"})
-        self.assertTrue(room["agent_notes"]["biz-ops"]["text"].startswith("Отвечай коротко"))
-        self.assertIsInstance(room["agent_notes"]["biz-ops"]["updated_at"], int)
+        self.assertEqual(set(room["agent_notes"]), {"team-ops", "team-cfo"})
+        self.assertTrue(room["agent_notes"]["team-ops"]["text"].startswith("Отвечай коротко"))
+        self.assertIsInstance(room["agent_notes"]["team-ops"]["updated_at"], int)
 
-        path = "/api/rooms/cafe/agents/biz-runner/notes"
+        path = "/api/rooms/cafe/agents/team-runner/notes"
         status, _, res = self.json(path, "PUT", {"text": "Всегда давай ссылку на источник."})
         self.assertEqual(status, 200)
         self.assertEqual(res["text"], "Всегда давай ссылку на источник.")
-        self.assertEqual(res["agent_notes"]["biz-runner"]["text"], "Всегда давай ссылку на источник.")
-        self.assertEqual(self.json("/api/rooms/cafe")[2]["agent_notes"]["biz-runner"]["text"],
+        self.assertEqual(res["agent_notes"]["team-runner"]["text"], "Всегда давай ссылку на источник.")
+        self.assertEqual(self.json("/api/rooms/cafe")[2]["agent_notes"]["team-runner"]["text"],
                          "Всегда давай ссылку на источник.")
 
         status, _, cleared = self.json(path, "PUT", {"text": "   "})
         self.assertEqual(status, 200)
         self.assertTrue(cleared["cleared"])
-        self.assertNotIn("biz-runner", self.json("/api/rooms/cafe")[2]["agent_notes"])
+        self.assertNotIn("team-runner", self.json("/api/rooms/cafe")[2]["agent_notes"])
 
     def test_agent_notes_validation_in_russian(self):
         self.assertEqual(self.json("/api/rooms/cafe/agents/nobody/notes", "PUT", {"text": "x"})[0], 400)
         status, _, err = self.json("/api/rooms/cafe/agents/nobody/notes", "PUT", {"text": "x"})
         self.assertIn("не участвует в комнате", err["error"]["message"])
-        status, _, err = self.json("/api/rooms/cafe/agents/biz-ops/notes", "PUT", {"text": "а" * 8001})
+        status, _, err = self.json("/api/rooms/cafe/agents/team-ops/notes", "PUT", {"text": "а" * 8001})
         self.assertEqual(status, 400)
         self.assertIn("8000", err["error"]["message"])
-        self.assertEqual(self.json("/api/rooms/cafe/agents/biz-ops/notes", "PUT", {})[0], 400)
-        self.assertEqual(self.json("/api/rooms/cafe/agents/biz-ops/notes", "PUT", {"text": 5})[0], 400)
-        status, _, res = self.json("/api/rooms/cafe/agents/biz-ops/notes", "PUT",
+        self.assertEqual(self.json("/api/rooms/cafe/agents/team-ops/notes", "PUT", {})[0], 400)
+        self.assertEqual(self.json("/api/rooms/cafe/agents/team-ops/notes", "PUT", {"text": 5})[0], 400)
+        status, _, res = self.json("/api/rooms/cafe/agents/team-ops/notes", "PUT",
                                    {"text": "Ключ sk-abc123def не показывай, пароль password=hunter2"})
         self.assertEqual(status, 200)
         self.assertTrue(res["warnings"], "секрет в указаниях — предупреждение, не блокировка")
@@ -1404,18 +1408,18 @@ class MockServerTest(unittest.TestCase):
 
     def test_room_settings_and_notes_in_create_and_patch(self):
         status, _, created = self.json("/api/rooms", "POST",
-                                       {"title": "Демо-проект", "orchestrator": "biz-director",
-                                        "members": [{"profile": "biz-ops", "role": "worker"}],
+                                       {"title": "Демо-проект", "orchestrator": "team-director",
+                                        "members": [{"profile": "team-ops", "role": "worker"}],
                                         "launch_mode": "auto", "max_parallel_streams": 3,
                                         "project_mode": True,
-                                        "agent_notes": {"biz-ops": {"text": "Отвечай цифрами."}}})
+                                        "agent_notes": {"team-ops": {"text": "Отвечай цифрами."}}})
         self.assertEqual(status, 201, created)
         self.assertEqual(created["launch_mode"], "auto")
         self.assertEqual(created["max_parallel_streams"], 3)
         self.assertIs(created["project_mode"], True)
-        self.assertEqual(created["agent_notes"]["biz-ops"]["text"], "Отвечай цифрами.")
+        self.assertEqual(created["agent_notes"]["team-ops"]["text"], "Отвечай цифрами.")
         rid = created["id"]
-        self.assertEqual(self.json("/api/rooms/%s" % rid)[2]["agent_notes"]["biz-ops"]["text"], "Отвечай цифрами.")
+        self.assertEqual(self.json("/api/rooms/%s" % rid)[2]["agent_notes"]["team-ops"]["text"], "Отвечай цифрами.")
 
         status, _, patched = self.json("/api/rooms/%s" % rid, "PATCH",
                                        {"max_parallel_streams": 4, "launch_mode": "plan_first"})
@@ -1448,7 +1452,15 @@ class MockServerTest(unittest.TestCase):
     def test_models_catalog_is_fictional(self):
         status, _, cat = self.json("/api/models")
         self.assertEqual(status, 200)
-        self.assertEqual(sorted(cat), ["cached", "efforts", "providers", "source", "updated_at", "warnings"])
+        self.assertEqual(sorted(cat), ["agent_defaults", "cached", "efforts", "providers",
+                                       "source", "updated_at", "warnings"])
+        # W20-MODELS §1.5: по каждому профилю — что стоит в настройках агента и откуда взято.
+        defaults = cat.get("agent_defaults") or {}
+        self.assertTrue(defaults, "agent_defaults обязателен")
+        for name, item in defaults.items():
+            for key in ("provider", "model", "reasoning", "source"):
+                self.assertIn(key, item, "%s: нет поля %s" % (name, key))
+            self.assertIn(item["source"], ("profile", "global", "none"))
         self.assertEqual(len(cat["providers"]), 4)
         self.assertEqual([e["id"] for e in cat["efforts"]],
                          ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
@@ -1470,21 +1482,21 @@ class MockServerTest(unittest.TestCase):
             self.assertEqual(sorted(settings), ["model", "provider", "reasoning", "source", "updated_at"])
             self.assertEqual(sorted(member["agent_default"]), ["model", "provider", "reasoning"])
         by_profile = {m["profile"]: m for m in cafe["members"]}
-        ops = by_profile["biz-ops"]
-        self.assertEqual(ops["model_settings"]["source"], "room", "у biz-ops модель изменена для комнаты")
+        ops = by_profile["team-ops"]
+        self.assertEqual(ops["model_settings"]["source"], "room", "у team-ops модель изменена для комнаты")
         self.assertEqual(ops["model_settings"]["model"], "dilizhans-ultra")
         self.assertNotEqual(ops["model_settings"]["model"], ops["agent_default"]["model"])
-        cfo = by_profile["biz-cfo"]
+        cfo = by_profile["team-cfo"]
         self.assertEqual(cfo["model_settings"]["source"], "agent")
         self.assertEqual({k: cfo["model_settings"][k] for k in ("provider", "model", "reasoning")},
                          cfo["agent_default"])
-        self.assertIn("biz-ops", cafe["agent_models"])
+        self.assertIn("team-ops", cafe["agent_models"])
         fn = self.json("/api/rooms/fn")[2]
         layers = {m["profile"]: m["model_settings"]["source"] for m in fn["members"]}
         self.assertEqual(layers, {"lawyer": "room", "coder": "agent", "surveyor": "agent"})
 
     def test_put_model_changes_and_resets(self):
-        path = "/api/rooms/cafe/agents/biz-cfo/model"
+        path = "/api/rooms/cafe/agents/team-cfo/model"
         status, _, res = self.json(path, "PUT", {"provider": "oblako-b", "model": "vektor-2", "reasoning": "low"})
         self.assertEqual(status, 200, res)
         self.assertEqual(sorted(res), ["agent_models", "applied", "cleared", "member", "ok",
@@ -1498,19 +1510,19 @@ class MockServerTest(unittest.TestCase):
                           for k in ("provider", "model", "reasoning", "source")},
                          {"provider": "oblako-b", "model": "vektor-2", "reasoning": "low", "source": "room"})
         self.assertIsInstance(res["member"]["model_settings"]["updated_at"], int)
-        self.assertEqual(res["agent_models"]["biz-cfo"]["model"], "vektor-2")
+        self.assertEqual(res["agent_models"]["team-cfo"]["model"], "vektor-2")
         self.assertEqual(res["applied"]["cards_updated"], 2,
-                         "у biz-cfo две карточки, которым сторож закрепит модель: ready и blocked")
+                         "у team-cfo две карточки, которым сторож закрепит модель: ready и blocked")
         self.assertEqual(res["applied"]["pending_running"], 0)
         room = self.json("/api/rooms/cafe")[2]
-        cfo = next(m for m in room["members"] if m["profile"] == "biz-cfo")
+        cfo = next(m for m in room["members"] if m["profile"] == "team-cfo")
         self.assertEqual(cfo["model_settings"]["model"], "vektor-2")
         self.assertEqual(cfo["model_settings"]["source"], "room")
-        self.assertEqual(room["agent_models"]["biz-cfo"]["reasoning"], "low")
+        self.assertEqual(room["agent_models"]["team-cfo"]["reasoning"], "low")
 
         journal = self.json("/api/rooms/cafe/journal")[2]["items"]
         self.assertEqual(journal[0]["kind"], "model_changed")
-        self.assertIn("Модель участника «biz-cfo» изменена", journal[0]["text"])
+        self.assertIn("Модель участника «team-cfo» изменена", journal[0]["text"])
         self.assertIn("Облако-Б · Вектор 2 · низкие", journal[0]["text"])
 
         # сторож комнаты: у карточек не в работе подпись меняется сразу, у done — нет
@@ -1529,42 +1541,42 @@ class MockServerTest(unittest.TestCase):
         back = {n["id"]: n for n in self.detail("t_9f3c2a10")["tree"]}
         self.assertEqual(back["t_9f3c2a14"]["model_label"],
                          "Облако-А · Дилижанс ультра · очень высокие")
-        self.assertNotIn("biz-cfo", self.json("/api/rooms/cafe")[2]["agent_models"])
+        self.assertNotIn("team-cfo", self.json("/api/rooms/cafe")[2]["agent_models"])
 
     def test_put_model_validation_in_russian(self):
         path = "/api/rooms/cafe/agents/%s/model"
         status, _, err = self.json(path % "nobody", "PUT", {"provider": "oblako-a", "model": "dilizhans-mini"})
         self.assertEqual(status, 400)
         self.assertIn("не участвует в комнате", err["error"]["message"])
-        status, _, err = self.json(path % "biz-ops", "PUT", {"provider": "kontur", "model": "kontur-1"})
+        status, _, err = self.json(path % "team-ops", "PUT", {"provider": "kontur", "model": "kontur-1"})
         self.assertEqual(status, 400)
         self.assertIn("не настроен", err["error"]["message"])
-        status, _, err = self.json(path % "biz-ops", "PUT", {"provider": "oblako-a", "model": "нет-такой"})
+        status, _, err = self.json(path % "team-ops", "PUT", {"provider": "oblako-a", "model": "нет-такой"})
         self.assertEqual(status, 400)
         self.assertIn("нет модели", err["error"]["message"])
-        status, _, err = self.json(path % "biz-ops", "PUT",
+        status, _, err = self.json(path % "team-ops", "PUT",
                                    {"provider": "oblako-a", "model": "dilizhans-mini", "reasoning": "turbo"})
         self.assertEqual(status, 400)
         self.assertIn("Усилия", err["error"]["message"])
-        status, _, err = self.json(path % "biz-ops", "PUT", {"provider": "oblako-a"})
+        status, _, err = self.json(path % "team-ops", "PUT", {"provider": "oblako-a"})
         self.assertEqual(status, 400)
         self.assertIn("выбрать модель", err["error"]["message"])
-        status, _, err = self.json(path % "biz-ops", "PUT", {"model": "dilizhans-mini"})
+        status, _, err = self.json(path % "team-ops", "PUT", {"model": "dilizhans-mini"})
         self.assertEqual(status, 400)
         self.assertIn("без провайдера", err["error"]["message"])
-        self.assertEqual(self.json(path % "biz-ops", "PUT", {"provider": 5})[0], 400)
-        self.assertEqual(self.call(path % "biz-ops", "GET")[0], 405)
+        self.assertEqual(self.json(path % "team-ops", "PUT", {"provider": 5})[0], 400)
+        self.assertEqual(self.call(path % "team-ops", "GET")[0], 405)
 
     def test_pending_running_and_restart(self):
-        path = "/api/rooms/cafe/agents/biz-ops/model"
+        path = "/api/rooms/cafe/agents/team-ops/model"
         status, _, res = self.json(path, "PUT", {"provider": "lokal", "model": "dilizhans-home-2",
                                                  "reasoning": "high"})
         self.assertEqual(status, 200)
-        self.assertEqual(res["applied"]["pending_running"], 1, "у biz-ops есть карточка в работе")
+        self.assertEqual(res["applied"]["pending_running"], 1, "у team-ops есть карточка в работе")
         self.assertTrue(res["warnings"], "нужно предупреждение про перезапуск")
         self.assertIn("Перезапустить на новой модели", res["warnings"][0])
 
-        status, _, restarted = self.json("/api/rooms/cafe/agents/biz-ops/restart", "POST", {})
+        status, _, restarted = self.json("/api/rooms/cafe/agents/team-ops/restart", "POST", {})
         self.assertEqual(status, 200)
         self.assertGreaterEqual(restarted["restarted"], 1)
         self.assertEqual(len(restarted["cards"]), restarted["restarted"])
@@ -1574,30 +1586,30 @@ class MockServerTest(unittest.TestCase):
         status, _, err = self.json("/api/rooms/cafe/agents/nobody/restart", "POST", {})
         self.assertEqual(status, 400)
         self.assertIn("не участвует", err["error"]["message"])
-        self.assertEqual(self.call("/api/rooms/cafe/agents/biz-ops/restart", "GET")[0], 405)
-        _, _, quiet = self.json("/api/rooms/cafe/agents/biz-cfo/restart", "POST", {})
+        self.assertEqual(self.call("/api/rooms/cafe/agents/team-ops/restart", "GET")[0], 405)
+        _, _, quiet = self.json("/api/rooms/cafe/agents/team-cfo/restart", "POST", {})
         self.assertEqual(quiet["restarted"], 0)
 
     def test_agent_models_in_create_and_patch(self):
         status, _, created = self.json("/api/rooms", "POST",
-                                       {"title": "Проверка моделей", "orchestrator": "biz-director",
-                                        "members": [{"profile": "biz-cfo"}, {"profile": "biz-runner"}],
-                                        "agent_models": {"biz-cfo": {"provider": "oblako-a",
+                                       {"title": "Проверка моделей", "orchestrator": "team-director",
+                                        "members": [{"profile": "team-cfo"}, {"profile": "team-runner"}],
+                                        "agent_models": {"team-cfo": {"provider": "oblako-a",
                                                                      "model": "dilizhans-pro",
                                                                      "reasoning": "high"}}})
         self.assertEqual(status, 201, created)
         rid = created["id"]
         layers = {m["profile"]: m["model_settings"]["source"] for m in created["members"]}
-        self.assertEqual(layers, {"biz-cfo": "room", "biz-runner": "agent"})
+        self.assertEqual(layers, {"team-cfo": "room", "team-runner": "agent"})
 
         status, _, patched = self.json("/api/rooms/%s" % rid, "PATCH",
-                                       {"agent_models": {"biz-runner": {"provider": "oblako-b",
+                                       {"agent_models": {"team-runner": {"provider": "oblako-b",
                                                                         "model": "vektor-1",
                                                                         "reasoning": "minimal"}}})
         self.assertEqual(status, 200)
         self.assertEqual([m["model_settings"]["source"] for m in patched["members"]], ["agent", "room"])
         room = self.json("/api/rooms/%s" % rid)[2]
-        self.assertEqual(room["agent_models"]["biz-runner"]["model"], "vektor-1")
+        self.assertEqual(room["agent_models"]["team-runner"]["model"], "vektor-1")
 
         status, _, err = self.json("/api/rooms/%s" % rid, "PATCH",
                                    {"agent_models": {"coder": {"provider": "oblako-a",
@@ -1605,7 +1617,7 @@ class MockServerTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("не участвует", err["error"]["message"])
         status, _, err = self.json("/api/rooms/%s" % rid, "PATCH",
-                                   {"agent_models": {"biz-runner": {"provider": "kontur",
+                                   {"agent_models": {"team-runner": {"provider": "kontur",
                                                                     "model": "kontur-1"}}})
         self.assertEqual(status, 400)
         self.assertIn("не настроен", err["error"]["message"])
@@ -1633,12 +1645,74 @@ class MockServerTest(unittest.TestCase):
             self.assertIn(" · ", node["model_label"])
             self.assertEqual(len(node["model_label"].split(" · ")), 3)
 
+    def test_card_stop_marks_stopped_in_tree(self):
+        """W23-ST: демо отдаёт ту же метку `stopped`, что и сервер (строка «Остановлено вами»).
+
+        Форма одна: `{by, at, model, provider, cost_usd}` — `model`/`provider` строками,
+        `cost_usd` числом или `null`. После «Продолжить» метка снимается.
+        """
+        rid = "t_9f3c2a10"
+        node = next(n for n in self.detail(rid)["tree"] if n["id"] == "t_9f3c2a13")
+        self.assertIn(node["status"], ("running", "review"))
+        status, _, res = self.json("/api/requests/%s/actions" % rid, "POST",
+                                   {"action": "card_stop", "task_id": "t_9f3c2a13"})
+        self.assertEqual(status, 200, res)
+        node = next(n for n in self.detail(rid)["tree"] if n["id"] == "t_9f3c2a13")
+        self.assertEqual(node["status"], "blocked", "сервер паркует остановленную в blocked")
+        stopped = node.get("stopped")
+        self.assertIsInstance(stopped, dict, node)
+        self.assertEqual(stopped["by"], "user")
+        self.assertGreater(stopped["at"], 0)
+        self.assertIsInstance(stopped["model"], str)
+        self.assertIsInstance(stopped["provider"], str)
+        self.assertTrue(stopped["model"], "модель, на которой шла работа")
+        self.assertIn("cost_usd", stopped)
+        status, _, res = self.json("/api/requests/%s/actions" % rid, "POST",
+                                   {"action": "card_resume", "task_id": "t_9f3c2a13"})
+        self.assertEqual(status, 200, res)
+        node = next(n for n in self.detail(rid)["tree"] if n["id"] == "t_9f3c2a13")
+        self.assertIsNone(node.get("stopped"), node)
+        self.assertIn(node["status"], ("running", "ready"))
+
+    def test_approvals_are_collapsed_by_reason(self):
+        """W22-ST: в демо одинаковые по причине блокировки — одна строка со счётчиком.
+
+        Форма та же, что у сервера: `group`, `approval_ids`, `commands[]` (свежие
+        первыми, в строке — последняя), `count` — сколько блокировок всего. Решение по
+        строке закрывает ВСЕ её запросы, иначе в демо оставалась бы половина вопросов.
+        """
+        rid = "t_5c8e4a02"
+        detail = self.detail(rid)
+        rows = detail["approvals"]
+        group = next((a for a in rows if a.get("group")), None)
+        self.assertIsNotNone(group, "в демо должна быть строка-группа: " + json.dumps(
+            [a.get("pattern_key") for a in rows], ensure_ascii=False))
+        self.assertEqual(len(group["commands"]), 2, group)
+        self.assertEqual(group["command"], group["commands"][0]["command"],
+                         "в строке — последняя команда")
+        self.assertEqual(len(group["approval_ids"]), 2)
+        self.assertGreaterEqual(group["count"], 2)
+        self.assertEqual(detail["approvals_pending"],
+                         len([a for a in rows if a["state"] == "pending"]),
+                         "счётчик считает строки, как сервер")
+        status, _, res = self.json("/api/requests/%s/actions" % rid, "POST",
+                                   {"action": "approval", "approval_id": group["id"],
+                                    "decision": "deny", "group": group["group"]})
+        self.assertEqual(status, 200, res)
+        self.assertEqual(sorted(res.get("applied") or []), sorted(group["approval_ids"]))
+        after = {a["id"]: a["state"] for a in self.detail(rid)["approvals"]}
+        for ident in group["approval_ids"]:
+            self.assertEqual(after.get(ident), "denied", "группа закрыта целиком")
+        self.assertEqual(self.json("/api/requests/%s/actions" % rid, "POST",
+                                   {"action": "approval", "approval_id": group["id"],
+                                    "decision": "once"})[0], 409)
+
     def test_models_endpoint_methods(self):
         self.assertEqual(self.call("/api/models", "POST", {})[0], 405)
         status, head, _raw = self.call("/api/models", "POST", {})
         self.assertIn("GET", head.get("Allow", ""))
-        self.assertEqual(self.call("/api/rooms/cafe/agents/biz-ops/model", "POST", {})[0], 405)
-        self.assertEqual(self.call("/api/rooms/cafe/agents/biz-ops/restart", "POST", {})[0], 200)
+        self.assertEqual(self.call("/api/rooms/cafe/agents/team-ops/model", "POST", {})[0], 405)
+        self.assertEqual(self.call("/api/rooms/cafe/agents/team-ops/restart", "POST", {})[0], 200)
 
     # --- фикстуры ---------------------------------------------------------
     def test_fixtures_valid_json_and_report_spec(self):

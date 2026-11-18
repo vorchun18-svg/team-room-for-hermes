@@ -385,22 +385,31 @@ def brief_body(cfg, room: dict, body: str) -> str:
     return body
 
 
-def _model_args(cfg, room: dict, profile: str) -> tuple[list, dict]:
-    """`--model/--provider` для новой карточки и настройки участника (WAVE 10).
+def _model_guard():
+    """Модуль контроля моделей (ленивый импорт — циклов между модулями нет)."""
+    try:
+        from . import model_guard as mod
+    except ImportError:                      # pragma: no cover - плоский импорт
+        import model_guard as mod            # type: ignore
+    return mod
 
-    Модель комнаты берётся у участника, которому карточка достанется: у корня запроса —
-    руководитель комнаты (или явно переданный профиль направления). Файлы профилей не
-    меняются: всё это только поля карточки.
+
+def _model_args(cfg, room: dict, profile: str) -> tuple[list, dict]:
+    """`--model/--provider` для новой карточки: ТОЛЬКО выбор комнаты (W23 §2.1–2.2).
+
+    Модель профиля в карточку НЕ переносится: она и так действует (движок читает
+    `config.yaml` агента), а «пин» навсегда перекрыл бы будущую смену настроек и уводил
+    работу на чужую модель. Именно так карточка `ornith` ушла на `claude-sonnet-5-5` за
+    $2,45: приложение записало в корень модель руководителя.
+
+    Единственное место сборки флагов модели для `create`: другое создание карточек должно
+    идти сюда же (`create_request`, `create_child_card`, направления карты проекта).
     """
     name = str(profile or "").strip()
     if not name:
         return [], {}
     try:
-        try:
-            from . import agent_models as models_mod
-        except ImportError:  # pragma: no cover - плоский импорт
-            import agent_models as models_mod  # type: ignore
-        settings = models_mod.card_settings(cfg, room, name)
+        settings = _model_guard().override_for_card(room, name)
     except Exception:  # noqa: BLE001 - выбор модели не должен мешать создать карточку
         return [], {}
     args: list = []
@@ -432,9 +441,11 @@ def create_request(cfg, room: dict, slug: str, title: str, body: str, *,
     """Создать корневую карточку запроса (triage) с телом и вернуть {root_id, warning}.
 
     ``brief=True`` — тело в режиме брифа проекта (WAVE 9, A5); ``idem_key`` — свой ключ
-    идемпотентности (у направлений карты ``plan:<room>:<stream_id>``). ``model_profile`` —
-    чей выбор модели применить к карточке (по умолчанию руководитель комнаты; направления
-    передают своего владельца).
+    идемпотентности (у направлений карты ``plan:<room>:<stream_id>``). ``model_profile``
+    принимается для совместимости с направлениями карты проекта, но переопределение
+    модели в корень больше НЕ пишется (W23 §2.2): карточка создаётся в `triage`, где
+    исполнителя ещё нет, а «модель руководителя» в корне и была причиной работы на
+    чужой модели. Модель профиля исполнителя движок берёт сам.
     """
     if not isinstance(room, dict):
         raise EngineWriteError("bad_request", "Не передана комната запроса.")
@@ -455,7 +466,13 @@ def create_request(cfg, room: dict, slug: str, title: str, body: str, *,
     # какая модель/провайдер выбраны для каждого исполнителя (иначе движок берёт модель
     # профиля: именно так работа уходила на `glm-5.3-flash` вместо выбранной в комнате).
     body = _with_models_block(cfg, room, body)
-    model_args, settings = _model_args(cfg, room, model_profile or room.get("orchestrator") or "")
+    # W23 §2.2: корневая карточка создаётся в `triage` — исполнителя ещё НЕТ, поэтому
+    # переопределение модели не ставится вообще (прежде сюда попадала модель
+    # руководителя и оставалась после назначения исполнителя — так работа `ornith`
+    # ушла на `claude-sonnet-5-5`). Чью модель применять, решит движок по профилю
+    # исполнителя; выбор комнаты закрепит сторож, когда исполнитель появится.
+    model_args: list = []
+    settings: dict = {}
     path = _write_body(cfg, body, slug)
     try:
         args = ["create", title, "--triage", opt("tenant", tenant), opt("created-by", CREATED_BY),
@@ -548,6 +565,394 @@ def create_child_card(cfg, room: dict, board: str, parent_id: str, assignee: str
                                json.dumps(data, ensure_ascii=False)[:600])
     _push_reasoning(cfg, board, card_id, str((settings or {}).get("reasoning") or ""))
     return card_id
+
+
+# ---------------------------------------------------------------- карточка: остановить/продолжить
+#
+# Три действия человека над ОДНОЙ карточкой (W23 §2.8): остановить работу (без потери
+# рабочей папки и прогресса), продолжить, сменить модель и продолжить. Тонкие обёртки над
+# CLI: своего SQL нет, все проверки значений — до сборки argv.
+#
+# Что именно останавливает работающий воркер (проверено по `hermes_cli/kanban_db.py`):
+# `reclaim_task` — единственный глагол, который завершает процесс воркера
+# (`_terminate_reclaimed_worker`), снимает claim и возвращает карточку в очередь
+# (`_retry_status_for_run`), сбрасывая счётчик неудач. `block_task` только парковывает
+# карточку (status blocked, claim_lock/worker_pid в NULL) и процесс не убивает, поэтому
+# остановка = `reclaim`, а `block` — чтобы диспетчер не подхватил её снова.
+
+def card_reclaim(cfg, board: str, task_id: str, *, reason: str = "") -> dict:
+    """Снять работу с карточки (`reclaim <id> --reason …`): воркер завершается, папка цела."""
+    task_id = assert_task_id(task_id, "task_id")
+    text = _reason(reason or "остановлено пользователем")
+    _out, ms = _run(cfg, board, ["reclaim", task_id, opt("reason", text)])
+    return {"ok": True, "detail": f"Работа с карточки {task_id} снята.", "cmd_ms": ms,
+            "task_id": task_id}
+
+
+def card_block(cfg, board: str, task_id: str, *, reason: str = "",
+               kind: str = "needs_input") -> dict:
+    """Поставить карточку на паузу (`block <id> --kind needs_input`)."""
+    task_id = assert_task_id(task_id, "task_id")
+    text = _reason(reason or "остановлено пользователем")
+    args = ["block", task_id, opt("reason", text)]
+    if kind:
+        args.append(opt("kind", str(kind)))
+    _out, ms = _run(cfg, board, args)
+    return {"ok": True, "detail": f"Карточка {task_id} остановлена.", "cmd_ms": ms,
+            "task_id": task_id}
+
+
+def card_unblock(cfg, board: str, task_id: str, *, reason: str = "") -> dict:
+    """Снять паузу (`unblock <id> --reason …`): карточка возвращается в очередь."""
+    task_id = assert_task_id(task_id, "task_id")
+    text = _reason(reason or "продолжаем")
+    _out, ms = _run(cfg, board, ["unblock", task_id, opt("reason", text)])
+    return {"ok": True, "detail": f"Карточка {task_id} продолжена.", "cmd_ms": ms,
+            "task_id": task_id}
+
+
+def card_promote(cfg, board: str, task_id: str) -> dict:
+    """Подтолкнуть карточку из `todo` в `ready` (`promote`)."""
+    task_id = assert_task_id(task_id, "task_id")
+    _out, ms = _run(cfg, board, ["promote", task_id])
+    return {"ok": True, "detail": f"Карточка {task_id} в очереди.", "cmd_ms": ms,
+            "task_id": task_id}
+
+
+def card_set_model(cfg, board: str, task_id: str, *, model=None, provider=None) -> dict:
+    """Сменить модель карточки (`set-model <id> <model|none> [--provider P]`).
+
+    `model=None` снимает переопределение: воркер пойдёт на модели профиля (ровно то, что
+    пользователь сделал руками 17.11: `set-model … none` + `reclaim`).
+    """
+    task_id = assert_task_id(task_id, "task_id")
+    name = "" if model is None else str(model).strip()
+    if name.startswith("-") or "\x00" in name or len(name) > 200:
+        raise EngineWriteError("bad_request", "Некорректное имя модели.",
+                               detail={"field": "model", "value": name[:80]})
+    args = ["set-model", task_id, name or "none"]
+    if provider and name:
+        args.append(opt("provider", str(provider).strip()))
+    _out, ms = _run(cfg, board, args)
+    return {"ok": True, "detail": (f"Модель карточки {task_id}: {name or 'модель профиля'}."),
+            "cmd_ms": ms, "task_id": task_id, "model": name, "provider": provider or ""}
+
+
+def _reason(text) -> str:
+    """Причина действия для CLI: одна строка, без NUL, до 200 знаков."""
+    clean = " ".join(str(text or "").split())
+    if "\x00" in clean:
+        raise EngineWriteError("bad_request", "В причине есть NUL-байт.", detail={"field": "reason"})
+    return clean[:200]
+
+
+# ---------------------------------------------------------------- атомарные остановка/продолжение
+#
+# ОКНО ГОНКИ (W23-AT1). `reclaim` убивает воркер и возвращает карточку в очередь, `block`
+# удерживает, но воркер НЕ убивает. Двумя вызовами CLI (~1–2 с каждый) диспетчер успевает
+# взять карточку из `ready` между ними — и человек получает «остановлено» над живым воркером.
+# Поэтому обе штатные функции вызываются подряд ОДНИМ процессом интерпретатора Hermes
+# (`server/kanban_atomic.py`: `reclaim_task` + `block_task` через десятки миллисекунд, без
+# промежуточного `ready`), результат проверяется по доске (статус + жив ли pid воркера), при
+# неудаче действие повторяется до 3 раз. Если интерпретатора Hermes нет (чистая машина) или
+# идёт песочница/демо — прежний путь «CLI + проверка + повтор»: он медленнее, но результат
+# тот же, и тесты продолжают видеть те же команды.
+
+ATOMIC_ATTEMPTS = 3
+ATOMIC_TIMEOUT = 45
+#: «Модель не задана — не трогать» (отличать от «снять переопределение» = ``None``).
+KEEP_MODEL = object()
+
+
+def _card_worker(cfg, board: str, task_id: str) -> dict:
+    """Статус карточки и её воркер (`worker_pid`/`claim_lock`) — только чтение, mode=ro."""
+    if not task_id:
+        return {}
+    db = _db_path(cfg, board)
+    if not db.exists():
+        return {}
+    try:
+        con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True, timeout=3)
+    except sqlite3.Error:
+        return {}
+    try:
+        con.row_factory = sqlite3.Row
+        row = con.execute("SELECT id,status,claim_lock,worker_pid,worker_started_at,"
+                          "model_override,provider_override,block_kind FROM tasks WHERE id=?",
+                          (str(task_id),)).fetchone()
+        return dict(row) if row else {}
+    except sqlite3.Error:
+        return {}
+    finally:
+        con.close()
+
+
+def _atomic():
+    """Модуль атомарных действий (ленивый импорт: циклов между модулями нет)."""
+    try:
+        from . import kanban_atomic as mod
+    except ImportError:                      # pragma: no cover - плоский импорт
+        import kanban_atomic as mod          # type: ignore
+    return mod
+
+
+def atomic_enabled(cfg) -> bool:
+    """Идти ли одним процессом Hermes.
+
+    Выключатели: ``TEAMROOM_KANBAN_ATOMIC=0/1`` (1 — включить и в песочнице), демо/мок.
+    В песочнице (`TEAMROOM_HERMES_HOME`) по умолчанию остаётся прежний путь CLI: тесты видят
+    те же команды и тот же шим, а не живые функции Hermes по поддельной доске.
+    """
+    flag = str(os.environ.get("TEAMROOM_KANBAN_ATOMIC") or "").strip().lower()
+    if flag in ("0", "off", "no", "false"):
+        return False
+    if flag in ("1", "on", "yes", "true"):
+        return True
+    if getattr(cfg, "mock", False) or getattr(cfg, "demo", False):
+        return False
+    return not bool(getattr(cfg, "sandbox", False))
+
+
+def _atomic_call(cfg, op: str, board: str, task_id: str, **kw):
+    """Атомарное действие одним процессом Hermes; ``None`` — путь недоступен (идём CLI)."""
+    if not atomic_enabled(cfg):
+        return None
+    try:
+        mod = _atomic()
+        if not mod.available(cfg):
+            return None
+    except Exception:                        # noqa: BLE001 - модуль/интерпретатор недоступен
+        return None
+    started = time.perf_counter()
+    try:
+        res = getattr(mod, op)(cfg, board, task_id, timeout=ATOMIC_TIMEOUT, **kw)
+    except Exception as exc:                 # noqa: BLE001
+        ms = int((time.perf_counter() - started) * 1000)
+        code = str(getattr(exc, "code", "") or "")
+        message = str(getattr(exc, "message", "") or exc)
+        _log(cfg, ["kanban", board or "", "atomic", op, task_id], ms, 1,
+             "%s: %s" % (code or "failed", message))
+        if code in ("no_hermes", "failed", "unavailable", "timeout", ""):
+            return None                      # инфраструктура: пробуем старый путь
+        if code == "not_found":
+            raise EngineWriteError("not_found", "Карточка не найдена в доске канбана.",
+                                   message)
+        if code == "conflict":
+            raise EngineWriteError("conflict", message or "Действие невозможно в текущем "
+                                                          "состоянии карточки.", message)
+        raise EngineWriteError("bad_request", message or "Некорректные параметры действия.")
+    ms = int((time.perf_counter() - started) * 1000)
+    _log(cfg, ["kanban", board or "", "atomic", op, task_id], ms,
+         0 if res.get("ok") else 1, "" if res.get("ok") else "not_held")
+    res["cmd_ms"] = int(res.get("ms") or ms)
+    return res
+
+
+def _cli_run(cfg, board: str, args: list, steps: list) -> int:
+    """Один глагол CLI для запасного пути: мс; «конфликт состояния» — пропуск шага."""
+    try:
+        _out, ms = _run(cfg, board, args)
+    except EngineWriteError as exc:
+        if exc.code == "conflict":
+            steps.append("skip:%s" % (args[0] if args else ""))
+            return 0
+        raise
+    if args:
+        steps.append(str(args[0]))
+    return int(ms)
+
+
+def _stop_cli(cfg, board: str, task_id: str, *, reason: str, kind=None) -> dict:
+    """Запасной путь остановки: `reclaim` → `block` → проверка, до 3 попыток."""
+    text = _reason(reason)
+    info = _card_worker(cfg, board, task_id)
+    if not info:
+        raise EngineWriteError("not_found", "Карточка не найдена в доске канбана.")
+    pid = info.get("worker_pid")
+    total, steps, attempts, row = 0, [], 0, info
+    for number in range(1, ATOMIC_ATTEMPTS + 1):
+        attempts = number
+        status = str(row.get("status") or "")
+        if status in ("done", "archived"):
+            raise EngineWriteError("conflict", "Карточка уже завершена — останавливать нечего.")
+        if status == "running" or row.get("claim_lock"):
+            total += _cli_run(cfg, board, ["reclaim", task_id, opt("reason", text)], steps)
+        row = _card_worker(cfg, board, task_id) or row
+        if str(row.get("status") or "") in ("running", "ready"):
+            args = ["block", task_id, opt("reason", text)]
+            if kind:
+                args.append(opt("kind", str(kind)))
+            total += _cli_run(cfg, board, args, steps)
+        row = _card_worker(cfg, board, task_id) or row
+        alive = bool(pid) and _pid_alive(pid)
+        if str(row.get("status") or "") in ("blocked", "todo") and not alive:
+            break
+        time.sleep(0.15)
+    status = str(row.get("status") or "")
+    alive = bool(pid) and _pid_alive(pid)
+    return {"ok": status in ("blocked", "todo") and not alive, "status": status,
+            "terminated": bool(pid) and not alive, "worker_alive": alive,
+            "attempts": attempts, "cmd_ms": total, "steps": steps, "path": "cli"}
+
+
+def _move_cli(cfg, board: str, task_id: str, *, mode: str, model=KEEP_MODEL,
+              provider: str = "", reason: str = "") -> dict:
+    """Запасной путь «продолжить / сменить модель / перезапустить»: CLI + проверка + повтор."""
+    text = _reason(reason or ("продолжаем" if mode == "resume" else "меняем модель и продолжаем"))
+    info = _card_worker(cfg, board, task_id)
+    if not info:
+        raise EngineWriteError("not_found", "Карточка не найдена в доске канбана.")
+    if str(info.get("status") or "") in ("done", "archived"):
+        raise EngineWriteError("conflict", "Карточка уже завершена.")
+    if mode == "resume" and str(info.get("status") or "") == "running":
+        raise EngineWriteError("conflict", "Карточка уже работает.")
+    pid = info.get("worker_pid")
+    total, steps, attempts = 0, [], 0
+    if model is not KEEP_MODEL:
+        name = "" if model is None else str(model).strip()
+        args = ["set-model", task_id, name or "none"]
+        if name and provider:
+            args.append(opt("provider", str(provider)))
+        total += _cli_run(cfg, board, args, steps)
+    row = info
+    for number in range(1, ATOMIC_ATTEMPTS + 1):
+        attempts = number
+        status = str(row.get("status") or "")
+        if status == "running":
+            if mode == "resume":
+                raise EngineWriteError("conflict", "Карточка уже работает.")
+            total += _cli_run(cfg, board, ["reclaim", task_id, opt("reason", text)], steps)
+        elif status in ("blocked", "scheduled"):
+            total += _cli_run(cfg, board, ["unblock", task_id, opt("reason", text)], steps)
+        row = _card_worker(cfg, board, task_id) or row
+        if str(row.get("status") or "") == "todo":
+            total += _cli_run(cfg, board, ["promote", task_id, opt("reason", text)], steps)
+        row = _card_worker(cfg, board, task_id) or row
+        status = str(row.get("status") or "")
+        alive = bool(pid) and _pid_alive(pid)
+        if status in ("ready", "todo", "review") and not alive:
+            break
+        time.sleep(0.15)
+    status = str(row.get("status") or "")
+    alive = bool(pid) and _pid_alive(pid)
+    return {"ok": status in ("ready", "todo", "review") and not alive, "status": status,
+            "terminated": bool(pid) and not alive, "worker_alive": alive,
+            "attempts": attempts, "cmd_ms": total, "steps": steps, "path": "cli"}
+
+
+def _stop_payload(task_id: str, res: dict) -> dict:
+    """Итог остановки простыми словами: честно, если удержать не удалось."""
+    status = str(res.get("status") or "")
+    ok, alive = bool(res.get("ok")), bool(res.get("worker_alive"))
+    if ok and status == "blocked":
+        detail = ("Работа снята, карточка на паузе: диспетчер её не подхватит, "
+                  "прогресс и рабочая папка на месте.")
+    elif ok:
+        detail = "Работа снята; карточка ждёт родительские карточки и сама не запустится."
+    elif alive:
+        detail = ("Работа снята с карточки, но процесс воркера ещё жив — повторите остановку "
+                  "(или проверьте разрешения на завершение процесса).")
+    elif status in ("ready", "review"):
+        detail = "Работа снята, но удержать карточку не удалось — она снова в очереди."
+    else:
+        detail = "Работа снята, но карточка в состоянии «%s»." % status
+    return {"ok": ok, "detail": detail, "status": status,
+            "held": status in ("blocked", "todo"), "terminated": bool(res.get("terminated")),
+            "worker_alive": alive, "attempts": int(res.get("attempts") or 0),
+            "cmd_ms": int(res.get("cmd_ms") or 0), "path": str(res.get("path") or ""),
+            "steps": list(res.get("steps") or []), "task_id": task_id}
+
+
+def card_stop(cfg, board: str, task_id: str, *, reason: str = "", kind=None) -> dict:
+    """Остановить работу: воркер завершён И карточка удержана в `blocked` (W23-AT1).
+
+    Один процесс Hermes вместо двух вызовов CLI: окна между `reclaim` и `block`, в котором
+    диспетчер поднимает карточку заново, нет. Результат проверяется по доске (статус и жив ли
+    pid воркера), при неудаче — до 3 попыток. Возвращает ``{ok, status, held, terminated,
+    worker_alive, attempts, cmd_ms, path, detail, task_id}``.
+    """
+    task_id = assert_task_id(task_id, "task_id")
+    text = _reason(reason or "остановлено пользователем")
+    res = _atomic_call(cfg, "stop", board, task_id, reason=text, kind=kind)
+    if res is None:
+        res = _stop_cli(cfg, board, task_id, reason=text, kind=kind)
+    res.setdefault("path", "atomic")
+    return _stop_payload(task_id, res)
+
+
+def card_resume(cfg, board: str, task_id: str, *, reason: str = "", model=KEEP_MODEL,
+                provider: str = "") -> dict:
+    """Продолжить карточку (`unblock`/`promote`) — и, если задана, сменить модель в том же
+    процессе: `set_model` → `unblock` → `promote` → `ready` (W23-AT1)."""
+    task_id = assert_task_id(task_id, "task_id")
+    text = _reason(reason or "продолжаем")
+    extra: dict = {}
+    if model is not KEEP_MODEL:
+        extra = {"model": None if model is None else model, "provider": provider or ""}
+    res = _atomic_call(cfg, "resume", board, task_id, reason=text, **extra)
+    if res is None:
+        res = _move_cli(cfg, board, task_id, mode="resume", reason=text,
+                        **({"model": model, "provider": provider} if extra else {}))
+    res.setdefault("path", "atomic")
+    return _move_payload(task_id, res, "resumed")
+
+
+def card_model_and_resume(cfg, board: str, task_id: str, *, model=None, provider: str = "",
+                          reason: str = "") -> dict:
+    """«Сменить модель и продолжить»: `set_model` + (`reclaim` | `unblock`) → `ready`.
+
+    Для идущей карточки работа снимается сразу после записи модели — одним процессом, чтобы
+    диспетчер не успел подхватить её со старым переопределением.
+    """
+    task_id = assert_task_id(task_id, "task_id")
+    text = _reason(reason or "меняем модель и продолжаем")
+    res = _atomic_call(cfg, "change_model_and_resume", board, task_id,
+                       model=None if model is None else model, provider=provider or "",
+                       reason=text)
+    if res is None:
+        res = _move_cli(cfg, board, task_id, mode="model", model=model, provider=provider,
+                        reason=text)
+    res.setdefault("path", "atomic")
+    return _move_payload(task_id, res, "resumed")
+
+
+def card_restart_on_model(cfg, board: str, task_id: str, *, model=KEEP_MODEL,
+                          provider: str = "", reason: str = "") -> dict:
+    """Перезапуск на верной модели (сторож моделей): `set_model` (если задана) + `reclaim`.
+
+    Карточка возвращается в очередь (`ready`), а не на паузу: сторож не останавливает работу
+    человека, а исправляет модель и даёт карточке продолжиться самой.
+    """
+    task_id = assert_task_id(task_id, "task_id")
+    text = _reason(reason or "контроль моделей: неверная модель")
+    extra: dict = {}
+    if model is not KEEP_MODEL:
+        extra = {"model": None if model is None else model, "provider": provider or ""}
+    res = _atomic_call(cfg, "restart_on_model", board, task_id, reason=text, **extra)
+    if res is None:
+        res = _move_cli(cfg, board, task_id, mode="restart", reason=text,
+                        **({"model": model, "provider": provider} if extra else {}))
+    res.setdefault("path", "atomic")
+    return _move_payload(task_id, res, "restarted")
+
+
+def _move_payload(task_id: str, res: dict, action: str) -> dict:
+    """Итог «продолжить/перезапустить»: статус, шаги, честный текст при неудаче."""
+    status = str(res.get("status") or "")
+    ok, alive = bool(res.get("ok")), bool(res.get("worker_alive"))
+    if ok:
+        detail = ("Карточка снова в очереди%s — агент вернётся к ней с того же места."
+                  % ("" if status == "ready" else " (или ждёт родительские карточки)"))
+    elif alive:
+        detail = "Карточка возвращена в очередь, но процесс прежнего воркера ещё жив."
+    else:
+        detail = "Не удалось вернуть карточку в очередь — она в состоянии «%s»." % status
+    return {"ok": ok, "detail": detail, "status": status, "action": action,
+            "terminated": bool(res.get("terminated")), "worker_alive": alive,
+            "attempts": int(res.get("attempts") or 0), "cmd_ms": int(res.get("cmd_ms") or 0),
+            "path": str(res.get("path") or ""), "steps": list(res.get("steps") or []),
+            "task_id": task_id}
+
 
 
 def retarget_root(cfg, board: str, root_id: str, profile: str) -> dict:

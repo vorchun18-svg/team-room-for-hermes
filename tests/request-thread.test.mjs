@@ -21,9 +21,20 @@ FakeElement.prototype.focus = function focus() { this._focused = true; };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const {
-  mountThread, secondAction, canReviseWithMessage, ruText, roleLabel, authorTitle, mergeThreads,
+  mountThread: mountThreadRaw, secondAction, canReviseWithMessage, ruText, roleLabel, authorTitle, mergeThreads,
   EMPTY_TEXT, SEND_HINT,
 } = await import('../web/js/views/request-thread.js');
+
+/**
+ * У-1 (волна 21): «Диалог по запросу» по умолчанию СВЁРНУТ (решение Михаила
+ * 11.11). Тесты проверяют ленту, поле и кнопки — сначала раскрываем блок так же,
+ * как это делает человек: заголовком общего компонента.
+ */
+function mountThread(...args) {
+  const ctl = mountThreadRaw(...args);
+  if (ctl && typeof ctl.expand === 'function') ctl.expand();
+  return ctl;
+}
 
 /* ─────────────────────────────────────────────────────────── помощники */
 
@@ -51,7 +62,7 @@ function makeCtx(apiPost, extra = {}) {
   const calls = [];
   const toasts = [];
   const ctx = {
-    room: { id: 'cafe', members: [{ profile: 'biz-ops', note: 'Операции: поставки' }] },
+    room: { id: 'cafe', members: [{ profile: 'team-ops', note: 'Операции: поставки' }] },
     toast: (msg, kind) => toasts.push({ msg, kind }),
     api: {
       post: async (path, body) => {
@@ -84,7 +95,7 @@ const THREAD = [
     text: 'Версия 2 готова', kind: 'event', task_id: null,
   },
   {
-    id: 'c3', at: now - 60, author_kind: 'agent', author: 'biz-ops', author_label: 'Глеб · директор',
+    id: 'c3', at: now - 60, author_kind: 'agent', author: 'team-ops', author_label: 'Глеб · директор',
     text: 'Принял, передал юристу', kind: 'comment', task_id: 't_child',
   },
 ];
@@ -125,7 +136,9 @@ test('пустая лента объясняет, зачем писать', () =
   assert.equal(textOf(byClass(host, 'thr__empty-text')[0]).trim(), EMPTY_TEXT);
   assert.equal(byClass(host, 'thr-msg').length, 0);
 
-  const hint = byClass(host, 'thr__hint')[0];
+  // W20-C1: подсказка «куда уйдёт сообщение» — та, что без класса модификатора;
+  // подсказка про доработку свода живёт отдельным узлом (появляется с переключателем).
+  const hint = byClass(host, 'thr__hint').find((el) => !el.classList.contains('thr__hint--revise'));
   assert.equal(textOf(hint).trim(), SEND_HINT);
 
   const ta = host.find('textarea');
@@ -154,7 +167,7 @@ test('кнопки по статусу: в работе одна, готово �
 
   assert.equal(secondAction('working'), null);
   assert.equal(secondAction('queued'), null);
-  assert.equal(secondAction('done'), null, 'доработка живёт только в блоке «Свод команды»');
+  assert.equal(secondAction('done'), null, 'доработка живёт только в блоке «Свод»');
   assert.equal(secondAction('failed').key, 'retry');
   assert.equal(canReviseWithMessage('done'), true);
   assert.equal(canReviseWithMessage('working'), false);
@@ -229,12 +242,12 @@ const OK_201 = (text) => ({
       text, task_id: null, kind: 'message',
     },
     {
-      id: 'c10', at: now, author_kind: 'agent', author: 'biz-ops',
+      id: 'c10', at: now, author_kind: 'agent', author: 'team-ops',
       author_label: 'Глеб · руководитель комнаты', text: 'Принял: учту на шаге 2',
       task_id: 't_child', kind: 'comment',
     },
   ],
-  routed_to: 'biz-ops', merged: false,
+  routed_to: 'team-ops', merged: false,
 });
 
 test('после 201 {message, thread, routed_to, merged} живая кнопка снова «Отправить руководителю»', async () => {
@@ -264,8 +277,13 @@ test('после 201 {message, thread, routed_to, merged} живая кнопк�
 
   assert.ok(hostB, 'страница перерисовалась и диалог смонтирован заново');
   const send = byClass(hostB, 'thr__send')[0];
-  assert.equal(textOf(send).trim(), 'Отправить руководителю', 'не «Отправляю…»');
-  assert.equal(send.disabled, false, 'кнопка снова доступна');
+  assert.equal(textOf(send).trim(), 'Отправить руководителю', 'не «Отправляется…»');
+  // W20-C1: поле после отправки пустое — «Отправить» неактивна, пока не набран текст.
+  assert.equal(send.disabled, true, 'пустое поле — кнопка неактивна');
+  const taB = hostB.find('textarea');
+  taB.value = 'Ещё одно уточнение';
+  taB.dispatch('input', { type: 'input', target: taB });
+  assert.equal(send.disabled, false, 'текст набран — кнопка снова доступна');
   assert.equal(send.getAttribute('aria-busy'), 'false');
   assert.equal(byClass(hostB, 'thr-msg--pending').length, 0, 'оптимистичной «отправляю» не осталось');
   assert.ok(
@@ -278,7 +296,7 @@ test('ответ без thread: сообщение из ленты не оста
   const { host } = mount(
     { id: 't_root', status: 'working', thread: [] },
     { apiPost: (path, body) => ({ message: { id: 'c11', at: now, author: 'mikhail',
-      author_kind: 'mikhail', author_label: 'Михаил', text: body.text, kind: 'message' }, routed_to: 'biz-ops' }) },
+      author_kind: 'mikhail', author_label: 'Михаил', text: body.text, kind: 'message' }, routed_to: 'team-ops' }) },
   );
   const ta = host.find('textarea');
   ta.value = 'Короткое уточнение';
@@ -411,8 +429,8 @@ test('старое название главы комнаты заменяетс
   assert.equal(ruText('Глеб · директор'), 'Глеб · руководитель комнаты');
   assert.equal(ruText('руководитель'), 'руководитель');
 
-  assert.equal(roleLabel({ author: 'biz-ops' }), 'операции');
-  assert.equal(authorTitle({ author: 'biz-ops', author_label: 'Глеб · директор' }), 'Глеб · руководитель комнаты');
+  assert.equal(roleLabel({ author: 'team-ops' }), 'операции');
+  assert.equal(authorTitle({ author: 'team-ops', author_label: 'Глеб · директор' }), 'Глеб · руководитель комнаты');
 });
 
 test('mergeThreads: склейка без дублей, порядок по времени', () => {

@@ -17,13 +17,20 @@
    `state/<комната>/roadmap.json` есть реальные статусы/заметки), этапы
    подхватываются из их собственного файла. Данные не переписываются, у
    комнаты без следов карты этапов не появляется.
+4. W20 §1.7 (P1) — ПРЕДЛОЖЕНИЕ этапов руководителем: `capture` кладёт
+   `metadata.phases_proposal` в поле комнаты `phases_proposal` и НЕ трогает
+   этапы пользователя, `decide` применяет решение (принять все / выбранные /
+   отклонить), `propose` ставит карточку «предложи этапы». Порядок,
+   переименования, удаления и добавления пользователя сохраняются всегда.
 
 Ни одного названия этапа какого-либо проекта в коде нет: заголовки приходят
 только из данных комнаты (или из её файла карты при миграции).
 """
 from __future__ import annotations
 
+import hashlib
 import re
+import time
 
 try:  # пакетный и «плоский» импорт (python server/app.py)
     from . import statefiles as sf
@@ -166,6 +173,14 @@ def _key(text) -> str:
     return " ".join(str(text or "").lower().replace("ё", "е").split())
 
 
+_PUNCT_RE = re.compile(r"[^\w\s-]+", re.UNICODE)
+
+
+def _plain(text) -> str:
+    """Ключ без знаков препинания: «Проверка спроса, цен» = «проверка спроса цен»."""
+    return " ".join(_PUNCT_RE.sub(" ", _key(text)).split())
+
+
 def _meta_index(canon: dict) -> tuple[dict, dict]:
     """Metadata ответа → (по id, по названию). Второй — для старых ключей-названий."""
     by_ident: dict = {}
@@ -222,6 +237,371 @@ def stage(phases, canon: dict | None = None) -> dict:
     if current is None:
         current = _derive_current(out)
     return {"current": current, "phases": out}
+
+
+# --- W20 §1.7 (P1): предложение этапов руководителем -------------------------
+#
+# Руководитель присылает предложение в `metadata.phases_proposal` ЛЮБОЙ своей
+# карточки. Приложение кладёт его в поле комнаты `phases_proposal` и НЕ трогает
+# `phases`: порядок, переименования, удаления и добавления пользователя остаются
+# его. Решение («принять все / принять выбранные / отклонить») — отдельным
+# действием: принятые этапы ДОПИСЫВАЮТСЯ в конец `phases`, а уже существующие
+# (тот же id или то же название) не переименовываются и не переставляются.
+
+PROPOSAL_STATES = ("proposed", "accepted", "rejected")
+PROPOSAL_ACTIONS = ("accept", "accept_selected", "reject")
+MAX_DESCRIPTION = 400
+PROPOSE_TITLE = "Какие этапы у проекта"
+
+
+def _num(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _desc(value) -> str:
+    return " ".join(str(value or "").split())[:MAX_DESCRIPTION]
+
+
+def _plural(count: int, forms: tuple) -> str:
+    """«1 этап / 2 этапа / 5 этапов» — по-русски, без «этап(ов)»."""
+    number = abs(int(count or 0)) % 100
+    if 11 <= number <= 14:
+        return forms[2]
+    tail = number % 10
+    if tail == 1:
+        return forms[0]
+    if 2 <= tail <= 4:
+        return forms[1]
+    return forms[2]
+
+
+def norm_items(value, *, strict: bool = False) -> list[dict]:
+    """`[{id,title,description}]` — терпимо; `strict=True` → PhaseError с позицией.
+
+    Терпимое чтение нужно для данных от руководителя и для старых записей реестра:
+    мусор не должен ронять карту комнаты. Строгое — для записи после проверки.
+    """
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        if strict:
+            raise PhaseError("Этапы проекта: нужен список этапов", {"field": "phases_proposal"})
+        return []
+    if strict and len(value) > MAX_PHASES:
+        raise PhaseError("Этапы проекта: не больше %d этапов" % MAX_PHASES,
+                         {"field": "phases_proposal", "max": MAX_PHASES})
+    out: list[dict] = []
+    seen: set[str] = set()
+    for pos, item in enumerate(value, 1):
+        if isinstance(item, str):
+            item = {"title": item}
+        if not isinstance(item, dict):
+            if strict:
+                raise PhaseError("Этап %d: нужен объект с заголовком" % pos,
+                                 {"field": "phases_proposal", "index": pos})
+            continue
+        title = " ".join(str(item.get("title") or item.get("name") or "").split())
+        if not title:
+            if strict:
+                raise PhaseError("Этап %d: нужен заголовок" % pos,
+                                 {"field": "phases_proposal", "index": pos})
+            continue
+        if len(title) > MAX_TITLE:
+            if strict:
+                raise PhaseError("Этап %d: заголовок не длиннее %d знаков (сейчас %d)"
+                                 % (pos, MAX_TITLE, len(title)),
+                                 {"field": "phases_proposal", "index": pos, "max": MAX_TITLE})
+            title = title[:MAX_TITLE].strip()
+        raw_id = str(item.get("id") or "").strip()
+        pid = _slug(raw_id) if raw_id else _slug(title)
+        if pid in seen:
+            if strict:
+                raise PhaseError("Этап %d: повторяется id «%s»" % (pos, pid),
+                                 {"field": "phases_proposal", "index": pos, "id": pid})
+            continue
+        seen.add(pid)
+        out.append({"id": pid, "title": title, "description": _desc(item.get("description"))})
+        if len(out) >= MAX_PHASES:
+            break
+    return out
+
+
+def signature(items) -> str:
+    """Отпечаток предложения: по id И названию (переименование = другое предложение)."""
+    raw = "|".join("%s=%s" % (item.get("id"), _key(item.get("title")))
+                   for item in (items or []))
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _title_seq(items) -> list[str]:
+    return [_key(item.get("title")) for item in (items or [])]
+
+
+def norm_proposal(value) -> dict | None:
+    """Чтение `phases_proposal`: мусор и пустое предложение — `None` (его нет)."""
+    if not isinstance(value, dict):
+        return None
+    items = norm_items(value.get("items"))
+    if not items:
+        return None
+    state = str(value.get("state") or "").strip().lower()
+    if state not in PROPOSAL_STATES:
+        state = "proposed"
+    out = {"at": _num(value.get("at")), "by": str(value.get("by") or "").strip(),
+           "state": state, "items": items,
+           "signature": str(value.get("signature") or "").strip() or signature(items),
+           "source": str(value.get("source") or "").strip(),
+           "note": _desc(value.get("note"))}
+    if _num(value.get("decided_at")):
+        out["decided_at"] = _num(value.get("decided_at"))
+    accepted = value.get("accepted_ids")
+    if isinstance(accepted, list):
+        out["accepted_ids"] = [str(x) for x in accepted if str(x or "").strip()]
+    return out
+
+
+def proposal_of(room) -> dict | None:
+    """Предложение комнаты в каноническом виде (или None)."""
+    return norm_proposal(room.get("phases_proposal")) if isinstance(room, dict) else None
+
+
+def parse_meta_proposal(raw) -> tuple[list[dict], list[str]]:
+    """`metadata.phases_proposal` → (этапы, предупреждения).
+
+    Принимается список объектов, один объект или список строк. Всё непонятное —
+    в предупреждения (это текст для журнала/ответа, не ошибка приёма ответа).
+    """
+    warnings: list[str] = []
+    if raw is None:
+        return [], warnings
+    if isinstance(raw, dict) and isinstance(raw.get("items"), (list, tuple)):
+        raw = raw.get("items")                       # уже готовая форма предложения
+    if isinstance(raw, (str, dict)):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        warnings.append("Предложение этапов не принято: нужен список этапов")
+        return [], warnings
+    items = norm_items(raw)
+    if not items:
+        warnings.append("Предложение этапов пустое — пропущено")
+        return [], warnings
+    dropped = len(raw) - len(items)
+    if dropped > 0:
+        warnings.append("В предложении этапов %d пункт(ов) без названия — пропущены" % dropped)
+    if len(items) > MAX_PHASES:
+        warnings.append("Этапов в предложении больше %d — взяты первые %d"
+                        % (len(raw), MAX_PHASES))
+        items = items[:MAX_PHASES]
+    return items, warnings
+
+
+def capture(room, items, by: str = "", source: str = "", at=None) -> dict:
+    """Положить предложение руководителя в комнату, НЕ трогая `phases`.
+
+    Возвращает `{applied, reason, proposal?, state}`:
+    * `empty` — этапов нет (ничего не меняем);
+    * `unchanged` — то же предложение уже лежит (повторное чтение карточки
+      не сбрасывает решение пользователя — в том числе «отклонено»);
+    * `same_as_phases` — предложение совпадает с этапами комнаты: показывать
+      нечего, этапы уже такие;
+    * `proposed` — записано новое предложение (`state="proposed"`).
+    """
+    got = norm_items(items)
+    if not got:
+        return {"applied": False, "reason": "empty"}
+    sig = signature(got)
+    current = proposal_of(room) or {}
+    if current.get("signature") == sig:
+        return {"applied": False, "reason": "unchanged", "state": current.get("state"),
+                "proposal": current}
+    phases = norm((room or {}).get("phases")) if isinstance(room, dict) else []
+    if phases and _title_seq(phases) == _title_seq(got):
+        return {"applied": False, "reason": "same_as_phases", "proposal": current or None}
+    proposal = {"at": _num(at) or int(time.time()), "by": str(by or "").strip(),
+                "state": "proposed", "items": got, "signature": sig,
+                "source": str(source or "").strip()}
+    return {"applied": True, "reason": "proposed", "proposal": proposal}
+
+
+def _same_title(left, right) -> bool:
+    """Один и тот же этап, названный чуть иначе: «Проверка спроса» / «… , цен и меню».
+
+    Человек переименовывает этап под себя — принятие предложения не должно
+    создавать второй такой же этап. Совпадением считаем равные названия (без
+    учёта регистра, ё/е и знаков препинания) и продолжение короткого названия
+    целым словом (не «Идея» ↔ «Идейный»).
+    """
+    a, b = _plain(left), _plain(right)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    short, long = (a, b) if len(a) <= len(b) else (b, a)
+    if len(short.split()) < 2:
+        return False
+    return long.startswith(short + " ")
+
+
+def decide(phases, proposal, action: str, selected=None, at=None) -> dict:
+    """Решение по предложению: `{phases, proposal, added, kept, skipped}`.
+
+    `accept` — все этапы предложения, `accept_selected` — только `ids`,
+    `reject` — этапы не меняются. Существующие этапы пользователя не
+    переименовываются и не переставляются: новые ДОПИСЫВАЮТСЯ в конец.
+    """
+    action = str(action or "").strip()
+    if action not in PROPOSAL_ACTIONS:
+        raise PhaseError("Действие: принять все, принять выбранные или отклонить",
+                         {"field": "action", "allowed": list(PROPOSAL_ACTIONS)})
+    prop = norm_proposal(proposal)
+    if prop is None:
+        raise PhaseError("Руководитель ещё не предлагал этапы", {"reason": "no_proposal"})
+    cur = norm(phases)
+    now = _num(at) or int(time.time())
+    if action == "reject":
+        decided = dict(prop, state="rejected", decided_at=now, accepted_ids=[])
+        return {"phases": cur, "proposal": decided, "added": [], "kept": ids(cur),
+                "skipped": [], "state": "rejected"}
+    chosen = list(prop["items"])
+    if action == "accept_selected":
+        wanted = {str(x).strip() for x in (selected or []) if str(x or "").strip()}
+        if not wanted:
+            raise PhaseError("Выберите хотя бы один этап", {"field": "ids", "reason": "empty_selection"})
+        known = {item["id"] for item in prop["items"]}
+        unknown = sorted(wanted - known)
+        if unknown:
+            raise PhaseError("В предложении нет таких этапов: %s" % ", ".join(unknown),
+                             {"field": "ids", "unknown": unknown})
+        chosen = [item for item in prop["items"] if item["id"] in wanted]
+    have_ids = ids(cur)
+    have_titles = [item["title"] for item in cur]
+    out = list(cur)
+    added: list[str] = []
+    skipped: list[str] = []
+    for item in chosen:
+        if item["id"] in have_ids or any(_same_title(item["title"], title) for title in have_titles):
+            skipped.append(item["id"])          # правку пользователя не затираем
+            continue
+        if len(out) >= MAX_PHASES:
+            raise PhaseError("Нельзя добавить этапы: в комнате уже %d" % MAX_PHASES,
+                             {"max": MAX_PHASES, "reason": "too_many"})
+        out.append({"id": item["id"], "title": item["title"]})
+        have_ids.append(item["id"])
+        have_titles.append(item["title"])
+        added.append(item["id"])
+    decided = dict(prop, state="accepted", decided_at=now,
+                   accepted_ids=[item["id"] for item in chosen])
+    return {"phases": out, "proposal": decided, "added": added, "kept": have_ids,
+            "skipped": skipped, "state": "accepted"}
+
+
+def reconcile(phases, proposal) -> dict | None:
+    """Правка пользователя совпала с предложением → предложение считается принятым.
+
+    Нужно, чтобы плашка «Руководитель предлагает этапы» не висела после того,
+    как пользователь сам собрал в редакторе ровно те же этапы.
+    """
+    prop = norm_proposal(proposal)
+    if prop is None or prop.get("state") != "proposed":
+        return prop
+    if _title_seq(norm(phases)) == _title_seq(prop["items"]):
+        return dict(prop, state="accepted", decided_at=int(time.time()),
+                    accepted_ids=ids(prop["items"]), auto=True)
+    return prop
+
+
+def state_text(proposal) -> str:
+    """Короткая строка для сводки комнаты (её же показывает карта проекта)."""
+    prop = norm_proposal(proposal)
+    if prop is None:
+        return ""
+    count = len(prop["items"])
+    words = _plural(count, ("этап", "этапа", "этапов"))
+    if prop["state"] == "proposed":
+        titles = ", ".join(item["title"] for item in prop["items"][:3])
+        if count > 3:
+            titles += "…"
+        return "Руководитель предлагает %d %s: %s" % (count, words, titles)
+    if prop["state"] == "accepted":
+        return "Этапы приняты (%d %s)" % (count, words)
+    return "Предложение этапов отклонено (%d %s)" % (count, words)
+
+
+def propose_body(room, phases, note: str = "") -> str:
+    """Текст карточки «предложи этапы»: что нужно и в каком виде ответить."""
+    title = str((room or {}).get("title") or (room or {}).get("id") or "комнаты")
+    lines = ["Предложите этапы проекта для комнаты «%s»." % title, "",
+             "Нужен только список этапов — по порядку, от первого к последнему: 3–8 штук.",
+             "У каждого этапа короткое название (до 60 знаков) и одна строка пояснения, "
+             "что в этот этап входит.", "",
+             "Как ответить: завершите карточку с metadata",
+             '  phases_proposal: [{"title": "<название>", "description": "<пояснение>"}, …]', "",
+             "Работу по проекту не начинайте и других карточек не создавайте: этапы сначала "
+             "посмотрит и поправит человек — он их примет или отклонит сам.", ""]
+    if str(note or "").strip():
+        lines += ["Что учесть в этот раз:", str(note).strip(), ""]
+    if phases:
+        lines.append("Этапы, которые уже заданы в комнате (их правил человек):")
+        lines += ["%d. %s" % (pos, item["title"]) for pos, item in enumerate(phases, 1)]
+        lines += ["", "Уже заданные этапы не переписывайте: в предложение включайте то, что "
+                      "считаете нужным добавить или уточнить, — приложение покажет разницу, "
+                      "а человек решит сам.", ""]
+    else:
+        lines += ["Этапов в комнате пока нет — предложите полный список.", ""]
+    return "\n".join(lines).strip()
+
+
+def propose(cfg, room, note: str = "", body: str | None = None) -> dict:
+    """Создать карточку руководителю «предложи этапы» (W20 §1.7).
+
+    Только постановка карточки: модели запускает штатный диспетчер, как у любого
+    запроса. Ответ руководителя вернётся в `metadata.phases_proposal` и попадёт
+    в комнату сам (`ingest` → `capture`).
+    """
+    room = room if isinstance(room, dict) else {}
+    room_id = str(room.get("id") or "").strip()
+    if not room_id:
+        raise PhaseError("Не передана комната", {"reason": "no_room"})
+    lead = str(room.get("orchestrator") or "").strip()
+    if not lead:
+        raise PhaseError("В комнате не назначен руководитель — предложить этапы некому",
+                         {"reason": "no_lead"})
+    try:
+        from . import engine_write as eng
+        from . import registry as reg
+    except ImportError:  # pragma: no cover - плоский импорт
+        import engine_write as eng  # type: ignore
+        import registry as reg  # type: ignore
+    text = body if isinstance(body, str) and body.strip() else propose_body(
+        room, phases_of(cfg, room), note)
+    slug = "phases-%s-%s" % (room_id, int(time.time()))
+    try:
+        res = eng.create_request(cfg, room, slug, PROPOSE_TITLE, text)
+    except Exception as exc:  # noqa: BLE001 - ошибку движка отдаём по-русски
+        message = (getattr(exc, "message_ru", None) or getattr(exc, "message", None)
+                   or str(exc) or "движок не ответил")
+        raise PhaseError("Не удалось поставить карточку руководителю: %s" % str(message)[:160],
+                         {"reason": "create_failed"}) from exc
+    root_id = str((res or {}).get("root_id") or (res or {}).get("id") or "")
+    if not root_id:
+        raise PhaseError("Движок не вернул id карточки «предложи этапы»",
+                         {"reason": "no_card"})
+    try:                       # реестр вторичен: карточка уже создана
+        reg.add_request(cfg, room_id, {
+            "root_id": root_id, "slug": slug, "title": PROPOSE_TITLE, "text": text,
+            "created_at": int(time.time()), "critic": False, "mode": "auto",
+            "adopted": False, "extra_cards": [], "ingested": {}, "retargeted": False,
+            "kind": "phases_proposal",
+        })
+    except Exception:  # noqa: BLE001
+        pass
+    return {"root_id": root_id, "title": PROPOSE_TITLE, "slug": slug, "body": text,
+            "warning": (res or {}).get("warning")}
 
 
 def _roadmap_path(cfg, room_id: str):
@@ -300,4 +680,8 @@ def current_of(cfg, room, phases=None) -> dict | None:
 
 
 __all__ = ["MAX_PHASES", "MAX_TITLE", "PHASE_STATUSES", "PhaseError", "norm", "check", "ids",
-           "by_id", "statuses_of", "stage", "migrate", "phases_of", "current_of"]
+           "by_id", "statuses_of", "stage", "migrate", "phases_of", "current_of",
+           # W20 §1.7 (P1): предложение этапов руководителем
+           "PROPOSAL_STATES", "PROPOSAL_ACTIONS", "MAX_DESCRIPTION", "PROPOSE_TITLE",
+           "norm_items", "signature", "norm_proposal", "proposal_of", "parse_meta_proposal",
+           "capture", "decide", "reconcile", "state_text", "propose_body", "propose"]

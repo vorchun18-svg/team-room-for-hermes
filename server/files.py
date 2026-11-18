@@ -1,8 +1,9 @@
-"""Отдача файлов из белого списка и «открыть в проводнике».
+"""Отдача файлов из белого списка, «Открыть» и «Показать в папке».
 
 Публичный интерфейс (сигнатуры фиксированы ARCHITECTURE §7 / задача):
     open_file(cfg, path) -> (status:int, headers:dict, body:bytes|Path)
     reveal(cfg, path) -> bool
+    launch(cfg, path) -> bool
 
 Правила:
   * любой путь проходит через ``config.path_allowed`` (realpath + белые корни +
@@ -254,36 +255,89 @@ def open_file(cfg: Cfg, path, roots=None, allow_external: bool = False) -> tuple
     return 200, headers, resolved
 
 
-def reveal(cfg: Cfg, path, roots=None, allow_external: bool = False) -> bool:
-    """«Открыть в проводнике»: ``explorer /select,<path>`` только для белых путей.
+#: Программа-проводник Windows.
+EXPLORER = "explorer"
 
-    ``roots``/``allow_external`` — как у ``open_file``: артефакты комнаты (B-22)
-    и файлы вне папки проекта (B-27) тоже открываются, с теми же проверками.
+
+def _checked(cfg: Cfg, path, roots=None, allow_external: bool = False) -> Path | None:
+    """Путь после ВСЕХ проверок белого списка (или ``None``).
+
+    Одна проверка на все действия с файлом («Открыть», «Показать в папке»,
+    «Копировать путь» на клиенте — путь приходит с сервера): resolve + корни
+    комнаты (B-22) + внешние файлы (B-27) + чёрный список имён + запрет
+    исполняемых типов (``BLOCKED_EXT``).
     """
     raw = "" if path is None else str(path).strip()
     if not raw or _suspicious(raw):
-        return False
+        return None
     resolved = path_allowed(cfg, raw, roots=roots)
     external = False
     if resolved is None and allow_external:
         resolved = external_allowed(cfg, raw)
         external = resolved is not None
     if resolved is None:
-        return False
+        return None
     if not external:
         root = root_of(cfg, resolved, roots=roots)
         if root is None or safe_resolve(root, resolved) is None:
-            return False        # запрещённые имена/типы, включая .exe/.bat/.lnk/.ps1
+            return None         # запрещённые имена/типы, включая .exe/.bat/.lnk/.ps1
+    return resolved
+
+
+def select_command(path) -> str:
+    """Командная строка проводника с выделением файла: ``explorer /select,"<путь>"``.
+
+    Кавычки — ВОКРУГ ПУТИ, а не вокруг всего аргумента. Раньше (до W26-D3) путь
+    передавался элементом списка ``["explorer", "/select,<путь>"]``, и
+    ``subprocess.list2cmdline`` склеивал его в ``explorer "/select,C:\\…\\файл.md"``
+    — с пробелом внутри пути проводник такую строку не понимает и открывает
+    «Документы» вместо папки файла. Поэтому строка собирается здесь и запускается
+    как есть (``proc.popen_line``): оболочка не участвует, а кавычка внутри самого
+    пути отсечена проверкой ``_suspicious``.
+    """
+    return '%s /select,"%s"' % (EXPLORER, path)
+
+
+def reveal(cfg: Cfg, path, roots=None, allow_external: bool = False) -> bool:
+    """«Показать в папке»: проводник с выделением файла, только для белых путей.
+
+    ``roots``/``allow_external`` — как у ``open_file``: файлы комнаты (B-22)
+    и файлы вне папки проекта (B-27) тоже открываются, с теми же проверками.
+
+    Если команда с ``/select`` не запустилась, открываем папку файла
+    (``proc.open_path``): человек всё равно попадает туда, где файл лежит.
+    """
+    resolved = _checked(cfg, path, roots=roots, allow_external=allow_external)
+    if resolved is None:
+        return False
     if sys.platform != "win32":
-        return False
+        # macOS/Linux: выделения в файловом менеджере нет — открываем папку файла.
+        return proc.open_path(resolved.parent)
     try:
-        # gui=True: окно проводника должно быть видно, но своих потоков у него нет
-        # и консоль не создаётся (флаг окна ставит proc).
-        proc.popen(["explorer", "/select,%s" % resolved], module=subprocess, gui=True,
-                   close_fds=True)
+        # gui=True: окно проводника должно быть видно, своих потоков у него нет,
+        # консоль не создаётся (флаги окна ставит proc).
+        proc.popen_line(select_command(resolved), module=subprocess, gui=True)
     except (OSError, ValueError):
-        return False
+        return proc.open_path(resolved.parent)
     return True
+
+
+def launch(cfg: Cfg, path, roots=None, allow_external: bool = False) -> bool:
+    """«Открыть»: файл открывает программа по умолчанию (W26-D3).
+
+    Тот же механизм, что двойной клик по файлу в проводнике — ShellExecute через
+    ``proc.open_path`` (``os.startfile`` на Windows), в сеансе человека. Раньше
+    клиент открывал превью через ``window.open``: внутри окна Hermes Desktop
+    новые окна блокируются, и кнопка не делала ничего; для docx/xlsx открывался
+    проводник вместо самого файла.
+
+    Проверки — те же, что у ``open_file``/``reveal``: только белый список и
+    никогда исполняемые типы.
+    """
+    resolved = _checked(cfg, path, roots=roots, allow_external=allow_external)
+    if resolved is None:
+        return False
+    return proc.open_path(resolved)
 
 
 def resolve_file(cfg: Cfg, path) -> Path | None:
@@ -314,5 +368,5 @@ def info(cfg: Cfg, path) -> dict:
             "allowed": ext in ALLOWED_EXT}
 
 
-__all__ = ["MAX_BYTES", "MIME", "BLOCKED_EXT", "safe_resolve", "root_of", "open_file", "reveal",
-           "resolve_file", "info", "is_denied_name"]
+__all__ = ["MAX_BYTES", "MIME", "BLOCKED_EXT", "EXPLORER", "safe_resolve", "root_of", "open_file",
+           "reveal", "launch", "select_command", "resolve_file", "info", "is_denied_name"]

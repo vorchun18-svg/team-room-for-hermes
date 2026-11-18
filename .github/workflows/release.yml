@@ -52,6 +52,19 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Клиент hermes для проверок (shim)
+        # на раннере нет Hermes CLI, а тесты в собранной копии (--run-tests)
+        # создают доску песочницы через `hermes kanban boards create`
+        run: |
+          bin_dir="$PWD/.ci-bin"
+          mkdir -p "$bin_dir"
+          cp tools/ci_hermes_shim.py "$bin_dir/"
+          cp tools/ci_hermes_shim.sh "$bin_dir/hermes"
+          chmod +x "$bin_dir/hermes"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          echo "TEAMROOM_CI_SHIM=$bin_dir/ci_hermes_shim.py" >> "$GITHUB_ENV"
+          hermes --version
+
       - name: Версия из VERSION и сверка с тегом
         id: version
         run: |
@@ -64,12 +77,25 @@ jobs:
           fi
 
       - name: Тесты, сборка и архивы
-        run: python tools/build_release.py --no-git --run-tests --out-dir dist
+        # Публичный репозиторий уже чист: собираем ровно из чекаута, таблицу
+        # обезличивания не применяем (--no-sanitize) и в архив её не кладём.
+        run: python tools/build_release.py --no-git --no-sanitize --run-tests --out-dir dist
 
       - name: Скан релиза
         run: |
           pkg="$(python tools/build_release.py --print-package)"
           python tools/release_scan.py "$pkg"
+
+      - name: Архивы на месте
+        run: |
+          for name in team-room.zip team-room.tar.gz; do
+            if [ ! -f "dist/$name" ]; then
+              echo "::error::нет файла dist/$name — установщики качают именно его"
+              ls -l dist
+              exit 1
+            fi
+          done
+          ls -l dist
 
       - name: Контрольные суммы
         run: |
@@ -91,7 +117,8 @@ jobs:
   publish:
     name: Публикация Release
     needs: build
-    if: github.ref_type == 'tag'
+    # dry_run по умолчанию true: ручной запуск только собирает архивы
+    if: github.ref_type == 'tag' && (github.event_name == 'push' || inputs.dry_run != true)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -104,16 +131,35 @@ jobs:
       - name: Показать файлы
         run: ls -l dist
 
-      - name: Загрузить в Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.build.outputs.version }}
-          name: Комната команды ${{ needs.build.outputs.version }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
-            dist/team-room-${{ needs.build.outputs.version }}.zip
-            dist/team-room-${{ needs.build.outputs.version }}.tar.gz
-            dist/team-room.zip
-            dist/team-room.tar.gz
-            dist/SHA256SUMS.txt
+      - name: Загрузить в Release (не падая, если релиз уже есть)
+        # Своими руками через gh, а не готовым action: если релиз по тегу уже
+        # создан (повторный запуск, ручной workflow_dispatch после релиза),
+        # нужно не упасть, а догрузить/перезаписать файлы (--clobber).
+        # GH_REPO обязателен: в этом job нет checkout, и без него gh не может
+        # определить репозиторий («fatal: not a git repository») — шаг падал.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="v${{ needs.build.outputs.version }}"
+          title="Комната команды ${{ needs.build.outputs.version }}"
+          files="dist/team-room-${{ needs.build.outputs.version }}.zip dist/team-room-${{ needs.build.outputs.version }}.tar.gz dist/team-room.zip dist/team-room.tar.gz dist/SHA256SUMS.txt"
+          for f in $files; do
+            if [ ! -f "$f" ]; then
+              echo "::error::нет файла $f"
+              ls -l dist
+              exit 1
+            fi
+          done
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Релиз $tag уже существует — обновляю файлы"
+            gh release upload "$tag" $files --clobber
+          else
+            if gh release create "$tag" --title "$title" --generate-notes $files; then
+              echo "Релиз $tag опубликован"
+            else
+              echo "::warning::создать релиз не удалось — возможно, его создали параллельно; пробую загрузить файлы"
+              gh release upload "$tag" $files --clobber
+            fi
+          fi
+          gh release view "$tag" --json tagName,assets --jq '.tagName, (.assets[].name)'

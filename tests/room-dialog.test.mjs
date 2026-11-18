@@ -90,9 +90,9 @@ function byAttr(root, name, value) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const PROFILES = [
-  { profile: 'biz-director', title: 'Директор Лето', kind: 'director' },
-  { profile: 'biz-ops', title: 'Операции', kind: 'worker' },
-  { profile: 'biz-cfo', title: 'Экономика Лето', kind: 'worker' },
+  { profile: 'team-director', title: 'Директор Лето', kind: 'director' },
+  { profile: 'team-ops', title: 'Операции', kind: 'worker' },
+  { profile: 'team-cfo', title: 'Экономика Лето', kind: 'worker' },
 ];
 
 /* ─────────────────────────────────────────────── чистые функции */
@@ -271,8 +271,8 @@ test('room-dialog.js: путь уходит в POST/PATCH как project_dir', (
 
 const PM_ROOM = {
   id: 'cafe', title: 'Лето', icon: 'cake',
-  orchestrator: 'biz-director', critic: '',
-  members: [{ profile: 'biz-ops', role: 'worker' }],
+  orchestrator: 'team-director', critic: '',
+  members: [{ profile: 'team-ops', role: 'worker' }],
   context_files: [], project_dir: '', critic_pass: false, max_rounds: 1,
   launch_mode: 'plan_first', max_parallel_streams: 2, project_mode: true,
 };

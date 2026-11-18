@@ -94,8 +94,8 @@ const DIR = 'C:\\TeamRoom\\Projects\\Лето';
 
 function roomWithDir() {
   return {
-    id: 'cafe', title: 'Лето', orchestrator: 'biz-director', critic: null,
-    members: [{ profile: 'biz-director', role: 'orchestrator' }], context_files: [],
+    id: 'cafe', title: 'Лето', orchestrator: 'team-director', critic: null,
+    members: [{ profile: 'team-director', role: 'orchestrator' }], context_files: [],
     project_dir: DIR, critic_pass: false, project_mode: true, launch_mode: 'plan_first',
     max_parallel_streams: 2, agent_notes: {}, agent_models: {},
   };
@@ -111,7 +111,7 @@ function ctxFor(room, { post } = {}) {
   const api = {
     get: async (path) => {
       calls.push(['GET', path]);
-      if (path === '/api/profiles') return [{ profile: 'biz-director', title: 'Директор', kind: 'director' }];
+      if (path === '/api/profiles') return [{ profile: 'team-director', title: 'Директор', kind: 'director' }];
       if (path === '/api/models') return { models: [] };
       if (path === '/api/rooms/check-dir') return { allowed: true, exists: true };
       if (String(path).startsWith('/api/rooms/')) return room;

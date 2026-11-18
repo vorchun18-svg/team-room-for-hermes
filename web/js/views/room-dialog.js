@@ -32,6 +32,8 @@ import {
 import { profileOptionLabel, humanApiMessage } from '../shell-labels.js';
 // WAVE13 §11: единая подпись участника — «Имя — должность», тех. имя профиля мелко.
 import { setProfileDirectory, participantLabel } from '../participant-label.js';
+// W23-MG2 «Контроль моделей»: настройка комнаты «строго / только предупреждать».
+import { guardModeField } from './model-guard.js';
 import { countNoun } from '../text-ru.js';
 import {
   projectDirButton, CHECK_DELAY_MS, dirVerdict, suggestProjectDir, MOVE_NOTE,
@@ -40,6 +42,8 @@ import {
 // только ссылки «Особенности (N)» (WAVE17 P6, без второго редактора).
 import { notesOf, entriesOfItem } from '../agent-notes-ui.js';
 import { notesLink } from '../notes-editor.js';
+// W20-FC §1.7 (F-2): этапы комнаты правит тот же редактор, что и на карте проекта.
+import { createPhasesEditor } from './phases-editor.js';
 
 const BOARD = 'team';
 
@@ -82,6 +86,21 @@ const ICONS = [
 const ICON_NAMES = new Set(ICONS.map((i) => i.name));
 
 const enc = (s) => encodeURIComponent(String(s == null ? '' : s));
+
+/**
+ * W20-FC §1.7: сообщить открытым вкладкам комнаты, что она сохранилась.
+ * Карта проекта показывает этапы сразу, без ожидания опроса и перезагрузки.
+ * Событие — удобство: если window нет (тесты), просто молчим.
+ */
+function notifyRoomSaved(id, room) {
+  try {
+    if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+    if (typeof CustomEvent !== 'function') return;
+    window.dispatchEvent(new CustomEvent('teamroom:room-saved', {
+      detail: { id: String(id || ''), room: room || null },
+    }));
+  } catch { /* событие не обязательно для сохранения */ }
+}
 
 /* ───────────────────────────────────── папка проекта (Д2 WAVE8-RULES) */
 
@@ -461,12 +480,28 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       || ((membersOf(full).find((m) => String(m.profile || '') === profile) || {}).model_settings)
       || null;
     if (!settings) return '';
-    const model = String(settings.model || '').trim();
-    if (!model) return 'модель и мышление — как в профиле';
-    const label = modelLabels.get(model) || model;
-    const effort = String(settings.reasoning || '').trim();
-    const effortLabel = effort ? (effortLabels.get(effort) || effort) : '';
-    return effortLabel && effortLabel !== 'как в профиле' ? label + ' · мышление: ' + effortLabel : label;
+    // W20 §1.5: по умолчанию — то, что стоит в настройках профиля Hermes; своё значение
+    // этой комнаты помечаем словами, а не цветом: «изменено для этой комнаты».
+    const parts = (value) => {
+      const model = String((value && value.model) || '').trim();
+      if (!model) return '';
+      const label = modelLabels.get(model) || model;
+      const effort = String((value && value.reasoning) || '').trim();
+      const effortLabel = effort ? (effortLabels.get(effort) || effort) : '';
+      return effortLabel && effortLabel !== 'как в профиле'
+        ? label + ' · мышление: ' + effortLabel : label;
+    };
+    const changed = String(settings.source || '') === 'room';
+    if (changed) {
+      const own = parts(settings);
+      return own ? 'изменено для этой комнаты: ' + own : 'изменено для этой комнаты';
+    }
+    const def = (meta && (meta.agent_default_info || meta.agent_default)) || settings;
+    const shared = String((def && def.source) || '') === 'global';
+    const text = parts(def) || parts(settings);
+    if (!text) return 'по умолчанию (из настроек агента): модель не задана';
+    return 'по умолчанию (из настроек агента): ' + text
+      + (shared ? ' — из общих настроек Hermes' : '');
   }
 
   function renderMembers() {
@@ -635,6 +670,68 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   }
   roundsSelect.addEventListener('change', renderRoundsState);
 
+  /* W20 §1.1 (B-36): «Автообновление свода» — переключатель и две простые настройки. */
+
+  const QUIET_CHOICES = [60, 120, 180, 300, 600, 900, 1800, 3600];
+  const GAP_CHOICES = [300, 600, 900, 1800, 3600, 7200, 14400, 43200, 86400];
+  const minutesRu = (sec) => countNoun(Math.max(1, Math.round(sec / 60)), ['минута', 'минуты', 'минут']);
+
+  /** Ближайшее значение из списка: сервер принимает любое число в границах. */
+  function pickSeconds(value, choices, fallback) {
+    const n = Number(value);
+    if (!isFinite(n) || n <= 0) return fallback;
+    return choices.reduce((best, cur) => (Math.abs(cur - n) < Math.abs(best - n) ? cur : best), choices[0]);
+  }
+
+  const autoSvodInput = h('input', { type: 'checkbox', id: 'roomdlg-auto-svod' });
+  autoSvodInput.checked = full && full.auto_svod !== undefined ? Boolean(full.auto_svod) : true;
+  const autoSvodBox = h('label', { class: 'checkbox' }, autoSvodInput,
+    h('span', null, 'Свод обновляется сам'));
+
+  const quietSelect = h('select', {
+    class: 'select', id: 'roomdlg-svod-quiet',
+    'aria-label': 'Сколько ждать тишины перед обновлением свода',
+  });
+  for (const sec of QUIET_CHOICES) quietSelect.appendChild(h('option', { value: String(sec) }, minutesRu(sec)));
+  quietSelect.value = String(pickSeconds((full && full.auto_svod_quiet_s) || 180, QUIET_CHOICES, 180));
+
+  const gapSelect = h('select', {
+    class: 'select', id: 'roomdlg-svod-gap',
+    'aria-label': 'Как часто свод может обновляться',
+  });
+  for (const sec of GAP_CHOICES) gapSelect.appendChild(h('option', { value: String(sec) }, minutesRu(sec)));
+  gapSelect.value = String(pickSeconds((full && full.auto_svod_min_gap_s) || 600, GAP_CHOICES, 600));
+
+  /** Выключили автообновление — настройки частоты не к чему применять. */
+  function renderSvodState() {
+    const on = Boolean(autoSvodInput.checked);
+    quietSelect.disabled = !on;
+    gapSelect.disabled = !on;
+  }
+  autoSvodInput.addEventListener('change', renderSvodState);
+  renderSvodState();
+
+  const svodBox = h('div', { class: 'roomdlg__section roomdlg__svod' },
+    h('div', { class: 'roomdlg__label' }, 'Живой свод'),
+    h('div', { class: 'roomdlg__hint' },
+      'Когда появляются ваши ответы, решения или уточнения в диалоге, свод обновляется сам: '
+      + 'версия растёт без ваших нажатий, а руководитель получает задание «обновить свод».'),
+    h('div', { class: 'row row--wrap' }, autoSvodBox),
+    h('div', { class: 'roomdlg__svod-when' },
+      h('div', { class: 'roomdlg__field-mini' },
+        h('span', { class: 'field__label' }, 'Подождать тишины'),
+        quietSelect),
+      h('div', { class: 'roomdlg__field-mini' },
+        h('span', { class: 'field__label' }, 'И не чаще раза в'),
+        gapSelect)),
+    h('div', { class: 'roomdlg__hint small' },
+      '«Тишина» — сколько подождать после последнего изменения, чтобы не пересобирать свод '
+      + 'после каждого шага. «Не чаще раза в» — потолок частоты: свод не будет обновляться '
+      + 'чаще, даже если писать помногу.'),
+    h('div', { class: 'roomdlg__hint small muted' },
+      'Кнопка «Обновить сейчас» в блоке «Свод» есть всегда — ею можно пересобрать свод, '
+      + 'не дожидаясь тишины.'));
+
   workPanel.appendChild(h('div', { class: 'roomdlg__section' },
     field({ label: 'Критик', control: criticSelect }),
     criticHint,
@@ -646,12 +743,81 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     roundsHelp,
   ));
 
+  workPanel.appendChild(svodBox);
+
+  /* W23-MG2: «Контроль моделей» — строго / только предупреждать. Простыми
+     словами: что произойдёт, если запуск соберётся уйти на другую модель. */
+  const guardField = guardModeField({ room: full || {}, idPrefix: 'roomdlg', onChange: () => markDirty() });
+  workPanel.appendChild(guardField.el);
+
+  /* ─── «Ход работы» (W20-FB; WAVE18 п.4). Простыми словами: что видно на
+     странице запроса, пока команда работает. Лента только читается с диска —
+     модели для этого не вызываются. Личное Подробно/Кратко/Выкл.
+     есть и в самом блоке: оно действует лишь на экране того, кто нажал. ─── */
+
+  const worklogModeSelect = h('select', {
+    class: 'select', id: 'roomdlg-worklog-mode', 'aria-label': 'Что показывать в «Ходе работы»',
+  },
+  h('option', { value: 'full' }, 'Подробно — с рассуждениями'),
+  h('option', { value: 'brief' }, 'Кратко — только действия'),
+  h('option', { value: 'off' }, 'Выключено — не показывать'));
+  worklogModeSelect.value = ['full', 'brief', 'off'].includes(String(full && full.worklog_mode))
+    ? String(full.worklog_mode) : 'full';
+
+  const digestSelect = h('select', {
+    class: 'select', id: 'roomdlg-worklog-digest', 'aria-label': 'Промежуточный итог сторожа',
+  },
+  h('option', { value: '0' }, 'Не делать'),
+  h('option', { value: '1' }, 'Каждую минуту'),
+  h('option', { value: '2' }, 'Каждые 2 минуты'),
+  h('option', { value: '5' }, 'Каждые 5 минут'));
+  const digestSaved = full && full.digest_every_min !== undefined ? Number(full.digest_every_min) : 2;
+  digestSelect.value = [0, 1, 2, 5].includes(digestSaved) ? String(digestSaved) : '2';
+
+  const worklogHelp = h('div', { class: 'roomdlg__hint roomdlg__hint--help hidden', id: 'roomdlg-worklog-help' },
+    h('p', null, 'Пока команда работает, на странице запроса видно, кто чем занят: кто читает файл, '
+      + 'кто ищет в сети, кто передал задачу другому. Не нужно ждать готового ответа, чтобы понять, '
+      + 'что работа идёт, а не встала.'),
+    h('p', null, '«Подробно» — ещё и короткие рассуждения участников, приглушённым курсивом: '
+      + 'видно, как они думают. «Кратко» — только действия, без рассуждений. «Выключено» — '
+      + 'блок ничего не показывает и даже не читает записи: если хочется спокойного экрана.'),
+    h('p', null, 'Лента только читается с диска и ничего не запускает: ни агентов, ни моделей, '
+      + 'ни моделей. Переключатель прямо в самом блоке действует только на вашем экране и '
+      + 'может сузить эту настройку, но не расширить её.'),
+    h('p', null, '«Промежуточный итог» — короткая сводка раз в несколько минут: кто чем занят, '
+      + 'сколько готово, когда было последнее событие. Пишет сторож, без модели. Итог приходит '
+      + 'и при выключенной ленте — так просили: «сторож работает всегда».'));
+  const worklogHelpBtn = h('button', {
+    class: 'btn btn--ghost btn--sm btn--icon roomdlg__help', type: 'button',
+    'aria-expanded': 'false', 'aria-controls': 'roomdlg-worklog-help',
+    title: 'Что такое «Ход работы» и промежуточный итог',
+  }, icon('info', { size: 13 }), h('span', { class: 'sr-only' }, 'Что такое ход работы'));
+  worklogHelpBtn.addEventListener('click', () => {
+    const open = worklogHelp.classList.toggle('hidden') === false;
+    worklogHelpBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+
+  workPanel.appendChild(h('div', { class: 'roomdlg__section roomdlg__section--worklog' },
+    h('div', { class: 'roomdlg__label' }, 'Ход работы'),
+    h('div', { class: 'roomdlg__hint' },
+      'Что видно на странице запроса, пока команда работает. Только чтение: ничего не запускает, модель не вызывает.'),
+    h('div', { class: 'roomdlg__field-mini' },
+      h('span', { class: 'field__label' }, 'Показывать ход работы'),
+      h('div', { class: 'roomdlg__critic-row' }, worklogModeSelect, worklogHelpBtn)),
+    h('div', { class: 'roomdlg__field-mini' },
+      h('span', { class: 'field__label' }, 'Промежуточный итог в ленте'),
+      digestSelect),
+    h('div', { class: 'roomdlg__hint' },
+      'Сторож сам коротко пишет, кто чем занят и что готово, — без модели. «Не делать» убирает эти записи.'),
+    worklogHelp,
+  ));
+
   /* ──────────────────────────────────────────────────────────── «Файлы» */
 
   let projectDir = String((full && full.project_dir) || '');
   const pathInput = h('input', {
     class: 'input', type: 'text', autocomplete: 'off', spellcheck: 'false',
-    placeholder: 'D:/Проекты/Название проекта',
+    placeholder: 'C:/Проекты/Название проекта',
     'aria-label': 'Папка проекта',
   });
   pathInput.value = projectDir;
@@ -732,7 +898,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   const filesHost = h('div', { class: 'roomdlg__files' });
   const fileInput = h('input', {
     class: 'input', type: 'text', autocomplete: 'off',
-    placeholder: 'D:/Проекты/Комната/STATE.md', 'aria-label': 'Путь к файлу контекста',
+    placeholder: 'C:/Проекты/Комната/STATE.md', 'aria-label': 'Путь к файлу контекста',
   });
 
   function renderFiles() {
@@ -839,89 +1005,34 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     + 'Остальные ждут своей очереди.');
 
   /* Этапы проекта — свойство КОМНАТЫ (W17-R §1, B-8): своих шаблонов нет.
-     Здесь только описание и порядок: сами этапы руководитель предложит позже (F-2). */
+     W20 §1.7 (F-2): редактор тот же, что на карте проекта — добавить,
+     переименовать, переставить стрелками, убрать и добавить этапы из
+     предложения руководителя. Правки уходят этим же PATCH комнаты. */
   let phases = Array.isArray(full && full.phases)
     ? full.phases.map((p) => ({ id: String((p && p.id) || ''), title: String((p && p.title) || '') }))
         .filter((p) => p.title)
     : [];
 
-  /** Заголовок → id этапа: переименование сохраняет id, привязка не рвётся. */
-  function phaseId(title, taken) {
-    const base = String(title || '').toLowerCase().replace(/[^a-zа-я0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
-      || 'etap';
-    let candidate = base;
-    let n = 2;
-    while (taken.has(candidate)) { candidate = base + '-' + n; n += 1; }
-    return candidate;
-  }
-
-  const phasesHost = h('div', { class: 'roomdlg__phases' });
-  const phasesHint = h('div', { class: 'roomdlg__hint' },
-    'Необязательно. Полоса этапов на вкладке «Карта проекта» — например «Идея», '
-    + '«Согласование», «Запуск». Порядок можно менять, этап — переименовать или убрать. '
-    + 'Этапы заводятся руками: автоматические предложения появятся отдельной функцией.');
-
-  function renderPhases() {
-    phasesHost.replaceChildren();
-    if (!phases.length) {
-      phasesHost.appendChild(h('div', { class: 'roomdlg__phases-empty muted' },
-        'Этапов пока нет — полосы этапов на карте не будет.'));
-      return;
-    }
-    phases.forEach((phase, index) => {
-      const input = h('input', {
-        class: 'input', type: 'text', maxlength: '80', value: phase.title,
-        'aria-label': 'Название этапа ' + (index + 1), placeholder: 'Например: Согласование',
-        // Длинное название в поле не переносится — полный текст даём в подсказке.
-        title: phase.title || 'Название этапа ' + (index + 1),
-      });
-      input.addEventListener('input', () => { phase.title = input.value; markDirty(); });
-      const up = iconButton({
-        icon: 'chevron-up', size: 'sm', title: 'Выше',
-        disabled: index === 0,
-        onclick: () => { phases.splice(index - 1, 0, phases.splice(index, 1)[0]); renderPhases(); markDirty(); },
-      });
-      const down = iconButton({
-        icon: 'chevron-down', size: 'sm', title: 'Ниже',
-        disabled: index === phases.length - 1,
-        onclick: () => { phases.splice(index + 1, 0, phases.splice(index, 1)[0]); renderPhases(); markDirty(); },
-      });
-      const del = iconButton({
-        icon: 'trash', size: 'sm', title: 'Убрать этап',
-        onclick: () => { phases.splice(index, 1); renderPhases(); markDirty(); },
-      });
-      phasesHost.appendChild(h('div', { class: 'roomdlg__phase' },
-        h('span', { class: 'roomdlg__phase-no tnum' }, String(index + 1)), input,
-        h('div', { class: 'roomdlg__phase-actions' }, up, down, del)));
-    });
-  }
-
-  const addPhaseBtn = h('button', { class: 'btn btn--secondary btn--sm', type: 'button' },
-    icon('add', { size: 13 }), 'Добавить этап');
-  addPhaseBtn.addEventListener('click', () => {
-    if (phases.length >= 24) { toast('Не больше 24 этапов в комнате', 'warn'); return; }
-    const taken = new Set(phases.map((p) => p.id));
-    phases.push({ id: phaseId('', taken), title: '' });
-    renderPhases();
-    markDirty();
-    const inputs = phasesHost.querySelectorAll ? phasesHost.querySelectorAll('input') : [];
-    const last = inputs[inputs.length - 1];
-    if (last && typeof last.focus === 'function') last.focus();
+  const phasesEditor = createPhasesEditor({
+    phases,
+    proposal: full && full.phases_proposal,
+    toast,
+    addLabel: 'Добавить этап',
+    onChange: (list) => {
+      phases = list;
+      // initialSig появляется ниже: до него «грязным» окно не считаем.
+      if (initialSig) markDirty();
+    },
   });
-  renderPhases();
+  const addPhaseBtn = phasesEditor.addButton;
+  const phasesHint = h('div', { class: 'roomdlg__hint' },
+    'Необязательно. Этапы видны на вкладке «Карта проекта»: текущий этап, прогресс и '
+    + 'решения по нему. Порядок меняется стрелками, этап можно переименовать или убрать. '
+    + 'Предложить этапы может и руководитель — кнопкой «Предложить этапы» на карте.');
 
   /** Список этапов для PATCH: id сохраняется, пустые строки не отправляем. */
   function phasesPayload() {
-    const taken = new Set();
-    const out = [];
-    for (const phase of phases) {
-      const title = String(phase.title || '').trim();
-      if (!title) continue;
-      const id = phase.id && !taken.has(phase.id) ? phase.id : phaseId(title, taken);
-      taken.add(id);
-      out.push({ id, title });
-    }
-    return out;
+    return phasesEditor.getPhases();
   }
 
   function renderModeState() {
@@ -952,11 +1063,10 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     field({ label: 'Одновременно частей работы', control: streamsSelect }),
     h('div', { class: 'roomdlg__section' }, modeCostHint),
   ));
-  projectPanel.appendChild(h('div', { class: 'roomdlg__section' },
+  projectPanel.appendChild(h('div', { class: 'roomdlg__section roomdlg__section--phases' },
     h('div', { class: 'roomdlg__label' }, 'Этапы проекта'),
     phasesHint,
-    phasesHost,
-    addPhaseBtn,
+    phasesEditor.el,
   ));
 
   /* ──────────────────────────────────────────── подсказки и состав */
@@ -1050,6 +1160,9 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       projectDir: String(pathInput.value || '').trim(),
       files: files.slice(),
       phases: phases.map((p) => ({ id: String(p.id || ''), title: String(p.title || '') })),
+      worklogMode: String(worklogModeSelect.value || 'full'),
+      worklogDigest: String(digestSelect.value || '2'),
+      modelGuard: guardField.value(),
     };
   }
 
@@ -1105,16 +1218,19 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       for (const input of launchInputs) input.checked = input.value === launchMode;
     }
     if (state.streams) { streamsSelect.value = String(state.streams); maxStreams = Number(state.streams) || 2; }
+    if (state.worklogMode) worklogModeSelect.value = String(state.worklogMode);
+    if (state.worklogDigest) digestSelect.value = String(state.worklogDigest);
+    if (state.modelGuard) guardField.set(String(state.modelGuard));
     if (state.projectDir !== undefined) { pathInput.value = String(state.projectDir || ''); syncMoveNote(); }
     if (Array.isArray(state.files)) { files.splice(0, files.length); for (const f of state.files) files.push(String(f)); }
     if (Array.isArray(state.phases)) {
       phases = state.phases.map((p) => ({ id: String((p && p.id) || ''), title: String((p && p.title) || '') }))
         .filter((p) => p.title);
+      phasesEditor.setPhases(phases);
     }
     renderHints();
     renderMembers();
     renderModeState();
-    renderPhases();
     renderFiles();
     renderRoundsState();
   }
@@ -1285,6 +1401,16 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       max_parallel_streams: Number.isInteger(maxStreams) && maxStreams >= 1 && maxStreams <= 4 ? maxStreams : 2,
       // Этапы проекта (W17-R §1): у комнаты свои, пустой список — «этапов нет».
       phases: phasesPayload(),
+      // W20-FB: «Ход работы» — уровень ленты и частота промежуточного итога (0…5).
+      worklog_mode: ['full', 'brief', 'off'].includes(String(worklogModeSelect.value))
+        ? String(worklogModeSelect.value) : 'full',
+      digest_every_min: Number(digestSelect.value) || 0,
+      // W20 §1.1 (B-36): живой свод — автообновление, «тишина» и потолок частоты.
+      auto_svod: Boolean(autoSvodInput.checked),
+      auto_svod_quiet_s: Number(quietSelect.value) || 180,
+      auto_svod_min_gap_s: Number(gapSelect.value) || 600,
+      // W23-MG2: контроль моделей — «строго» (по умолчанию) или «только предупреждать».
+      model_guard: guardField.value(),
     };
 
     const projectWas = full && full.project_mode !== undefined ? Boolean(full.project_mode) : true;
@@ -1326,6 +1452,8 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       }
       await refreshRooms(api, store).catch(() => {});
       clearDraft(key);
+      // Карта проекта перечитает комнату сразу: этапы — её свойство (W20-FC §1.7).
+      notifyRoomSaved(id, updated);
       const thenHash = pendingAction && pendingAction !== 'close' ? pendingAction : '';
       pendingAction = null;
       close(updated || full);

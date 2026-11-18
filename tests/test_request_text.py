@@ -72,7 +72,7 @@ class VisibleTextTest(unittest.TestCase):
     def _body(self, team: bool = True) -> str:
         parts = [self.USER]
         if team:
-            parts.append("Команда комнаты (назначай подзадачи только этим профилям): biz-director — директор комнаты")
+            parts.append("Команда комнаты (назначай подзадачи только этим профилям): team-director — директор комнаты")
         parts.append(contract.build_contract_block({"id": "cafe", "title": "Лето"}, "r-1", self._cfg()))
         return "\n\n".join(parts)
 
@@ -105,7 +105,7 @@ class VisibleTextTest(unittest.TestCase):
         with Sandbox() as sb:
             body = self._body()
             agents = SimAgents(sb)
-            rid = agents.card("Запрос с контрактом", "biz-director", body=body, tenant="room:cafe")
+            rid = agents.card("Запрос с контрактом", "team-director", body=body, tenant="room:cafe")
             detail = engine_read.request_detail(sb.cfg, "team", rid)
             self.assertEqual(detail["text"], self.USER)
             self.assertNotIn("КОМНАТА-КОНТРАКТ", detail["text"])

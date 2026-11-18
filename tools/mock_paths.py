@@ -16,21 +16,21 @@ import re
 
 from mock_core import ROOT
 
-VAULT_DIR = r"D:\Проекты\Vault"
+VAULT_DIR = r"C:\Проекты\Vault"
 HERMES_HOME_FALLBACK = r"C:\Users\User\AppData\Local\hermes"
 SYSTEM_ROOTS = (r"C:\Windows", r"C:\Program Files", r"C:\Program Files (x86)", r"C:\ProgramData",
                  r"C:\PerfLogs", r"C:\Recovery", r"C:\System Volume Information", r"C:\$Recycle.Bin")
 # Демо-каталоги, которые «уже есть» на стенде (реальный диск не спрашиваем).
-DEMO_EXISTING = (r"D:\Проекты", r"D:\Проекты\Vault", r"D:\Проекты\Комната",
-                 r"D:\Проекты\Архив", r"C:\Users", r"C:\Users\User")
+DEMO_EXISTING = (r"C:\Проекты", r"C:\Проекты\Vault", r"C:\Проекты\Комната",
+                 r"C:\Проекты\Архив", r"C:\Users", r"C:\Users\User")
 # Деревья, у которых все подпапки считаются существующими (Vault и личная папка).
-DEMO_TREES = (r"D:\Проекты\Vault", r"C:\Users\User")
+DEMO_TREES = (r"C:\Проекты\Vault", r"C:\Users\User")
 RESERVED = {"con", "prn", "aux", "nul"} | {"com%d" % i for i in range(1, 10)} | {"lpt%d" % i for i in range(1, 10)}
 MAX_PATH = 400
 
 MESSAGES = {
     "empty": "Путь пустой — выберите папку проекта",
-    "relative": "Нужен полный путь, например D:\\Проекты\\Комната",
+    "relative": "Нужен полный путь, например C:\\Проекты\\Комната",
     "network": "Сетевая папка (\\\\сервер\\папка) не подойдёт — выберите папку на этом компьютере",
     "traversal": "В пути есть «..» — укажите полный путь без сокращений",
     "reserved": "Имя папки зарезервировано Windows (CON, PRN, AUX, NUL, COM1…LPT9) — выберите другое",
@@ -106,7 +106,7 @@ def check_dir(path: str, *, app_dir: str | None = None) -> dict:
             return deny("system_root", normalized)
     if _is_inside(normalized, VAULT_DIR):
         out["warnings"].append("Папка внутри Obsidian Vault: материалы будут и в заметках. "
-                              "Обычно лучше выбрать папку вне Vault, например D:\\Проекты\\Комната")
+                              "Обычно лучше выбрать папку вне Vault, например C:\\Проекты\\Комната")
 
     exists = (any(normalized.casefold() == demo.casefold() for demo in DEMO_EXISTING)
               or any(_is_inside(normalized, tree) for tree in DEMO_TREES))

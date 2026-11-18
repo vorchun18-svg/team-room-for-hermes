@@ -48,7 +48,7 @@ STATE = {
             {"id": "t_a1b2c3d4:ns_1", "text": "Согласовать цену 220 ₽", "owner": "mikhail",
              "due": "2026-11-05", "status": "open", "source_request": "t_a1b2c3d4",
              "source_title": "Легализация и ИНН", "created_at": 1761700300},
-            {"id": "t_a1b2c3d4:ns_2", "text": "Проверить ёмкость рынка моти", "owner": "biz-cfo",
+            {"id": "t_a1b2c3d4:ns_2", "text": "Проверить ёмкость рынка моти", "owner": "team-cfo",
              "due": None, "status": "open", "source_request": "t_a1b2c3d4"},
         ],
         "journal": [

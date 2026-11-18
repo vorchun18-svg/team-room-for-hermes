@@ -15,6 +15,7 @@
 import { h, initials, hashColor, toDate, uid } from './util.js';
 import { icon } from './icons.js';
 import { renderMarkdown } from './md.js';
+import { checkChips } from './found.js';
 import { api } from './api.js';
 
 /* ------------------------------------------------------------------ стили */
@@ -101,6 +102,8 @@ const STATUS_META = {
   running: { label: 'идёт', tone: 'info', pulse: true, hint: 'Выполняется' },
   review: { label: 'проверка', tone: 'info', pulse: true, hint: 'На проверке' },
   blocked: { label: 'заблокирована', tone: 'warn', hint: 'Ждёт зависимости или ответа' },
+  // W23-MG2: карточку остановил человек кнопкой «Остановить» — её можно продолжить.
+  paused: { label: 'остановлено', tone: 'warn', hint: 'Остановлено вами: работу можно продолжить' },
   archived: { label: 'архив', tone: 'muted', hint: 'В архиве' },
   scheduled: { label: 'отложена', tone: 'muted', hint: 'Отложена по расписанию' },
 };
@@ -209,7 +212,8 @@ export function avatar(name, opts = {}) {
     const px = Math.round(size);
     style.width = px + 'px';
     style.height = px + 'px';
-    style.fontSize = Math.max(8, Math.round(px * 0.4)) + 'px';
+    // W25-L1 (R5 §9 п. 12): инициалы не мельче 11 px — мелкий текст в интерфейсе не нужен.
+    style.fontSize = Math.max(11, Math.round(px * 0.42)) + 'px';
   } else if (size === 'sm' || size === 'lg') {
     classes.push('avatar--' + size);
   }
@@ -483,7 +487,11 @@ function htmlToNodes(html, doc) {
 /**
  * Блок Markdown: единственный путь HTML агента в DOM.
  * @param {string} src
- * @param {{fileUrl?: (path: string) => string}} [opts]
+ * @param {{fileUrl?: (path: string) => string,
+ *          openPath?: (path: string) => (void|Promise<void>)}} [opts]
+ *   `openPath` — как открывать ссылку на локальный файл. По умолчанию `/api/file`
+ *   без комнаты; страница запроса передаёт открытие в контексте комнаты
+ *   (W20-A1: иначе ссылки внутри свода отвечали 403).
  * @returns {HTMLElement} div.markdown
  */
 export function mdBlock(src, opts = {}) {
@@ -499,47 +507,55 @@ export function mdBlock(src, opts = {}) {
   });
   const holder = htmlToNodes(html, d);
   for (const node of Array.from(holder.childNodes)) el.appendChild(node);
+  // W26-D4: чипы-ссылки — проверить, есть ли файлы (серые «не найден» без ложных кнопок).
+  try { checkChips(el); } catch { /* без сети чипы остаются обычными */ }
 
+  const customOpen = typeof o.openPath === 'function' ? o.openPath : null;
   el.addEventListener('click', (ev) => {
     const target = ev && ev.target;
     if (!target || typeof target.closest !== 'function') return;
     const link = target.closest('a[data-path]');
     if (!link) return;
     ev.preventDefault();
-    openPath(link.getAttribute('data-path')).catch(() => {});
+    const path = link.getAttribute('data-path');
+    const opening = customOpen ? customOpen(path) : openPath(path);
+    if (opening && typeof opening.catch === 'function') opening.catch(() => {});
   });
   return el;
 }
 
 /* ------------------------------------------------------------ файлы/пути */
 
-const PREVIEW_RE = /\.(?:md|markdown|txt|log|json|jsonl|csv|tsv|ya?ml|xml|html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif|ics|py|js|css|sh)$/i;
-
 /**
- * Открыть путь: превьюемые типы — новой вкладкой через /api/file,
- * остальные — «показать в проводнике» (POST /api/open).
+ * Открыть путь файлом по умолчанию (W26-D3).
+ *
+ * Раньше здесь для «превьюемых» типов вызывался `window.open` — внутри окна
+ * Hermes Desktop новые окна блокируются, и клик по пути не делал ничего.
+ * Теперь открытие — серверное действие `/api/files/launch {mode:"open"}`: файл
+ * открывает программа по умолчанию, как двойной клик в проводнике. Если сервер
+ * путь не разрешил, пробуем прежнее «показать в проводнике» (`/api/open`) —
+ * так поведение старых мест не ухудшается.
+ *
  * @param {string} path
  * @returns {Promise<void>}
  */
 export async function openPath(path) {
   const p = path === null || path === undefined ? '' : String(path).trim();
   if (!p) return;
-  const url = '/api/file?path=' + encodeURIComponent(p);
-  const openTab = () => {
-    if (typeof window !== 'undefined' && typeof window.open === 'function') {
-      window.open(url, '_blank', 'noopener');
-      return true;
+  try {
+    await api.post('/api/files/launch', { path: p, mode: 'open' });
+    return;
+  } catch (err) {
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn('ui.openPath: программа по умолчанию не открыла файл', err);
     }
-    return false;
-  };
-  if (PREVIEW_RE.test(p)) { openTab(); return; }
+  }
   try {
     await api.post('/api/open', { path: p });
   } catch (err) {
     if (typeof console !== 'undefined' && console.warn) {
       console.warn('ui.openPath: не удалось открыть в проводнике', err);
     }
-    openTab();
   }
 }
 

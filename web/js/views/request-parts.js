@@ -1,6 +1,6 @@
 /**
  * request-parts.js — блоки страницы запроса: линейка этапов, предупреждения,
- * критик, дерево работ, артефакты, хронология.
+ * критик, дерево работ, файлы (до W26-D3 — «артефакты»), хронология.
  *
  * Все функции возвращают готовый Element (или null, если показывать нечего)
  * и монтируются страницей запроса (request.js). Данные — только из detail,
@@ -15,7 +15,7 @@ import { h, timeAgo, fmtDateTime, fromCount, plainTerms } from '../util.js';
 import { fileUrl } from '../api.js';
 import { icon } from '../icons.js';
 import {
-  pathChip, sectionHeader, copyText, ensureCss,
+  pathChip, sectionHeader, copyText, ensureCss, buildDialog,
 } from '../ui.js';
 import {
   pipeline, warningItems, criticInfo, artifactKindMeta, formatBytes,
@@ -25,7 +25,10 @@ import { toast, changed, postAction, button, lock, focusTreeTask } from './rp-sh
 import { renderTree } from './request-parts-tree.js';
 import { createNotices } from './notice-state.js';
 import { firstLine, blockHead, personName } from './request-util.js';
-import { countNoun } from '../text-ru.js';
+import { countNoun, FILES_RU } from '../text-ru.js';
+import { createSection, sectionDefaults, artifactsSummaryChips } from './section-collapse.js';
+// W23-MG2 «Контроль моделей»: лента событий сторожа (остановлено/исправлено).
+import { buildRequestFeed } from './model-guard.js';
 
 export { renderTree };
 
@@ -43,9 +46,11 @@ const PIECE_ICON = { done: 'check', active: null, paused: 'lock', failed: 'error
  */
 export function renderPipeline(detail) {
   const p = pipeline(detail);
-  const card = h('section', { class: 'card rp-pipeline', 'data-rp': 'pipeline', 'aria-label': 'Ход работы' });
+  // W20-FB: полоса этапов называется «Этапы» — имя «Ход работы» занял живой ход
+  // работы на странице запроса (один смысл — одно место, в т.ч. для чтения с экрана).
+  const card = h('section', { class: 'card rp-pipeline', 'data-rp': 'pipeline', 'aria-label': 'Этапы' });
 
-  const head = sectionHeader('Ход работы', {
+  const head = sectionHeader('Этапы', {
     actions: [
       h('span', { class: 'chip chip--muted tnum rp-pipeline__count', title: `Пройдено этапов: ${p.done} из ${p.total}` },
         fromCount(p.done, p.total, ['этап', 'этапа', 'этапов'])),
@@ -84,6 +89,41 @@ export function renderPipeline(detail) {
 /* ────────────────────────────────────────────────────────── предупреждения */
 
 /**
+ * W25.5: пометка «вне папки проекта» одной строкой — значок, подпись,
+ * «подробнее». Полный путь и совет — только в раскрытом виде, чтобы длинный
+ * путь не занимал первый экран и не рвал строку.
+ * Экспортируется: тест проверяет и свёрнутый вид, и раскрытие.
+ * @param {{path?: string, hint?: string, text?: string}} w
+ * @returns {HTMLElement}
+ */
+export function outsideNotice(w) {
+  const item = w && typeof w === 'object' ? w : {};
+  const path = String(item.path || '').trim();
+  const hint = String(item.hint || '').trim()
+    || 'Файл открывается, но лучше держать итоги в папке проекта комнаты.';
+  const more = h('button', {
+    type: 'button', class: 'btn btn--link btn--sm rp-outside__more',
+    'data-rp': 'outside-more', 'aria-expanded': 'false',
+  }, 'подробнее');
+  const box = h('div', { class: 'rp-outside__box', 'data-rp': 'outside-box', hidden: true },
+    path ? h('div', { class: 'rp-outside__path small' }, h('span', { class: 'muted' }, 'Путь: '), path) : null,
+    h('div', { class: 'rp-outside__hint small muted' }, hint));
+  more.addEventListener('click', () => {
+    const open = box.hasAttribute('hidden');
+    if (open) box.removeAttribute('hidden'); else box.setAttribute('hidden', '');
+    more.setAttribute('aria-expanded', open ? 'true' : 'false');
+    more.textContent = open ? 'свернуть' : 'подробнее';
+  });
+  return h('div', {
+    class: 'rp-outside', 'data-code': 'artifact_outside', role: 'status',
+    title: 'Файл открывается, но лежит не в папке проекта',
+  },
+  icon('warning', { size: 14, className: 'rp-outside__icon' }),
+  h('span', { class: 'rp-outside__text' }, 'вне папки проекта'),
+  more, box);
+}
+
+/**
  * Баннеры предупреждений: detail.warnings, dispatcher.warning, карточки вне
  * состава комнаты. null, если предупреждений нет.
  *
@@ -102,6 +142,13 @@ export function renderWarnings(detail) {
 
   const box = h('div', { class: 'stack stack--tight rp-warnings', role: 'status', 'data-rp': 'warnings' });
   for (const w of items) {
+    // W25.5: «файл сохранён вне папки проекта» — ОДНА строка, а не баннер с
+    // путём на всю ширину. Путь и совет открываются по «подробнее»: в свёрнутом
+    // виде путь не показываем (он длинный и ничего не решает на первом экране).
+    if (w.code === 'artifact_outside') {
+      box.appendChild(outsideNotice(w));
+      continue;
+    }
     const banner = h('div', {
       class: ['banner', w.bannerClass, 'rp-warning'],
       role: w.tone === 'danger' ? 'alert' : undefined,
@@ -294,7 +341,7 @@ async function runCritique(detail, ctx, btn) {
   }
 }
 
-/* ────────────────────────────────────────────────────────────── артефакты */
+/* ───────────────────────────────────────────────────────────────── файлы */
 
 /**
  * Путь внутри папки проекта — относительно неё (Д2 WAVE8-RULES).
@@ -317,21 +364,32 @@ export function relativeToDir(path, dir) {
 
 /** Чип пути: внутри папки проекта — короткий относительный, полный в title. */
 function artifactPathChip(full, rel, ctx, roomId) {
-  if (!rel) return pathChip(full, { onOpen: () => { openArtifact(ctx, full, roomId).catch(() => {}); } });
+  if (!rel) return pathChip(full, { onOpen: () => { openFile(ctx, full, roomId).catch(() => {}); } });
   const el = h('button', {
     class: 'chip chip--outline path-chip',
     type: 'button',
     title: full + ' — внутри папки проекта',
     'aria-label': 'Открыть: ' + full,
-  }, icon('file-text', { size: 11 }), h('span', { class: 'path-chip__text mono' }, rel));
-  el.addEventListener('click', () => { openArtifact(ctx, full, roomId).catch(() => {}); });
+  }, icon('file-text', { size: 11 }), h('span', { class: 'path-chip__text mono', title: full }, rel));
+  el.addEventListener('click', () => { openFile(ctx, full, roomId).catch(() => {}); });
   return el;
 }
 
 /* B-22 (WAVE19): файлы карточки открываются в контексте КОМНАТЫ — тогда сервер
  * разрешает её папку проекта и зеркало в Vault. Без `room` сервер искал файл
  * только в общих корнях и отвечал «файл не найден» на существующие файлы. */
-const ART_PREVIEW_RE = /\.(?:md|markdown|txt|log|json|jsonl|csv|tsv|ya?ml|xml|html?|pdf|png|jpe?g|gif|webp|svg|bmp|avif|ics|py|js|css|sh)$/i;
+/* W26-D3: «Просмотр» — только текстовые типы, которые читаются во встроенной
+ * панели. Всё остальное (Word, Excel, PDF, картинки) открывает программа по
+ * умолчанию: `window.open` внутри окна Hermes Desktop блокируется, поэтому
+ * открытие стало серверным действием. */
+const TEXT_PREVIEW_RE = /\.(?:md|markdown|txt|log|json|jsonl|csv|tsv|ya?ml|xml|html?|ics|py|js|mjs|css|sh|ini|conf|cfg)$/i;
+/** Предел текста в панели «Просмотр» — чтобы окно не вставало на гигантском логе. */
+const PREVIEW_LIMIT = 400000;
+
+/** Текстовый ли файл: у таких есть кнопка «Просмотр» (W26-D3). */
+export function canPreview(path) {
+  return TEXT_PREVIEW_RE.test(String(path === null || path === undefined ? '' : path).trim());
+}
 
 /** URL файла карточки: путь + комната (папка проекта этой комнаты — в белом списке). */
 export function artifactUrl(path, roomId) {
@@ -340,20 +398,114 @@ export function artifactUrl(path, roomId) {
   return room ? base + '&room=' + encodeURIComponent(room) : base;
 }
 
-/** Открыть файл карточки: превью — новой вкладкой, остальное — в проводнике. */
-async function openArtifact(ctx, path, roomId) {
+/**
+ * Серверное действие с файлом (W26-D3): `open` — «Открыть», `reveal` — «Показать
+ * в папке». Адрес — `/api/files/launch` с комбинацией `mode`; сервер проверяет
+ * путь по белым корням комнаты и сам вызывает ShellExecute/проводник.
+ * @returns {Promise<boolean>} получилось ли
+ */
+async function fileAction(ctx, path, roomId, mode) {
   const p = String(path === null || path === undefined ? '' : path).trim();
-  if (!p) return;
-  if (ART_PREVIEW_RE.test(p) && typeof window !== 'undefined' && typeof window.open === 'function') {
-    window.open(artifactUrl(p, roomId), '_blank', 'noopener');
-    return;
-  }
+  if (!p) return false;
+  const failText = mode === 'reveal' ? FILES_RU.revealFailed : FILES_RU.openFailed;
   try {
-    await ctx.api.post('/api/artifacts/open', { path: p, room: String(roomId || '') });
-    toast(ctx, 'Открыто в проводнике', 'ok');
+    await ctx.api.post('/api/files/launch', { path: p, room: String(roomId || ''), mode });
+    return true;
   } catch (err) {
-    toast(ctx, (err && err.message) || 'Не удалось открыть файл', 'danger');
+    toast(ctx, (err && err.message) || failText, 'danger');
+    return false;
   }
+}
+
+/**
+ * «Открыть»: файл открывает программа по умолчанию (Word, Excel, просмотрщик).
+ * Раньше здесь был `window.open` для превью и сломанный `reveal` для остальных —
+ * внутри Hermes Desktop не работало ни то, ни другое (W26-D3, §7 «Ошибка 2»).
+ * @param {object} ctx
+ * @param {string} path
+ * @param {string} roomId
+ * @returns {Promise<boolean>}
+ */
+export async function openFile(ctx, path, roomId) {
+  const ok = await fileAction(ctx, path, roomId, 'open');
+  if (ok) toast(ctx, FILES_RU.openOk, 'ok');
+  return ok;
+}
+
+/**
+ * «Показать в папке»: проводник с выделением файла (`reveal` на сервере).
+ * @returns {Promise<boolean>}
+ */
+export async function revealFile(ctx, path, roomId) {
+  const ok = await fileAction(ctx, path, roomId, 'reveal');
+  if (ok) toast(ctx, FILES_RU.revealOk, 'ok');
+  return ok;
+}
+
+/**
+ * «Просмотр» (W26-D3): текст файла во встроенном окне приложения.
+ *
+ * Никакого `window.open`: в окне Hermes Desktop новые окна молча блокируются.
+ * Текст берём тем же `GET /api/file?path=…&room=…`, что и раньше, — белый
+ * список и корни комнаты проверяет сервер.
+ *
+ * @param {object} ctx
+ * @param {string} path
+ * @param {string} roomId
+ * @returns {Promise<object|null>} диалог или null, если путь пустой
+ */
+export async function openPreview(ctx, path, roomId) {
+  const p = String(path === null || path === undefined ? '' : path).trim();
+  if (!p) return null;
+  const pre = h('pre', { class: 'rp-preview__text', tabindex: '0' }, '…');
+  let dlg = null;
+  const close = () => { if (dlg) dlg.close(); };
+  dlg = buildDialog({
+    title: FILES_RU.previewTitle,
+    wide: true,
+    onCancel: close,
+    body: h('div', { class: 'rp-preview', 'data-rp': 'preview' },
+      h('div', { class: 'rp-preview__path small mono', title: p }, p),
+      pre),
+    buttons: [
+      button(FILES_RU.open, {
+        variant: 'secondary', size: 'sm', icon: 'open-preview', title: FILES_RU.openHint,
+        onclick: () => { openFile(ctx, p, roomId).catch(() => {}); },
+      }),
+      button(FILES_RU.reveal, {
+        variant: 'ghost', size: 'sm', icon: 'folder-opened', title: FILES_RU.revealHint,
+        onclick: () => { revealFile(ctx, p, roomId).catch(() => {}); },
+      }),
+      button(FILES_RU.close, { variant: 'primary', size: 'sm', onclick: close }),
+    ],
+  });
+  try {
+    const text = await ctx.api.text(artifactUrl(p, roomId));
+    const body = String(text === null || text === undefined ? '' : text);
+    if (!body) {
+      pre.textContent = FILES_RU.previewEmpty;
+    } else {
+      pre.textContent = body.length > PREVIEW_LIMIT
+        ? body.slice(0, PREVIEW_LIMIT) + '\n… (показаны первые ' + PREVIEW_LIMIT + ' знаков)'
+        : body;
+    }
+  } catch (err) {
+    pre.classList.add('rp-preview__fail');
+    pre.textContent = (err && err.message) || FILES_RU.previewFailed;
+  }
+  return dlg;
+}
+
+/**
+ * Открыть путь файла в контексте КОМНАТЫ (W20-A1, §1.4): так же, как кнопки блока
+ * файлов. Используется ссылками на локальные файлы внутри свода.
+ * @param {object} ctx
+ * @param {string} path
+ * @param {string} roomId
+ * @returns {Promise<boolean>}
+ */
+export function openArtifactPath(ctx, path, roomId) {
+  return openFile(ctx, path, roomId);
 }
 
 /** Подпись состояния файла: что именно не так и что с этим делать (B-22, B-27). */
@@ -379,10 +531,175 @@ function artifactStateChip(artifact, state) {
   return null;
 }
 
+/* W20-A1 (B-43): группы блока «Файлы» — итоговые первыми (§1.4). */
+export const ARTIFACT_GROUPS = [
+  { id: 'final', title: 'Итоговые', hint: 'письмо и краткая сводка' },
+  { id: 'material', title: 'Материалы', hint: 'рабочие файлы запроса' },
+  { id: 'service', title: 'Служебные', hint: 'служебные файлы приложения' },
+];
+
+/** Группа файла: `group` с сервера; у старых ответов — по имени файла. */
+export function artifactGroup(artifact) {
+  const raw = String((artifact && artifact.group) || '').toLowerCase();
+  if (raw === 'final' || raw === 'material' || raw === 'service') return raw;
+  const title = String((artifact && artifact.title) || '');
+  const base = String((artifact && artifact.path) || '').split(/[\/]/).pop() || '';
+  const name = (title + ' ' + base).toLowerCase();
+  if (name.startsWith('_') && /\.(json|html?|log)$/.test(name)) return 'service';
+  if (/итог|письмо|кратко|final|summary|letter/.test(name)) return 'final';
+  return 'material';
+}
+
+/** Элемент-папка: `{kind:'folder', title, count, items}` (§1.4). */
+export function isFolderNode(artifact) {
+  return Boolean(artifact) && artifact.kind === 'folder' && Array.isArray(artifact.items);
+}
+
+/** Сколько файлов в списке с учётом содержимого свёрнутых папок. */
+export function artifactsCount(items) {
+  let total = 0;
+  for (const item of Array.isArray(items) ? items : []) {
+    total += isFolderNode(item) ? item.items.length : 1;
+  }
+  return total;
+}
+
+/** Свёрнутые папки запоминают своё состояние между перерисовками страницы. */
+const openFolders = new Set();
+
+/** Время изменения файла: «4 ноября, 09:15». */
+export function artifactTimeLabel(mtime) {
+  const n = Number(mtime);
+  if (!isFinite(n) || n <= 0) return '';
+  return fmtDateTime(n);
+}
+
+/** Строка под файлом: время изменения и размер (B-43). */
+function artifactMetaLine(artifact) {
+  const time = artifactTimeLabel(artifact && artifact.mtime);
+  const size = artifact && artifact.size !== null && artifact.size !== undefined
+    ? formatBytes(artifact.size) : '';
+  const parts = [time, size].filter(Boolean);
+  if (!parts.length) return null;
+  return h('div', { class: 'rp-art__info small muted tnum' },
+    time ? h('span', { class: 'rp-art__time', title: 'Изменён: ' + time }, time) : null,
+    time && size ? h('span', { class: 'rp-art__dot', 'aria-hidden': 'true' }, ' · ') : null,
+    size ? h('span', { class: 'rp-art__size' }, size) : null);
+}
+
+/** Бейдж «новее свода»: файл изменён позже последней версии свода (B-43). */
+function artifactNewerChip(artifact) {
+  if (!artifact || !artifact.newer_than_svod) return null;
+  return h('span', {
+    class: 'chip chip--info rp-art__newer',
+    title: 'Файл изменён позже последней версии свода — в своде его может ещё не быть',
+  }, 'новее свода');
+}
+
+/** Одна строка файла: значок, название, вид, состояние, путь, время, размер, действия. */
+function artifactRow(artifact, ctx, roomId, projectDir, opts = {}) {
+  const meta = artifactKindMeta(artifact.kind);
+  const path = String(artifact.path);
+  const state = String(artifact.state || (artifact.exists === false ? 'missing' : 'ok'));
+  const exists = artifact.exists !== false && state !== 'missing' && state !== 'denied';
+  const outside = state === 'outside' || artifact.outside_project === true;
+  const rel = relativeToDir(path, projectDir);
+  const title = String(artifact.title || path.split(/[\\/]/).pop() || 'Файл');
+
+  const li = h('li', {
+    class: ['rp-art', exists ? '' : 'rp-art--missing', opts.nested ? 'rp-art--nested' : '',
+      outside ? 'rp-art--outside' : ''],
+    'data-key': path,
+  });
+  const thumb = exists && artifact.kind === 'image'
+    ? h('button', {
+      class: 'rp-art__thumb', type: 'button', title: 'Открыть картинку',
+      onclick: () => { openFile(ctx, path, roomId).catch(() => {}); },
+    }, h('img', { src: artifactUrl(path, roomId), alt: title, loading: 'lazy' }))
+    : h('span', { class: 'rp-art__icon', 'aria-hidden': 'true' }, icon(meta.icon, { size: 15 }));
+
+  const main = h('div', { class: 'rp-art__main' },
+    h('div', { class: 'rp-art__title-row' },
+      h('span', { class: 'rp-art__title', title }, title),
+      h('span', { class: 'chip chip--muted rp-art__kind', title: meta.label }, meta.label),
+      artifactNewerChip(artifact),
+      artifactStateChip(artifact, state)),
+    // W25.5: совет «договоритесь хранить файлы в папке проекта» больше не
+    // повторяется у каждого файла — он один в строке «вне папки проекта»
+    // (renderWarnings → outsideNotice) и открывается по «подробнее».
+    h('div', { class: 'rp-art__path' }, artifactPathChip(path, rel, ctx, roomId)));
+
+  const acts = h('div', { class: 'rp-actions rp-art__actions' });
+  if (exists) {
+    // W26-D3: «Открыть» — файл в программе по умолчанию (серверное действие).
+    // Раньше здесь для превью-типов был `window.open` (в Hermes Desktop новые
+    // окна блокируются), а для остальных — проводник вместо самого файла.
+    acts.appendChild(button(FILES_RU.open, {
+      variant: 'secondary', size: 'sm', icon: 'open-preview', title: FILES_RU.openHint,
+      onclick: () => { openFile(ctx, path, roomId).catch(() => {}); },
+    }));
+    if (canPreview(path)) {
+      acts.appendChild(button(FILES_RU.preview, {
+        variant: 'ghost', size: 'sm', icon: 'eye', title: FILES_RU.previewHint,
+        onclick: () => { openPreview(ctx, path, roomId).catch(() => {}); },
+      }));
+    }
+  }
+  acts.appendChild(button(FILES_RU.copyPath, {
+    variant: 'ghost', size: 'sm', icon: 'copy', title: FILES_RU.copyPathHint,
+    onclick: async () => {
+      const ok = await copyText(path);
+      toast(ctx, ok ? 'Путь скопирован' : 'Не удалось скопировать путь', ok ? 'ok' : 'danger');
+    },
+  }));
+  if (exists) {
+    acts.appendChild(button(FILES_RU.reveal, {
+      variant: 'ghost', size: 'sm', icon: 'folder-opened', title: FILES_RU.revealHint,
+      onclick: () => { revealFile(ctx, path, roomId).catch(() => {}); },
+    }));
+  }
+
+  li.appendChild(thumb);
+  li.appendChild(main);
+  const infoLine = artifactMetaLine(artifact);
+  if (infoLine) li.appendChild(infoLine);
+  li.appendChild(acts);
+  return li;
+}
+
+/** Свёрнутая папка: заголовок со счётчиком и файлы внутри (B-43). */
+function folderRow(folder, ctx, roomId, projectDir) {
+  const key = String(folder.folder || folder.title || folder.path || '');
+  const details = h('details', {
+    class: 'rp-artifacts__folder', 'data-folder': key,
+    'data-key': 'folder:' + key,
+  });
+  if (openFolders.has(key)) details.open = true;
+  details.addEventListener('toggle', () => {
+    if (details.open) openFolders.add(key); else openFolders.delete(key);
+  });
+  const count = Array.isArray(folder.items) ? folder.items.length : Number(folder.count || 0);
+  details.appendChild(h('summary', { class: 'rp-artifacts__folder-sum' },
+    h('span', { class: 'rp-artifacts__folder-caret', 'aria-hidden': 'true' },
+      icon('chevron-right', { size: 12 })),
+    h('span', { class: 'rp-artifacts__folder-icon', 'aria-hidden': 'true' },
+      icon('folder', { size: 14 })),
+    h('span', { class: 'rp-artifacts__folder-title', title: key }, String(folder.title || key)),
+    h('span', { class: 'chip chip--muted tnum' }, countNoun(count, ['файл', 'файла', 'файлов'])),
+    folder.newer_than_svod ? artifactNewerChip(folder) : null));
+  const sublist = h('ul', { class: 'rp-artifacts__sublist' });
+  for (const item of Array.isArray(folder.items) ? folder.items : []) {
+    sublist.appendChild(artifactRow(item, ctx, roomId, projectDir, { nested: true }));
+  }
+  details.appendChild(sublist);
+  return h('li', { class: 'rp-artifacts__folder-item' }, details);
+}
+
 /**
- * «Артефакты»: файлы работы с открытием, копированием пути и проводником;
- * картинки показываются превью. null, если файлов нет.
- * Пути внутри папки проекта комнаты показываются относительно неё.
+ * «Файлы»: файлы работы — «Открыть», «Просмотр», «Показать в папке», путь;
+ * картинки показываются превью. Группы «Итоговые / Материалы / Служебные»,
+ * подпапки — свёрнутыми группами, у файла время изменения и размер (W20-A1, B-43).
+ * null, если файлов нет.
  * @param {object} detail RequestDetail
  * @param {object} ctx
  * @param {{projectDir?: string, room?: string}} [opts]
@@ -393,79 +710,54 @@ export function renderArtifacts(detail, ctx, opts = {}) {
   const projectDir = String(o.projectDir || o.project_dir || '').trim();
   const roomId = String((detail && detail.room) || o.room || '').trim();
   const items = (detail && Array.isArray(detail.artifacts) ? detail.artifacts : [])
-    .filter((a) => a && typeof a === 'object' && a.path);
+    .filter((a) => a && typeof a === 'object' && (a.path || isFolderNode(a)));
   if (!items.length) return null;
 
-  const card = h('section', { class: 'card rp-artifacts', 'data-rp': 'artifacts' });
-  card.appendChild(blockHead('Артефакты', countNoun(items.length, ['файл', 'файла', 'файлов'])));
-  const list = h('ul', { class: 'rp-artifacts__list' });
+  const defaults = sectionDefaults(detail);
 
-  for (const artifact of items) {
-    const meta = artifactKindMeta(artifact.kind);
-    const path = String(artifact.path);
-    const state = String(artifact.state || (artifact.exists === false ? 'missing' : 'ok'));
-    const exists = artifact.exists !== false && state !== 'missing' && state !== 'denied';
-    const outside = state === 'outside' || artifact.outside_project === true;
-    const rel = relativeToDir(path, projectDir);
-    const title = String(artifact.title || path.split(/[\\/]/).pop() || 'Файл');
-
-    const li = h('li', { class: ['rp-art', exists ? '' : 'rp-art--missing'] });
-    const thumb = exists && artifact.kind === 'image'
-      ? h('button', {
-        class: 'rp-art__thumb', type: 'button', title: 'Открыть картинку',
-        onclick: () => { openArtifact(ctx, path, roomId).catch(() => {}); },
-      }, h('img', { src: artifactUrl(path, roomId), alt: title, loading: 'lazy' }))
-      : h('span', { class: 'rp-art__icon', 'aria-hidden': 'true' }, icon(meta.icon, { size: 15 }));
-
-    const main = h('div', { class: 'rp-art__main' },
-      h('div', { class: 'rp-art__title-row' },
-        h('span', { class: 'rp-art__title' }, title),
-        h('span', { class: 'chip chip--muted rp-art__kind' }, meta.label),
-        artifactStateChip(artifact, state)),
-      h('div', { class: 'rp-art__path' }, artifactPathChip(path, rel, ctx, roomId)),
-      outside
-        ? h('div', { class: 'rp-art__note small muted' },
-          'Сохранён вне папки проекта — договоритесь с командой хранить файлы в папке проекта')
-        : null);
-
-    const info = h('div', { class: 'rp-art__info small muted tnum' },
-      artifact.size === null || artifact.size === undefined ? '' : formatBytes(artifact.size));
-    const acts = h('div', { class: 'rp-actions rp-art__actions' });
-    if (exists) {
-      acts.appendChild(button('Открыть', {
-        variant: 'secondary', size: 'sm', icon: 'open-preview',
-        onclick: () => { openArtifact(ctx, path, roomId).catch(() => {}); },
-      }));
+  /**
+   * Строки файлов строятся только при раскрытии блока (У-1): при 200 файлах
+   * это 200 строк с путями, кнопками и картинками. Счётчик в заголовке считается
+   * по данным и без строк — «23 файла · есть новее свода» видно и в свёрнутом виде.
+   */
+  const buildGroups = () => {
+    const buckets = { final: [], material: [], service: [] };
+    for (const item of items) buckets[artifactGroup(item)].push(item);
+    const nodes = [];
+    for (const group of ARTIFACT_GROUPS) {
+      const list = buckets[group.id];
+      if (!list.length) continue;
+      const section = h('div', { class: 'rp-artifacts__group', 'data-group': group.id });
+      section.appendChild(h('div', { class: 'rp-artifacts__group-head' },
+        h('h3', { class: 'rp-artifacts__group-title', title: group.hint }, group.title),
+        h('span', { class: 'chip chip--muted tnum' },
+          countNoun(artifactsCount(list), ['файл', 'файла', 'файлов']))));
+      const ul = h('ul', { class: 'rp-artifacts__list' });
+      for (const item of list) {
+        ul.appendChild(isFolderNode(item)
+          ? folderRow(item, ctx, roomId, projectDir)
+          : artifactRow(item, ctx, roomId, projectDir));
+      }
+      section.appendChild(ul);
+      nodes.push(section);
     }
-    acts.appendChild(button('Копировать путь', {
-      variant: 'ghost', size: 'sm', icon: 'copy',
-      onclick: async () => {
-        const ok = await copyText(path);
-        toast(ctx, ok ? 'Путь скопирован' : 'Не удалось скопировать путь', ok ? 'ok' : 'danger');
-      },
-    }));
-    if (exists) {
-      acts.appendChild(button('В проводнике', {
-        variant: 'ghost', size: 'sm', icon: 'folder-opened',
-        onclick: async () => {
-          try {
-            await ctx.api.post('/api/artifacts/open', { path, room: roomId });
-            toast(ctx, 'Открыто в проводнике', 'ok');
-          } catch (err) {
-            toast(ctx, (err && err.message) || 'Не удалось открыть проводник', 'danger');
-          }
-        },
-      }));
-    }
+    return nodes;
+  };
 
-    li.appendChild(thumb);
-    li.appendChild(main);
-    li.appendChild(info);
-    li.appendChild(acts);
-    list.appendChild(li);
-  }
-  card.appendChild(list);
-  return card;
+  const sec = createSection({
+    // Ключ состояния остался 'artifacts': это внутреннее имя (память свёрнутости
+    // и адрес блока), человек видит только «Файлы» (W26-D3).
+    key: 'artifacts',
+    requestId: String((detail && detail.id) || ''),
+    title: FILES_RU.title,
+    hint: FILES_RU.titleHint,
+    defaultOpen: defaults.artifacts,
+    className: 'rp-artifacts',
+    attrs: { 'data-rp': 'artifacts' },
+    summary: artifactsSummaryChips({ artifacts: items }),
+    content: buildGroups,
+  });
+  return sec.element;
 }
 
 /* ───────────────────────────────────────────────────────────── хронология */
@@ -488,7 +780,7 @@ function timelineItem(row) {
 }
 
 /**
- * «Хронология»: вертикальная лента событий; свёрнута до последних 6.
+ * «Хронология»: вертикальная лента событий; свёрнута до последних 5 (R5 §7.2).
  * null, если событий нет.
  * @param {object} detail RequestDetail
  * @returns {HTMLElement|null}
@@ -497,7 +789,11 @@ export function renderTimeline(detail) {
   const events = Array.isArray(detail && detail.timeline) ? detail.timeline.filter(Boolean) : [];
   if (!events.length) return null;
 
-  const card = h('section', { class: 'card rp-timeline', 'data-rp': 'timeline' });
+  const card = h('section', {
+    class: 'card rp-timeline', 'data-rp': 'timeline',
+    // У-1: хронология остаётся развёрнутой — стрелки у неё нет (решение Михаила).
+    'data-section': 'timeline', 'data-collapsible': 'false',
+  });
   card.appendChild(blockHead('Хронология', countNoun(events.length, ['событие', 'события', 'событий'])));
   const list = h('ol', { class: 'rp-timeline__list' });
   const more = h('button', {
@@ -506,7 +802,7 @@ export function renderTimeline(detail) {
   }, `Показать все: ${countNoun(events.length, ['событие', 'события', 'событий'])}`);
   const render = (expanded) => {
     list.textContent = '';
-    for (const row of timelineRows(detail, { limit: 6, expanded })) list.appendChild(timelineItem(row));
+    for (const row of timelineRows(detail, { limit: 5, expanded })) list.appendChild(timelineItem(row));
     more.textContent = expanded ? 'Свернуть до последних' : `Показать все: ${countNoun(events.length, ['событие', 'события', 'событий'])}`;
     more.setAttribute('aria-expanded', expanded ? 'true' : 'false');
   };
@@ -517,10 +813,25 @@ export function renderTimeline(detail) {
   });
   render(false);
   card.appendChild(list);
-  if (events.length > 6) card.appendChild(more);
+  if (events.length > 5) card.appendChild(more);
   return card;
+}
+
+/**
+ * «Контроль моделей» (W23-MG2): лента событий — что остановили, что исправили
+ * до запуска, сколько это сэкономило. Своё место на странице запроса: человек
+ * видит вмешательство сторожа, а не только итог работы.
+ *
+ * @param {object} detail RequestDetail (`model_guard[]`)
+ * @param {object} [ctx]
+ * @returns {HTMLElement|null} null — событий не было, пустую карточку не рисуем
+ */
+export function renderModelGuard(detail, ctx) {
+  if (!detail || !Array.isArray(detail.model_guard) || !detail.model_guard.length) return null;
+  return buildRequestFeed(detail, ctx, { catalog: (ctx && ctx.catalog) || null });
 }
 
 export default {
   renderPipeline, renderWarnings, renderCritic, renderTree, renderArtifacts, renderTimeline,
+  renderModelGuard,
 };

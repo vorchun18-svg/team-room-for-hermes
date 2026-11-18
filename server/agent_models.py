@@ -376,25 +376,69 @@ def _scalar(text: str, section: str, key: str) -> str:
     return ""
 
 
-def agent_default(cfg, profile) -> dict:
-    """Настройки самого агента: `model.provider`, `model.default`, `agent.reasoning_effort`.
+#: подписи источника «по умолчанию» (W20 §1.5) — человеческие, без техники
+SOURCE_RU = {"profile": "из настроек профиля", "global": "из общих настроек Hermes",
+             "none": "не задана"}
+GLOBAL_NOTE = "В профиле модель не задана — показана общая настройка Hermes."
+NONE_NOTE = "Модель не задана ни в профиле, ни в общих настройках Hermes."
 
-    Только собственный блок профиля: `delegation.reasoning_effort` — уровень для
-    делегированных детей, а не для карточек комнаты (их берёт сам профиль), поэтому
-    за «по умолчанию» он не выдаётся. Пустая строка = «как в Hermes по умолчанию».
-    Файл открывается только на чтение.
-    """
-    path = config_path(cfg, profile)
+
+def _config_text(path: Path) -> str:
+    """Текст конфига (только чтение); нет файла — пустая строка, а не ошибка."""
     try:
-        text = path.read_text("utf-8", "replace")
+        return path.read_text("utf-8", "replace")
     except OSError:
-        return {"provider": "", "model": "", "reasoning": ""}
+        return ""
+
+
+def _defaults_of(text: str) -> dict:
+    """`model.provider`, `model.default` (или `model.name`), `agent.reasoning_effort`."""
     reasoning = _scalar(text, "agent", "reasoning_effort")
     if reasoning.lower() in ("false", "none", "disabled"):
         reasoning = "none"
     return {"provider": _scalar(text, "model", "provider"),
             "model": _scalar(text, "model", "default") or _scalar(text, "model", "name"),
             "reasoning": reasoning}
+
+
+def default_info(cfg, profile) -> dict:
+    """Настройки самого агента + ИСТОЧНИК: `profile` | `global` | `none` (W20 §1.5).
+
+    Порядок ровно один и тот же для интерфейса и для движка:
+
+    1. собственный `config.yaml` профиля (`default` — общий конфиг Hermes): если в нём
+       есть ПАРА провайдер+модель, действует профиль — `source: "profile"`;
+    2. пара в профиле неполная или модели нет — берётся общая настройка Hermes
+       (корневой `config.yaml`) ЦЕЛОЙ парой, `source: "global"` и пометка: смешивать
+       провайдера одного источника с моделью другого нельзя (так на карточку попадала
+       чужая модель);
+    3. нет нигде — пустые значения и `source: "none"`: приложение ничего не выдумывает.
+
+    `delegation.reasoning_effort` за «по умолчанию» НЕ выдаётся: это уровень
+    делегированных детей, а не самого агента. Файлы открываются только на чтение.
+    """
+    name = _profile(profile) or "default"
+    own = _defaults_of(_config_text(config_path(cfg, name)))
+    if own["provider"] and own["model"]:
+        return dict(own, source="profile", note="", label=SOURCE_RU["profile"])
+    if name in ("", "default"):
+        # Общий конфиг — это и есть настройки профиля `default`: подменять нечем.
+        return dict(own, source="none", note=NONE_NOTE, label=SOURCE_RU["none"])
+    shared = _defaults_of(_config_text(_root(cfg) / "config.yaml"))
+    if shared["provider"] and shared["model"]:
+        return dict(shared, source="global", note=GLOBAL_NOTE, label=SOURCE_RU["global"])
+    return dict(own, source="none", note=NONE_NOTE, label=SOURCE_RU["none"])
+
+
+def agent_default(cfg, profile) -> dict:
+    """Настройки самого агента: `model.provider`, `model.default`, `agent.reasoning_effort`.
+
+    Ровно три поля — форма, на которую опираются карточки комнаты и старые клиенты.
+    Источник и пометку отдаёт `default_info` (там же правило «профиль → общие настройки»).
+    """
+    info = default_info(cfg, profile)
+    return {"provider": info["provider"], "model": info["model"],
+            "reasoning": info["reasoning"]}
 
 
 # ---------------------------------------------------------------- проверка
@@ -607,10 +651,19 @@ def effective(cfg, room, profile) -> dict:
 
 
 def model_settings(cfg, room, profile) -> dict:
+    """Что применится к следующей карточке: `source` = `room` (выбрано) или `agent`.
+
+    `default_source`/`default_note` — откуда взялось «по умолчанию» (W20 §1.5):
+    из профиля агента, из общих настроек Hermes или не задано нигде. Интерфейсу это
+    нужно, чтобы честно написать «по умолчанию (из настроек агента): …» и пометить
+    значения, взятые из общих настроек.
+    """
     value = effective(cfg, room, profile)
+    info = default_info(cfg, profile)
     return {"provider": value["provider"], "model": value["model"],
             "reasoning": value["reasoning"], "source": value["source"],
-            "updated_at": value["updated_at"]}
+            "updated_at": value["updated_at"],
+            "default_source": info["source"], "default_note": info["note"]}
 
 
 def get(cfg, room_id, profile) -> dict:
@@ -627,6 +680,7 @@ def get(cfg, room_id, profile) -> dict:
     return {"profile": name, "role": role_ru(room, name),
             "model_settings": model_settings(cfg, room, name),
             "agent_default": agent_default(cfg, name),
+            "agent_default_info": default_info(cfg, name),
             "room_setting": settings.get(name) or {},
             "agent_models": settings}
 
@@ -875,6 +929,16 @@ def push_effort(cfg, board: str, task_ids: list, reasoning: str) -> tuple[list, 
     return done, failed
 
 
+def push_model(cfg, board: str, cards: list, want: dict) -> tuple[list, list]:
+    """Поставить (или снять) модель карточкам штатным мостом — публичная обёртка.
+
+    Нужна сторожу моделей (`server/model_guard.py`, WAVE23 §2.3): запись идёт тем же
+    единственным путём — `tools/kb_bridge.py` → `kanban_db.set_model_override`, а не
+    своим SQL. `want` без модели снимает переопределение (`--clear-model`).
+    """
+    return _push(cfg, board, cards, want)
+
+
 def card_label(cfg, room, profile) -> str:
     """Подпись «провайдер · модель · мышление» для выбранной замены (для журнала)."""
     value = effective(cfg, room, profile)
@@ -1075,11 +1139,26 @@ def _session_model(cfg, profile, session_id) -> dict:
             con = sqlite3.connect("file:%s?mode=ro" % path.as_posix(), uri=True, timeout=5)
             try:
                 con.row_factory = sqlite3.Row
-                row = con.execute("SELECT model, billing_provider FROM sessions WHERE id = ?",
-                                  (sid,)).fetchone()
+                # `estimated_cost_usd` есть не во всех версиях Hermes — читаем только
+                # существующие колонки (W23: стоимость последнего запуска нужна «ушло на»)
+                cols = {str(r[1]) for r in con.execute("PRAGMA table_info(sessions)")}
+                wanted = [c for c in ("model", "billing_provider", "estimated_cost_usd")
+                          if c in cols]
+                row = con.execute("SELECT %s FROM sessions WHERE id = ?"
+                                  % ", ".join(wanted), (sid,)).fetchone() if wanted else None
                 if row is not None:
-                    out = {"model": str(row["model"] or "").strip(),
-                           "provider": str(row["billing_provider"] or "").strip()}
+                    data = dict(row)
+                    out = {"model": str(data.get("model") or "").strip(),
+                           "provider": str(data.get("billing_provider") or "").strip()}
+                    # Сессия есть, а стоимость не записана (локальная модель/старая
+                    # версия Hermes) — это 0, а не «неизвестно»: иначе интерфейс не
+                    # отличит «не запускалась» от «запускалась бесплатно».
+                    out["cost_usd"] = 0.0
+                    if data.get("estimated_cost_usd") not in (None, ""):
+                        try:
+                            out["cost_usd"] = round(float(data["estimated_cost_usd"]), 4)
+                        except (TypeError, ValueError):
+                            pass
             finally:
                 con.close()
     except Exception:  # noqa: BLE001 - нет файла/схемы: «неизвестно», а не падение
@@ -1120,7 +1199,7 @@ def actual_model(cfg, board: str, card_id: str, *, profile: str = "", run: dict 
     `run` можно передать готовым (дерево уже прочитало прогоны) — тогда БД не трогаем.
     """
     out = {"provider": "", "model": "", "session_id": "", "run_id": None, "started_at": None,
-           "source": ""}
+           "source": "", "cost_usd": None}
     close = False
     if con is None and card_id:
         con = _connect(cfg, board)
@@ -1142,6 +1221,7 @@ def actual_model(cfg, board: str, card_id: str, *, profile: str = "", run: dict 
         if row.get("model"):
             out["model"] = row["model"]
             out["provider"] = row.get("provider") or ""
+            out["cost_usd"] = row.get("cost_usd")
             out["source"] = "session"
     finally:
         if close:
@@ -1182,6 +1262,7 @@ def sent_of(cfg, room, card, *, board: str | None = None, run: dict | None = Non
         got = actual_model(cfg, board or "", str(card.get("id")), profile=profile, run=run)
         actual = {"model": got.get("model") or "", "provider": got.get("provider") or "",
                   "run_id": got.get("run_id"), "started_at": got.get("started_at"),
+                  "cost_usd": got.get("cost_usd"),
                   "confirmed": bool(got.get("model"))}
     provider = actual["provider"] or pin["provider"]
     model = actual["model"] or pin["model"]
@@ -1200,6 +1281,7 @@ def sent_of(cfg, room, card, *, board: str | None = None, run: dict | None = Non
     return {"provider": provider, "model": model, "reasoning": reasoning,
             "label": label, "text": ("ушло на: " + label) if label else "",
             "confirmed": bool(actual["confirmed"]), "run_id": actual["run_id"],
+            "cost_usd": actual.get("cost_usd"),
             "at": actual["started_at"], "expected": expected, "pinned": pin,
             "mismatch": bool(mismatch and label),
             "note": "расходится с выбором комнаты" if (mismatch and label) else ""}
@@ -1339,7 +1421,7 @@ def models_block(cfg, room) -> str:
             value = effective(cfg, room, profile)
             own = _short_label(value.get("provider") or "", value.get("model") or "",
                                value.get("reasoning") or "")
-            lines.append("- %s (%s) — модель профиля%s (в комнате не выбиралась) → "
+            lines.append("- %s (%s) — модель из настроек агента%s (в комнате не выбиралась) → "
                          "флаги не нужны"
                          % (profile, role_ru, (": " + own) if own else ""))
     if not lines:
@@ -1347,17 +1429,21 @@ def models_block(cfg, room) -> str:
     board = str(room.get("board") or "") or "<доска>"
     tenant = _tenant(room)
     return "\n".join([
-        "<<<МОДЕЛИ ИСПОЛНИТЕЛЕЙ  (обязательно: карточка, созданная без --model/--provider, "
-        "стартует на модели профиля, а не на выбранной в комнате)",
-        "Выбор комнаты — на момент создания карточки:",
+        "<<<МОДЕЛИ ИСПОЛНИТЕЛЕЙ  (важно: модель карточки задаёт ПРИЛОЖЕНИЕ — флаги "
+        "--model/--provider при создании карточек НЕ передавай)",
+        "Что действует в комнате сейчас (для сведения):",
         *lines,
-        "Правило: каждую карточку исполнителю создавай с ЕГО флагами, например:",
+        "Правило (W23 §2.2): создавай карточку без флагов модели —",
         "  hermes kanban --board=%s create \"<название>\" --assignee=<профиль> "
-        "--parent=<id родителя> --tenant=%s %s" % (board, tenant, " ".join(example)),
-        "Уровень мышления ставить не нужно: приложение проставляет его по карточке сразу "
-        "после создания (у CLI такого флага нет).",
+        "--parent=<id родителя> --tenant=%s" % (board, tenant),
+        "Зачем: приложение само сверяет модель карточки с ожидаемой моделью исполнителя "
+        "(переопределение комнаты или настройки его профиля Hermes). Если модель не совпадает, "
+        "карточку исправят ДО запуска, а запущенную на чужой модели остановят и перезапустят — "
+        "поверх твоего --model всё равно поедет правильная.",
+        "Уровень мышления тоже ставить не нужно: приложение проставляет его по карточке "
+        "(у CLI такого флага нет).",
         "Проверить, что реально ушло: в карточке дерева строка «ушло на: провайдер · модель · "
-        "уровень»; расхождение с выбором комнаты помечается.",
+        "уровень».",
         "МОДЕЛИ ИСПОЛНИТЕЛЕЙ>>>",
     ])
 
@@ -1701,7 +1787,8 @@ def decorate_room(cfg, detail: dict) -> dict:
     for profile, role in participants(room):
         meta[profile] = {"profile": profile, "role": role,
                          "model_settings": model_settings(cfg, room, profile),
-                         "agent_default": agent_default(cfg, profile)}
+                         "agent_default": agent_default(cfg, profile),
+                         "agent_default_info": default_info(cfg, profile)}
     detail["agent_models_meta"] = meta
     members = []
     for member in room.get("members") or []:
@@ -1714,6 +1801,8 @@ def decorate_room(cfg, detail: dict) -> dict:
             model_settings(cfg, room, profile)
         item["agent_default"] = meta.get(profile, {}).get("agent_default") or \
             agent_default(cfg, profile)
+        item["agent_default_info"] = meta.get(profile, {}).get("agent_default_info") or \
+            default_info(cfg, profile)
         members.append(item)
     detail["members"] = members
     return detail
@@ -1730,6 +1819,7 @@ def member_of(room, cfg, profile) -> dict:
             break
     base["model_settings"] = model_settings(cfg, room, name)
     base["agent_default"] = agent_default(cfg, name)
+    base["agent_default_info"] = default_info(cfg, name)
     try:
         base["model_sent"] = member_sent(cfg, room, name)
     except Exception:  # noqa: BLE001 - «ушло на» вторично для ответа
@@ -1768,9 +1858,10 @@ def card_settings(cfg, room, profile, *, data=None) -> dict:
 
 __all__ = ["EFFORTS", "EFFORT_LABELS", "EFFORT_SHORT", "APPLY_STATUSES", "FIXUP_MAX", "ModelError",
            "config_path", "state_path", "bridge_path", "catalog", "provider_label", "agent_default",
+           "default_info", "SOURCE_RU", "GLOBAL_NOTE", "NONE_NOTE",
            "validate", "validate_map", "normalize", "settings_of", "effective", "model_settings",
            "get", "set", "clear", "label", "human", "apply_to_tree", "apply_profile",
            "restart_running", "pending_marked", "mark_pending", "clear_pending",
            "decorate_room", "card_settings", "participants",
            "apply_to_room", "verify_started", "tenant_cards", "card_map", "actual_model",
-           "sent_of", "member_sent", "models_block"]
+           "sent_of", "member_sent", "models_block", "push_model"]

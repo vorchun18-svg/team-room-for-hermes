@@ -87,6 +87,13 @@ export function parseRouteHash(hash) {
   }
   if (seg[0] === 'search') return { kind: 'search' };
   if (seg[0] === 'settings') return { kind: 'settings', tab: seg[1] || null };
+  // W24-N3: экран «Сегодня» — такой же полноправный маршрут, как поиск и
+  // настройки: прямой адрес `#/today` не должен выбрасывать в комнату.
+  if (seg[0] === 'today') return { kind: 'today' };
+  // W26-D6: «Дела» — список и карточка дела. Полноправные маршруты: прямой адрес
+  // не должен выбрасывать человека в комнату при перезагрузке.
+  if (seg[0] === 'delos') return { kind: 'delos' };
+  if (seg[0] === 'delo' && seg[1]) return { kind: 'delo', id: seg[1] };
   return null;
 }
 
@@ -134,7 +141,8 @@ export function chooseHash(opts = {}) {
     const route = parseRouteHash(hash);
     if (!route) continue;
     if (route.kind === 'home') continue;
-    if (route.kind === 'search' || route.kind === 'settings') return hash;
+    if (route.kind === 'search' || route.kind === 'settings' || route.kind === 'today'
+      || route.kind === 'delos' || route.kind === 'delo') return hash;
     if (!rooms.size) return hash;                    // список комнат ещё не пришёл — доверяем
     if (!rooms.has(String(route.roomId))) continue;  // комнаты больше нет
     if (route.kind === 'request' && requestOk === false) {

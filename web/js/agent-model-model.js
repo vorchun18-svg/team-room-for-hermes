@@ -115,15 +115,28 @@ export function modelLabelOf(catalog, providerId, modelId) {
   return hit ? String(hit.label || hit.id) : id;
 }
 
-/** Подпись «по умолчанию: провайдер · модель · мышление». */
+/** Подпись «по умолчанию (из настроек агента): провайдер · модель · мышление».
+ *
+ * W20 §1.5: по умолчанию действует ТО, ЧТО СТОИТ В НАСТРОЙКАХ ПРОФИЛЯ HERMES.
+ * Если профиль модель не задаёт, сервер отдаёт общую настройку Hermes и
+ * `source: 'global'` — тогда в подписи честная пометка, откуда взято значение.
+ * @param {object} catalog
+ * @param {{provider?: string, model?: string, reasoning?: string, source?: string}} defaults
+ * @returns {string}
+ */
 export function defaultsText(catalog, defaults) {
   const d = defaults || {};
-  if (!d.provider && !d.model) return 'по умолчанию: как у агента';
+  const head = 'по умолчанию (из настроек агента): ';
+  const shared = String(d.source || '') === 'global';
+  if (!d.provider && !d.model) {
+    return head + (shared ? 'не задана в профиле Hermes' : 'модель не задана');
+  }
   const parts = [];
   if (d.provider) parts.push(providerLabelOf(catalog, d.provider));
   if (d.model) parts.push(modelLabelOf(catalog, d.provider, d.model));
   parts.push(lowerFirst(reasoningLabel(d.reasoning)));
-  return 'по умолчанию: ' + parts.join(' · ');
+  const text = head + parts.join(' · ');
+  return shared ? text + ' — из общих настроек Hermes' : text;
 }
 
 /** Полная подпись «провайдер · модель · мышление» (для title и дерева работ). */
@@ -166,15 +179,31 @@ export function modelSettingsOf(room, profile, member) {
     });
   }
   if (entry) return Object.assign(pickSettings(entry), { source: 'room' });
-  return Object.assign(agentDefaultOf(room, profile, m), { source: 'agent' });
+  const fallback = agentDefaultOf(room, profile, m);
+  return { provider: fallback.provider, model: fallback.model,
+    reasoning: fallback.reasoning, source: 'agent' };
 }
 
-/** Настройки самого агента (read-only): к ним же возвращает «Вернуть по умолчанию». */
+/** Настройки самого агента (read-only): к ним же возвращает «Вернуть по умолчанию».
+ *
+ * W20 §1.5: `source` — `profile` (свой конфиг профиля), `global` (общая настройка
+ * Hermes — профиль модель не задаёт) или `none`. Сервер присылает это полем
+ * `agent_default_info`; старые данные без него читаем как «из профиля».
+ * @returns {{provider: string, model: string, reasoning: string,
+ *            source: string, note: string}}
+ */
 export function agentDefaultOf(room, profile, member) {
-  const given = member && (member.agent_default || member.model_settings) ? member : null;
+  const given = member && (member.agent_default || member.agent_default_info
+    || member.model_settings) ? member : null;
   const m = given || memberOf(room, profile);
   const own = m && m.agent_default && typeof m.agent_default === 'object' ? m.agent_default : null;
-  return pickSettings(own);
+  const info = m && m.agent_default_info && typeof m.agent_default_info === 'object'
+    ? m.agent_default_info : null;
+  const out = pickSettings(info || own);
+  const known = Boolean(info || own);
+  out.source = String((info && info.source) || (own && own.source) || (known ? 'profile' : ''));
+  out.note = String((info && info.note) || (own && own.note) || '');
+  return out;
 }
 
 /**

@@ -23,7 +23,7 @@
     "total": 2,
     "percent": 50
   },
-  "assignee": "biz-director",
+  "assignee": "team-director",
   "needs_you": false,
   "preview": "Посчитай юнит-экономику набора из 6 моти по каналам. Срок — до пятницы.",
   "archived": false,
@@ -46,7 +46,7 @@
     {
       "id": "ns_1",
       "text": "Починить формулу: в таблице поставщика нет колонки cost_packaging",
-      "owner": "biz-cfo",
+      "owner": "team-cfo",
       "due": "2026-10-29",
       "state": "open"
     }
@@ -107,7 +107,7 @@
       "id": "t_3b7e9d11",
       "parent_ids": [],
       "title": "Юнит-экономика набора из 6 моти",
-      "assignee": "biz-director",
+      "assignee": "team-director",
       "role": "root",
       "status": "blocked",
       "started_at": 1793159930,
@@ -126,7 +126,7 @@
         "t_3b7e9d11"
       ],
       "title": "Собрать себестоимость ингредиентов",
-      "assignee": "biz-ops",
+      "assignee": "team-ops",
       "role": "worker",
       "status": "done",
       "started_at": 1793159960,
@@ -137,7 +137,7 @@
       "runs": [
         {
           "id": 92,
-          "profile": "biz-ops",
+          "profile": "team-ops",
           "status": "done",
           "outcome": "completed",
           "started_at": 1793159960,
@@ -155,7 +155,7 @@
         "t_3b7e9d11"
       ],
       "title": "Посчитать маржу по каналам",
-      "assignee": "biz-cfo",
+      "assignee": "team-cfo",
       "role": "worker",
       "status": "blocked",
       "started_at": 1793160510,
@@ -164,7 +164,7 @@
       "metadata": {},
       "comments": [
         {
-          "author": "biz-cfo",
+          "author": "team-cfo",
           "text": "Дважды упало на отсутствующее поле cost_packaging в таблице поставщика: в листе «Котировки» после строки с итогами идут пустые строки, из-за чего заголовки читаются со сдвигом, и колонка с ценой короба не находится. Пересобирать таблицу без согласования не стал — цена короба входит в себестоимость, от неё зависит маржа по всем трём каналам, поэтому нужен ваш ответ: правим таблицу или считаем по цене из прошлой версии файла (128,5 ₽ за моти с упаковкой и наклейкой).",
           "at": 1793160805
         }
@@ -172,7 +172,7 @@
       "runs": [
         {
           "id": 93,
-          "profile": "biz-cfo",
+          "profile": "team-cfo",
           "status": "failed",
           "outcome": "failed",
           "started_at": 1793160510,
@@ -181,18 +181,18 @@
         },
         {
           "id": 94,
-          "profile": "biz-cfo",
+          "profile": "team-cfo",
           "status": "failed",
           "outcome": "failed",
           "started_at": 1793160700,
           "ended_at": 1793160800,
-          "error": "exit 1: KeyError('cost_packaging') (повтор после правки файла C:\\Work\\Rooms\\demo\\2026-11-06 Письмо Лебедев — ответ\\Котировки упаковка городе — финал.xlsx)"
+          "error": "exit 1: KeyError('cost_packaging') (повтор после правки файла C:\\Work\\Rooms\\demo\\2026-11-06 Письмо поставщику — ответ\\Котировки упаковка городе — финал.xlsx)"
         }
       ],
       "needs_human": false,
       "error": {
         "code": "worker_crashed",
-        "message": "Процесс воркера завершился с кодом 1: KeyError('cost_packaging') — при разборе таблицы поставщика «C:\\Work\\Rooms\\demo\\2026-11-06 Письмо Лебедев — ответ\\Котировки упаковка городе — финал.xlsx» не нашлось колонки с ценой короба, поэтому расчёт маржи по каналам (Telegram, «Едок», B2B-кофейни) остановлен на шаге свода; проверьте, что в листе «Котировки» есть столбец cost_packaging и что строка итогов не сдвинута вниз пустыми строками."
+        "message": "Процесс воркера завершился с кодом 1: KeyError('cost_packaging') — при разборе таблицы поставщика «C:\\Work\\Rooms\\demo\\2026-11-06 Письмо поставщику — ответ\\Котировки упаковка городе — финал.xlsx» не нашлось колонки с ценой короба, поэтому расчёт маржи по каналам (Telegram, «Едок», B2B-кофейни) остановлен на шаге свода; проверьте, что в листе «Котировки» есть столбец cost_packaging и что строка итогов не сдвинута вниз пустыми строками."
       },
       "outside_room": false
     }
@@ -209,28 +209,28 @@
       "at": 1793159960,
       "kind": "claimed",
       "task_id": "t_3b7e9d12",
-      "actor": "biz-ops",
+      "actor": "team-ops",
       "text": "Сергей собирает себестоимость"
     },
     {
       "at": 1793160500,
       "kind": "completed",
       "task_id": "t_3b7e9d12",
-      "actor": "biz-ops",
+      "actor": "team-ops",
       "text": "Себестоимость готова"
     },
     {
       "at": 1793160660,
       "kind": "failed",
       "task_id": "t_3b7e9d13",
-      "actor": "biz-cfo",
+      "actor": "team-cfo",
       "text": "Воркер упал: KeyError cost_packaging"
     },
     {
       "at": 1793160800,
       "kind": "failed",
       "task_id": "t_3b7e9d13",
-      "actor": "biz-cfo",
+      "actor": "team-cfo",
       "text": "Повтор упал с той же ошибкой"
     }
   ],
@@ -259,7 +259,7 @@
       "id": "c2",
       "at": 1793150100,
       "author_kind": "agent",
-      "author": "biz-director",
+      "author": "team-director",
       "author_label": "Глеб · руководитель комнаты",
       "text": "Принял; передал Вере — расчёт по таблице поставщика, Сергею — сверить цены упаковки.",
       "task_id": "t_3b7e9d11",

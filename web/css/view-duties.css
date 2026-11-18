@@ -1,0 +1,218 @@
+/* ============================================================================
+   view-duties.css — раздел «Дежурства» комнаты (#/room/<id>/duties).
+
+   Недельная сетка (семь дней, плашки, «+N ещё», итог дня) и список дежурств
+   с действиями. Цвета — только токены: красное/жёлтое/зелёное читаются в обеих
+   темах, горизонтальной прокрутки нет (сетка переносится на узком окне).
+   ========================================================================== */
+
+/* У .app__main нет min-height: 0 — без этого правила длинный список обрезается
+   (та же грабля, что в view-diagnostics.css и view-settings.css). */
+.app:has(#view .duties) { grid-template-rows: minmax(0, 1fr); }
+
+.duties {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  max-width: 1120px; min-width: 0;
+}
+
+/* ── Шапка ────────────────────────────────────────────────────────────────── */
+
+.duties__head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--space-4); flex-wrap: wrap;
+}
+.duties__headline { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; flex: 1 1 320px; }
+.duties__title {
+  margin: 0; font-size: var(--text-xl); font-weight: 600;
+  line-height: var(--leading-tight, 1.25); color: var(--foreground);
+}
+.duties__lead { margin: 0; max-width: 74ch; font-size: var(--text-sm); line-height: 1.55; }
+.duties__head-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+
+/* ── Сводка ───────────────────────────────────────────────────────────────── */
+
+.duties__summary {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.duties__verdict { margin: 0; font-size: var(--text-md); font-weight: 600; line-height: 1.35; }
+.duties__summary .duty-sum { margin-right: 6px; }
+
+.duty-sum {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 9px; border-radius: var(--radius-full, 999px);
+  font-size: var(--text-xs); font-weight: 500;
+  /* Контраст в обеих темах: серые плашки — не «на границе», а читаемо. */
+  background: var(--ui-bg-tertiary); color: var(--ui-text-primary);
+  border: 1px solid var(--ui-stroke-secondary);
+}
+.duty-sum--fail { background: color-mix(in srgb, var(--ui-red) 14%, transparent); color: var(--ui-red); border-color: color-mix(in srgb, var(--ui-red) 34%, transparent); }
+.duty-sum--off { background: color-mix(in srgb, var(--ui-yellow) 14%, transparent); color: var(--ui-yellow); border-color: color-mix(in srgb, var(--ui-yellow) 32%, transparent); }
+.duty-sum--run { background: color-mix(in srgb, var(--ui-blue) 12%, transparent); color: var(--ui-blue); border-color: color-mix(in srgb, var(--ui-blue) 30%, transparent); }
+
+/* ── Недельная сетка ──────────────────────────────────────────────────────── */
+
+.duties__section-head { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+.duties__section-title { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.duties__section-title--list { margin-top: var(--space-2); }
+
+.week {
+  display: grid; gap: var(--space-2);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  align-items: stretch; min-width: 0;
+}
+
+.week__day {
+  display: flex; flex-direction: column; gap: 6px;
+  min-width: 0; padding: var(--space-2) var(--space-2) calc(var(--space-2) + 2px);
+  text-align: left; cursor: pointer; font: inherit; color: inherit;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  transition: background .12s ease, border-color .12s ease;
+}
+.week__day:hover { background: var(--ui-row-hover-background); border-color: var(--ui-stroke-secondary); }
+.week__day:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.week__day--today {
+  border-color: color-mix(in srgb, var(--ui-blue) 45%, var(--border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ui-blue) 24%, transparent);
+}
+.week__day--future { opacity: .82; background: var(--ui-bg-quaternary); }
+.week__day--fail { border-left: 3px solid var(--ui-red); }
+
+.week__head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.week__date { font-size: var(--text-xs); font-weight: 600; color: var(--ui-text-secondary); text-transform: lowercase; }
+.week__day--today .week__date { color: var(--ui-blue); }
+.week__count { font-size: var(--text-xs); font-variant-numeric: tabular-nums; color: var(--ui-text-quaternary); }
+
+.week__jobs { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.week__job {
+  display: block; max-width: 100%;
+  padding: 2px 6px; border-radius: 6px;
+  font-size: var(--text-xs); line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--ui-blue) 10%, transparent);
+  color: var(--ui-text-secondary);
+  border-left: 2px solid color-mix(in srgb, var(--ui-blue) 45%, transparent);
+}
+.week__job--fail {
+  background: color-mix(in srgb, var(--ui-red) 12%, transparent);
+  border-left-color: var(--ui-red); color: var(--ui-text-primary);
+}
+.week__more { font-size: var(--text-xs); color: var(--ui-text-quaternary); }
+.week__foot { margin-top: auto; font-size: var(--text-xs); color: var(--ui-text-secondary); }
+.week__empty { grid-column: 1 / -1; margin: 0; }
+
+/* Узкое окно: сетка переносится, прокрутки по горизонтали нет. */
+@media (max-width: 980px) {
+  .week { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .week { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ── День недели: подробности ─────────────────────────────────────────────── */
+
+.duties__day-card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--ui-bg-quaternary);
+  border: 1px solid var(--ui-stroke-quaternary);
+  border-radius: var(--radius-lg);
+}
+.duties__day-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.duties__day-close { margin-left: auto; }
+.duties__day-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.duties__day-line { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; font-size: var(--text-sm); }
+.duties__day .linkish {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; color: var(--ui-accent); text-decoration: underline dotted;
+}
+
+/* ── Список дежурств ──────────────────────────────────────────────────────── */
+
+.duties__list { display: flex; flex-direction: column; gap: var(--space-2); }
+.duties__group {
+  margin: var(--space-2) 0 0; font-size: var(--text-xs); font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; color: var(--ui-text-quaternary);
+}
+
+.duty {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--card); border: 1px solid var(--border);
+  border-left: 3px solid var(--ui-green);
+  border-radius: var(--radius-lg);
+  min-width: 0;
+}
+.duty--fail { border-left-color: var(--ui-red); }
+.duty--off { border-left-color: var(--ui-yellow); }
+
+.duty__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.duty__title { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 260px; }
+.duty__name { margin: 0; font-size: var(--text-md); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.duty__chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.duty-chip {
+  display: inline-flex; align-items: center;
+  padding: 1px 8px; border-radius: var(--radius-full, 999px);
+  font-size: var(--text-xs); font-weight: 500;
+  background: color-mix(in srgb, var(--ui-green) 12%, transparent);
+  color: var(--ui-green);
+  border: 1px solid color-mix(in srgb, var(--ui-green) 30%, transparent);
+}
+.duty-chip--off {
+  background: color-mix(in srgb, var(--ui-yellow) 14%, transparent);
+  color: var(--ui-yellow); border-color: color-mix(in srgb, var(--ui-yellow) 32%, transparent);
+}
+.duty-chip--fail {
+  background: color-mix(in srgb, var(--ui-red) 14%, transparent);
+  color: var(--ui-red); border-color: color-mix(in srgb, var(--ui-red) 34%, transparent);
+}
+.duty-chip--muted {
+  background: var(--ui-bg-quaternary); color: var(--ui-text-tertiary);
+  border-color: var(--ui-stroke-quaternary);
+}
+
+.duty__actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.duty__actions .btn--sm { padding: 3px 10px; font-size: var(--text-xs); }
+
+.duty__times {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: var(--text-sm); color: var(--ui-text-secondary);
+}
+.duty__when { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; color: var(--ui-text-primary); }
+.duty__dot { color: var(--ui-text-tertiary); }
+.duty__missed { color: var(--ui-yellow); }
+
+.duty__problem {
+  margin: 0; font-size: var(--text-sm); color: var(--ui-red);
+  overflow-wrap: anywhere;
+}
+.duty__problem--off { color: var(--ui-yellow); }
+
+.duty__recent { display: flex; align-items: center; gap: 4px; }
+.duty__dot-run {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: color-mix(in srgb, var(--ui-green) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ui-green) 70%, transparent);
+}
+.duty__dot-run--failed { background: var(--ui-red); border-color: var(--ui-red); }
+.duty__dot-run--missed { background: var(--ui-yellow); border-color: var(--ui-yellow); }
+.duty__dot-run--running { background: var(--ui-blue); border-color: var(--ui-blue); }
+.duty__dot-run--unknown { background: var(--ui-text-quaternary); border-color: var(--ui-text-quaternary); }
+
+.duty__excerpt { font-size: var(--text-sm); }
+.duty__excerpt > summary { cursor: pointer; color: var(--ui-text-tertiary); }
+.duty__excerpt-text {
+  margin: 6px 0 0; padding: var(--space-2) var(--space-3);
+  background: var(--ui-bg-quaternary); border-radius: var(--radius-md, 10px);
+  color: var(--ui-text-secondary); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+.duties__note { margin: 0; max-width: 84ch; }
+.duties__empty { display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; }
+
+/* Пока идёт действие — кнопки не должны выглядеть «нажимаемыми дважды». */
+.duties[data-busy] .duty__actions .btn { opacity: .6; pointer-events: none; }

@@ -58,16 +58,16 @@ const PLAN = {
   status: 'draft',
   streams: [
     {
-      id: 's1', title: 'Упаковка', goal: 'Собрать варианты коробок', owner: 'biz-ops',
-      members: ['biz-ops', 'biz-design'], depends_on: [], due: '2026-11-05',
+      id: 's1', title: 'Упаковка', goal: 'Собрать варианты коробок', owner: 'team-ops',
+      members: ['team-ops', 'team-design'], depends_on: [], due: '2026-11-05',
       status: 'proposed', reason: 'первый шаг',
     },
     {
-      id: 's2', title: 'Логистика', goal: 'Посчитать доставку', owner: 'biz-ops',
+      id: 's2', title: 'Логистика', goal: 'Посчитать доставку', owner: 'team-ops',
       members: [], depends_on: ['s1'], due: null, status: 'running', reason: '',
     },
     {
-      id: 's3', title: 'Цены', goal: 'Прайс', owner: 'biz-fin', members: [], depends_on: [],
+      id: 's3', title: 'Цены', goal: 'Прайс', owner: 'team-fin', members: [], depends_on: [],
       due: null, status: 'done', reason: '',
     },
   ],
@@ -152,7 +152,7 @@ test('planOf: `{plan}` и сам план, пустой ответ — null', ()
 
 test('имена без системных id: руководитель комнаты и профиль', () => {
   assert.equal(whoName('manager'), 'руководитель комнаты');
-  assert.equal(whoName('biz-ops'), 'ops');
+  assert.equal(whoName('team-ops'), 'ops');
   assert.equal(whoName('mikhail'), 'Михаил');
   assert.equal(whoName(''), '');
 });

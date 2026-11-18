@@ -31,10 +31,10 @@ def make_detail(report_path=None, answer="## Вывод\n\nМаржа **48,8 %**
     return {
         "id": "t_a1b2c3d4", "room": "cafe", "title": "Себестоимость моти", "status": "done",
         "created_at": 1761700000, "duration_s": 5400, "text": "Посчитай себестоимость моти",
-        "synthesis": {"state": "ready", "text_md": answer, "author": "biz-director",
+        "synthesis": {"state": "ready", "text_md": answer, "author": "team-director",
                       "at": 1761701000, "version": 1, "legacy": False},
         "next_steps": [
-            {"id": "ns_1", "text": "Согласовать цену 220 ₽", "owner": "biz-cfo",
+            {"id": "ns_1", "text": "Согласовать цену 220 ₽", "owner": "team-cfo",
              "due": "2026-11-05", "state": "open"},
             {"id": "ns_2", "text": "Запросить КП на муку", "owner": None, "due": None,
              "state": "open"},
@@ -59,12 +59,12 @@ def make_detail(report_path=None, answer="## Вывод\n\nМаржа **48,8 %**
                        "exists": False}],
         "tree": [
             {"id": "t_a1b2c3d4", "parent_ids": [], "title": "Себестоимость моти",
-             "assignee": "biz-director", "role": "root", "status": "done", "duration_s": 5400},
+             "assignee": "team-director", "role": "root", "status": "done", "duration_s": 5400},
             {"id": "t_child0001", "parent_ids": ["t_a1b2c3d4"], "title": "Юнит-экономика",
-             "assignee": "biz-cfo", "role": "worker", "status": "done",
+             "assignee": "team-cfo", "role": "worker", "status": "done",
              "summary_md": "Маржа 48,8 %.\nПодробности в отчёте."},
             {"id": "t_child0002", "parent_ids": ["t_child0001"], "title": "Проверка цифр",
-             "assignee": "biz-critic", "role": "critic", "status": "done"},
+             "assignee": "team-critic", "role": "critic", "status": "done"},
         ],
         "progress": {"done": 2, "total": 2, "percent": 100},
         "report": ({"available": True, "kind": "spec", "path": str(report_path),
@@ -88,11 +88,11 @@ class MarkdownTest(unittest.TestCase):
     def test_answer_present(self):
         self.assertIn("## Ответ", self.md)
         self.assertIn("Маржа **48,8 %** при цене 220 ₽.", self.md)
-        self.assertIn("автор: biz-director", self.md)
+        self.assertIn("автор: team-director", self.md)
 
     def test_steps_table(self):
         self.assertIn("| Шаг | Кто | Срок | Статус |", self.md)
-        self.assertIn("| Согласовать цену 220 ₽ | biz-cfo | 2026-11-05 | open |", self.md)
+        self.assertIn("| Согласовать цену 220 ₽ | team-cfo | 2026-11-05 | open |", self.md)
         self.assertIn("| Запросить КП на муку | — | — | open |", self.md)
 
     def test_questions(self):
@@ -114,13 +114,13 @@ class MarkdownTest(unittest.TestCase):
         self.assertIn("⚠ **Бренд** — ждёт (ждём Роспатент)", self.md)
 
     def test_artifacts_and_tree(self):
-        self.assertIn("## Артефакты", self.md)
+        self.assertIn("## Файлы", self.md)   # W26-D3: раздел экспорта — «Файлы», не «Артефакты»
         self.assertIn("`C:/TeamRoom/Vault/Projects/Лето/смета.xlsx`", self.md)
         self.assertIn("(не найден)", self.md)
         self.assertIn("## Дерево работ", self.md)
-        self.assertIn("- **Себестоимость моти** (biz-director, корень, done", self.md)
-        self.assertIn("  - **Юнит-экономика** (biz-cfo, исполнитель, done", self.md)
-        self.assertIn("    - **Проверка цифр** (biz-critic, критик, done)", self.md)
+        self.assertIn("- **Себестоимость моти** (team-director, корень, done", self.md)
+        self.assertIn("  - **Юнит-экономика** (team-cfo, исполнитель, done", self.md)
+        self.assertIn("    - **Проверка цифр** (team-critic, критик, done)", self.md)
         self.assertIn("Маржа 48,8 %.", self.md)
 
     def test_warnings_and_footer(self):

@@ -42,10 +42,10 @@ from server.http_util import ApiError         # noqa: E402
 from tests.helpers import Sandbox, SimAgents  # noqa: E402
 
 ROOM = "cafe"
-LEAD = "biz-director"
+LEAD = "team-director"
 
-QUESTION = "Добавляем ли биз-финансиста (biz-cfo) и геолога в команду?"
-STEP_TEXT = "Решить по составу команды: добавить biz-cfo и/или геолога"
+QUESTION = "Добавляем ли биз-финансиста (team-cfo) и геолога в команду?"
+STEP_TEXT = "Решить по составу команды: добавить team-cfo и/или геолога"
 STEP_OTHER = "Проверить состав и аллергены на этикетке по СанПиН до первой партии"
 
 
@@ -118,7 +118,7 @@ class _Base(unittest.TestCase):
         metadata = {
             "open_questions": [{"text": QUESTION, "for": "mikhail"}],
             "next_steps": [{"text": STEP_TEXT, "owner": "default", "due": "2026-11-07"},
-                           {"text": STEP_OTHER, "owner": "biz-lawyer"}],
+                           {"text": STEP_OTHER, "owner": "team-lawyer"}],
         }
         self.sa.finish(root, "Команда собрана, нужен ответ по составу.", metadata)
         registry.add_request(self.cfg, ROOM, _record(root))
@@ -277,10 +277,10 @@ class StepMoveTests(_Base):
         rid = self.rid()
         step = self.step(rid)
         status, payload, _ = self.actions(rid, action="step_move", step_id=step["id"],
-                                          owner="biz-lawyer")
+                                          owner="team-lawyer")
         self.assertEqual(status, 200, payload)
         fresh = self.step(rid)
-        self.assertEqual(fresh["owner"], "biz-lawyer")
+        self.assertEqual(fresh["owner"], "team-lawyer")
         self.assertTrue(fresh["owner_changed_by_user"])
 
     def test_move_reorders_steps(self):

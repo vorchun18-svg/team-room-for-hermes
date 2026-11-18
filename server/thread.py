@@ -28,6 +28,7 @@ try:  # пакетный и «плоский» импорт (python server/app.p
     from .app_common import MAX_TEXT
     from .config import path_allowed
     from .engine_cli import EngineWriteError, _run, _run_json, opt
+    from .engine_db import like_prefix
     from .engine_write import CREATED_BY, _write_body
     from .engine_write_guard import assert_task_id, no_nul, tree_ids
 except ImportError:  # pragma: no cover
@@ -35,6 +36,7 @@ except ImportError:  # pragma: no cover
     from app_common import MAX_TEXT  # type: ignore
     from config import path_allowed  # type: ignore
     from engine_cli import EngineWriteError, _run, _run_json, opt  # type: ignore
+    from engine_db import like_prefix  # type: ignore
     from engine_write import CREATED_BY, _write_body  # type: ignore
     from engine_write_guard import assert_task_id, no_nul, tree_ids  # type: ignore
 
@@ -189,7 +191,7 @@ def role_label(profile: str, room: dict) -> str:
 
 
 def author_label(cfg, room: dict, profile: str, roster: dict | None = None) -> str:
-    """Подпись автора: «Михаил» или «Антон · исполнитель» (не `biz-lawyer`)."""
+    """Подпись автора: «Михаил» или «Антон · исполнитель» (не `team-lawyer`)."""
     name = str(profile or "").strip()
     if not name or name == "mikhail":
         return "Михаил"
@@ -204,10 +206,14 @@ def author_label(cfg, room: dict, profile: str, roster: dict | None = None) -> s
 # ---------------------------------------------------------------- карточки «Уточнение»
 
 def _note_cards(con, root_id: str, tenant: str) -> list[dict]:
-    """Карточки «Уточнение от Михаила» этого запроса (не дочерние корня, tenant комнаты)."""
-    key_like = NOTE_KEY_PREFIX + root_id + "%"
+    """Карточки «Уточнение от Михаила» этого запроса (не дочерние корня, tenant комнаты).
+
+    Префикс ключа экранируется (`like_prefix`): `_` в id запроса — не «любой символ», иначе
+    шаблон цеплял бы карточки чужих запросов с похожим id (B-49b).
+    """
+    key_like = like_prefix(NOTE_KEY_PREFIX + root_id)
     rows = _rows(con, "SELECT id,title,body,status,assignee,created_at,idempotency_key "
-                      "FROM tasks WHERE COALESCE(idempotency_key,'') LIKE ?", (key_like,))
+                      "FROM tasks WHERE COALESCE(idempotency_key,'') LIKE ? ESCAPE '\\'", (key_like,))
     if not rows and tenant:
         rows = _rows(con, "SELECT id,title,body,status,assignee,created_at,idempotency_key "
                           "FROM tasks WHERE title = ? AND COALESCE(tenant,'') = ?",
@@ -238,6 +244,23 @@ def _open_note(cfg, board: str, root_id: str, tenant: str) -> dict:
 
 # ---------------------------------------------------------------- чтение ленты
 
+def _decision_status_action(text) -> str:
+    """«Снять — неактуально» / «Вернуть» из метки решения ('' — это не оно).
+
+    W21-S2 (B-47): такие строки меняют только список решений и событием свода НЕ
+    считаются — иначе автообновление будило руководителя из-за уборки списка.
+    """
+    value = str(text or "")
+    if not answers.decision_kind_of(value):
+        return ""
+    tail = value.split("]", 1)[1].strip().lower() if "]" in value else ""
+    if tail.startswith("снять"):
+        return "dismiss"
+    if tail.startswith("вернуть"):
+        return "restore"
+    return ""
+
+
 def _comment_item(cfg, room: dict, row, roster: dict) -> dict:
     author = str(row["author"] or "mikhail")
     mikhail = author in ("mikhail", "Михаил")
@@ -248,6 +271,11 @@ def _comment_item(cfg, room: dict, row, roster: dict) -> dict:
             "author_label": "Михаил" if mikhail else author_label(cfg, room, author, roster),
             "text": body, "task_id": str(row["task_id"] or "") or None,
             "kind": "message" if mikhail else "comment"}
+    if mikhail:
+        status_action = _decision_status_action(body)
+        if status_action:
+            item["svod_event"] = False          # B-47: не событие живого свода
+            item["decision_action"] = status_action
     # W14-D §1: ответ на вопрос — ОТДЕЛЬНЫЙ тип записи со ссылкой на вопрос,
     # а не обычное сообщение в общем чате.
     kind = answers.answer_kind_of(body) if mikhail else ""
@@ -437,7 +465,7 @@ def build_note_body(cfg, room: dict, root: str, row: dict, text: str, attach=Non
     title = str(row.get("title") or "")
     status = _STATUS_RU.get(str(row.get("status") or ""), str(row.get("status") or ""))
     lines = [
-        "СООБЩЕНИЕ МАКСИМА (дословно, передано приложением «Комната команды»):",
+        "СООБЩЕНИЕ МИХАИЛА (дословно, передано приложением «Комната команды»):",
         "<<<УТОЧНЕНИЕ>>>", text, "<<<КОНЕЦ УТОЧНЕНИЯ>>>", "",
         "Запрос: %s «%s» (сейчас %s)." % (root, _short(title, 120), status or "неизвестно"),
     ]
@@ -642,11 +670,11 @@ def build_answer_body(cfg, room: dict, root: str, row: dict, question: dict, tex
     qtext = _short((question or {}).get("text") or "", 200)
     title = str(row.get("title") or "")
     status = _STATUS_RU.get(str(row.get("status") or ""), str(row.get("status") or ""))
-    marker, caption = (("<<<ПРОСЬБА ПОЯСНИТЬ>>>", "МАКСИМ ПРОСИТ ПОЯСНЕНИЕ (это НЕ ответ)")
+    marker, caption = (("<<<ПРОСЬБА ПОЯСНИТЬ>>>", "МИХАИЛ ПРОСИТ ПОЯСНЕНИЕ (это НЕ ответ)")
                        if need_explanation else
-                       ("<<<ОТВЕТ>>>", "ОТВЕТ МАКСИМА НА ВОПРОС (отвечено именно на этот вопрос)"))
+                       ("<<<ОТВЕТ>>>", "ОТВЕТ МИХАИЛА НА ВОПРОС (отвечено именно на этот вопрос)"))
     lines = [
-        "СООБЩЕНИЕ МАКСИМА (дословно, передано приложением «Комната команды»):",
+        "СООБЩЕНИЕ МИХАИЛА (дословно, передано приложением «Комната команды»):",
         caption + ":",
         "Вопрос: %s «%s»" % (qid, qtext),
         marker, text, "<<<КОНЕЦ>>>", "",
@@ -733,6 +761,9 @@ def post_answer_note(cfg, room, rid, question: dict, text: str,
         raise EngineWriteError("not_found", "Запрос не найден на доске комнаты.",
                               detail={"reason": "no_card", "rid": root}, http_status=404)
     lead = _lead(room, row)
+    # W21-Q1 (B-44): «Пояснить» без текста — стандартная просьба (одна на всю систему).
+    if need_explanation and not str(text or "").strip():
+        text = answers.DEFAULT_EXPLAIN_TEXT
     value = _validate_text(text)
     qid = str((question or {}).get("id") or "").strip() or "q_0"
     mark = (answers.explanation_comment(qid, (question or {}).get("text") or "", value)
@@ -764,7 +795,7 @@ def build_decision_body(cfg, room: dict, root: str, row: dict, decision: dict, o
     title = str(row.get("title") or "")
     status = _STATUS_RU.get(str(row.get("status") or ""), str(row.get("status") or ""))
     lines = [
-        "СООБЩЕНИЕ МАКСИМА (передано приложением «Комната команды»):",
+        "СООБЩЕНИЕ МИХАИЛА (передано приложением «Комната команды»):",
         "ЕГО РЕШЕНИЕ ПО ВАШЕМУ ПРЕДЛОЖЕНИЮ:",
         "Решение: %s «%s»" % (did, _short(decision.get("text") or "", 200)),
     ]
@@ -858,7 +889,7 @@ def build_answers_digest_body(cfg, room: dict, root: str, row: dict, items: list
     status = _STATUS_RU.get(str(row.get("status") or ""), str(row.get("status") or ""))
     rows = [item for item in items or [] if isinstance(item, dict)]
     lines = [
-        "СООБЩЕНИЕ МАКСИМА (передано приложением «Комната команды» по его кнопке):",
+        "СООБЩЕНИЕ МИХАИЛА (передано приложением «Комната команды» по его кнопке):",
         "НАКОПЛЕННЫЕ ОТВЕТЫ БЕЗ ВАШЕЙ РЕАКЦИИ — %d:" % len(rows),
         "<<<ОТВЕТЫ>>>",
     ]
@@ -905,7 +936,7 @@ def post_answers_digest(cfg, room, rid, items) -> dict:
                               detail={"reason": "room_not_found"}, http_status=404)
     rows = [item for item in items or [] if isinstance(item, dict) and item.get("question_id")]
     if not rows:
-        raise EngineWriteError("bad_request", "Нечего отправлять: ответов без реакции нет.",
+        raise EngineWriteError("bad_request", "Нечего отправлять: руководитель уже учёл все ответы.",
                               detail={"reason": "nothing_to_resend"}, http_status=409)
     board = _board_of(room)
     row = card_row(cfg, board, root)

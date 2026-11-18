@@ -59,7 +59,7 @@ except ImportError:  # pragma: no cover
 __all__ = [
     "EngineError", "health", "dispatcher_status", "list_roots", "list_candidates",
     "request_summary", "request_detail", "request_states", "team_state", "needs_human", "task_events",
-    "is_decomposed", "root_assignee_status",
+    "is_decomposed", "root_assignee_status", "today_states",
 ]
 
 
@@ -278,6 +278,11 @@ def _load(cfg, board, root_id, room=None, extra_cards=None, enabled=None, answer
         # B7-2: близнецы (тот же вопрос с новым id) схлопываются, id — в `aliases`
         questions = _answers.dedupe_questions(questions)
         questions = _apply_answers(questions, answers)
+        # W20-D1 §1.2 (B-37): история версий свода — отзыв решения руководителем
+        # (`metadata.decisions_retracted`) и «решения нет в новой версии» дают
+        # «устарело». Только чтение: данные карточек не переписываются.
+        versions = _answers.decision_versions(nodes, canons)
+        superseded = _answers.superseded_decisions(versions) if versions else {}
         critic = _critic_block(nodes, extra, room_dict, ctx, enabled)
         status, reason = _status(ctx["tasks"][root_id], nodes, questions, critic)
         # `needs_you` — флаг «нужен человек»: статус needs_you ИЛИ заблокированная карточка,
@@ -290,7 +295,7 @@ def _load(cfg, board, root_id, room=None, extra_cards=None, enabled=None, answer
     return {"ctx": ctx, "nodes": nodes, "synth": synth, "canon": canon, "warnings": warns,
             "questions": questions, "critic": critic, "status": status, "reason": reason,
             "needs_you": needs_you, "timeline": timeline, "room": room_dict,
-            "hidden_questions": hidden_questions}
+            "hidden_questions": hidden_questions, "versions": versions, "superseded": superseded}
 
 
 def _summary_fields(ctx, nodes, status, reason, extra, critic=None, room=None, needs_you=None,
@@ -363,6 +368,33 @@ def _slim_runs(nodes: list) -> None:
                 run.pop("summary", None)
 
 
+def _superseded_view(decisions, versions) -> list:
+    """Решения + «устаревшие» (W20-D1 §1.2, B-37) + не повторённые действующей версией (B-50).
+
+    Отметки ставятся наложением при чтении: решение, отозванное руководителем
+    (``metadata.decisions_retracted``) или исчезнувшее из новой версии свода, получает
+    ``status="superseded"`` и ``superseded_by``; то, чего в действующем списке уже нет,
+    добавляется отдельным элементом, чтобы владелец видел, что именно устарело.
+    Данные карточек не переписываются.
+
+    W21-S5 (B-50): список решений карточки без ``metadata.svod.decisions_full`` —
+    дополнение, поэтому решения прежних версий, которые она не повторила, остаются
+    действующими (``carried: true``, ``from_version``) — иначе одно новое решение
+    «съедало» весь прежний список.
+    """
+    items = [item for item in decisions or [] if isinstance(item, dict)]
+    if not versions:
+        return items
+    try:
+        marked = _answers.apply_superseded(items, versions)
+        live = [str(item.get("id") or "") for item in items]
+        marked.extend(_answers.carried_decisions(versions, live))
+        marked.extend(_answers.retired_decisions(versions, live))
+        return marked
+    except Exception:  # noqa: BLE001 - список решений важнее отметки «устарело»
+        return items
+
+
 def _split_heartbeats(timeline: list, include: bool) -> tuple:
     """(события для ответа, сводка heartbeat).
 
@@ -397,9 +429,12 @@ def request_detail(cfg, board, root_id, room=None, extra_cards=None, critic=None
                 "dispatcher": _dispatcher_short(cfg),
                 "synthesis": data["synth"], "next_steps": _steps_with_source(canon),
                 "open_questions": data["questions"],
-                "decisions": _decisions(canon, root_id, data["synth"].get("at")),
+                "decisions": _superseded_view(_decisions(canon, root_id, data["synth"].get("at")),
+                                              data.get("versions") or []),
                 "stage": _stage(canon, _phases.phases_of(cfg, data["room"])),
-                "future_questions": _future(canon), "artifacts": _artifacts(cfg, canon, warnings, data["room"]),
+                "future_questions": _future(canon), "artifacts": _artifacts(cfg, canon, warnings, data["room"],
+                                                                            request_id=root_id,
+                                                                            svod_at=data["synth"].get("at")),
                 "report": _report(cfg, canon), "tree": nodes, "timeline": timeline,
                 "heartbeats": heartbeats,
                 "warnings": _dedupe_warnings(warnings), "critic": data["critic"]})
@@ -437,6 +472,60 @@ def _dedupe_warnings(warnings: list) -> list:
 
 
 # --------------------------------------------------------- команда и вопросы ---
+def _root_ids(con, ids: list) -> dict:
+    """``{task_id: id корня}`` — к какому запросу относится карточка (W23-ST).
+
+    Нужно интерфейсу: строка «чем занят» в карточке участника ведёт на страницу
+    ЗАПРОСА (а не карточки), и кнопки контроля моделей работают от корня. Идём по
+    ``task_links`` вверх; у самого корня родителя нет — он и есть запрос. Нет таблицы
+    связей или цепочка глубже :data:`MAX_DEPTH` — корень неизвестен (``None``), это не
+    ошибка чтения: карточка просто не покажет ссылку.
+    """
+    wanted = [str(i) for i in _as_list(ids) if i]
+    if not wanted:
+        return {}
+    try:
+        if not _cols(con, "task_links"):
+            return {}
+    except sqlite3.Error:
+        return {}
+    out: dict = {}
+    level: dict = {}                        # узел цепочки → карточки, от которых пришли
+    for card in wanted:
+        level.setdefault(card, []).append(card)
+    for _step in range(MAX_DEPTH):
+        if not level:
+            break
+        keys = list(level)
+        marks = ",".join("?" * len(keys))
+        try:
+            rows = list(con.execute("SELECT child_id, parent_id FROM task_links "
+                                    "WHERE child_id IN (%s)" % marks, keys))
+        except sqlite3.Error:
+            return out
+        parents: dict = {}
+        for row in rows:
+            child, parent = str(row[0]), str(row[1] or "")
+            if parent and child not in parents:
+                parents[child] = parent
+        nxt: dict = {}
+        for node, cards in level.items():
+            parent = parents.get(node)
+            if parent:
+                for card in cards:
+                    nxt.setdefault(parent, []).append(card)
+            else:
+                for card in cards:
+                    out[card] = node          # выше родителей нет — это корень
+        level = nxt
+    for cards in level.values():              # цепочка длиннее MAX_DEPTH — не угадываем
+        for card in cards:
+            out.setdefault(card, None)
+    for card in wanted:
+        out.setdefault(card, None)
+    return out
+
+
 def team_state(cfg, board, members: list, tenant=None) -> list:
     """Кто чем занят: TeamMember[] (docs/API.md §3.5). ``members`` — состав комнаты.
 
@@ -470,6 +559,8 @@ def team_state(cfg, board, members: list, tenant=None) -> list:
                 "ORDER BY COALESCE(completed_at, 0) DESC, created_at DESC) rn FROM tasks "
                 f"WHERE assignee IN ({ph}) AND status IN ('done','archived'){extra}) WHERE rn = 1", params)]
             last_runs = _run_rows(con, [r["id"] for r in last])
+            shown_ids = [r["id"] for r in cur + blocked] or ["-"]
+            roots = _root_ids(con, shown_ids)        # W23-ST: карточка → id запроса
     except EngineError:
         raise
     except sqlite3.Error as exc:
@@ -495,6 +586,9 @@ def team_state(cfg, board, members: list, tenant=None) -> list:
             "pinned": bool(member.get("pinned")), "state": "working" if now else ("waiting" if blk else "idle"),
             "current": {"task_id": shown["id"], "title": shown["title"] or "", "status": shown["status"],
                         "started_at": shown.get("started_at"),
+                        # W23-ST: id запроса (корня), к которому относится карточка —
+                        # по нему интерфейс ведёт на страницу запроса
+                        "request_id": roots.get(shown["id"]),
                         "since": shown.get("started_at") or shown.get("created_at")} if shown else None,
             "last": {"task_id": prev["id"], "title": prev["title"] or "", "status": prev["status"],
                      "finished_at": prev.get("completed_at"), "at": prev.get("completed_at"),
@@ -550,4 +644,59 @@ def needs_human(cfg, board, root_ids) -> list:
                             "title": data["ctx"]["tasks"][root_id].get("title") or "",
                             "assignee": q.get("for"), "since": data["synth"].get("at"),
                             "question_id": q.get("id"), "text": q.get("text") or "", "status": data["status"]})
+    return out
+
+
+# ------------------------------------------------- экран «Сегодня» (W24 §3.1) ---
+def today_states(cfg, board, root_ids) -> dict:
+    """Лёгкое состояние корней для экрана «Сегодня» (WAVE24 §3.1, пакет N2).
+
+    ``{root_id: {status, started_at, finished_at, error, members_working, since}}``:
+    один запрос по корням и один — по их живым карточкам первого уровня. Деталь
+    запроса (дерево, свод, артефакты) не собирается, поэтому чтение дешёвое даже
+    на полусотне запросов комнаты — это требование контракта (ответ ≤ 200 мс).
+
+    ``members_working`` — сколько разных исполнителей занято прямо сейчас
+    (карточки ``running``/``review``, привязанные к запросу), ``since`` — самое
+    раннее время начала этой работы. Нет связей/колонок в старой схеме — просто
+    нули: экран покажет запрос идущим без подробностей, а не упадёт.
+    """
+    ids = [str(i) for i in _as_list(root_ids) if i]
+    if not ids:
+        return {}
+    out: dict = {}
+    try:
+        with _conn(cfg, board) as con:
+            _require_tables(con, "tasks")
+            for root_id, row in _task_rows(con, ids).items():
+                out[root_id] = {"status": row.get("status") or "",
+                                "started_at": row.get("started_at"),
+                                "finished_at": row.get("completed_at"),
+                                "error": row.get("last_failure_error") or "",
+                                "members_working": 0,
+                                "since": row.get("started_at")}
+            if _cols(con, "task_links"):
+                live: dict = {}
+                for chunk in _chunks(ids):
+                    ph = ", ".join("?" * len(chunk))
+                    rows = con.execute(
+                        "SELECT l.child_id AS root_id, t.assignee AS assignee, t.started_at AS started_at "
+                        "FROM task_links l JOIN tasks t ON t.id = l.parent_id "
+                        f"WHERE l.child_id IN ({ph}) AND t.status IN ('running','review')", chunk)
+                    for row in rows:
+                        live.setdefault(str(row["root_id"]), []).append(
+                            {"assignee": row["assignee"], "at": row["started_at"]})
+                for root_id, cards in live.items():
+                    row = out.setdefault(root_id, {"status": "", "started_at": None,
+                                                   "finished_at": None, "error": "",
+                                                   "members_working": 0, "since": None})
+                    people = {str(card["assignee"]) for card in cards if card.get("assignee")}
+                    starts = [int(card["at"]) for card in cards if isinstance(card.get("at"), int)]
+                    row["members_working"] = len(people) or len(cards)
+                    row["since"] = min(starts) if starts else row.get("started_at")
+    except EngineError:
+        raise
+    except sqlite3.Error as exc:
+        raise EngineError("db_error", f"Не удалось прочитать состояние запросов: {exc}",
+                          {"board": board}) from exc
     return out

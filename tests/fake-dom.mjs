@@ -153,3 +153,32 @@ export function installFakeDom() {
 export function uninstallFakeDom() {
   delete globalThis.document;
 }
+
+/**
+ * Развернуть свёрнутые блоки страницы в готовом узле (W25-L2).
+ *
+ * Зачем: по канону R5 §7.2 блоки «Дерево работ» и «Артефакты» свёрнуты по
+ * умолчанию, а содержимое собирается ЛЕНИВО — при первом раскрытии. Тесты
+ * проверяют СОДЕРЖИМОЕ, поэтому разворачивают блок как человек: нажатием по
+ * заголовку. Умолчание проверяется отдельно (`request-blocks.test.mjs`).
+ *
+ * @param {FakeElement|null} node узел блока (или null — вернётся как есть)
+ * @returns {FakeElement|null} тот же узел
+ */
+export function expandSections(node) {
+  if (!node || typeof node !== 'object') return node;
+  const buttons = [];
+  const walk = (n) => {
+    for (const child of n.childNodes || []) {
+      if (!child || child.nodeType !== 1) continue;
+      const cls = String(child.getAttribute && child.getAttribute('class') || '');
+      if (String(child.tagName || '').toLowerCase() === 'button' && /\bsec__toggle\b/.test(cls)) buttons.push(child);
+      walk(child);
+    }
+  };
+  walk(node);
+  for (const btn of buttons) {
+    if (typeof btn.dispatch === 'function') btn.dispatch('click');
+  }
+  return node;
+}

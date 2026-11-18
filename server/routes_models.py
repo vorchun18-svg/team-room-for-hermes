@@ -32,6 +32,8 @@ ROUTES = [
     # W13-A: «что реально ушло» и проверка по факту запусков
     ("GET", r"/api/rooms/" + ROOM_RE + r"/models/sent", "h_models_sent"),
     ("POST", r"/api/rooms/" + ROOM_RE + r"/models/check", "h_models_check"),
+    # W23-MG1 §2.4: «куда собирается уйти запрос» — ожидаемая модель, карточка, факт запуска
+    ("GET", r"/api/rooms/" + ROOM_RE + r"/model-check", "h_room_model_check"),
 ]
 
 #: что принимаем в теле PUT (всё остальное — ошибка, а не тихо игнорируется)
@@ -76,8 +78,63 @@ class ModelRoutes:
             raise self._models_error(exc) from exc
 
     # --- каталог -----------------------------------------------------------
+    def _models_profiles(self, query=None) -> list:
+        """Профили Hermes на диске (и участники комнаты из ``?room=``) без дублей.
+
+        Только чтение файлов: `list_profiles` не запускает CLI и не трогает профили.
+        Участники комнаты добавляются даже если своего конфига у профиля нет — тогда
+        `source: "none"` (так интерфейс честно скажет «не задана»).
+        """
+        names: list = []
+
+        def add(value):
+            name = str(value or "").strip()
+            if name and name not in names:
+                names.append(name)
+
+        try:
+            profiles = self.mod("engine_write").list_profiles(self.cfg) or []
+        except Exception:                      # noqa: BLE001 - каталог важнее ростера
+            profiles = []
+        for item in profiles:
+            if isinstance(item, dict):
+                add(item.get("name"))
+        raw = (query or {}).get("room") or [""]
+        room_id = str((raw[0] if isinstance(raw, list) else raw) or "").strip()
+        if room_id:
+            try:
+                with self.engine():
+                    room = self._room(room_id)
+            except Exception:                  # noqa: BLE001 - нет комнаты: только профили
+                room = None
+            if room:
+                try:
+                    for profile, _role in self._models_mod().participants(room):
+                        add(profile)
+                except Exception:              # noqa: BLE001
+                    pass
+        return names
+
+    def _models_defaults(self, profiles) -> dict:
+        """`agent_defaults[profile] = {provider, model, reasoning, source, note}` (W20 §1.5)."""
+        mod = self._models_mod()
+        out: dict = {}
+        for name in profiles or []:
+            try:
+                out[name] = mod.default_info(self.cfg, name)
+            except Exception:                  # noqa: BLE001 - один профиль не валит ответ
+                out[name] = {"provider": "", "model": "", "reasoning": "",
+                             "source": "none", "note": "Настройки профиля не прочитаны."}
+        return out
+
     def h_models_get(self, query, body):
-        """``GET /api/models`` — провайдеры с рабочим ключом, их модели и уровни мышления."""
+        """``GET /api/models`` — провайдеры с рабочим ключом, их модели и уровни мышления.
+
+        W20-MODELS §1.5: вместе с каталогом отдаются ``agent_defaults`` — что стоит
+        в настройках каждого профиля Hermes (провайдер, модель, мышление) и откуда
+        взято значение: ``source`` = ``profile`` (свой конфиг), ``global`` (общая
+        настройка Hermes, профиль модель не задаёт) или ``none``. Ничего не додумываем.
+        """
         raw = str((query.get("refresh") or [""])[0] or "").strip().lower()
         force = raw in ("1", "true", "yes", "on")
         mod = self._models_mod()
@@ -89,6 +146,7 @@ class ModelRoutes:
         data.setdefault("providers", [])
         data.setdefault("efforts", [])
         data.setdefault("warnings", [])
+        data["agent_defaults"] = self._models_defaults(self._models_profiles(query))
         return 200, data, {"Cache-Control": "no-store"}
 
     # --- выбор участника ---------------------------------------------------
@@ -222,6 +280,27 @@ class ModelRoutes:
                      "fixed": res.get("fixed") or [],
                      "failed": res.get("failed") or [],
                      "unknown": int(res.get("unknown") or 0)}, {}
+
+    def h_room_model_check(self, query, body, room_id):
+        """``GET /api/rooms/{id}/model-check`` — «куда собирается уйти запрос» (W23 §2.4).
+
+        Ожидаемая модель участника, что записано в карточке, на чём был последний запуск
+        из `sessions` (только чтение) и сводка сторожа за сутки. Кнопка «Проверить
+        сейчас» и пункт диагностики работают по этому ответу.
+        """
+        room = self._models_room(room_id)
+        module = self.mod("model_guard")
+        try:
+            payload = module.model_check(self.cfg, room)
+        except Exception as exc:              # noqa: BLE001 - проверка не должна отдавать 500
+            self.log.error("model-check %s" % room_id, exc)
+            payload = {"room": room_id, "at": int(_time.time()), "members": [],
+                       "guard": {"mode": module.mode_of(room), "open": 0, "fixed_24h": 0,
+                                 "stopped_24h": 0, "saved_usd_est": 0.0, "text": ""},
+                       "warnings": ["Проверка не удалась: %s" % str(exc)[:160]]}
+        payload.setdefault("room", room_id)
+        payload.setdefault("warnings", [])
+        return 200, payload, {"Cache-Control": "no-store"}
 
 
 def install_model_routes(app_cls, routes: list) -> None:

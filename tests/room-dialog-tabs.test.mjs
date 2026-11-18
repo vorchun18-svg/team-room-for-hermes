@@ -119,28 +119,28 @@ function fireKey(doc, key, target) {
 /* ────────────────────────────────────────────────────────── данные */
 
 const PROFILES = [
-  { profile: 'biz-director', title: 'Руководитель проекта', kind: 'director' },
-  { profile: 'biz-critic', title: 'Критик', kind: 'critic' },
-  { profile: 'biz-ops', title: 'Операции', kind: 'worker' },
-  { profile: 'biz-cfo', title: 'Экономика Лето', kind: 'worker' },
+  { profile: 'team-director', title: 'Руководитель проекта', kind: 'director' },
+  { profile: 'team-critic', title: 'Критик', kind: 'critic' },
+  { profile: 'team-ops', title: 'Операции', kind: 'worker' },
+  { profile: 'team-cfo', title: 'Экономика Лето', kind: 'worker' },
 ];
 
 function room(over) {
   return Object.assign({
     id: 'cafe', title: 'Лето', icon: 'project',
-    orchestrator: 'biz-director', critic: 'biz-critic',
+    orchestrator: 'team-director', critic: 'team-critic',
     members: [
-      { profile: 'biz-director', role: 'orchestrator' },
-      { profile: 'biz-critic', role: 'critic' },
-      { profile: 'biz-ops', role: 'worker' },
-      { profile: 'biz-cfo', role: 'worker' },
+      { profile: 'team-director', role: 'orchestrator' },
+      { profile: 'team-critic', role: 'critic' },
+      { profile: 'team-ops', role: 'worker' },
+      { profile: 'team-cfo', role: 'worker' },
     ],
     context_files: [], project_dir: 'C:\\Проекты\\Лето',
     critic_pass: true, max_rounds: 2, critic_mode: 'rounds', critic_round_cap: 12,
     project_mode: false, launch_mode: 'plan_first', max_parallel_streams: 2,
     phases: [], agent_notes: {}, agent_models: {},
     agent_models_meta: {
-      'biz-ops': { profile: 'biz-ops', role: 'worker', model_settings: { provider: 'p', model: 'dilizhans-pro', reasoning: 'high', source: 'room' } },
+      'team-ops': { profile: 'team-ops', role: 'worker', model_settings: { provider: 'p', model: 'dilizhans-pro', reasoning: 'high', source: 'room' } },
     },
   }, over || {});
 }
@@ -267,11 +267,12 @@ test('B-32: модели и «Особенности» — строка и сс�
   assert.equal(byClass(doc.body, 'agent-model__edit').length, 0, 'редактора модели здесь нет');
   assert.equal(walk(doc.body).filter((el) => String(el.className).includes('agent-model')).length, 0);
 
-  // Краткая строка про модель — человеческими словами.
+  // Краткая строка про модель — человеческими словами и с пометкой, что это выбор комнаты.
   const modelLine = walk(doc.body).find((el) => String(el.className).includes('roomdlg__person-model'));
   assert.ok(modelLine, 'строка модели есть');
-  assert.equal(modelLine.textContent.trim(), 'Дилижанс про · мышление: высокое мышление',
-    'подпись из каталога, без технических id');
+  assert.equal(modelLine.textContent.trim(),
+    'изменено для этой комнаты: Дилижанс про · мышление: высокое мышление',
+    'подпись из каталога, без технических id, с пометкой «изменено для этой комнаты»');
 
   // Ссылка в карточку команды — там полный интерфейс.
   const cfg = walk(doc.body).find((el) => el.tagName.toLowerCase() === 'a'

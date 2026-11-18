@@ -1,0 +1,444 @@
+/* worklog.css — блок «Ход работы» на странице запроса (W20-FB).
+   Только токены tokens.css и базовые классы components.css; свои имена — .wl-*.
+   Кегль не мельче 12 px (бейджи — 11), контраст ≥ 4.5:1 в обеих темах,
+   на ширине 640 px ничего не вылезает: длинные пути и тексты переносятся. */
+
+.wl {
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  overflow: visible;
+}
+
+/* ── Заголовок-переключатель ─────────────────────────────────────────────── */
+
+.wl__box { display: block; }
+
+.wl__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-md);
+  padding: var(--space-2) var(--space-1);
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.wl__summary::-webkit-details-marker { display: none; }
+.wl__summary:hover { background: var(--ui-row-hover-background); }
+.wl__summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.wl__chev {
+  flex: none;
+  color: var(--ui-text-quaternary);
+  transition: transform 120ms ease;
+}
+.wl__box[open] .wl__chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .wl__chev { transition: none; }
+}
+
+.wl__title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--ui-text-primary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wl__count {
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+  flex: none;
+}
+
+.wl__chip {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.wl__chip--live {
+  color: var(--ok-ink);
+  background: var(--ok-soft);
+  border-color: color-mix(in srgb, var(--ok) 26%, transparent);
+}
+.wl__chip--wait {
+  color: var(--warn-ink);
+  background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 26%, transparent);
+}
+.wl__chip--quiet {
+  color: var(--ui-text-secondary);
+  background: var(--ui-bg-tertiary);
+  border-color: var(--border-soft);
+}
+
+/* ── Тело ────────────────────────────────────────────────────────────────── */
+
+.wl__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  min-width: 0;
+}
+
+.wl__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.wl__live {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1 1 320px;
+}
+.wl__live .avatar { flex: none; }
+.wl__live .avatar + .avatar { margin-left: -4px; }
+.wl__livetext {
+  font-size: var(--text-sm);
+  color: var(--ui-text-secondary);
+  line-height: var(--leading-normal);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wl__live--idle .wl__livetext { color: var(--muted-foreground); }
+
+/* Личный переключатель «Подробно / Кратко / Выкл.» */
+.wl__modes {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-full);
+  background: var(--ui-bg-tertiary);
+  border: 1px solid var(--border-soft);
+  flex: none;
+}
+.wl__mode {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1;
+  padding: 6px 10px;
+  min-height: 26px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wl__mode:hover:not(:disabled) { background: var(--ui-control-hover-background); color: var(--ui-text-primary); }
+.wl__mode.is-on {
+  background: var(--card);
+  color: var(--ui-text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ui-base) 12%, transparent);
+}
+.wl__mode:disabled { opacity: 0.55; cursor: not-allowed; }
+.wl__mode:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Итог сторожа, когда блок свёрнут */
+.wl__digest {
+  display: flex;
+  margin: var(--space-1) 0 var(--space-1) var(--space-5);
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-secondary);
+  color: var(--ui-text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.wl__digest .codicon { flex: none; margin-top: 2px; color: var(--ui-text-quaternary); }
+.wl__digesttext { min-width: 0; overflow-wrap: anywhere; }
+.wl__digest[hidden] { display: none; }
+
+/* «Возможно завис» */
+.wl__stuck { display: flex; flex-direction: column; gap: var(--space-1); }
+.wl__stuckrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+  border: 1px solid color-mix(in srgb, var(--warn) 26%, transparent);
+  font-size: var(--text-xs);
+  color: var(--warn-ink);
+}
+.wl__stuckrow .codicon { flex: none; }
+.wl__stucktext { min-width: 0; overflow-wrap: anywhere; }
+.wl__kick { margin-left: auto; flex: none; }
+
+/* ── Лента ───────────────────────────────────────────────────────────────── */
+
+.wl__feedwrap {
+  position: relative;
+  min-width: 0;
+}
+
+.wl__earlier { margin-bottom: var(--space-1); }
+.wl__earlier[hidden] { display: none; }
+
+.wl__feed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 44vh;
+  min-height: 64px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  /* Полоса прокрутки не должна наезжать на длинные пути — держим место заранее. */
+  scrollbar-gutter: stable;
+  padding: var(--space-1) var(--space-3) var(--space-2) 0;
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.wl__feed:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.wl__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+  line-height: var(--leading-normal);
+  padding: var(--space-2) 0;
+  overflow-wrap: anywhere;
+}
+.wl__error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--warn-ink);
+}
+.wl__error .codicon { flex: none; }
+
+/* Кнопка «К новым» — висит снизу ленты, ничего не двигает сама */
+.wl__new {
+  position: sticky;
+  bottom: var(--space-2);
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: -44px auto 0;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--ui-stroke-primary);
+  background: var(--ui-bg-elevated);
+  color: var(--ui-text-primary);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ui-base) 18%, transparent);
+  cursor: pointer;
+  z-index: 2;
+}
+.wl__new[hidden] { display: none; }
+.wl__new:hover { background: var(--ui-control-hover-background); }
+.wl__new:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.wl__hint {
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
+/* ── Строка события ──────────────────────────────────────────────────────── */
+
+/* Новый участник — новый подход: тихая черта отделяет группы, не разрывая время. */
+.wl-item--start {
+  margin-top: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-soft);
+}
+.wl-item--start:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+
+.wl-item {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+  border-radius: var(--radius-sm);
+}
+.wl-item__ava { display: flex; justify-content: center; padding-top: 1px; }
+.wl-item__ava .avatar { flex: none; }
+
+.wl-item__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-2);
+  min-width: 0;
+  padding-bottom: var(--space-1);
+}
+.wl-item__head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.wl-item__who {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--ui-text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wl-item__role {
+  flex: none;
+  font-size: var(--text-2xs);
+  color: var(--muted-foreground);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-full);
+  padding: 0 6px;
+  line-height: 16px;
+}
+.wl-item__time {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--text-xs);
+  /* Читаемый текст не мельче 12 px и контраст ≥ 4.5:1: время — не украшение. */
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.wl-item__tail {
+  grid-column: 2;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.wl-item__line {
+  grid-column: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.wl-item__ico { flex: none; margin-top: 2px; color: var(--ui-text-tertiary); }
+.wl-item__ico.is-ok { color: var(--ok-ink); }
+.wl-item__ico.is-bad { color: var(--danger-ink); }
+
+.wl-item__text {
+  font-size: var(--text-sm);
+  color: var(--ui-text-primary);
+  line-height: var(--leading-normal);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wl-item__text--result { color: var(--ui-text-secondary); }
+.wl-item__text--thought {
+  color: var(--ui-text-secondary);
+  font-style: italic;
+}
+/* Длинное рассуждение: две строки и «ещё» (сервер тоже режет до ~300 знаков) */
+.wl-item__text--thought.is-clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.wl-item__more {
+  grid-column: 1;
+  justify-self: start;
+  margin-top: 2px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--link);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.wl-item__more:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-xs); }
+
+.wl-item__badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--ui-bg-tertiary);
+  border: 1px solid var(--border-soft);
+  color: var(--ui-text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+
+/* Передача работы: «Руководитель → Юрист: …» */
+.wl-item__text--handoff { display: block; }
+.wl-item__from { font-weight: 600; color: var(--ui-text-primary); }
+.wl-item__arrow { color: var(--ui-text-tertiary); }
+.wl-item__to { font-weight: 600; color: var(--ui-text-primary); }
+.wl-item__what { color: var(--ui-text-secondary); min-width: 0; overflow-wrap: anywhere; }
+
+/* Итог сторожа в ленте */
+.wl-item--digest {
+  grid-template-columns: 24px minmax(0, 1fr);
+  margin: var(--space-1) 0;
+  padding: var(--space-2);
+  background: var(--ui-bg-secondary);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--ui-stroke-primary);
+  border-radius: var(--radius-md);
+}
+.wl-item__digestico { color: var(--ui-text-quaternary); padding-top: 1px; }
+.wl-item--digest .wl-item__body { grid-template-columns: minmax(0, 1fr) auto; }
+.wl-item__digesthead {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.wl-item__digestlabel {
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  /* На подложке итога 62 % текста даёт 3.7:1 — берём вторичный цвет (≥ 4.5:1). */
+  color: var(--ui-text-secondary);
+  flex: none;
+}
+.wl-item--digest .wl-item__text {
+  grid-column: 1 / -1;
+  font-size: var(--text-sm);
+  color: var(--ui-text-secondary);
+}
+
+/* ── Узкая ширина (640 px): аватары в одну строку, лента без отступов ────── */
+
+@media (max-width: 760px) {
+  .wl { padding: var(--space-2) var(--space-3) var(--space-3); }
+  .wl__bar { flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+  .wl__live { flex: 1 1 auto; }
+  .wl__modes { align-self: flex-start; }
+  .wl-item { grid-template-columns: 26px minmax(0, 1fr); }
+  .wl-item__ava .avatar { width: 22px; height: 22px; font-size: var(--text-2xs); }
+  .wl__feed { max-height: 52vh; }
+}

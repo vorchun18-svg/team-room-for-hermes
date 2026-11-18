@@ -1,0 +1,387 @@
+/* view-delo.css — экран «Дела» и карточка «Дело» (W26-D6).
+ *
+ * Макет: Mockup-Delo-2026-11-18.html. Стили — только токены приложения
+ * (var(--…)), не значения из макета: обе темы и пайплайн Hermes Desktop.
+ * Раскладка — по ширине ВИДА (`@container`), с поправкой на режим `data-layout`
+ * с `#app`: на m/s/xs одна колонка, две — от 1100 px.
+ */
+
+.delo {
+  container-type: inline-size;
+  container-name: delo;
+  padding-bottom: var(--space-6);
+  min-width: 0;
+}
+
+.delo__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+  min-width: 0;
+}
+.delo__headline { min-width: 0; }
+.delo__title {
+  margin: 0;
+  font-size: var(--text-xl);
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ui-text-primary);
+  overflow-wrap: anywhere;
+}
+.delo__lead { margin: var(--space-1) 0 0; }
+.delo__filters { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+.delo-filter { cursor: pointer; height: auto; line-height: 1.6; }
+.delo-filter[aria-pressed="true"] { border-color: transparent; }
+
+/* ── Список ─────────────────────────────────────────────────────────────── */
+
+.delo-list { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+
+.delo-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+.delo-row:hover { border-color: var(--border); background: var(--ui-row-hover-background); }
+.delo-row:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.delo-row--needs { border-left-color: var(--warn); }
+
+.delo-row__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.delo-row__title {
+  font-weight: 600;
+  font-size: var(--text-base);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.delo-row__needs { gap: 3px; }
+.delo-row__due, .delo-row__status { white-space: nowrap; }
+.delo-row__pipe { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+.delo-row__progress { margin-left: var(--space-1); }
+.delo-row__next {
+  font-size: var(--text-sm);
+  color: var(--ui-text-secondary);
+  overflow-wrap: anywhere;
+}
+.delo-row__next--warn { color: var(--warn-ink); }
+.delo-row__meta { display: flex; gap: var(--space-1); flex-wrap: wrap; align-items: center; }
+.delo-row__dot { color: var(--ui-text-quaternary); }
+
+/* ── Цепочка этапов (общая для списка и карточки) ───────────────────────── */
+
+.delo-pipe {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+  min-width: 0;
+}
+.delo-pipe__sep { color: var(--ui-text-quaternary); }
+.delo-pipe__progress { margin-left: var(--space-2); }
+.delo-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-full);
+  color: var(--ui-text-tertiary);
+  background: transparent;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.delo-st--done { color: var(--ok-ink); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.delo-st--now {
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-color: var(--primary);
+  font-weight: 600;
+}
+.delo-st--btn { cursor: pointer; font-family: inherit; }
+.delo-st--btn:hover { border-color: var(--border); }
+.delo-st--btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* ── Карточка ───────────────────────────────────────────────────────────── */
+
+.delo-card__head { display: block; margin-bottom: var(--space-3); }
+.delo-card__top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.delo-card__back { flex: none; }
+.delo-card__title { font-size: var(--text-2xl); flex: 1 1 320px; }
+.delo-card__meta { margin-top: var(--space-1); overflow-wrap: anywhere; }
+
+.delo__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  min-width: 0;
+}
+.delo__col { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+
+/* Две колонки — только когда вид достаточно широкий. `data-layout` ставит
+   layout-mode.js по ширине вида: m/s/xs — одна колонка всегда. */
+@container delo (min-width: 1100px) {
+  .delo__grid { grid-template-columns: minmax(0, 1fr) 300px; }
+}
+#app[data-layout="m"] .delo__grid,
+#app[data-layout="s"] .delo__grid,
+#app[data-layout="xs"] .delo__grid { grid-template-columns: minmax(0, 1fr); }
+
+/* Блоки карточки: общий компонент section-collapse даёт .sec/.card/.sec__head */
+.delo-sec { margin: 0; }
+.delo-sec .sec__title { font-size: var(--text-base); }
+
+/* ── «Ждёт вашего решения» ──────────────────────────────────────────────── */
+
+.delo-need {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-soft);
+}
+.delo-need:first-child { border-top: 0; padding-top: 0; }
+.delo-need__kind {
+  font-size: var(--text-2xs);
+  text-transform: none;
+  letter-spacing: 0.01em;
+  color: var(--warn-ink);
+  font-weight: 600;
+}
+.delo-need__text { font-size: var(--text-sm); color: var(--ui-text-primary); overflow-wrap: anywhere; }
+.delo-need__rec {
+  display: flex;
+  gap: var(--space-1);
+  align-items: baseline;
+  color: var(--ui-text-tertiary);
+}
+.delo-need__own { display: flex; flex-direction: column; gap: var(--space-2); }
+.delo-need__own[hidden] { display: none; }
+.delo-input {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  font: inherit;
+  color: var(--foreground);
+  background: var(--ui-bg-input);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+}
+.delo-row-btns {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  margin-top: var(--space-1);
+}
+.delo-btn { white-space: nowrap; }
+
+/* ── Результат ──────────────────────────────────────────────────────────── */
+
+.delo-parts { display: flex; flex-direction: column; gap: 0; }
+.delo-part {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--border-soft);
+}
+.delo-part:first-child { border-top: 0; }
+.delo-part__state {
+  flex: none;
+  width: 104px;
+  font-size: var(--text-2xs);
+  color: var(--ui-text-tertiary);
+}
+.delo-part__state--agreed { color: var(--ok-ink); }
+.delo-part__state--discussing { color: var(--warn-ink); }
+.delo-part__title { font-size: var(--text-sm); min-width: 0; overflow-wrap: anywhere; }
+
+.delo-files { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
+.delo-file {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-soft);
+}
+.delo-file:first-child { border-top: 0; padding-top: 0; }
+.delo-file__mark { color: var(--ui-text-tertiary); padding-top: 2px; }
+.delo-file__body { min-width: 0; flex: 1 1 auto; }
+.delo-file__head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.delo-file__name {
+  font: inherit;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--link);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.delo-file__name:hover { text-decoration: underline; }
+.delo-file__name:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-xs); }
+.delo-file__note { margin-top: 2px; }
+
+/* ── Исходящее ──────────────────────────────────────────────────────────── */
+
+.delo-outbox {
+  border-left: 3px solid var(--accent-strong);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-quaternary);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  min-width: 0;
+}
+.delo-outbox:last-child { margin-bottom: 0; }
+.delo-outbox[data-state="sent"] { border-left-color: var(--ok); }
+.delo-outbox[data-state="failed"] { border-left-color: var(--danger); }
+.delo-outbox__head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.delo-outbox__kind { font-weight: 600; font-size: var(--text-sm); }
+.delo-outbox__subject { font-weight: 600; margin-top: var(--space-2); overflow-wrap: anywhere; }
+.delo-outbox__body {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--ui-text-secondary);
+  overflow-wrap: anywhere;
+}
+.delo-outbox__meta { margin-top: var(--space-2); }
+.delo-outbox__honest {
+  display: flex;
+  gap: var(--space-1);
+  align-items: baseline;
+  margin-top: var(--space-2);
+  color: var(--ui-text-tertiary);
+}
+
+/* ── «Ждём» ─────────────────────────────────────────────────────────────── */
+
+.delo-wait {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--border-soft);
+}
+.delo-wait:first-child { border-top: 0; }
+.delo-wait__who {
+  flex: none;
+  width: 84px;
+  font-size: var(--text-2xs);
+  color: var(--ui-text-tertiary);
+  overflow-wrap: anywhere;
+}
+.delo-wait__who--you { color: var(--warn-ink); font-weight: 600; }
+.delo-wait__body { min-width: 0; }
+.delo-wait__what { font-size: var(--text-sm); overflow-wrap: anywhere; }
+
+/* ── «Найдено» (запасная отрисовка; компонент D4 приносит свои классы) ──── */
+
+.delo-found { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.delo-found__verdict {
+  display: flex;
+  gap: var(--space-1);
+  align-items: baseline;
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  font-size: var(--text-sm);
+}
+.delo-found__gt { font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--ui-text-tertiary); }
+.delo-found__item {
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.delo-found__name { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; font-size: var(--text-sm); font-weight: 600; overflow-wrap: anywhere; }
+.delo-found__name a { color: var(--link); text-decoration: none; }
+.delo-found__name a:hover { text-decoration: underline; }
+.delo-found__type { font-weight: 400; }
+.delo-found__desc, .delo-found__note { overflow-wrap: anywhere; }
+
+/* ── Ход дела ───────────────────────────────────────────────────────────── */
+
+.delo-tl { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); }
+.delo-tl__row {
+  padding: 2px 0 2px var(--space-3);
+  border-left: 2px solid var(--border-soft);
+  margin-left: 2px;
+  min-width: 0;
+}
+.delo-tl__text { overflow-wrap: anywhere; }
+.delo-tl__who { margin-top: 1px; }
+
+/* ── Дежурства ──────────────────────────────────────────────────────────── */
+
+.delo-duties { display: flex; flex-direction: column; gap: var(--space-2); }
+.delo-duty { min-width: 0; }
+.delo-duty__text { font-size: var(--text-sm); overflow-wrap: anywhere; }
+.delo-duty__meta { color: var(--ui-text-tertiary); }
+.delo-duty__state--ok { color: var(--ok-ink); }
+.delo-duty__state--danger { color: var(--danger-ink); }
+.delo-duty__state--muted { color: var(--ui-text-tertiary); }
+
+/* ── Подвал карточки и пустые состояния ─────────────────────────────────── */
+
+.delo-card__foot {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-soft);
+}
+.delo-empty { display: flex; flex-direction: column; gap: var(--space-1); align-items: flex-start; }
+.delo-empty__title { font-weight: 600; }
+.delo-empty p { margin: 0; }
+
+/* Узкий вид: подписи этапов короче не станут — разрешаем перенос строкой. */
+@container delo (max-width: 640px) {
+  .delo-card__title { font-size: var(--text-xl); }
+  .delo-st { white-space: normal; }
+  .delo-part { flex-direction: column; gap: 2px; }
+  .delo-part__state { width: auto; }
+  .delo-wait { flex-direction: column; gap: 0; }
+  .delo-wait__who { width: auto; }
+  .delo-row__head { align-items: flex-start; }
+}
+
+@media print {
+  .delo-card__foot, .delo__filters, .delo-btn { display: none; }
+}

@@ -45,6 +45,7 @@ import server.engine_write as ew                # noqa: E402
 import server.rooms as rooms_mod                # noqa: E402
 import server.watcher as watcher_mod            # noqa: E402
 from tests.helpers import Sandbox, SimAgents     # noqa: E402
+from tests import ci_marks                       # noqa: E402
 
 ROOM = "cafe"
 NOW = int(time.time())
@@ -226,15 +227,15 @@ class ParseTests(_Base):
 
     def test_note_added_mark_counts_and_profiles(self):
         mark, _w = notes_mod.parse_leader_review({"leader_review": {
-            "outcome": "note_added", "profiles": ["biz-lawyer"],
-            "added": [{"profile": "biz-lawyer", "text": "проверять сроки подачи"}],
+            "outcome": "note_added", "profiles": ["team-lawyer"],
+            "added": [{"profile": "team-lawyer", "text": "проверять сроки подачи"}],
             "summary": "юрист отработал хорошо"}})
         self.assertEqual(mark["outcome"], "note_added")
         self.assertEqual(mark["count"], 1)
-        self.assertEqual(mark["profiles"], ["biz-lawyer"])
+        self.assertEqual(mark["profiles"], ["team-lawyer"])
         self.assertEqual(mark["added"][0]["text"], "проверять сроки подачи")
         self.assertEqual(mark["outcome_ru"], "добавил 1 запись")
-        self.assertIn("biz-lawyer", mark["text"])
+        self.assertIn("team-lawyer", mark["text"])
         self.assertIn("юрист отработал хорошо", mark["text"])
 
     def test_plural_forms(self):
@@ -304,14 +305,14 @@ class JournalTests(_Base):
         root = self.new_root()
         detail = {"status": "done", "finished_at": NOW - 3600, "tree": [
             {"id": root, "metadata": {"leader_review": {
-                "outcome": "note_added", "profiles": ["biz-lawyer"],
-                "added": [{"profile": "biz-lawyer", "text": "проверять сроки"}],
+                "outcome": "note_added", "profiles": ["team-lawyer"],
+                "added": [{"profile": "team-lawyer", "text": "проверять сроки"}],
                 "summary": "учтено"}}, "completed_at": NOW - 3600}]}
         event = notes_mod.record_leader_review(self.cfg, ROOM, root, detail)
         self.assertEqual(event["action"], "leader_review")
         self.assertEqual(event["outcome"], "note_added")
         self.assertEqual(event["count"], 1)
-        self.assertEqual(event["profiles"], ["biz-lawyer"])
+        self.assertEqual(event["profiles"], ["team-lawyer"])
         self.assertEqual(self.events("leader_review")[0]["id"], event["id"])
 
     def test_mark_in_normalized_extra(self):
@@ -358,23 +359,23 @@ class JournalTests(_Base):
 
     def test_user_notes_survive_the_mark(self):
         root = self.new_root()
-        notes_mod.add(self.cfg, ROOM, "biz-lawyer", "Ручная запись Михаила",
+        notes_mod.add(self.cfg, ROOM, "team-lawyer", "Ручная запись Михаила",
                       source="user", origin="проверка")
         notes_mod.log_leader_review(self.cfg, ROOM, root, self.mark(), actor="default")
-        item = (notes_mod.notes_of(self.room()) or {}).get("biz-lawyer") or {}
+        item = (notes_mod.notes_of(self.room()) or {}).get("team-lawyer") or {}
         texts = [entry["text"] for entry in notes_mod.entries_of(item)]
         self.assertIn("Ручная запись Михаила", texts)
 
     def test_mark_cannot_be_rolled_back_and_never_wipes_notes(self):
         """Откат отметки не должен «вернуть» пустой список и снести записи."""
         root = self.new_root()
-        notes_mod.add(self.cfg, ROOM, "biz-lawyer", "Запись руководителя о сроках",
+        notes_mod.add(self.cfg, ROOM, "team-lawyer", "Запись руководителя о сроках",
                       source="leader", origin="оценка")
         event = notes_mod.log_leader_review(self.cfg, ROOM, root, self.mark(), actor="default")
         with self.assertRaises(notes_mod.NotesError) as ctx:
             notes_mod.rollback(self.cfg, ROOM, event["id"])
         self.assertEqual(ctx.exception.code, "conflict")
-        item = (notes_mod.notes_of(self.room()) or {}).get("biz-lawyer") or {}
+        item = (notes_mod.notes_of(self.room()) or {}).get("team-lawyer") or {}
         texts = [entry["text"] for entry in notes_mod.entries_of(item)]
         self.assertIn("Запись руководителя о сроках", texts)
         self.assertNotIn("leader_review", notes_mod.ROLLBACK_ACTIONS)
@@ -382,6 +383,7 @@ class JournalTests(_Base):
 
 # ---------------------------------------------------------------- напоминание в watcher
 
+@unittest.skipUnless(ci_marks.has_real_profiles(), ci_marks.WHY_NO_PROFILES)
 class ReminderTests(_Base):
     """Тик: нет отметки → ровно одно напоминание; есть → только запись в журнал."""
 
