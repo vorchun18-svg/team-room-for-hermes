@@ -59,7 +59,7 @@ except ImportError:  # pragma: no cover
 __all__ = [
     "EngineError", "health", "dispatcher_status", "list_roots", "list_candidates",
     "request_summary", "request_detail", "request_states", "team_state", "needs_human", "task_events",
-    "is_decomposed", "root_assignee_status", "today_states",
+    "is_decomposed", "root_assignee_status", "today_states", "waiting_candidates",
 ]
 
 
@@ -648,6 +648,128 @@ def needs_human(cfg, board, root_ids) -> list:
 
 
 # ------------------------------------------------- экран «Сегодня» (W24 §3.1) ---
+#: Приставка ключа идемпотентности карточек обновления свода (`svod_live`). Такие
+#: карточки не всегда связаны с запросом связью и подтягиваются по ключу — но их
+#: `metadata.svod` тоже даёт вопросы и решения запроса (W27-FIX).
+_SVOD_KEY = "svod-"
+
+
+def _last_run_meta(rows) -> tuple:
+    """(metadata, summary) последних непустых запусков карточки — как `_tree._pick_run`."""
+    meta, summary = {}, ""
+    for row in rows:
+        raw = _json(row["metadata"])
+        if raw:
+            meta = raw if isinstance(raw, dict) else {}
+        text = str(row["summary"] or "")
+        if text:
+            summary = text
+    return meta, summary
+
+
+def _waits_meta(meta, summary) -> bool:
+    """Даёт ли metadata карточки (или её свод) открытые вопросы / решения."""
+    raw = _json(meta) if not isinstance(meta, dict) else meta
+    if not raw and not str(summary or "").strip():
+        return False
+    canon = _canon(raw if isinstance(raw, dict) else {}, summary or "")
+    return bool(canon.get("open_questions") or canon.get("decisions"))
+
+
+def waiting_candidates(cfg, board, root_ids) -> set:
+    """Запросы, у которых МОГУТ быть пункты «ждёт вас» — дешёвый отбор (W27-FIX).
+
+    Вопросы и решения запроса живут в `metadata` карточек дерева (свод, карточки
+    участников, карточки обновления свода), а не в индексе бэклога. Собирать полную
+    деталь по каждому запросу ради «Сегодня» нельзя: на комнате из 50 запросов это
+    секунды. Поэтому здесь один обход дерева БЕЗ подробностей запусков, событий и
+    комментариев: связи карточек, `metadata`/`summary` их запусков и тот же
+    нормализатор (`engine_tree._canon`), что и на странице запроса.
+
+    Ответ — надмножество настоящих ожиданий: если хоть одна карточка дерева даёт
+    открытые вопросы или решения, запрос в наборе и его деталь собирается
+    по-настоящему (`routes_today`). Сбой чтения — «могут все»: точность счётчика
+    важнее скорости отбора.
+    """
+    ids = [str(i) for i in _as_list(root_ids) if i]
+    if not ids:
+        return set()
+    out: set = set()
+    try:
+        with _conn(cfg, board) as con:
+            _require_tables(con, "tasks")
+            known = _task_rows(con, ids)
+            owner = {rid: rid for rid in ids if rid in known}
+            members: dict = {rid: [rid] for rid in owner}
+            frontier = list(owner)
+            for _level in range(MAX_DEPTH):
+                if not frontier:
+                    break
+                ph = ", ".join("?" * len(frontier))
+                try:
+                    rows = con.execute("SELECT parent_id, child_id FROM task_links "
+                                       f"WHERE parent_id IN ({ph}) OR child_id IN ({ph})",
+                                       frontier + frontier).fetchall()
+                except sqlite3.Error:
+                    rows = []
+                fresh: list = []
+                for row in rows:
+                    # связь бывает в обе стороны: у карточки-ребёнка `child_id=root`
+                    for near, far in ((row["parent_id"], row["child_id"]),
+                                      (row["child_id"], row["parent_id"])):
+                        near, far = str(near or ""), str(far or "")
+                        if near in owner and far and far not in owner:
+                            owner[far] = owner[near]
+                            members[owner[near]].append(far)
+                            fresh.append(far)
+                fresh = list(dict.fromkeys(fresh))
+                found = _task_rows(con, fresh)
+                for tid in list(fresh):
+                    if tid not in found:
+                        owner.pop(tid, None)         # связь есть, карточки нет — не считаем
+                frontier = [tid for tid in fresh if tid in found]
+            # карточки обновления свода: связи может не быть, ключ идемпотентности есть
+            try:
+                svod = con.execute("SELECT id, idempotency_key FROM tasks "
+                                   "WHERE idempotency_key LIKE ? ESCAPE '\\'",
+                                   (_SVOD_KEY + "%",)).fetchall()
+            except sqlite3.Error:
+                svod = []
+            for row in svod:
+                key, tid = str(row["idempotency_key"] or ""), str(row["id"])
+                if tid in owner:
+                    continue
+                for rid in owner:
+                    if key.startswith(_SVOD_KEY + str(rid) + "-"):
+                        owner[tid] = rid
+                        members[rid].append(tid)
+                        break
+            all_ids = list(owner)
+            if not all_ids:
+                return set()
+            ph = ", ".join("?" * len(all_ids))
+            try:
+                run_rows = con.execute(
+                    f"SELECT task_id, metadata, summary FROM task_runs WHERE task_id IN ({ph}) "
+                    "ORDER BY COALESCE(ended_at, started_at, 0), id", all_ids).fetchall()
+            except sqlite3.Error:
+                return set(owner.values())          # старой схемы нет — «могут все»
+            by_task: dict = {}
+            for row in run_rows:
+                by_task.setdefault(str(row["task_id"]), []).append(row)
+            for rid, tids in members.items():
+                for tid in tids:
+                    meta, summary = _last_run_meta(by_task.get(tid, []))
+                    if _waits_meta(meta, summary):
+                        out.add(str(rid))
+                        break
+    except EngineError:
+        return set(ids)
+    except sqlite3.Error:
+        return set(ids)
+    return out
+
+
 def today_states(cfg, board, root_ids) -> dict:
     """Лёгкое состояние корней для экрана «Сегодня» (WAVE24 §3.1, пакет N2).
 

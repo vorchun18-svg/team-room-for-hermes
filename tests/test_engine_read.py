@@ -40,7 +40,7 @@ ENV_KEYS = ("TEAMROOM_HERMES_HOME", "TEAMROOM_DATA", "TEAMROOM_VAULT_DIR", "HERM
 #: Этапы демо-комнаты Лето — её собственные данные (W17-R §1, B-8): в коде списка
 #: этапов больше нет, поэтому тест, которому нужна полоса этапов, передаёт комнату
 #: с этапами, как это делает сервер (`room` в `request_detail`).
-AMI_PHASES = [
+CAFE_PHASES = [
     {"id": "idea", "title": "Идея и стратегия"},
     {"id": "legal", "title": "Легализация"},
     {"id": "brand", "title": "Бренд и товарный знак"},
@@ -48,7 +48,7 @@ AMI_PHASES = [
     {"id": "production", "title": "Производство"},
     {"id": "sales", "title": "Продажи"},
 ]
-AMI_MEMBERS = ("team-lawyer", "team-ops", "team-marketing", "team-strategy", "team-cfo",
+CAFE_MEMBERS = ("team-lawyer", "team-ops", "team-marketing", "team-strategy", "team-cfo",
                "team-runner", "team-critic")
 
 
@@ -57,8 +57,8 @@ def cafe_room(phases: list | None = None) -> dict:
     return {"id": "cafe", "title": "Лето", "orchestrator": "team-director",
             "critic": "team-critic",
             "members": [{"profile": profile, "role": "critic" if profile == "team-critic" else "worker"}
-                        for profile in AMI_MEMBERS],
-            "phases": AMI_PHASES if phases is None else phases}
+                        for profile in CAFE_MEMBERS],
+            "phases": CAFE_PHASES if phases is None else phases}
 
 
 class EngineReadSandboxTest(unittest.TestCase):

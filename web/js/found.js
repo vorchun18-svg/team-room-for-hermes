@@ -582,6 +582,12 @@ export function installFoundWiring(doc) {
     const holder = chip.classList.contains('md-url-chip') ? chip : (target.closest('[data-path]') || chip);
     const path = holder.getAttribute && holder.getAttribute('data-path');
     const url = holder.getAttribute && holder.getAttribute('data-url');
+    // W26-QA1: блок сам знает свою комнату (свод запроса) — открытие ведёт он,
+    // через свой `openPath`. Здесь выходим ДО preventDefault, чтобы клик дошёл до
+    // блока: один клик — один запрос, и комната та, что нужна своду.
+    if (!url && act === 'open' && typeof chip.closest === 'function' && chip.closest('[data-file-owner]')) {
+      return;
+    }
     ev.preventDefault();
     ev.stopPropagation();
     if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();

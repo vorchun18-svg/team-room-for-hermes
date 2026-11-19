@@ -702,6 +702,22 @@ def _journal(cfg, room_id, text: str, kind: str = "approval") -> None:
         pass
 
 
+def _journal_level(cfg, room, item: dict, decision: str) -> None:
+    """Строка в журнал УРОВНЯ автономии: «что агент сделал сам / что решил человек».
+
+    W27-E5 §2: журнал уровня отвечает на вопрос «что разрешено по уровню», он НЕ
+    пополняет «нужно от вас» (у него нет счётчика). Сбой журнала решение не ломает.
+    """
+    try:
+        try:
+            from . import autonomy as autonomy_mod
+        except ImportError:                              # pragma: no cover
+            import autonomy as autonomy_mod              # type: ignore
+        autonomy_mod.note_decision(cfg, room, item, decision)
+    except Exception:                                    # noqa: BLE001 - журнал вторичен
+        pass
+
+
 # ---------------------------------------------------------------- поиск блокировок
 
 def approval_id(task_id: str, pattern_key: str, command: str, kind: str = "terminal") -> str:
@@ -1124,6 +1140,22 @@ def collect(cfg, room, root_id: str, extra=None, now: int | None = None,
     return items[:MAX_PER_REQUEST]
 
 
+def _severity(pattern_key, command: str, floor: bool) -> str:
+    """Вид блокировки для интерфейса: ``critical`` | ``routine`` (W27-E5 §2).
+
+    Считает модуль уровней автономии (``server/autonomy.py``); его отсутствие или
+    сбой вида не ломают выдачу разрешений — тогда всё «рутина».
+    """
+    try:
+        try:
+            from . import autonomy as autonomy_mod
+        except ImportError:                              # pragma: no cover
+            import autonomy as autonomy_mod              # type: ignore
+        return autonomy_mod.severity_of(pattern_key, command, bool(floor))
+    except Exception:                                    # noqa: BLE001 - вид вторичен
+        return "routine"
+
+
 def _public(raw: dict, record: dict | None, now: int, only_record: bool = False,
             live_keys=None) -> dict:
     """Запрос разрешения наружу (поля контракта W22 §2.1)."""
@@ -1176,6 +1208,9 @@ def _public(raw: dict, record: dict | None, now: int, only_record: bool = False,
         "kind": kind if kind in KINDS else "terminal",
         "command": _one_line(command, MAX_COMMAND),
         "description": describe(pattern_key, kind),
+        # W27-E5 §2: критичные блокировки (разрушительные классы и «наружу») — отдельным
+        # заметным видом; поле только для вида, состояние и действия не меняет.
+        "severity": _severity(pattern_key, command, floor),
         "pattern_key": pattern_key,
         "floor": floor,
         "grantable": grantable,
@@ -1411,6 +1446,7 @@ def decide(cfg, room, root_id: str, approval_unique: str, decision: str, note: s
         "навсегда" if decision == "always" else ("один раз" if decision == "once" else "запрет"),
         ", команд: %d" % len(records) if len(records) > 1 else ""))
     restarted = False
+    _journal_level(cfg, room, record, decision)
     if act is not None:
         try:
             act("comment", text=_comment_text(item, decision))
@@ -1646,6 +1682,64 @@ def act_block(cfg, room, root_id: str, approval_unique: str, action: str, note: 
                             "ttl_min": trust["ttl_min"], "expires_at": trust["expires_at"],
                             "previous": trust["previous"],
                             "label": _ttl_label(trust["scope"], trust["ttl_min"])}
+    return payload
+
+
+def restore(cfg, room, root_id: str, approval_unique: str, extra=None,
+            now: int | None = None) -> dict:
+    """Вернуть запрос разрешения, закрытый как неактуальное (W27-E1, контракт §1).
+
+    Снятие (`dismiss`) пишет в реестр комнаты строку «закрыто». Возврат —
+    обратное действие: строка убирается, и блокировка снова читается как
+    `pending`, если она ещё есть в сессиях участников. Карточка не
+    перезапускается, разрешение не выдаётся — меняется только учёт пункта.
+
+    Ошибки: 404 — запроса нет; 409 `already_decided` — пункт не был снят
+    (клиенту это не ошибка: он тихо перерисовывает состояние).
+    """
+    now = _now() if now is None else int(now)
+    ident = str(approval_unique or "").strip()
+    if not ident:
+        raise ApprovalError("Не указан запрос разрешения", 400, "bad_request",
+                            {"field": "approval_id"})
+    room = room if isinstance(room, dict) else {}
+    room_id = room.get("id")
+    if not room_id:
+        raise ApprovalError("Непонятно, в какой комнате действие", 400, "bad_request")
+    items = collect(cfg, room, root_id, extra, now=now)
+    item = next((row for row in items if row.get("id") == ident), None)
+    if item is None:
+        raise ApprovalError("Запрос разрешения не найден — возможно, это уже другая работа",
+                            404, "not_found", {"approval_id": ident})
+    if item.get("state") != "dismissed":
+        raise ApprovalError("Этот пункт не закрывали как неактуальное", 409,
+                            "already_decided", {"approval_id": ident,
+                                                "state": item.get("state")})
+    keys = [ident] + [str(i) for i in (item.get("approval_ids") or []) if i and str(i) != ident]
+    removed: list = []
+    with _registry_lock(cfg, room_id):
+        reg = _registry(cfg, room_id)
+        for key in keys:
+            if reg["approvals"].pop(key, None) is not None:
+                removed.append(key)
+        _save_registry(cfg, room_id, reg)
+    if not removed:                        # строки не было — вернуть нечего, честно говорим
+        raise ApprovalError("Снятия в реестре нет — пункт уже открыт заново", 409,
+                            "already_decided", {"approval_id": ident, "state": "pending"})
+    _journal(cfg, room_id, "пункт снова актуален для %s в карточке «%s» (%s)" % (
+        item.get("member_title") or item.get("profile") or "участник",
+        item.get("card_title") or item.get("task_id") or "", item.get("description") or ""))
+    try:
+        fresh = collect(cfg, room, root_id, extra, now=now)
+    except Exception:                      # noqa: BLE001 - возврат уже сделан
+        fresh = []
+    back = next((row for row in fresh if row.get("id") == ident), None)
+    payload = {"ok": True, "action": "approval", "decision": "restore",
+               "approval_id": ident, "restored": removed, "decided_at": now,
+               "message": "Пункт снова ждёт вашего решения."}
+    if back is not None:
+        payload["approval"] = back
+        payload["state"] = back.get("state")
     return payload
 
 
@@ -2080,4 +2174,4 @@ __all__ = ["MAX_COMMAND", "ONCE_TTL", "STATES", "DECISIONS", "KINDS", "PATTERN_R
            "find_python", "python_candidates", "profile_home", "config_path", "hermes_root",
            "hermes_tree", "room_profiles", "registry_path", "run_worker", "mode_of",
            "actions_for", "act_block", "auto_hint", "parse_ttl", "trusts", "revoke_trust",
-           "reset_python_cache", "grant_of"]
+           "restore", "reset_python_cache", "grant_of"]

@@ -31,6 +31,22 @@
 .ap--denied { border-left: 3px solid var(--danger); }
 .ap--expired { border-left: 3px solid var(--border-soft); opacity: .85; }
 
+/* W27-E2 §1: закрытое сервером и снятое — спокойный вид: решать здесь нечего,
+   но строка остаётся читаемой (причина закрытия + «Вернуть»). */
+.ap--closed,
+.ap--dismissed,
+.ap--unknown {
+  border-left: 3px solid var(--border-soft);
+  background: var(--ui-bg-subtle, var(--ui-bg-editor));
+  opacity: .92;
+}
+.ap--closed .ap__title,
+.ap--unknown .ap__title { font-weight: 500; color: var(--ui-text-secondary, var(--ui-text-primary)); }
+.ap--closed .ap__code,
+.ap--unknown .ap__code { max-height: 96px; overflow: auto; }
+.ap__act--restore { align-self: flex-start; }
+.ap__result-line--muted { color: var(--ui-text-secondary, var(--ui-text-muted)); }
+
 .ap__head {
   display: flex;
   align-items: flex-start;
@@ -302,6 +318,34 @@
 
 .ap-block__list--done { margin-top: 8px; }
 
+/* W27-E2 §1: «Закрытые» — свёрнутый список с причиной; «Закрыть все неактуальные». */
+.ap-block__closed { margin-top: 10px; }
+.ap-block__closed-why { font-weight: 400; }
+.ap-block__closed-hint { margin: 6px 0 8px; max-width: 72ch; line-height: var(--leading-normal); }
+.ap-block__list--closed { margin-top: 6px; display: flex; flex-direction: column; gap: 8px; }
+
+.ap-block__stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-subtle, transparent);
+  min-width: 0;
+}
+.ap-block__stale-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 1 1 260px;
+  min-width: 0;
+  line-height: var(--leading-normal);
+}
+.ap-block__stale-btn { flex: none; }
+
 /* ─────────────────────────────────── раздел «Разрешения агентов» */
 
 .ap-grants { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -448,6 +492,53 @@
 .req-side__fold-body { display: flex; flex-direction: column; }
 .req-side__fold-body > .req-side__body { padding: 0; }
 .req-side__fold:not([open]) > .req-side__fold-body { display: none; }
+
+/* ───────── W27-E2 §1: «Не актуально» с возвратом и «Закрытые» в колонке ───── */
+
+.req-side__stale {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 10px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.req-side__stale-text {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: var(--leading-normal);
+  min-width: 0;
+}
+.req-side__stale-btn { align-self: flex-start; }
+
+.req-q__stale-row { display: flex; gap: 6px; padding: 0 0 4px; }
+.req-q__stale { padding-inline: 6px; }
+
+.req-side__closed { margin-top: 8px; border-top: 1px solid var(--border-soft); padding-top: 6px; }
+.req-side__closed-sum {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+.req-side__closed-sum::-webkit-details-marker { display: none; }
+.req-side__closed[open] > .req-side__closed-sum .icon { transform: rotate(90deg); }
+.req-side__closed-body { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.req-side__closed-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-subtle, transparent);
+  min-width: 0;
+}
+.req-side__closed-q { font-weight: 500; word-break: break-word; }
+.req-side__closed-text { min-width: 0; }
 
 @media (max-width: 640px) {
   .ap__kind { display: none; }        /* в узком окне вид уже виден по плашке */

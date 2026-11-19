@@ -47,6 +47,17 @@ export class FakeElement {
     return node;
   }
 
+  /** W27-E8: `replaceChildren` — есть в браузере, нужен и в тестах. */
+  replaceChildren(...nodes) {
+    for (const child of this.childNodes) child.parentNode = null;
+    this.childNodes = [];
+    for (const node of nodes.flat()) {
+      if (node === null || node === undefined || node === false || node === true) continue;
+      this.appendChild(node);
+    }
+    return this;
+  }
+
   get className() { return this.getAttribute('class') || ''; }
   set className(v) { this.setAttribute('class', v); }
 

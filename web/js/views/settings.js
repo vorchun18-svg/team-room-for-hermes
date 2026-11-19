@@ -16,6 +16,8 @@ import {
   field, iconButton, lsGet, lsSet, openPath,
 } from '../ui.js';
 import { countText, COUNT_FORMS, humanApiMessage } from '../shell-labels.js';
+// W27-E4: значения «Стартовой страницы» — из route-memory.js (один источник).
+import { START_KEY, START_TODAY, START_OPTIONS, normalizeStartPref } from '../route-memory.js';
 import { personName } from './request-util.js';
 import {
   KICK_LABEL, KICK_HINT, kickPreview, kickNow, kickUsefulness, kickWhyNot, kickPanel,
@@ -668,33 +670,35 @@ async function mountSettings(el, ctx) {
       h('div', { class: 'banner__text' }, 'Этот браузер не умеет системные уведомления — настройка не повлияет на работу приложения.')));
   }
 
-  // W24-N3: «Стартовая страница» — что открывать при запуске приложения.
-  // Сохраняется сразу (это навигационная привычка, а не черновик настроек):
-  // ключ тот же, что читает app.js при выборе начального маршрута.
+  // W24-N3 → W27-E4: «Стартовая страница» — что открывать при запуске.
+  // Три варианта (дефект 3: «Комнаты» были недостижимы, «Сегодня» перекрывала
+  // дом): «Сегодня», «Комнаты» (#/) и «Последнее место». Значения и ключ —
+  // из route-memory.js (один источник с каркасом и тестами). Сохраняется сразу:
+  // это навигационная привычка, а не черновик настроек.
   const startGet = () => {
-    try { return localStorage.getItem('teamroom.start') === 'last' ? 'last' : 'today'; } catch { return 'today'; }
+    try { return normalizeStartPref(localStorage.getItem(START_KEY)); } catch { return START_TODAY; }
   };
+  const startHint = h('p', { class: 'set-hint small muted' },
+    'Что открывать при запуске. «Комнаты» — список комнат с быстрым запросом, '
+      + '«Последнее место» — экран, на котором вы остановились. Явный адрес в строке '
+      + '(например, ссылка на запрос) всегда сильнее настройки. Выбор сохраняется сразу.');
   const startHost = h('div', { class: 'set-field__control' },
     segmented({
-      options: [
-        { value: 'today', label: 'Сегодня' },
-        { value: 'last', label: 'Последняя комната' },
-      ],
+      options: START_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
       value: startGet(),
       onchange: (value) => {
-        const next = value === 'last' ? 'last' : 'today';
-        try { localStorage.setItem('teamroom.start', next); } catch { /* приватный режим */ }
+        const next = normalizeStartPref(value);
+        try { localStorage.setItem(START_KEY, next); } catch { /* приватный режим */ }
+        const label = (START_OPTIONS.find((o) => o.value === next) || {}).label || '';
         if (typeof ctx.toast === 'function') {
-          ctx.toast(next === 'today' ? 'При запуске будем открывать «Сегодня»' : 'При запуске вернёмся в последнюю комнату', 'ok');
+          ctx.toast('При запуске будем открывать «' + label + '»', 'ok');
         }
       },
     }));
   prefsBody.appendChild(h('div', { class: 'set-field', 'data-setting': 'start-page' },
     h('span', { class: 'field__label' }, 'Стартовая страница'),
     startHost,
-    h('p', { class: 'set-hint small muted' },
-      'Что открывать при запуске: свод «Сегодня» (по умолчанию) или последнюю комнату, в которой вы работали. '
-        + 'Выбор сохраняется сразу.')));
+    startHint));
 
   const saveState = h('p', { class: 'set-save__state small muted' });
   const saveBtn = h('button', {

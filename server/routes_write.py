@@ -14,6 +14,7 @@ try:  # пакетный и «плоский» импорт
     from . import answers as answers_mod
     from . import decision_registry as dec_reg
     from . import idempotency as idem_mod
+    from . import stale as stale_mod
     from .app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM, BACKLOG_STATUSES,
                              MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS, REPORT_KEY_RE, TASK_ID_RE,
                              UNASSIGN_VALUES, derive_title, err, has_nul, make_slug, profile_ok,
@@ -27,6 +28,7 @@ except ImportError:  # pragma: no cover
     import answers as answers_mod  # type: ignore
     import decision_registry as dec_reg  # type: ignore
     import idempotency as idem_mod  # type: ignore
+    import stale as stale_mod  # type: ignore
     from app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM,  # type: ignore
                             BACKLOG_STATUSES, MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS,
                             REPORT_KEY_RE, TASK_ID_RE, UNASSIGN_VALUES, derive_title, err, has_nul,
@@ -76,6 +78,30 @@ def message_fingerprint(text: str, attach, urgent: bool) -> str:
         "1" if urgent else "0",
     ])
     return hashlib.sha1(body.encode("utf-8")).hexdigest()[:20]
+
+
+#: Где в детали запроса лежит пункт каждого вида (контракт §1, ``stale.SECTIONS``).
+ITEM_FIELD = {"question": "open_questions", "decision": "decisions",
+              "step": "next_steps", "approval": "approvals"}
+
+
+def _mark_item_state(payload: dict, kind: str) -> None:
+    """Обновлённый пункт в ответе несёт поля §1: ``state``, ``closed``, ``actions``.
+
+    W27-QA1: клиент кладёт присланный пункт в стор как есть (`request-store`:
+    `answeredItem`), поэтому без `state` строка после «Не актуально» теряла
+    состояние — «Вернуть» появлялось только после перезагрузки. Поля считает тот
+    же модуль, что и при чтении (`stale.decorate`) — второго мнения нет.
+    """
+    item = payload.get(kind)
+    field = ITEM_FIELD.get(kind)
+    if not isinstance(item, dict) or not field:
+        return
+    try:
+        stale_mod.decorate({field: [item]})
+    except Exception:                    # noqa: BLE001 - ответ действия важнее разметки
+        return
+    payload.setdefault("state", item.get("state"))
 
 
 class WriteRoutes:
@@ -523,6 +549,11 @@ class WriteRoutes:
             # блокировка «опасной» команды в карточке. Свой обработчик: тело другое
             # (approval_id, decision, note), текст в карточку пишет он же.
             return self._approval_action(room, rec, rid, body)
+        if action in ("dismiss", "restore"):
+            # W27-E1 §1: ОДНО действие «Не актуально» / «Вернуть» на все виды пунктов
+            # запроса — цель в `target{kind,id}`. Ведёт к существующим механизмам
+            # (реестр ответов, реестр разрешений, бэклог шагов), второго источника нет.
+            return self._stale_action(room, rec, rid, body, action)
         if action in ("card_stop", "card_resume", "card_model"):
             # W23-MG1 §2.8: действия над ОДНОЙ карточкой — остановить работу, продолжить,
             # сменить модель. Свой обработчик: тело другое (task_id, model, provider, note).
@@ -1184,6 +1215,16 @@ class WriteRoutes:
                      if str(s.get("id")) == step_id), None)
         if step is None:
             raise err(404, "Шаг не найден", step_id=step_id)
+        _dropped_now = [str(item) for item in (rec.get("steps_dropped") or [])]
+        if kind == "drop" and step_id in _dropped_now:
+            raise ApiError(409, "Шаг уже снят как неактуальный", code="already_decided",
+                           detail={"reason": "already_decided", "step_id": step_id,
+                                   "state": "dismissed"})
+        if kind == "restore" and step_id not in _dropped_now \
+                and str(step.get("state")) != "dismissed":
+            raise ApiError(409, "Шаг не был снят — возвращать нечего", code="already_decided",
+                           detail={"reason": "already_decided", "step_id": step_id,
+                                   "state": str(step.get("state") or "open")})
         action: dict = {"kind": kind, "at": int(time.time())}
         if kind == "comment":
             text = str(kw.get("text") or "").strip()
@@ -1240,16 +1281,20 @@ class WriteRoutes:
             if step_id not in dropped:
                 dropped.append(step_id)
             updates["steps_dropped"] = dropped
+        elif kind == "restore":
+            # W27-E1 §1: «Вернуть» снятый шаг — обратное к «Убрать», без второго хранилища.
+            updates["steps_dropped"] = [item for item in dropped if item != step_id]
         try:
             self.call("registry", "update", ((self.cfg, room.get("id"), rid, updates), {}))
         except Exception as exc:  # noqa: BLE001 - метка в ветке важнее реестра
             self.log.error("реестр: действие по шагу %s не сохранено" % rid, exc)
         item_id = self._backlog_id(rid, step_id)
-        if self._has_mod("ingest") and (kind == "drop" or "due" in action):
+        if self._has_mod("ingest") and (kind in ("drop", "restore") or "due" in action):
             try:
                 ingest = self.mod("ingest")
                 ingest.ensure_backlog_item(self.cfg, room.get("id"), item_id, detail)
                 status = "dismissed" if kind == "drop" else (
+                    "open" if kind == "restore" else
                     str(step.get("state") or "open")
                     if str(step.get("state")) in ("open", "asked", "done") else "open")
                 extra = {"due": action.get("due")} if "due" in action else {}
@@ -1271,12 +1316,19 @@ class WriteRoutes:
         if kind == "drop":
             view.update({"state": "dismissed", "state_label": "убран", "can_remove": False,
                          "can_agree": False, "can_drop": False})
+        elif kind == "restore":
+            # W27-E1 §1: шаг снова в работе — состояние и подпись как у обычного шага.
+            view.update({"state": "open", "state_label": answers_mod.STEP_STATUS_RU["open"],
+                         "closed": False, "closed_reason": None,
+                         "can_remove": True, "can_agree": True, "can_drop": True})
         payload = {"ok": True, "action": "step_" + kind, "step_id": step_id,
                    "step": view, "message": mark, "log": log[-5:],
                    "reaction_label": view.get("reaction_label"),
                    "pending_label": answers_mod.PENDING_RU}
         if kind == "drop":
             payload["dropped"] = dropped
+        if kind == "restore":
+            payload["restored"] = step_id
         payload["request"] = self._summary_or_local(
             room, rid, rec.get("text") or "", rec.get("title") or "",
             bool(rec.get("critic")), rec.get("mode") or "auto", rec.get("answers"))
@@ -1475,6 +1527,140 @@ class WriteRoutes:
             room, rid, rec.get("text") or "", rec.get("title") or "",
             bool(rec.get("critic")), rec.get("mode") or "auto", answers)
         return 200, payload, {}
+
+    def _stale_action(self, room: dict, rec: dict, rid: str, body: dict, action: str):
+        """«Не актуально» / «Вернуть» для вопроса, решения, разрешения и шага (W27-E1 §1).
+
+        Тело: ``{action:"dismiss"|"restore", target:{kind, id}, reason?}``. Второго
+        источника нет: вопрос — реестр ответов комнаты, решение — тот же реестр,
+        разрешение — реестр разрешений, шаг — ``steps_dropped`` и бэклог. Ответ —
+        обновлённый пункт; счётчик запроса интерфейс берёт из ``needs_you_count``
+        при следующем чтении (или сразу из ``payload["needs_you_count"]``, если оно есть).
+
+        ``409 already_decided`` — не ошибка интерфейса: пункт уже снят/решён, клиент
+        тихо перерисовывает состояние.
+        """
+        body = body if isinstance(body, dict) else {}
+        target = body.get("target")
+        if not isinstance(target, dict):
+            raise err(400, "Нужно поле target: {kind, id}", field="target")
+        kind = str(target.get("kind") or "").strip().lower()
+        ident = str(target.get("id") or "").strip()
+        if kind not in stale_mod.KINDS:
+            raise err(400, "kind: question|decision|approval|step", field="target.kind",
+                      allowed=list(stale_mod.KINDS), value=kind[:40])
+        if not ident:
+            raise err(400, "Нужен id пункта", field="target.id")
+        reason = body.get("reason")
+        if reason is not None:
+            if not isinstance(reason, str):
+                raise err(400, "Поле reason должно быть строкой", field="reason")
+            if len(reason) > MAX_NOTE:
+                raise err(400, text_too_long("Причина", len(reason), MAX_NOTE),
+                          field="reason", length=len(reason), limit=MAX_NOTE)
+            if has_nul(reason):
+                raise err(400, "В поле reason есть NUL-байт", field="reason")
+        reason = " ".join((reason or "").split())
+        if kind == "question":
+            status, payload, headers = self._stale_question(room, rec, rid, ident, action, reason)
+        elif kind == "decision":
+            # W20-D1 §1.2: у решения это уже есть («Снять»/«Вернуть»), ведём туда же.
+            status, payload, headers = self._decision_action(
+                room, rec, rid, {"decision_id": ident},
+                {"decision": action, "text": reason, "reason": reason})
+        elif kind == "approval":
+            if action == "dismiss":
+                status, payload, headers = self._approval_action(
+                    room, rec, rid, {"approval_id": ident, "decision": "dismiss", "note": reason})
+            else:
+                status, payload, headers = self._stale_approval_restore(room, rec, rid, ident)
+        else:
+            # Шаг: снятие — существующее «Убрать» (steps_dropped + бэклог), возврат — обратное.
+            body_step = {"step_id": ident, "text": reason, "reason": reason}
+            status, payload, headers = self._step_action(
+                room, rec, rid, {"step_id": ident},
+                "drop" if action == "dismiss" else "restore", body_step)
+        if isinstance(payload, dict):
+            payload["action"] = action
+            payload["target"] = {"kind": kind, "id": ident}
+            if status == 200:
+                payload.setdefault("message", answers_mod.stale_comment(action, kind, ident,
+                                                                       "", reason or None))
+                _mark_item_state(payload, kind)
+        return status, payload, headers
+
+    def _stale_question(self, room: dict, rec: dict, rid: str, qid: str, action: str,
+                        reason: str = ""):
+        """Снять/вернуть вопрос: отметка в реестре ответов комнаты (W27-E1 §1)."""
+        if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", qid):
+            raise err(400, "Некорректный id вопроса", field="target.id", value=qid[:80])
+        answers = dict(rec.get("answers") or {}) if isinstance(rec.get("answers"), dict) else {}
+        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), answers)
+        question = self._find_question(room, rid, detail, qid, answers)
+        if question is None:
+            raise err(404, "Вопрос не найден", question_id=qid)
+        state = stale_mod.question_state(question)
+        record = answers.get(qid) if isinstance(answers.get(qid), dict) else {}
+        at = int(time.time())
+        if action == "dismiss":
+            if state == "dismissed" or record.get("dismissed"):
+                raise ApiError(409, "Вопрос уже снят как неактуальный", code="already_decided",
+                               detail={"reason": "already_decided", "state": state,
+                                       "question_id": qid})
+            if state != "open":
+                raise ApiError(409, "Вопрос уже закрыт — снимать нечего", code="already_decided",
+                               detail={"reason": "already_decided", "state": state,
+                                       "question_id": qid})
+            new = {"kind": "question", "question_id": qid,
+                   "question_text": str(question.get("text") or ""),
+                   "dismissed": True, "status": "dismissed", "answered": False,
+                   "text": "", "at": at, "reason": reason or None,
+                   "source": question.get("source") or "card"}
+        else:
+            if not record.get("dismissed") and state != "dismissed":
+                raise ApiError(409, "Пункт не был снят — возвращать нечего", code="already_decided",
+                               detail={"reason": "already_decided", "state": state,
+                                       "question_id": qid})
+            # Пустая запись со статусом «open» = вопрос снова ждёт ответа.
+            new = {"kind": "question", "question_id": qid,
+                   "question_text": str(question.get("text") or ""),
+                   "dismissed": False, "status": "open", "answered": False,
+                   "text": "", "at": at, "restored_at": at, "reason": reason or None,
+                   "source": question.get("source") or "card"}
+        answers[qid] = new
+        self._save_answers(room, rid, answers)
+        mark = answers_mod.stale_comment(action, "question", qid,
+                                         question.get("text") or "", reason or None)
+        try:
+            with self.engine():
+                self.call("engine_write", "act",
+                          ((self.cfg, room.get("board") or self.board, rid, "comment"),
+                           {"text": mark, "author": AUTHOR_MAXIM}))
+        except Exception as exc:  # noqa: BLE001 - запись в реестре уже есть
+            self.log.warning("метка %s по вопросу %s не записана: %s" % (action, qid, exc))
+        view = answers_mod.apply_question(dict(question), new)
+        payload = {"ok": True, "question_id": qid, "question": view,
+                   "state": stale_mod.question_state(view),
+                   "needs_you": not view.get("dismissed") and bool(view.get("needs_answer")),
+                   "message": mark,
+                   "request": self._summary_or_local(
+                       room, rid, rec.get("text") or "", rec.get("title") or "",
+                       bool(rec.get("critic")), rec.get("mode") or "auto", answers)}
+        return 200, payload, {"Cache-Control": "no-store"}
+
+    def _stale_approval_restore(self, room: dict, rec: dict, rid: str, ident: str):
+        """Вернуть снятое разрешение: строка реестра убирается (``approvals.restore``)."""
+        mod = self._approvals_mod()
+        try:
+            payload = mod.restore(self.cfg, room, rid, ident,
+                                  extra=(rec or {}).get("extra_cards"))
+        except mod.ApprovalError as exc:
+            raise ApiError(int(getattr(exc, "http", 400) or 400),
+                           getattr(exc, "message", None) or str(exc) or
+                           "Не удалось вернуть пункт",
+                           code=str(getattr(exc, "code", "bad_request")),
+                           detail=getattr(exc, "detail", None) or {}) from exc
+        return 200, payload, {"Cache-Control": "no-store"}
 
     def _question_dismiss(self, room: dict, rec: dict, rid: str, kw: dict):
         """«Это не вопрос» (W20-D1 §1.2, B-38): вопрос уходит из «Нужен ваш ответ».

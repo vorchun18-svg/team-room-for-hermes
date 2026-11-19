@@ -185,7 +185,7 @@ function makeApi(initial) {
 const ENTRIES = [
   { id: 'n_one', text: 'Всегда проверяй договор по закону X и указывай сроки в днях.',
     source: 'user', origin: 'наблюдение', created_at: 1700000000, used_count: 2, pinned: true },
-  { id: 'n_two', text: 'Ornith слабая модель, но локальная — простые задачи поручать ей.',
+  { id: 'n_two', text: 'Локальная модель слабая, но бесплатная — простые задачи поручать ей.',
     source: 'leader', origin: '', created_at: 1700001000, used_count: 0, pinned: false },
 ];
 
@@ -214,8 +214,8 @@ test('фильтр «все / ваши / руководителя» и поис�
   assert.equal(filterEntries(ENTRIES, '', 'all').length, 2);
   assert.equal(filterEntries(ENTRIES, '', 'user').length, 1);
   assert.equal(filterEntries(ENTRIES, '', 'leader').length, 1);
-  assert.equal(filterEntries(ENTRIES, 'ornith', 'all').length, 1);
-  assert.equal(filterEntries(ENTRIES, 'ornith', 'user').length, 0);
+  assert.equal(filterEntries(ENTRIES, 'Локальная', 'all').length, 1);
+  assert.equal(filterEntries(ENTRIES, 'Локальная', 'user').length, 0);
   assert.equal(filterEntries(ENTRIES, 'ЗАКОНУ', 'all').length, 1);
   assert.equal(filterEntries(ENTRIES, 'нет-такого', 'all').length, 0);
 });
@@ -291,11 +291,11 @@ test('окно: список записей, редактор выбранной
     // поиск сужает список
     filters[0].dispatch('click', { type: 'click', target: filters[0] });
     const search = byClass(dialog, 'notes-ed__search')[0];
-    search.value = 'ornith';
+    search.value = 'Локальная';
     search.dispatch('input', { type: 'input', target: search });
     const found = byClass(dialog, 'notes-ed__item');
     assert.equal(found.length, 1);
-    assert.match(String(found[0].textContent), /Ornith/);
+    assert.match(String(found[0].textContent), /Локальная/);
     ui.destroy();
   } finally {
     uninstallDom();

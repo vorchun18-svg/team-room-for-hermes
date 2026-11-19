@@ -150,7 +150,7 @@ test('карточка показывает название, цель, отве
     assert.equal(byClass(card, 'ps-card__goal')[0].textContent, 'Получить образцы к 5 ноября');
     // Ответственный — по-русски: без карты людей это роль, а не team-ops.
     assert.match(text(byClass(card, 'ps-card__meta')[0]), /Исполнитель/, 'ответственный виден по-русски');
-    assert.doesNotMatch(text(card), /team-/, 'технический профиль в тексте карточки не показываем');
+    assert.doesNotMatch(text(card), /(?:biz|team)-/, 'технический профиль в тексте карточки не показываем');
     assert.match(text(byClass(card, 'ps-card__members')[0]), /1 участник/);
     assert.match(text(card), /до 5 нояб\./, 'срок по-русски');
   } finally {
@@ -318,7 +318,7 @@ test('участники части работы — по именам, без �
     const card = cardsOf(root)[2]; // s3, участники team-marketing и team-runner
     const members = byClass(card, 'ps-card__members')[0];
     assert.match(String(members.getAttribute('title') || ''), /Раннер/);
-    assert.doesNotMatch(text(members), /team-/);
+    assert.doesNotMatch(text(members), /(?:biz|team)-/);
   } finally {
     uninstallFakeDom();
   }

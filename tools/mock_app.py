@@ -70,8 +70,25 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
         self.backlog = {"cafe": copy.deepcopy(self.fx["backlog_cafe.json"])} if "backlog_cafe.json" in self.fx else {}
         for room in self.rooms:
             self.backlog.setdefault(room["id"], mock_backlog.empty(room["id"]))
-        self.candidates = {"cafe": copy.deepcopy(self.fx["candidates_cafe.json"]),
-                           "fn": {"room": "fn", "generated_at": now(), "count": 0, "items": []}}
+        # W27-QA1: демо-комната называется по файлу (`<prefix>_<id>.json`), а не по одному
+        # зашитому имени: после слияния фикстуры переименованы, а литерал `cafe` остался —
+        # мок падал на старте с KeyError. Индексируем по имени файла И по полю `room`
+        # внутри: демо работает при любом из двух написаний.
+        def _by_prefix(prefix: str) -> dict:
+            out: dict = {}
+            for name, data in self.fx.items():
+                if not (name.startswith(prefix + "_") and name.endswith(".json")):
+                    continue
+                room_id = name[len(prefix) + 1:-len(".json")]
+                copy_of = copy.deepcopy(data)
+                out[room_id] = copy_of
+                inner = data.get("room") if isinstance(data, dict) else None
+                if isinstance(inner, str) and inner:
+                    out.setdefault(inner, copy.deepcopy(data))
+            return out
+
+        self.candidates = _by_prefix("candidates")
+        self.candidates.setdefault("fn", {"room": "fn", "generated_at": now(), "count": 0, "items": []})
         self.live = {}
         self.adopted = {}
         self.counter = 0

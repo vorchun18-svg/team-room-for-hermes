@@ -150,7 +150,7 @@ PROFILE_ROLE_RU = {"director": "руководитель комнаты", "ops":
                    "critic": "критик", "runner": "сбор фактов", "coder": "программист",
                    "surveyor": "исследователь", "analyst": "аналитик", "default": "руководитель комнаты"}
 OWNER_LABEL_MAX = 32
-_SLUG_RE = re.compile(r"^(?:biz|room)-")
+_SLUG_RE = re.compile(r"^(?:biz|team|room)-")
 _NOTE_HEAD_RE = re.compile(r"[:.,;]|\s[—–]\s")
 
 

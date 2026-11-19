@@ -17,9 +17,63 @@ import mock_backlog
 import mock_demo as demo
 import mock_delos
 import mock_stt
+import mock_duties_fe   # W27-E8: демо-сервер дежурств комнаты
 from mock_write import collapse_approvals   # W22-ST: строки-группы разрешений (одно правило)
 
 _LABEL_DASH = re.compile("\\s*[\u2014\u2013\u2015\u2012\u2212-]{1,2}\\s*")
+
+
+def needs_you_count(detail: dict) -> dict:
+    """`needs_you_count` запроса — то же правило, что §1 воли 27 (W27-E2).
+
+    Считает ТОЛЬКО пункты, у которых есть действие: вопрос `open` без ответа и без
+    снятия, решение `proposed`/`discuss`, разрешение `pending` c действиями. Всё
+    остальное (`closed`, `dismissed`, `expired`, `granted_*`, `denied`, `answered`,
+    `accepted`, `rejected`) не считается: именно из-за этого интерфейс складывал
+    20 закрытых разрешений в «27» и звал решать решённое.
+
+    Шаги считаются как на сервере (`server/stale.py: counts`): шаг ждёт человека,
+    пока его состояние `open` — тот же словарь, что в `stale.waits()`. Раньше здесь
+    стоял ноль, и демо показывало счётчик меньше боевого.
+    """
+    d = detail if isinstance(detail, dict) else {}
+    questions = 0
+    for q in d.get("open_questions") or []:
+        if not isinstance(q, dict):
+            continue
+        state = str(q.get("state") or "open").lower()
+        if state != "open" or q.get("answered") or q.get("dismissed"):
+            continue
+        questions += 1
+    decisions = 0
+    for item in d.get("decisions") or []:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "proposed").lower()
+        if item.get("dismissed") or item.get("superseded"):
+            continue
+        if item.get("open") is True or status in ("proposed", "discuss"):
+            decisions += 1
+    approvals = 0
+    for a in d.get("approvals") or []:
+        if not isinstance(a, dict):
+            continue
+        if str(a.get("state") or "").lower() != "pending":
+            continue
+        if not a.get("actions"):
+            continue
+        approvals += 1
+    steps = 0
+    for s in d.get("next_steps") or []:
+        if not isinstance(s, dict):
+            continue
+        state = str(s.get("state") or "open").lower()
+        if state != "open" or s.get("dismissed"):
+            continue
+        steps += 1
+    total = questions + decisions + approvals + steps
+    return {"questions": questions, "decisions": decisions, "approvals": approvals,
+            "steps": steps, "total": total}
 
 
 def phase_rules():
@@ -124,6 +178,25 @@ class MockRead:
             return 200, self.today()
         if path == "/api/duties":
             return 200, self.duties(query)
+        # W27-E8: шаблоны дежурств и история запусков (свои блоки демо-сервера).
+        if path == "/api/duty-templates":
+            return 200, mock_duties_fe.templates()
+        m = re.fullmatch(r"/api/duties/([A-Za-z0-9_.-]{1,64})/history", path)
+        if m:
+            return 200, mock_duties_fe.history(self, m.group(1))
+        # W27-E6 (контракт §2): «Уровень автономии» комнаты — три чтения.
+        #   GET …/autonomy          — уровень, список «только с моего да», участники, предпросмотр
+        #   GET …/autonomy/journal  — что сделано по уровню и что остановлено (severity)
+        #   GET …/autonomy/suggest  — предложения по истории («вы разрешали 22 раза»)
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/autonomy", path)
+        if m:
+            return 200, self.autonomy_payload(m.group(1))
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/autonomy/journal", path)
+        if m:
+            return 200, self.autonomy_journal(m.group(1))
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/autonomy/suggest", path)
+        if m:
+            return 200, self.autonomy_suggest(m.group(1))
         # W26-D5: дела — список комнаты/all и одно дело (форма из fixtures/delo.json)
         if path == "/api/delos" or re.fullmatch(r"/api/rooms/[a-z][a-z0-9_-]{1,31}/delos", path):
             return 200, mock_delos.payload(query, path)
@@ -345,7 +418,8 @@ class MockRead:
             items = [item for item in items if room in (item.get("bound_rooms") or [])]
         data["items"] = items
         data["generated_at"] = now()
-        return data
+        # W27-E8: поля дежурства комнаты (тип/правило/итог), корзина и предложения.
+        return mock_duties_fe.enrich(self, data)
 
     def health_integrations(self) -> dict:
         """GET /api/health/integrations — сводка проверок (контракт §3.3)."""
@@ -405,11 +479,43 @@ class MockRead:
         # (то же правило, что `server/approvals._same_reason`; решение по строке
         # закрывает все её запросы — см. mock_write, действие `approval`).
         detail["approvals"] = [dict(a) for a in collapse_approvals(approvals)]
+        # W27-E2 §1: реестр «не актуально» (снять/вернуть) — поверх собранной детали,
+        # как реестр ответов: фикстура на каждый GET новая, отметка — в памяти мока.
+        try:
+            stale = self.stale_overrides(rid)
+        except Exception:  # noqa: BLE001 — демо без реестра продолжает работать
+            stale = {}
+        def _mark(kind_name, item):
+            bucket = stale.get(kind_name) or {}
+            key = str((item or {}).get("id") or "")
+            if key and key in bucket:
+                if kind_name == "approval":
+                    item["state"] = "dismissed"
+                elif kind_name == "question":
+                    item["dismissed"] = True
+                    item["state"] = "dismissed"
+                elif kind_name == "decision":
+                    item["open"] = False
+                    item["status"] = "dismissed"
+                    item["dismissed"] = True
+                elif kind_name == "step":
+                    item["state"] = "dismissed"
+                item["closed_reason"] = bucket[key] or "dismissed"
+            return item
+        for _kind, _field in (("approval", "approvals"), ("question", "open_questions"),
+                              ("decision", "decisions"), ("step", "next_steps")):
+            for _item in detail.get(_field) or []:
+                if isinstance(_item, dict):
+                    _mark(_kind, _item)
         # W22-AP1: счётчик и «ждёт вас» — по тем же правилам, что на сервере:
         # завершённая карточка ждёт человека, только если участник написал о блокировке.
         # Считаем СТРОКИ (как сервер: строка-группа — одно решение), а не команды.
         pending = [a for a in detail["approvals"] if a.get("state") == "pending"]
         detail["approvals_pending"] = len(pending)
+        # W27-E2 §1: ОДНО число «ждёт вас» с расшифровкой — клиент показывает его,
+        # а не складывает список (иначе 20 закрытых разрешений давали «27»).
+        detail["needs_you_count"] = needs_you_count(detail)
+        detail["approvals_actionable"] = detail["needs_you_count"]["approvals"]
         if any(a.get("card_state") not in ("done", "archived", "failed") or a.get("stopped")
                for a in pending):
             detail["needs_you"] = True
@@ -1175,5 +1281,216 @@ class MockRead:
             body = fh.read()
         return 200, Raw(body, ctype, headers)
 
+    # --- W27-E6: «Уровень автономии» комнаты (контракт §2) -------------------
+    # Демо ничего не пишет в профили участников: уровень и список «только с
+    # моего да» живут в памяти процесса, как и остальное в моке. Формы ответов —
+    # ровно контракт §2, чтобы интерфейс проверялся на том, что отдаст сервер.
+    AUTONOMY_LEVELS = ("careful", "working", "free")
+    #: классы «свои скрипты» — их включает рабочий уровень
+    AUTONOMY_SCRIPT_CLASSES = ["script execution via -e/-c flag", "script execution via heredoc"]
+    #: маски «только с моего да» по умолчанию (тот же список у сервера)
+    AUTONOMY_NEVER_DEFAULTS = [
+        "удаление папки целиком",
+        "удаление файлов с подтверждением «всё равно»",
+        "отправка писем и сообщений",
+        "платежи и деньги",
+        "права администратора",
+        "реестр и службы Windows",
+        "остановка процессов",
+        "контейнеры и их хранилища",
+        "скачивание и сразу запуск",
+        "запись в файлы с паролями и ключами",
+    ]
+    #: разрушительные классы: в журнале они получают severity=critical
+    AUTONOMY_CRITICAL_WORDS = ("recursive", "registry", "sudo", "taskkill", "docker", "curl", "rm -rf")
+
+    def _autonomy_names(self) -> dict:
+        """Имена участников для подписей («Анна», «Лев») из справочника профилей."""
+        try:
+            data = self.fixture("profiles.json")
+        except Exception:      # noqa: BLE001 — подпись не повод падать
+            return {}
+        out = {}
+        for item in (data.get("items") or []):
+            if not isinstance(item, dict):
+                continue
+            profile = str(item.get("profile") or "")
+            name = str(item.get("name") or "").strip()
+            if profile and name:
+                out[profile] = name
+        return out
+
+    def _autonomy_people(self, room: dict) -> list:
+        """Участники комнаты одной строкой: руководитель, критик, исполнители."""
+        names = self._autonomy_names()
+        profiles = [room.get("orchestrator"), room.get("critic")]
+        profiles += [m.get("profile") for m in (room.get("members") or []) if isinstance(m, dict)]
+        out, seen = [], set()
+        for raw in profiles:
+            profile = str(raw or "")
+            if not profile or profile in seen:
+                continue
+            seen.add(profile)
+            out.append({"profile": profile, "member_title": names.get(profile, profile)})
+        return out
+
+    def autonomy_state(self, room_id: str) -> dict:
+        """Текущий уровень комнаты (память демо; у новой комнаты — «Рабочий»)."""
+        self.room(room_id)
+        store = getattr(self, "autonomy_demo", None)
+        if not isinstance(store, dict):
+            store = {}
+            self.autonomy_demo = store
+        if room_id not in store:
+            room = self.room(room_id)
+            saved = room.get("autonomy") if isinstance(room.get("autonomy"), dict) else {}
+            level = str(saved.get("level") or "")
+            if level not in self.AUTONOMY_LEVELS:
+                level = "working"
+            never = saved.get("never")
+            never = [" ".join(str(x).split()) for x in never if str(x or "").strip()] \
+                if isinstance(never, list) else []
+            store[room_id] = {"level": level, "never": never or list(self.AUTONOMY_NEVER_DEFAULTS),
+                              "updated_at": int(saved.get("updated_at") or (now() - 3 * 86400))}
+        return store[room_id]
+
+    def _autonomy_profiles(self, room: dict, level: str, never: list) -> list:
+        """Что будет записано участникам на этом уровне (ровно, без догадок)."""
+        rows = []
+        for person in self._autonomy_people(room):
+            if level == "careful":
+                allow, mode, deny = [], "deny", []
+            elif level == "free":
+                allow, mode, deny = list(self.AUTONOMY_SCRIPT_CLASSES), "approve", list(never)
+            else:
+                allow, mode, deny = list(self.AUTONOMY_SCRIPT_CLASSES), "deny", []
+            rows.append({"profile": person["profile"], "member_title": person["member_title"],
+                         "allowlist": allow, "single_query_mode": mode, "deny": deny})
+        return rows
+
+    def _autonomy_preview(self, room: dict, level: str, never: list) -> dict:
+        """«Что изменится» простыми словами — до подтверждения."""
+        people = self._autonomy_people(room)
+        if level == "careful":
+            changes = [
+                "любой запуск скрипта или команды участник снова спрашивает у вас",
+                "постоянные разрешения, которые добавила Комната, снимаются",
+                "чтение, поиск и заметки в папке комнаты остаются без вопросов",
+            ]
+            note = "Так комната работает «как раньше»: спокойно, но с вопросом на каждый запуск."
+        elif level == "free":
+            changes = [
+                "почти все действия участники делают сами",
+                "останавливается только список «только с моего да» (%d)" % len(never),
+                "если действие запрещено, участник напишет вам вопрос в карточке — "
+                "«спросить» на этом уровне некому",
+            ]
+            note = "Держите список «только с моего да» полным: на этом уровне в нём вся защита."
+        else:
+            changes = [
+                "свои скрипты участники запускают сами — без вопроса",
+                "удаление, отправка наружу, реестр, службы и права администратора остаются вопросами",
+                "всё, что вне папки комнаты, участник спросит у вас",
+                "при первой остановке участник получит подсказку: скрипт — файлом, а не одной строкой",
+            ]
+            note = "Рекомендуемый уровень: обычная работа идёт без вас, опасное — с вашего «да»."
+        return {"changes": changes, "note": note, "affects": len(people)}
+
+    def autonomy_payload(self, room_id: str) -> dict:
+        """GET /api/rooms/{id}/autonomy (контракт §2)."""
+        room = self.room(room_id)
+        state = self.autonomy_state(room_id)
+        level = state["level"]
+        never = list(state["never"])
+        return {
+            "room": room["id"],
+            "level": level,
+            "never": never,
+            "updated_at": state["updated_at"],
+            "profiles": self._autonomy_profiles(room, level, never),
+            "defaults": {"never": list(self.AUTONOMY_NEVER_DEFAULTS)},
+            "preview": {lvl: self._autonomy_preview(room, lvl, never) for lvl in self.AUTONOMY_LEVELS},
+        }
+
+    def autonomy_journal(self, room_id: str) -> dict:
+        """GET /api/rooms/{id}/autonomy/journal — что сделано само и что остановлено.
+
+        Остановленные строки берутся из НАСТОЯЩИХ ожидающих разрешений комнаты:
+        нажатие «Разрешить один раз» в демо действительно снимает блокировку.
+        """
+        room = self.room(room_id)
+        names = {p["profile"]: p["member_title"] for p in self._autonomy_people(room)}
+        stamp = now()
+        items = []
+        if room["id"] == "cafe":
+            own = [
+                ("team-ops", "свои скрипты", 42 * 60, "Собрать отчёт по упаковке за неделю", "t_a1b2c3d4"),
+                ("team-cfo", "свои скрипты", 3 * 3600, "Юнит-экономика набора из 6 моти", "t_3b7e9d11"),
+                ("team-runner", "чтение файлов в папке комнаты", 5 * 3600,
+                 "Дорожная карта проекта: где мы сейчас", "t_a1b2c3d4"),
+                ("team-lawyer", "свои скрипты", 26 * 3600, "Разбор договора поставки упаковки", "t_5d0c11a2"),
+            ]
+            for profile, cls, ago, card, rid in own:
+                items.append({"id": "aj_self_" + profile, "kind": "self", "room": room["id"],
+                              "profile": profile, "member_title": names.get(profile, profile),
+                              "class": cls, "severity": "routine", "at": stamp - ago,
+                              "card": card, "request_id": rid})
+        for rid, detail in self.requests.items():
+            if detail.get("room") != room["id"]:
+                continue
+            for approval in self._approvals_for(rid):
+                if approval.get("state") != "pending":
+                    continue
+                pattern = str(approval.get("pattern_key") or "").lower()
+                critical = any(word in pattern for word in self.AUTONOMY_CRITICAL_WORDS)
+                item = {
+                    "id": str(approval.get("id") or ""),
+                    "approval_id": str(approval.get("id") or ""),
+                    "kind": "blocked",
+                    "room": room["id"],
+                    "profile": approval.get("profile"),
+                    "member_title": names.get(str(approval.get("profile")),
+                                              approval.get("member_title") or approval.get("profile")),
+                    "class": approval.get("description") or approval.get("pattern_key"),
+                    "severity": "critical" if critical else "routine",
+                    "at": int(approval.get("at") or stamp),
+                    "card": approval.get("card_title"),
+                    "request_id": rid,
+                    "command": approval.get("command"),
+                    # W27-E6: жёсткий запрет нельзя «разрешить» — интерфейс обязан
+                    # показать это честно, иначе кнопка ведёт в пустоту.
+                    "floor": bool(approval.get("floor")),
+                    "grantable": approval.get("grantable") is not False,
+                    "actions": list(approval.get("actions") or []),
+                }
+                if critical:
+                    item["what"] = [
+                        "C:/Work/Rooms/demo/архив/упаковка — 9 файлов",
+                        "C:/Work/Rooms/demo/архив/сметы — 5 файлов",
+                        "всего 14 файлов, 1,8 МБ",
+                        "после удаления вернуть нельзя",
+                    ]
+                items.append(item)
+        counts = {"self": sum(1 for i in items if i["kind"] == "self"),
+                  "blocked_critical": sum(1 for i in items if i["severity"] == "critical"),
+                  "blocked_routine": sum(1 for i in items
+                                         if i["kind"] == "blocked" and i["severity"] == "routine")}
+        return {"room": room["id"], "items": items, "counts": counts, "at": now()}
+
+    def autonomy_suggest(self, room_id: str) -> dict:
+        """GET /api/rooms/{id}/autonomy/suggest — «вы разрешали 22 раза»."""
+        self.room(room_id)
+        state = self.autonomy_state(room_id)
+        taken = {str(x).lower() for x in state["never"]}
+        rows = [
+            {"key": "script execution via -e/-c flag", "label": "свои скрипты одной строкой",
+             "count": 22, "destructive": False},
+            {"key": "script execution via heredoc", "label": "свои скрипты файлом через терминал",
+             "count": 10, "destructive": False},
+            {"key": "чтение файлов в папке комнаты", "label": "чтение файлов в папке комнаты",
+             "count": 7, "destructive": False},
+        ]
+        return {"room": room_id, "ok": True, "source": "approvals suggest",
+                "items": [r for r in rows if r["label"].lower() not in taken], "at": now()}
     # --- POST -------------------------------------------------------------
 

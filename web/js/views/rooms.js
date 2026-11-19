@@ -60,7 +60,7 @@ function personName(id) {
   const s = String(id == null ? '' : id).trim();
   if (!s) return '';
   if (s === 'mikhail') return 'Михаил';
-  return s.replace(/^(?:biz|room)-/, '');
+  return s.replace(/^(?:biz|team|room)-/, '');
 }
 
 /** Подпись руководителя комнаты без повтора роли. */
@@ -160,6 +160,119 @@ export async function mount(el, ctx) {
     'Всё локально: комнаты, запросы и файлы лежат на этом компьютере. Внешних сервисов нет.');
 
   root.appendChild(head);
+
+  /* ── W27-E4: быстрый запрос с домашней страницы ─────────────────────────
+     «Комнаты» — не витрина: отсюда можно сразу написать запрос в выбранную
+     комнату, уйти в «Надиктовать» и открыть «Входящие» комнаты. Раньше на
+     этой странице жила только кнопка «Комната» (создать), и любое действие
+     требовало зайти в комнату. */
+  const quickRoom = h('select', {
+    class: 'rooms-quick__select', id: 'quick-room', 'aria-label': 'Комната для запроса',
+  });
+  const quickText = h('textarea', {
+    class: 'rooms-quick__text', id: 'quick-text', rows: '2', maxlength: '4000',
+    placeholder: 'Что нужно сделать? Один текст — как диктуете.',
+    'aria-label': 'Текст запроса',
+  });
+  const quickSend = h('button', {
+    class: 'btn btn--primary', type: 'button', 'data-action': 'quick-request',
+  }, icon('send', { size: 13 }), 'Отправить');
+  const quickDictate = h('button', {
+    class: 'btn btn--secondary', type: 'button', 'data-action': 'quick-dictate',
+    title: 'Откроет комнату: микрофон — в полосе «Надиктовать» внизу экрана',
+  }, icon('lightbulb', { size: 13 }), 'Надиктовать');
+  const quickInbox = h('a', {
+    class: 'btn btn--ghost', href: '#/', 'data-action': 'quick-inbox',
+    title: 'Записи комнаты, которые ждут разбора',
+  }, icon('inbox', { size: 13 }), 'Входящие');
+  const quickNote = h('p', { class: 'rooms-quick__note small muted' },
+    'Запрос уйдёт в выбранную комнату — руководитель комнаты раздаст работу.');
+  const quickForm = h('div', { class: 'rooms-quick__body' },
+    h('div', { class: 'rooms-quick__row' }, quickRoom, quickText),
+    h('div', { class: 'rooms-quick__actions' },
+      quickSend, quickDictate, quickInbox, h('span', { class: 'spacer' }), quickNote),
+  );
+  const quickCard = h('section', { class: 'rooms-quick', 'aria-label': 'Быстрый запрос' },
+    h('div', { class: 'rooms-quick__head' },
+      icon('zap', { size: 15 }),
+      h('span', { class: 'rooms-quick__title' }, 'Быстрый запрос'),
+    ),
+    quickForm,
+  );
+
+  /** Текущая комната формы: выбранная, иначе последняя, иначе первая. */
+  function quickRoomId() {
+    const list = cardsSource().filter((r) => r && !r.archived);
+    const chosen = String(quickRoom.value || '');
+    if (chosen && list.some((r) => String(r.id) === chosen)) return chosen;
+    return list.length ? String(list[0].id) : '';
+  }
+
+  function syncQuickRooms() {
+    const list = cardsSource().filter((r) => r && !r.archived);
+    const prev = String(quickRoom.value || '');
+    quickRoom.replaceChildren();
+    for (const room of list) {
+      quickRoom.appendChild(h('option', { value: String(room.id) }, String(room.title || room.id)));
+    }
+    const keep = list.find((r) => String(r.id) === prev) ? prev : (list.length ? String(list[0].id) : '');
+    quickRoom.value = keep;
+    const empty = !list.length;
+    quickRoom.disabled = empty;
+    quickText.disabled = empty;
+    quickSend.disabled = empty;
+    quickDictate.disabled = empty;
+    quickInbox.href = empty ? '#/' : '#/room/' + enc(keep) + '/inbox';
+    quickInbox.classList.toggle('is-disabled', empty);
+    quickNote.textContent = empty
+      ? 'Комнат пока нет — создайте первую, и запрос уйдёт в неё.'
+      : 'Запрос уйдёт в выбранную комнату — руководитель комнаты раздаст работу.';
+  }
+
+  quickRoom.addEventListener('change', () => {
+    const id = quickRoomId();
+    if (id) quickInbox.href = '#/room/' + enc(id) + '/inbox';
+  });
+
+  let quickBusy = false;
+  async function sendQuick() {
+    const text = String(quickText.value || '').trim();
+    const roomId = quickRoomId();
+    if (!roomId) { toast('Сначала создайте комнату', 'info'); return; }
+    if (!text) { toast('Введите текст запроса', 'info'); quickText.focus(); return; }
+    if (quickBusy) return;
+    quickBusy = true;
+    quickSend.disabled = true;
+    try {
+      const res = await api.post('/api/rooms/' + enc(roomId) + '/requests', { text, attach: [] });
+      const rootId = res && (res.root_id || (res.request && res.request.id));
+      quickText.value = '';
+      toast('Запрос принят', 'ok');
+      if (rootId) navigate('#/room/' + enc(roomId) + '/request/' + enc(rootId));
+      else navigate('#/room/' + enc(roomId) + '/composer');
+    } catch (err) {
+      toast(err && err.message ? err.message : 'Не удалось отправить запрос', 'danger');
+    } finally {
+      quickBusy = false;
+      quickSend.disabled = !cardsSource().length;
+    }
+  }
+
+  quickSend.addEventListener('click', () => sendQuick());
+  quickText.addEventListener('keydown', (ev) => {
+    if (ev && ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+      if (ev.preventDefault) ev.preventDefault();
+      sendQuick();
+    }
+  });
+  quickDictate.addEventListener('click', () => {
+    const roomId = quickRoomId();
+    if (!roomId) { toast('Сначала создайте комнату', 'info'); return; }
+    navigate('#/room/' + enc(roomId) + '/composer');
+    toast('Микрофон — в полосе «Надиктовать» внизу экрана', 'info');
+  });
+
+  root.appendChild(quickCard);
   root.appendChild(steps);
   root.appendChild(gridHost);
   root.appendChild(archHost);
@@ -275,6 +388,9 @@ export async function mount(el, ctx) {
       isProjectMode(r)])) + '#' + state.loaded + '#' + Boolean(state.error);
     if (!force && sig === renderSig) return;
     renderSig = sig;
+
+    // W27-E4: список комнат в «Быстром запросе» — тот же, что в карточках.
+    syncQuickRooms();
 
     grid.replaceChildren();
     if (!state.loaded && !state.error) {

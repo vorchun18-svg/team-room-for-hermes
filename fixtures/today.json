@@ -108,7 +108,11 @@
       "owner": "Вы",
       "due": "2026-11-11",
       "days_overdue": 7,
-      "request_id": "t_5c8e4a02"
+      "request_id": "t_5c8e4a02",
+      "kind": "next_step",
+      "state": "open",
+      "actionable": true,
+      "request_title": "Сайт студии: структура разделов"
     },
     {
       "room": "fn",
@@ -118,7 +122,11 @@
       "owner": "Вы",
       "due": "2026-11-14",
       "days_overdue": 4,
-      "request_id": "t_4e91c7b2"
+      "request_id": "t_4e91c7b2",
+      "kind": "next_step",
+      "state": "open",
+      "actionable": true,
+      "request_title": "Ремонт офиса: смета и порядок работ"
     },
     {
       "room": "long",
@@ -128,7 +136,11 @@
       "owner": "Исполнитель",
       "due": "2026-11-16",
       "days_overdue": 2,
-      "request_id": null
+      "request_id": null,
+      "kind": "next_step",
+      "state": "open",
+      "actionable": true,
+      "request_title": ""
     }
   ],
   "due_soon": [
@@ -140,7 +152,11 @@
       "owner": "Вы",
       "due": "2026-11-19",
       "days_left": 1,
-      "request_id": "t_5c8e4a02"
+      "request_id": "t_5c8e4a02",
+      "kind": "next_step",
+      "state": "open",
+      "actionable": true,
+      "request_title": "Сайт студии: структура разделов"
     },
     {
       "room": "fn",
@@ -150,7 +166,11 @@
       "owner": "Помощник",
       "due": "2026-11-21",
       "days_left": 3,
-      "request_id": null
+      "request_id": null,
+      "kind": "next_step",
+      "state": "open",
+      "actionable": true,
+      "request_title": ""
     }
   ],
   "running": [

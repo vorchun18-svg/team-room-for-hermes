@@ -60,7 +60,11 @@ UPDATABLE = ("title", "icon", "orchestrator", "critic", "context_files", "projec
              "model_guard",
              # Дежурства комнаты (W24 §3.2): только привязка id заданий Hermes —
              # сами задания живут в Hermes и читаются на чтение (`server/duties.py`).
-             "duties")
+             "duties",
+             # Уровень автономии комнаты (W27-E5 §2): `{level, never, updated_at}`.
+             # Пишется ТОЛЬКО маршрутом `POST /api/rooms/{id}/autonomy` (после записи
+             # в профили) — интерфейс комнаты поле не редактирует.
+             "autonomy")
 IMMUTABLE = ("id", "board", "tenant")
 DEFAULT_BOARD = "team"
 DEFAULT_MAX_ROUNDS = 1
@@ -402,6 +406,37 @@ def _norm_duties(value) -> list[str]:
         return _check_duties(value)
     except RoomsError:
         return []
+
+
+# --- уровень автономии комнаты (W27-E5 §2) --------------------------------
+# В реестре комнаты живёт ТОЛЬКО выбор уровня и список «только с моего да»
+# (`{level, never, updated_at}`). Сами настройки — в профилях Hermes, их пишет
+# `server/autonomy.py` отдельным процессом; комната лишь помнит, что выбрано.
+
+def _autonomy_mod():
+    """Модуль уровней автономии (лениво: rooms ← autonomy, обратной зависимости нет)."""
+    try:
+        from . import autonomy as mod
+    except ImportError:  # pragma: no cover - плоский импорт
+        import autonomy as mod  # type: ignore
+    return mod
+
+
+def _check_autonomy(value) -> dict:
+    """Проверить запись `{level, never}` (ошибки — RoomsError, роут отдаст 400)."""
+    mod = _autonomy_mod()
+    try:
+        return mod.validate(value)
+    except mod.AutonomyError as exc:
+        raise RoomsError(exc.message, "bad_request", dict(exc.detail or {})) from exc
+
+
+def _norm_autonomy(value) -> dict:
+    """Чтение реестра: мусор не роняет список комнат — уровень берём по умолчанию."""
+    try:
+        return _autonomy_mod().normalize(value)
+    except Exception:  # noqa: BLE001 - реестр комнат важнее одного поля
+        return {"level": "working", "never": [], "updated_at": 0}
 
 
 
@@ -849,6 +884,9 @@ def _norm_room(room: dict) -> dict:
         "model_guard_block": model_guard_block(room.get("model_guard")),
         # Дежурства комнаты (W24 §3.2): id заданий Hermes; у старых комнат поля нет — пусто.
         "duties": _norm_duties(room.get("duties")),
+        # Уровень автономии (W27-E5 §2): у старых комнат поля нет — «Рабочий» по умолчанию,
+        # но профили НЕ меняются: уровень применяется только по действию человека.
+        "autonomy": _norm_autonomy(room.get("autonomy")),
         "created_at": int(room.get("created_at") or 0),
         "archived": bool(room.get("archived")),
         "seeded": bool(room.get("seeded")),
@@ -1086,6 +1124,10 @@ def update_room(cfg, room_id: str, patch: dict) -> dict:
                 elif key == "duties":
                     # W24 §3.2: привязка дежурств Hermes к комнате (только id, без правки Hermes).
                     room["duties"] = _check_duties(value)
+                elif key == "autonomy":
+                    # W27-E5 §2: выбор уровня автономии. Пишет только маршрут
+                    # `POST /api/rooms/{id}/autonomy` — после записи в профили.
+                    room["autonomy"] = _check_autonomy(value)
                 else:
                     room[key] = value
             if "project_dir" in patch:

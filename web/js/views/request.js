@@ -41,6 +41,8 @@ import { buildSvodBar } from '../shell-svod-bar.js';
 import { installFocusMode, buildFocusBar } from '../focus-mode.js';
 import { installDensity } from '../density.js';
 import { isTypingTarget } from '../hotkeys.js';
+// W27-E3: якорь шага `?step=ns_…` — раскрыть и подсветить шаг, к которому пришли.
+import { focusStepWhenReady, stepFromRoute } from './step-focus.js';
 
 const FINAL = new Set(['done', 'failed']);
 // WAVE17-P4: опрос реже, чем раньше (было 2 с): 304 по ETag дешёвый, но и он
@@ -729,6 +731,25 @@ export async function mount(el, ctx) {
   await ensureParts();
   await refresh({ initial: true });
   if (disposed) return { unmount() {} };
+
+  /* ── W27-E3: пришли по ссылке на конкретный шаг ──────────────────────────
+   * «Сегодня» ведёт сюда с `?step=ns_2`: раскрываем блок «Шаги» и подсвечиваем
+   * этот шаг, иначе переход «в запрос» был бы переходом «куда-то туда».
+   * Шаги приходят вместе с деталями (и на перерисовке могут появиться позже),
+   * поэтому ждём их появления, а не надеемся на первый кадр.
+   */
+  const focusStepId = stepFromRoute(ctx.route)
+    || String((ctx.params && ctx.params.step) || '');
+  if (focusStepId) {
+    focusStepWhenReady(root, focusStepId, {
+      scroll: !isTypingTarget(document.activeElement),
+      onMissing: () => {
+        try {
+          ctx.toast('Этот шаг уже не в плане: он сделан, снят или переписан', 'warn');
+        } catch { /* тост не критичен */ }
+      },
+    });
+  }
 
   poller = (typeof ctx.api.poll === 'function' ? ctx.api.poll : apiPoll)(tick, POLL_ACTIVE, { pauseHidden: true, immediate: false });
 

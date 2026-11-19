@@ -25,6 +25,7 @@ import {
   roundsLabel, versionsLabel, tabTitleOf,
 } from '../web/js/text-ru.js';
 import { TABS, TAB_IDS, tabTitle } from '../web/js/router.js';
+import { TAB_ORDER } from '../web/js/views/palette-model.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -55,8 +56,17 @@ test('имена вкладок берутся из словаря — шапк�
     assert.equal(tabTitleOf(t.id), t.title, `tabTitleOf(${t.id})`);
     assert.equal(tabTitle(t.id), t.title, `tabTitle(${t.id})`);
   }
-  assert.deepEqual(TAB_IDS, ['composer', 'team', 'roadmap', 'backlog', 'reports', 'journal'],
-    'id вкладок прежние: ссылки и закладки не ломаются');
+  // W26-QA1: id семи прежних вкладок и их относительный порядок прежние — ссылки и
+  // закладки не ломаются; «Дела» встали рядом с «От вас нужно», а новые служебные
+  // («Входящие», «Дежурства») — в хвост, чтобы не забивать шапку.
+  assert.deepEqual(TAB_IDS,
+    ['composer', 'team', 'roadmap', 'backlog', 'delos', 'reports', 'journal', 'inbox', 'duties'],
+    'id вкладок и их порядок: старые на месте, Дела рядом с «От вас нужно»');
+  assert.equal(TAB_IDS.indexOf('delos'), TAB_IDS.indexOf('backlog') + 1,
+    '«Дела» стоят сразу после «От вас нужно»');
+  // Палитра держит свой запасной список вкладок — он обязан совпадать с маршрутами,
+  // иначе Ctrl+K предложит разделы в другом порядке (или не все).
+  assert.deepEqual(TAB_ORDER, TAB_IDS, 'запасной список палитры = список вкладок');
 });
 
 test('ни в одном файле интерфейса не осталось старых подписей', () => {

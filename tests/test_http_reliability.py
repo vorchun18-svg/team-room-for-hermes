@@ -389,7 +389,11 @@ class TestCorruptStateWarning(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=5)
-            warnings = [w for w in body["warnings"] if w["code"] == "state_corrupt"]
+            # W26-QA1: `statefiles._PROBLEMS` — общий на процесс список проблем чтения,
+            # поэтому в ПОЛНОМ прогоне в warnings попадают и чужие файлы из прошлых
+            # песочниц. Проверяем предупреждение про СВОЙ файл (проверка строже, а не слабее).
+            warnings = [w for w in body["warnings"] if w["code"] == "state_corrupt"
+                        and str(w["detail"].get("path")) == str(reg)]
             self.assertTrue(warnings, body["warnings"])
             warning = warnings[0]
             self.assertIn("копия", warning["message"])

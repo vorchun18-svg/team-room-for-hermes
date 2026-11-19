@@ -13,7 +13,8 @@ import { createRouter, TABS, TAB_IDS, buildHash, parseHash, tabTitle } from './r
 // W26-D9: полоса «Надиктовать» и бейдж вкладки «Входящие» (один счётчик на все места).
 import { installQuickCapture, captureBadge } from './quick-capture.js';
 import {
-  createRouteMemory, chooseHash, parseRouteHash, isBareHash,
+  createRouteMemory, parseRouteHash, isBareHash, planStart,
+  normalizeStartPref, START_KEY, buildRoomHash,
 } from './route-memory.js';
 import { rooms, currentRoom, toasts, theme, health } from './store.js';
 import {
@@ -38,8 +39,10 @@ import { folderActionButton, roomSettingsButton, projectDirHint } from './projec
 import {
   waitingFor, refreshInbox, subscribeInbox, startInboxPolling,
 } from './shell-inbox.js';
-import { installHotkeys as installFieldHotkeys, openHotkeyHelp } from './hotkeys.js';
+import { installHotkeys as installFieldHotkeys, openHotkeyHelp, NAV_EVENT } from './hotkeys.js';
 import { applyViewMode, toggleViewMode } from './view-mode.js';
+// W27-E4: заглушка-скелетон при запуске (без смены адреса и «прыжка» страницы).
+import { skeletonCards } from './shell-skeleton.js';
 import {
   FILTER_TABS as SCOPE_FILTER_TABS, phaseLabel, scopeModel, scopeSwitcher, toolsGroup,
 } from './topbar-scope.js';
@@ -51,8 +54,13 @@ export { dispatcherRunning };
 
 const THEME_KEY = 'teamroom.theme';
 const LAST_ROOM_KEY = 'teamroom.lastRoom';
-// W24-N3: «Стартовая страница» — «Сегодня» (по умолчанию) или последняя комната.
-const START_KEY = 'teamroom.start';
+// W24-N3 → W27-E4: «Стартовая страница» — «Сегодня» (по умолчанию), «Комнаты»
+// или «Последнее место». Ключ и значения живут в route-memory.js (один источник
+// для настроек, каркаса и тестов). Здесь только чтение/запись в localStorage.
+// W27-E4: последний список комнат — в локальной памяти: до ответа /api/rooms
+// каркас сразу знает, есть ли комнаты, и выбирает адрес ОДИН раз.
+const ROOMS_CACHE_KEY = 'teamroom.roomsCache';
+const ROOMS_CACHE_MAX = 40;
 /** Вкладки, которые принимают фильтр ?request=<id> (Д3, имя согласовано с BACKLOG-FIX). */
 const FILTER_TABS = SCOPE_FILTER_TABS;
 
@@ -130,19 +138,59 @@ const waitingOf = waitingFor;
 
 const media = window.matchMedia('(prefers-color-scheme: dark)');
 
-/** Стартовая страница из настроек: 'today' (по умолчанию) или 'last'. */
+/**
+ * Стартовая страница из настроек: 'today' (по умолчанию), 'rooms' или 'last'.
+ * @returns {'today'|'rooms'|'last'}
+ */
 export function readStartPref() {
   try {
-    const saved = localStorage.getItem(START_KEY);
-    return saved === 'last' ? 'last' : 'today';
+    return normalizeStartPref(localStorage.getItem(START_KEY));
   } catch { return 'today'; }
 }
 
 /** Сохранить выбор стартовой страницы (экран «Настройки»). */
 export function saveStartPref(value) {
-  const next = value === 'last' ? 'last' : 'today';
+  const next = normalizeStartPref(value);
   try { localStorage.setItem(START_KEY, next); } catch { /* приватный режим */ }
   return next;
+}
+
+/* ─────────────────────────── W27-E4: локальная память списка комнат ─────── */
+
+/**
+ * Последний известный список комнат из локальной памяти.
+ *
+ * Зачем: при запуске адрес выбирается ОДИН раз и до первой отрисовки (дефект 3:
+ * «страница прыгает»). Без кэша «Сегодня» не отличить от «комнат нет», и адрес
+ * пришлось бы менять после ответа сервера — это и был видимый прыжок. Кэш даёт
+ * мгновенный ответ; свежие данные приходят следом тихим опросом.
+ *
+ * @returns {object[]} [] — кэша нет или он испорчен (не ошибка)
+ */
+function readRoomsCache() {
+  try {
+    const raw = localStorage.getItem(ROOMS_CACHE_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    const list = Array.isArray(data && data.rooms) ? data.rooms : [];
+    return list.map(normalizeRoom).filter(Boolean);
+  } catch { return []; }
+}
+
+/** Запомнить список комнат (только поля, нужные меню и шапке). */
+function saveRoomsCache(list) {
+  try {
+    const rows = (Array.isArray(list) ? list : []).slice(0, ROOMS_CACHE_MAX).map((r) => ({
+      id: r.id,
+      title: r.title,
+      icon: r.icon,
+      phase: r.phase,
+      project_dir: r.project_dir,
+      members: Array.isArray(r.members) ? r.members.slice(0, 8) : [],
+      counts: r.counts,
+    }));
+    localStorage.setItem(ROOMS_CACHE_KEY, JSON.stringify({ at: Date.now(), rooms: rows }));
+  } catch { /* приватный режим или места нет — работаем без кэша */ }
 }
 
 /**
@@ -323,6 +371,9 @@ function crumbsNav(route, room) {
     tabTitle,
   });
   if (!items.length) return null;
+  // W27-E4: первый элемент крошек — «Комнаты» со ссылкой на `#/`. Из любого
+  // экрана комнаты до списка комнат один клик (дефект 3: «вернуться не смог»).
+  items.unshift({ text: 'Комнаты', href: '#/', hint: 'Все комнаты — список комнат' });
   const nav = h('nav', { class: 'crumbs', 'aria-label': 'Где вы находитесь' });
   // Бейдж — текст, а не элемент крошек: он рисуется в блоке меты (вторая строка
   // шапки на узком экране), чтобы не отнимать место у названия страницы.
@@ -353,6 +404,122 @@ function renderPageHint(node) {
   } else {
     host.replaceChildren();
     host.hidden = true;
+  }
+}
+
+/**
+ * W26-QA1: «Ещё ▾» для вкладок комнаты.
+ *
+ * Полоса вкладок прокручивается, но ползунка не видно: на 1026 px «Дежурства»
+ * уезжали за правый край и достать их мышью было нельзя, на 683 px — три
+ * вкладки из девяти (замер: tools/probe_w26_tabs.py). Теперь не поместившиеся
+ * вкладки прячутся, а в шапке появляется «Ещё ▾» с теми же пунктами, счётчиками
+ * и адресами. Активную вкладку прячем последней; если она всё же ушла в меню,
+ * кнопка подсвечивается — видно, где вы.
+ *
+ * @param {HTMLElement} nav полоса вкладок (`nav.tabs`), уже в документе
+ * @param {string} activeId id текущей вкладки
+ */
+function tabsOverflow(nav, activeId) {
+  const all = Array.from(nav.querySelectorAll('.tab'));
+  if (!all.length || typeof nav.querySelectorAll !== 'function') return;
+  const more = h('button', {
+    type: 'button',
+    class: 'tab tab--more',
+    'aria-haspopup': 'menu',
+    'aria-expanded': 'false',
+    title: 'Остальные разделы комнаты',
+  }, 'Ещё ▾');
+  more.hidden = true;
+  const pop = h('div', { class: 'popover tabs__more-pop', role: 'menu', 'aria-label': 'Разделы комнаты' });
+  pop.hidden = true;
+  let open = false;
+  let onDoc = null;
+  let onKey = null;
+
+  const close = () => {
+    if (!open) return;
+    open = false;
+    if (pop.parentNode) pop.parentNode.removeChild(pop);
+    more.setAttribute('aria-expanded', 'false');
+    if (onDoc) document.removeEventListener('mousedown', onDoc, true);
+    if (onKey) document.removeEventListener('keydown', onKey, true);
+    onDoc = null;
+    onKey = null;
+  };
+
+  const openMenu = () => {
+    const hiddenTabs = all.filter((a) => a.hidden);
+    if (!hiddenTabs.length) return;
+    pop.replaceChildren(h('div', { class: 'menu' }, ...hiddenTabs.map((a) => {
+      const id = a.getAttribute('data-tab') || '';
+      const on = a.classList.contains('tab--active');
+      const count = a.querySelector('.tab__count');
+      return h('a', {
+        class: 'menu__item' + (on ? ' menu__item--on' : ''),
+        href: a.getAttribute('href'),
+        'aria-current': on ? 'page' : null,
+        onclick: () => close(),
+      }, tabTitle(id), count && count.textContent
+        ? h('span', { class: 'menu__hint' }, count.textContent) : null);
+    })));
+    document.body.appendChild(pop);
+    pop.hidden = false;
+    // Положение — под кнопкой, не вылезая за окно (fixed: полоса вкладок режет overflow).
+    const r = more.getBoundingClientRect();
+    const w = pop.getBoundingClientRect().width || 214;
+    const left = Math.max(8, Math.min(Math.round(r.left), Math.round(window.innerWidth - w - 12)));
+    pop.style.top = Math.round(r.bottom + 4) + 'px';
+    pop.style.left = left + 'px';
+    open = true;
+    more.setAttribute('aria-expanded', 'true');
+    onDoc = (e) => { if (!pop.contains(e.target) && !more.contains(e.target)) close(); };
+    onKey = (e) => { if (e.key === 'Escape') { close(); more.focus(); } };
+    document.addEventListener('mousedown', onDoc, true);
+    document.addEventListener('keydown', onKey, true);
+  };
+
+  more.addEventListener('click', () => { if (open) close(); else openMenu(); });
+  nav.appendChild(more);
+
+  const fit = () => {
+    close();
+    for (const a of all) a.hidden = false;
+    more.hidden = true;
+    const tight = () => nav.scrollWidth > nav.clientWidth + 1;
+    if (!tight()) {
+      more.classList.remove('tab--active');
+      more.title = 'Остальные разделы комнаты';
+      return;
+    }
+    more.hidden = false;
+    // С конца, но активную вкладку — в последнюю очередь: человек должен видеть,
+    // где он, а увести из-под него текущую вкладку хуже, чем соседнюю.
+    const order = all.filter((a) => a.getAttribute('data-tab') !== activeId).reverse()
+      .concat(all.filter((a) => a.getAttribute('data-tab') === activeId));
+    for (const a of order) {
+      if (!tight()) break;
+      a.hidden = true;
+    }
+    const names = all.filter((a) => a.hidden).map((a) => tabTitle(a.getAttribute('data-tab')));
+    more.classList.toggle('tab--active',
+      all.some((a) => a.hidden && a.getAttribute('data-tab') === activeId));
+    more.title = names.length ? 'Ещё: ' + names.join(', ') : 'Остальные разделы комнаты';
+  };
+
+  fit();
+  // Ширина шапки меняется с окном и с режимом меню — пересчитываем по факту.
+  if (typeof ResizeObserver === 'function') {
+    let raf = 0;
+    const ro = new ResizeObserver(() => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (!nav.isConnected) { ro.disconnect(); return; }
+        fit();
+      });
+    });
+    ro.observe(nav);
   }
 }
 
@@ -415,6 +582,13 @@ function renderTopbar(route) {
     lead.push(h('div', { class: 'topbar__title' },
       h('span', { class: 'topbar__name' }, 'Сегодня'),
       h('span', { class: 'topbar__sub' }, 'что ждёт вас и что идёт'),
+    ));
+  } else if (route.name === 'home') {
+    // W27-E4: `#/` — полноценный экран («Комнаты»), а не «заготовка»: у него
+    // своё название в шапке и подсказка, что здесь можно сделать.
+    lead.push(h('div', { class: 'topbar__title' },
+      h('span', { class: 'topbar__name' }, 'Все комнаты'),
+      h('span', { class: 'topbar__sub' }, 'выберите комнату или начните новую'),
     ));
   } else if (room) {
     const phase = roomPhase(room);
@@ -526,6 +700,7 @@ function renderTopbar(route) {
       ].filter(Boolean).join('. ');
       tabs.appendChild(h('a', {
         class: 'tab' + (isActive ? ' tab--active' : ''),
+        'data-tab': t.id,
         href: FILTER_TABS.includes(t.id)
           ? scopeHash(room.id, t.id, filterTab)
           : buildHash({ roomId: room.id, tab: t.id }),
@@ -540,6 +715,8 @@ function renderTopbar(route) {
       ));
     }
     bar.appendChild(tabs);
+    // W26-QA1: не поместившиеся вкладки уходят в «Ещё ▾» (см. tabsOverflow).
+    tabsOverflow(tabs, active);
   }
 
   const banners = h('div', { id: 'banners', class: 'topbar__banners' });
@@ -613,6 +790,7 @@ async function refreshSidebarSummary() {
     });
     if (changed) {
       rooms.set({ list: next, loadedAt: Date.now() });
+      saveRoomsCache(next);
       renderRoomList();
       updateTitle();
     }
@@ -655,6 +833,8 @@ async function loadRooms({ silent = false } = {}) {
     }
     const list = normalizeRooms(payload);
     rooms.set({ list, loadedAt: Date.now(), loading: false, error: null });
+    // W27-E4: список — в локальную память: следующий запуск выберет адрес сразу.
+    saveRoomsCache(list);
     notifyChanges(list);
   } catch (err) {
     rooms.set({ loading: false, error: err && err.message ? err.message : 'Список комнат недоступен' });
@@ -751,6 +931,26 @@ function watchViewWidth() {
   if (el.app) el.app.dataset.viewCols = String(columnsForView(layoutMode.width));
 }
 
+/**
+ * W27-E4: заглушка-скелетон до первой отрисовки.
+ *
+ * Пока адрес не выбран (первый запуск без локальной памяти комнат), страница
+ * НЕ показывает «Комнаты» и не переключается на «Сегодня» через полсекунды —
+ * именно это было видимым «прыжком». Вместо этого нейтральная заглушка в форме
+ * будущих карточек; адрес в строке не меняется.
+ */
+function paintBootSkeleton() {
+  if (!el.view) return;
+  const box = h('div', { class: 'view__inner boot-start', 'data-boot': 'skeleton' },
+    h('div', { class: 'boot-start__head', role: 'status', 'aria-live': 'polite' },
+      h('span', { class: 'boot-start__label' }, 'Загружаю…'),
+      h('span', { class: 'boot-start__note small muted' }, 'открываю рабочий экран'),
+    ),
+    skeletonCards({ rows: 3, label: 'Загружаю…' }),
+  );
+  el.view.replaceChildren(box);
+}
+
 function mountShell() {
   if (!el.sidebar || !el.topbar || !el.view) {
     console.error('[app] нет контейнеров #sidebar/#topbar/#view — проверьте index.html');
@@ -806,8 +1006,16 @@ function mountShell() {
   });
 
   renderEngineStatus();
-  router.start();
-  quickCapture.sync(router.route);
+  // W27-E4: пока адрес не выбран — заглушка-скелетон (адрес не меняется).
+  // Если список комнат уже известен из локальной памяти, решение принимается
+  // сразу: заглушка не нужна, и лишнего мигания не будет.
+  // Роутер стартует в boot() ровно один раз, когда адрес уже известен.
+  if (!rooms.get('list').length) {
+    // Шапка нейтральная, но не пустая: пока адрес не выбран, она не должна
+    // показывать чужой экран — только «Все комнаты».
+    renderTopbar(parseHash());
+    paintBootSkeleton();
+  }
 }
 
 /* ─────────────────────────────────────────────────────── старт приложения */
@@ -840,31 +1048,74 @@ async function requestExists(id) {
 }
 
 /**
- * Маршрут для открытия: явный хэш → сохранённый последний → комната.
- * Решение принимает `chooseHash` (чистая функция, покрыта тестами).
+ * Маршрут для открытия — ОДНО решение до первой отрисовки (W27-E4).
+ *
+ * Порядок:
+ *   1. `planStart` решает по адресу и настройке «Стартовая страница»
+ *      (явный `#/` не перекидывается никогда);
+ *   2. если решать нечем («Сегодня» без списка комнат) — ждём `/api/rooms`
+ *      под заглушкой-скелетоном и решаем ОДИН раз: второй отрисовки с другим
+ *      адресом не будет;
+ *   3. устаревший запрос из памяти не восстанавливаем (B-16), но явный адрес
+ *      не выбрасываем: страница сама скажет «не удалось открыть».
+ *
+ * @returns {Promise<string>} хэш, который надо открыть
  */
-async function initialHash() {
+async function planBootRoute() {
   const stored = routeMemory.read();
   const urlHash = location.hash;
-  const candidate = isBareHash(urlHash) ? stored.hash : urlHash;
-  const route = parseRouteHash(candidate);
-  const requestOk = route && route.kind === 'request' ? await requestExists(route.id) : null;
+  const startPref = readStartPref();
   let last = '';
   try { last = localStorage.getItem(LAST_ROOM_KEY) || ''; } catch { /* ignore */ }
-  // W24-N3: «Стартовая страница» = «Сегодня» и в приложении есть хотя бы одна
-  // комната → открываем «Сегодня». Явный адрес в строке (`#/room/...`) сильнее
-  // настройки: человек пришёл по ссылке, а не «просто открыл приложение».
-  if (readStartPref() === 'today' && isBareHash(urlHash) && rooms.get('list').length) {
-    return '#/today';
-  }
-  return chooseHash({
+  // `null` — список комнат ещё не известен (кэша нет): «Сегодня» решать нечем,
+  // ждём `/api/rooms` под заглушкой. Пустой МАССИВ — уже ответ «комнат нет».
+  const knownIds = () => (rooms.get('list').length ? rooms.get('list').map((room) => room.id) : null);
+  let roomIds = knownIds();
+  const ask = () => planStart({
     urlHash,
+    startPref,
     stored,
-    roomIds: rooms.get('list').map((room) => room.id),
+    roomIds,
     tabIds: TAB_IDS,
-    requestOk,
     defaultRoom: last,
   });
+
+  let plan = ask();
+  if (!plan.ready) {
+    // Первый запуск без локальной памяти: адрес не трогаем, ждём список.
+    await loadRooms();
+    roomIds = knownIds();
+    plan = ask();
+  }
+  if (!plan.ready) return '#/';
+
+  // Память могла хранить удалённый запрос — проверяем только этот случай.
+  const route = parseRouteHash(plan.hash);
+  if (route && route.kind === 'request' && plan.why !== 'deep-link') {
+    const ok = await requestExists(route.id);
+    if (ok === false) return buildRoomHash(route.roomId, 'composer');
+  }
+  return plan.hash;
+}
+
+/**
+ * Старт роутера: адрес выставляется ОДИН раз и без события `hashchange`
+ * (`replaceState`), поэтому первая отрисовка сразу правильная — прыжка нет.
+ * @param {string} target
+ */
+function startRouter(target) {
+  const hash = target || '#/';
+  if (hash !== location.hash) {
+    try {
+      history.replaceState(null, '', hash);
+    } catch {
+      location.replace(hash);   // старый браузер — как раньше, через адрес
+    }
+  }
+  if (!router) return;
+  router.start();
+  routeMemory.remember(router.route.hash || hash);
+  routeMemory.restore(router.route.hash || hash);
 }
 
 async function boot() {
@@ -873,6 +1124,10 @@ async function boot() {
   // B-16: память маршрута подключаем ДО роутера — иначе первая смена хэша
   // пришла бы после перерисовки и позиция прокрутки потерялась бы.
   routeMemory.connect();
+  // W27-E4: список комнат из локальной памяти — ДО первой отрисовки. Меню и
+  // выбор стартового адреса сразу знают, есть ли комнаты.
+  const cached = readRoomsCache();
+  if (cached.length) rooms.set({ list: cached, loading: true, error: null });
   initShellFeatures({
     toast,
     api,
@@ -889,6 +1144,12 @@ async function boot() {
     onHelp: () => openHelp(),
     onToggleView: () => toggleView(),
   });
+  // W27-E4: клавиша G, H (и любые другие клавиши навигации) просит каркас
+  // перейти по адресу событием — так клавиши не знают про роутер.
+  window.addEventListener(NAV_EVENT, (ev) => {
+    const hash = String((ev && ev.detail && ev.detail.hash) || '').trim();
+    if (hash) navigate(hash);
+  });
   applyViewMode();
   initStatusBanners({
     pick,
@@ -899,20 +1160,19 @@ async function boot() {
   mountShell();
   applyNotifyLabel();
 
-  await Promise.all([loadHealth(), loadRooms(), loadTodayBadge()]);
-  loadDeloBadge().catch(() => {});
-  // B-16: открываем ПОЛНЫЙ прежний маршрут (явный хэш → память → комната),
-  // а не «Запрос» последней комнаты. Устаревший запрос не восстанавливаем.
-  const target = await initialHash();
-  if (target && target !== location.hash) {
-    // hashchange → router.render + route-memory.restore (прокрутка)
-    location.replace(target);
-  } else {
-    routeMemory.remember(target || '#/');
-    routeMemory.restore(target || '');
-  }
+  // W27-E4: сначала адрес (один раз), потом первая отрисовка. Пока решаем
+  // (только когда кэша нет) — заглушка-скелетон в #view.
+  startRouter(await planBootRoute());
   renderRoomList();
   updateTitle();
+
+  // Данные — следом, уже на правильном экране: без «прыжка» и без пустого свода.
+  loadHealth();
+  // Список уже пришёл (кэш или ожидание в planBootRoute) — тихое обновление;
+  // иначе полная загрузка, иначе меню осталось бы пустым.
+  loadRooms(rooms.get('loadedAt') ? { silent: true } : {});
+  loadTodayBadge();
+  loadDeloBadge().catch(() => {});
 
   // Сайдбар и вкладки живут на одном сторе: как только диалог комнаты или
   // вкладка обновили данные, рисуем сразу, а не ждём пятисекундного опроса (D3).

@@ -28,6 +28,9 @@ ANSWER_MARK = "[Михаил · ответ на вопрос"
 EXPLAIN_MARK = "[Михаил · просит пояснить по вопросу"
 REACTION_MARK = "[Руководитель · реакция на ответ"
 REMIND_MARK = "[Михаил · напоминание]"
+#: W27-E1 §1: «Не актуально» и «Вернуть» — один вид метки для всех пунктов.
+STALE_MARK = "[Михаил · закрыто как неактуальное"
+RESTORE_MARK = "[Михаил · снова актуально"
 
 #: W21-Q1 (B-44): стандартная просьба, когда «Пояснить» нажали БЕЗ текста.
 #: Раньше пустое поле блокировало кнопку, а вопрос бывает просто непонятен —
@@ -1082,11 +1085,14 @@ STEP_COMMENT_MARK = "[Михаил · комментарий к шагу"
 STEP_MOVE_MARK = "[Михаил · переместить шаг"
 STEP_REACTION_MARK = "[Руководитель · реакция на шаг"
 
-STEP_KINDS = ("agree", "comment", "move", "drop")
+STEP_KINDS = ("agree", "comment", "move", "drop", "restore")
 STEP_KIND_RU = {"agree": "вы согласовали", "comment": "ваш комментарий",
-                "move": "вы переместили", "drop": "вы убрали"}
+                "move": "вы переместили", "drop": "вы убрали",
+                # W27-E1 §1: «Вернуть» — шаг снова в работе, это тоже ответ на шаг
+                "restore": "вы вернули"}
 STEP_KIND_VERB = {"agree": "согласовано вами", "comment": "прокомментировано вами",
-                  "move": "перемещено вами", "drop": "убрано вами"}
+                  "move": "перемещено вами", "drop": "убрано вами",
+                  "restore": "возвращено вами"}
 STEP_STATUS_RU = {"open": "предстоит", "asked": "спрашивает", "done": "сделано",
                   "dismissed": "убран", "cancelled": CANCELLED_RU}
 
@@ -1102,7 +1108,9 @@ def step_id_of(text) -> str:
 def step_comment(kind, step_id, step_text, text="", due=None, owner=None, direction=None) -> str:
     """Метка действия по шагу в ветке: руководитель видит, к какому шагу это относится."""
     head = {"agree": STEP_AGREE_MARK, "drop": STEP_DROP_MARK,
-            "comment": STEP_COMMENT_MARK, "move": STEP_MOVE_MARK}.get(str(kind))
+            "comment": STEP_COMMENT_MARK, "move": STEP_MOVE_MARK,
+            # W27-E1 §1: «Вернуть» — шаг снова в работе (обратное «Убрать»)
+            "restore": RESTORE_MARK}.get(str(kind))
     if not head:
         raise ValueError("неизвестное действие по шагу: %r" % (kind,))
     mark = "%s %s «%s»]" % (head, step_id, short(step_text, 120))
@@ -1351,6 +1359,23 @@ def decision_comment(action, decision_id, decision_text, text="") -> str:
     head = "%s %s «%s»]" % (DECISION_MARK, str(decision_id or "d_0"), short(decision_text, 120))
     body = norm(text)
     return "%s %s: %s" % (head, label, body) if body else "%s %s" % (head, label)
+
+
+def stale_comment(action: str, kind: str, ident, text="", reason=None) -> str:
+    """Метка «Не актуально» / «Вернуть» для любого пункта (W27-E1, контракт §1).
+
+    Одна формулировка на вопросы, решения, разрешения и шаги: по метке видно, что
+    человек не принимал решение, а всего лишь убрал/вернул пункт — и почему.
+    """
+    action = str(action or "dismiss").strip().lower()
+    kind_ru = {"question": "вопрос", "decision": "решение",
+               "approval": "запрос разрешения", "step": "шаг"}.get(str(kind or ""), "пункт")
+    head = ("%s: %s %s «%s»]"
+            % (STALE_MARK if action != "restore" else RESTORE_MARK, kind_ru,
+               str(ident or ""), short(text, 120)))
+    body = norm(reason)
+    tail = ("Вернул в работу" if action == "restore" else "Решение не принималось")
+    return "%s %s%s" % (head, tail, (": " + body) if body else "")
 
 
 def decision_reaction_comment(decision_id, text) -> str:
@@ -2129,6 +2154,7 @@ __all__ = ["ANSWER_MARK", "EXPLAIN_MARK", "REACTION_MARK", "REMIND_MARK", "STATE
            "LINK_MIN_SCORE", "ACTION_MIN_SCORE",
            "STEP_AGREE_MARK", "STEP_DROP_MARK", "STEP_COMMENT_MARK", "STEP_MOVE_MARK",
            "STEP_REACTION_MARK", "STEP_KINDS", "STEP_KIND_RU", "STEP_KIND_VERB", "STEP_STATUS_RU",
+           "STALE_MARK", "RESTORE_MARK", "stale_comment",
            "norm", "short", "stems", "is_negation", "is_counter_question",
            "answer_comment", "explanation_comment", "reaction_comment", "remind_text",
            "DIGEST_MARK", "digest_comment", "explanation_hint",

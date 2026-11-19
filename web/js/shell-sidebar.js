@@ -18,7 +18,7 @@ import { countText, COUNT_FORMS } from './shell-labels.js';
 import { titleShortOf, titleHint } from './request-title.js';
 import { ingestSummary, recentReactionMark } from './views/reaction-notice.js';
 import { viewModeButton, watchViewMode, isSimple } from './view-mode.js';
-import { FOLD_TITLE, railBadges, roomNavTitle } from './shell-rail.js';
+import { FOLD_TITLE, railBadges, roomNavTitle, homeNavTitle } from './shell-rail.js';
 
 export const APP_TITLE = 'Комната команды';
 const RECENT_LIMIT = 5;
@@ -211,6 +211,15 @@ export function markActiveRoom() {
     if (roomId === id) item.node.setAttribute('aria-current', 'page');
     else item.node.removeAttribute('aria-current');
   }
+  // W27-E4: «Все комнаты» (`#/`) подсвечиваются, когда открыт список комнат.
+  const homeLink = typeof document !== 'undefined' && document.getElementById
+    ? document.getElementById('home-link') : null;
+  if (homeLink) {
+    const on = !!route && route.name === 'home';
+    homeLink.classList.toggle('nav-item--active', on);
+    if (on) homeLink.setAttribute('aria-current', 'page');
+    else homeLink.removeAttribute('aria-current');
+  }
   const todayLink = typeof document !== 'undefined' && document.getElementById
     ? document.getElementById('today-link') : null;
   if (todayLink) {
@@ -281,11 +290,13 @@ export function setDelosCount(count) {
     if (link) link.setAttribute('aria-label', 'Дела');
     return;
   }
-  const label = 'Дела: ждут вашего решения — ' + value;
+  // W26-QA2: число — это ПУНКТЫ «ждёт вашего решения», а не дела: у одного дела
+  // их бывает три. Подпись говорит, что именно посчитано (правило «счётчики не врут»).
+  const label = 'Дела: пунктов «ждёт вашего решения» — ' + value;
   host.replaceChildren(h('span', {
     class: 'count-pill count-pill--you', title: label, 'aria-label': label,
   }, String(value)));
-  if (link) link.setAttribute('aria-label', 'Дела — ждут вашего решения: ' + value);
+  if (link) link.setAttribute('aria-label', 'Дела — пунктов «ждёт вашего решения»: ' + value);
 }
 
 /* ─────────────────────────────────────── «Недавнее»: последние запросы */
@@ -518,11 +529,18 @@ export function buildSidebar(host, { onNewRoom, onToggleNotifications, onCycleTh
     'aria-pressed': 'false', 'aria-controls': 'room-list',
   }, icon('chevron-left', { size: 14 })));
   host.appendChild(h('div', { class: 'brand' },
-    h('div', { class: 'brand__mark', 'aria-hidden': 'true' }, 'К'),
-    h('div', { class: 'brand__text' },
-      h('div', { class: 'brand__name' }, APP_TITLE),
-      h('div', { class: 'brand__sub' }, 'только на этом компьютере'),
-    ),
+    // W27-E4: заголовок «Комната команды» — ссылка на `#/` (список комнат).
+    // Дефект 3: «пробовал надпись сверху — она не открывает стартовую страницу».
+    h('a', {
+      class: 'brand__home', href: '#/', id: 'home-link-brand',
+      title: 'Все комнаты — список комнат (G, H)',
+      'aria-label': APP_TITLE + ' — все комнаты',
+    },
+    h('span', { class: 'brand__mark', 'aria-hidden': 'true' }, 'К'),
+    h('span', { class: 'brand__text' },
+      h('span', { class: 'brand__name' }, APP_TITLE),
+      h('span', { class: 'brand__sub' }, 'только на этом компьютере'),
+    )),
     // Видна только в выдвижном режиме (<900 px): явный способ закрыть меню.
     h('button', {
       class: 'btn btn--ghost btn--icon btn--sm sidebar__close', type: 'button',
@@ -535,6 +553,16 @@ export function buildSidebar(host, { onNewRoom, onToggleNotifications, onCycleTh
 
   // Прокручиваемая середина: комнаты и «Недавнее». Подвал закреплён снизу.
   const scroll = h('div', { class: 'sidebar__scroll' },
+    // W27-E4: «Все комнаты» — постоянный первый пункт главного меню (значок
+    // дома). Дефект 3: на страницу `#/` не вела НИ ОДНА кнопка — теперь ведёт
+    // пункт меню, заголовок «Комната команды» и клавиши G, H. Один и тот же
+    // пункт работает и в развёрнутом меню, и в полосе значков (подпись прячет CSS).
+    h('nav', { class: 'nav nav--top', id: 'home-nav', 'aria-label': 'Все комнаты' },
+      h('a', {
+        class: 'nav-item nav-item--home', href: '#/', id: 'home-link',
+        title: homeNavTitle(), 'aria-label': 'Все комнаты',
+      }, icon('home', { size: 15 }),
+      h('span', { class: 'nav-item__text' }, 'Все комнаты'))),
     // W24-N3: «Сегодня» — первым пунктом меню. Число «ждёт вас» приходит из
     // /api/today (ставит экран «Сегодня» и загрузка приложения), не из комнат:
     // там считаются запросы, а здесь — дела.

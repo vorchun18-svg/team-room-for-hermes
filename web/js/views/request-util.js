@@ -31,7 +31,7 @@ export function personName(p) {
   const s = String(p == null ? '' : p).trim();
   if (!s) return '';
   if (s === 'mikhail') return 'Михаил';
-  const slug = s.replace(/^(?:biz|room)-/, '');
+  const slug = s.replace(/^(?:biz|team|room)-/, '');
   return ROLE_SLUG_RU[slug] || slug;
 }
 

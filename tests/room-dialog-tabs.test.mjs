@@ -219,19 +219,21 @@ test('B-30: поля «Доска» в окне нет, но доска по-п�
 
 /* ────────────────────────────────────────── B-32: вкладки вместо простыни */
 
-test('B-32: пять разделов, на экране ровно один, переключение работает', async () => {
+test('B-32: шесть разделов, на экране ровно один, переключение работает', async () => {
   const doc = installDom();
   const { openRoomDialog } = await import('../web/js/views/room-dialog.js');
   const ctx = ctxFor({ room: room() });
   const done = openRoomDialog(ctx, room());
   await sleep(40);
 
-  const tabs = walk(doc.body).filter((el) => el.getAttribute('role') === 'tab');
+  // Только вкладки окна: свои role="tab" есть и внутри разделов (фильтры журнала).
+  const tabs = walk(doc.body).filter((el) => el.getAttribute('role') === 'tab'
+    && /roomdlg__tab/.test(String(el.className)));
   assert.deepEqual(tabs.map((t) => t.textContent.trim()),
-    ['Основное', 'Состав', 'Работа', 'Проект', 'Файлы'], 'разделы названы по-русски');
+    ['Основное', 'Состав', 'Работа', 'Автономия', 'Проект', 'Файлы'], 'разделы названы по-русски');
 
   const panels = walk(doc.body).filter((el) => el.getAttribute('role') === 'tabpanel');
-  assert.equal(panels.length, 5);
+  assert.equal(panels.length, 6);
   const visible = () => panels.filter((p) => !p.hasAttribute('hidden'));
   assert.equal(visible().length, 1, 'одновременно виден один раздел');
   assert.equal(visible()[0].dataset.panel, 'main', 'открывается «Основное»');
@@ -248,7 +250,11 @@ test('B-32: пять разделов, на экране ровно один, п
   assert.ok(walk(work).some((el) => el.id === 'roomdlg-critic-rounds'));
   assert.ok(work.textContent.includes('Раунды проверки'));
 
-  tabs[4].dispatch('click');
+  // W27-E6: «Автономия» — свой раздел, а не строка в простыне.
+  tabs[3].dispatch('click');
+  assert.equal(visible()[0].dataset.panel, 'autonomy', 'уровень автономии — отдельный раздел');
+
+  tabs[5].dispatch('click');
   assert.equal(visible()[0].dataset.panel, 'files');
   assert.ok(byAttr(visible()[0], 'aria-label', 'Папка проекта'), 'папка и файлы — в «Файлах»');
 
@@ -296,8 +302,9 @@ test('B-32/B-9: opts.focus открывает нужный раздел и ст�
 
   const done = openRoomDialog(ctx, room(), { focus: 'project_mode' });
   await sleep(40);
-  const tabs = walk(doc.body).filter((el) => el.getAttribute('role') === 'tab');
-  assert.equal(tabs[3].getAttribute('aria-selected'), 'true', 'открылся раздел «Проект»');
+  const tabs = walk(doc.body).filter((el) => el.getAttribute('role') === 'tab'
+    && /roomdlg__tab/.test(String(el.className)));
+  assert.equal(tabs[4].getAttribute('aria-selected'), 'true', 'открылся раздел «Проект»');
   assert.equal(doc.activeElement && doc.activeElement.id, 'roomdlg-project-mode', 'курсор на переключателе');
   byText(doc.body, 'Отмена', 'button').dispatch('click');
   await done;
@@ -305,8 +312,9 @@ test('B-32/B-9: opts.focus открывает нужный раздел и ст�
   const doc2 = globalThis.document;
   const done2 = openRoomDialog(ctx, room(), { focus: 'project_dir' });
   await sleep(40);
-  const tabs2 = walk(doc2.body).filter((el) => el.getAttribute('role') === 'tab');
-  assert.equal(tabs2[4].getAttribute('aria-selected'), 'true', 'открылся раздел «Файлы»');
+  const tabs2 = walk(doc2.body).filter((el) => el.getAttribute('role') === 'tab'
+    && /roomdlg__tab/.test(String(el.className)));
+  assert.equal(tabs2[5].getAttribute('aria-selected'), 'true', 'открылся раздел «Файлы»');
   assert.equal(doc2.activeElement && doc2.activeElement.getAttribute('aria-label'), 'Папка проекта');
   byText(doc2.body, 'Отмена', 'button').dispatch('click');
   await done2;
@@ -513,8 +521,10 @@ test('B-33: «Сейчас: …» заметно, меняется сразу и
 
   // Второго, «точкой», обозначения нет: состояние читается только из плашки
   // (один смысл — одно место), иначе её путают с пометкой «не сохранено».
-  const tabs = walk(doc.body).filter((el) => el.getAttribute('role') === 'tab');
-  assert.ok(!tabs[3].className.includes('roomdlg__tab--on'), 'на вкладке нет второй отметки');
+  const tabs = walk(doc.body).filter((el) => el.getAttribute('role') === 'tab'
+    && /roomdlg__tab/.test(String(el.className)));
+  assert.ok(tabs.every((t) => !t.className.includes('roomdlg__tab--on')),
+    'на вкладке нет второй отметки');
 
   // Сохраняем — в запрос уходит project_mode: true.
   const form = walk(doc.body).find((el) => el.tagName.toLowerCase() === 'form');

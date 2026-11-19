@@ -9,6 +9,10 @@
 * ``registry.list_requests`` — запросы комнаты (через ``App._records``);
 * ``ingest.backlog_view`` — пункты «От вас нужно» (через ``App._backlog``, с
   наложением ответов);
+* сам запрос — точные пункты «ждёт вас» тем же расчётом, что ``needs_you_count``
+  страницы (`_detail` → ``_answers_view`` → ``_approvals_view`` → ``stale.decorate``);
+  дорогая деталь собирается только там, где в ``metadata`` карточек дерева правда
+  есть вопросы или решения (``engine_read.waiting_candidates``);
 * ``engine_read.today_states`` — состояние корней на доске одним-двумя запросами;
 * ``approvals.collect`` — блокировки, только у корней со статусом ``needs_you``
   (не больше :data:`APPROVAL_SCAN_MAX` на комнату: экран не должен перечитывать
@@ -44,6 +48,60 @@ ROUTES = [
     ("GET", r"/api/today", "h_today"),
     ("POST", r"/api/today/seen", "h_today_seen"),
 ]
+
+
+def waiting_items(app, room: dict, rec: dict) -> list[dict]:
+    """Точные пункты «ждёт вас» одного запроса (W27-FIX).
+
+    Один расчёт на страницу запроса и на «Сегодня»: деталь запроса → вопросы из
+    ветки и ответы из реестра (`_answers_view`) → разрешения и единые состояния
+    пунктов (`_approvals_view` → ``stale.decorate``). Берём только пункты с
+    ``needs_you`` (состояние ``open``/``proposed``/``pending`` и есть действие);
+    отвеченные, снятые и закрытые остаются на странице, но не «ждут вас».
+
+    Шаги сюда не входят: у них своё место — «Просрочено/Ближайшие». Разрешения —
+    отдельный источник экрана (`LiveSources.approvals`, тот же `approvals.collect`,
+    что и на странице): считать их ещё и здесь значило бы посчитать дважды.
+    """
+    rid = str((rec or {}).get("root_id") or "")
+    if not rid:
+        return []
+    rec = rec if isinstance(rec, dict) else {}
+    detail = app._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), rec.get("answers"))
+    detail["thread"] = app._thread(room, rid)
+    app._answers_view(room, rec, detail)
+    app._approvals_view(room, rec, detail)      # ставит needs_you и needs_you_count
+    out: list[dict] = []
+    for key, kind in (("open_questions", "question"), ("decisions", "decision")):
+        for item in detail.get(key) or []:
+            if not isinstance(item, dict) or not item.get("needs_you"):
+                continue
+            out.append({"kind": kind, "id": str(item.get("id") or ""),
+                        "text": _item_text(kind, item),
+                        "since": _item_since(item, rec)})
+    return out
+
+
+def _item_text(kind: str, item: dict) -> str:
+    """Текст пункта так, как его читает человек: у разрешения — описание запроса."""
+    if kind == "approval":
+        return str(item.get("description") or item.get("note") or "")
+    return str(item.get("text") or "")
+
+
+def _item_since(item: dict, rec: dict) -> int:
+    """С какого времени пункт ждёт: своё время пункта, иначе время запроса."""
+    for key in ("at", "asked_at", "answered_at", "created_at"):
+        try:
+            value = int((item or {}).get(key) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            return value
+    try:
+        return int((rec or {}).get("created_at") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 class LiveSources(today_mod.Sources):
@@ -100,6 +158,51 @@ class LiveSources(today_mod.Sources):
         view = self._once(("backlog", room_id), lambda: self.app._backlog(room_id))
         items = (view or {}).get("items") if isinstance(view, dict) else view
         return [item for item in (items or []) if isinstance(item, dict)]
+
+    def waiting(self, room: dict) -> dict | None:
+        """Точные пункты «ждёт вас» по запросам комнаты (W27-FIX).
+
+        Источник — тот же расчёт, что отдаёт `needs_you_count` страницы запроса:
+        `_detail` → вопросы из ветки и ответы из реестра (`_answers_view`) →
+        разрешения и единые состояния (`_approvals_view` → ``stale.decorate``).
+        В «Ждёт вас» идут только вопрос, решение и разрешение; шаги остаются в
+        «Просрочено/Ближайшие».
+
+        Дешёво по времени: дорогая деталь собирается не для всех запросов комнаты,
+        а только для тех, где в `metadata` карточек дерева правда есть вопросы или
+        решения (`engine_read.waiting_candidates`, один проход по доске). На
+        комнате из 50 запросов без вопросов деталей не собирается вовсе.
+        """
+        room_id = self._room_id(room)
+
+        def build() -> dict:
+            records = [rec for rec in self.requests(room) if isinstance(rec, dict) and rec.get("root_id")]
+            if not records:
+                return {}
+            roots = [str(rec.get("root_id")) for rec in records]
+            board = room.get("board") or getattr(self.app, "board", None)
+            try:
+                candidates = self.app.call("engine_read", "waiting_candidates",
+                                           ((self.cfg, board, roots), {}))
+            except Exception:                  # noqa: BLE001 — отбор вторичен, точность важнее
+                candidates = set(roots)
+            if not isinstance(candidates, (set, frozenset, list, tuple)):
+                candidates = set(roots)
+            candidates = {str(rid) for rid in candidates}
+            out: dict = {}
+            for rec in records:
+                root_id = str(rec.get("root_id"))
+                if root_id not in candidates:
+                    continue
+                try:
+                    items = waiting_items(self.app, room, rec)
+                except Exception:              # noqa: BLE001 — один запрос не валит экран
+                    continue
+                if items:
+                    out[root_id] = items
+            return out
+
+        return self._once(("waiting", room_id), build)
 
     def approvals(self, room: dict) -> list[dict]:
         """Блокировки, которые правда ждут человека: только «можно разрешить» (W26-D1).

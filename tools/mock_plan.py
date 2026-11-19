@@ -85,7 +85,7 @@ ROLE_SLUG_RU = {"director": "руководитель комнаты", "ops": "�
                 "marketing": "маркетинг", "strategy": "стратегия", "lawyer": "юрист",
                 "critic": "критик", "runner": "сбор фактов", "coder": "программист",
                 "surveyor": "исследователь", "analyst": "аналитик", "default": "руководитель комнаты"}
-SLUG_RE = re.compile(r"^(?:biz|room)-")
+SLUG_RE = re.compile(r"^(?:biz|team|room)-")
 NOTE_HEAD_RE = re.compile(r"[:.,;]|\s[—–]\s")
 OWNER_LABEL_MAX = 32
 

@@ -810,7 +810,7 @@ def step_c(p: Probe, res: Result, state: dict) -> None:
                       ".find((x) => /ответственный/.test(x.textContent)); "
                       "return n ? n.textContent.trim() : ''; })()") or ""))
     if re.search(r"ответственный:\s*[a-z-]+$", owner):
-        res.notes.append("Плашка карты: «%s» — whoName() срезает «team-» и оставляет латинский "
+        res.notes.append("Плашка карты: «%s» — whoName() срезает «biz-» и оставляет латинский "
                          "огрызок вместо человеческого имени (plan-req.js)." % owner[:80])
     p.js("(() => { const c = document.querySelector('.plan-card'); "
          "if (c) c.scrollIntoView({block: 'center'}); return true; })()")

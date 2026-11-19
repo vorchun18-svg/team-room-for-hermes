@@ -102,7 +102,7 @@ class BriefBodyTests(unittest.TestCase):
         self.assertIn("team-lawyer — исполнитель", body)
         self.assertIn("team-director — руководитель комнаты", body)
         self.assertIn("team-critic — критик", body)
-        for alien in ("coder", "ornith", "team-strategy"):
+        for alien in ("coder", "team-local", "team-strategy"):
             self.assertNotIn(alien, body, "чужой профиль не должен попасть в список")
 
     def test_brief_without_roster_says_so(self):

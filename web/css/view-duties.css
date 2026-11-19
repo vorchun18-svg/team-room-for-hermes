@@ -216,3 +216,302 @@
 
 /* Пока идёт действие — кнопки не должны выглядеть «нажимаемыми дважды». */
 .duties[data-busy] .duty__actions .btn { opacity: .6; pointer-events: none; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   W27-E8: мастер, шаблоны, корзина, история, предложения.
+   Только токены темы: обе темы без отдельных правил. Горизонтальной прокрутки
+   нет — длинные строки (команда предпросмотра) переносятся.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.duties__proposals { display: flex; flex-direction: column; gap: var(--space-2); }
+.duties__weekblock { display: flex; flex-direction: column; gap: var(--space-2); }
+.duties__templates, .duties__picker, .duties__trash { display: flex; flex-direction: column; gap: var(--space-3); }
+.duties__wizard { display: flex; flex-direction: column; }
+
+/* ── Карточка дежурства: итог, история, сухой прогон ─────────────────────── */
+
+.duty__actions--more {
+  width: 100%; margin-top: 2px; padding-top: 6px;
+  border-top: 1px dashed var(--ui-stroke-tertiary);
+}
+.duty__actions--more .btn { color: var(--ui-text-tertiary); }
+.duty__actions--more .duty__danger { color: var(--ui-red); }
+
+.duty__outcome {
+  display: flex; align-items: baseline; gap: 6px; margin: 0;
+  padding: 5px var(--space-3); border-radius: var(--radius-md, 8px);
+  font-size: var(--text-sm); line-height: 1.45;
+  background: var(--ui-bg-quaternary); color: var(--ui-text-secondary);
+  overflow-wrap: anywhere;
+}
+.duty__outcome--changed {
+  background: color-mix(in srgb, var(--ui-blue) 12%, transparent);
+  color: var(--ui-text-primary);
+  border-left: 2px solid color-mix(in srgb, var(--ui-blue) 55%, transparent);
+}
+.duty__outcome--changed svg { color: var(--ui-blue); }
+.duty__outcome--calm svg { color: var(--ui-green); }
+
+.duty__history {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: var(--space-2) var(--space-3); margin-top: 2px;
+  background: var(--ui-bg-quaternary); border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--ui-stroke-quaternary);
+}
+.duty__history-title { margin: 0; font-size: var(--text-sm); font-weight: 600; }
+.duty__history-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.duty__history-row {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 6px 8px; border-radius: var(--radius-sm, 6px);
+  background: var(--card); border-left: 2px solid var(--ui-stroke-tertiary);
+  overflow-wrap: anywhere;
+}
+.duty__history-row--changed { border-left-color: var(--ui-blue); }
+.duty__history-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.duty__history-time { font-size: var(--text-xs); color: var(--ui-text-tertiary); font-variant-numeric: tabular-nums; }
+.duty__history-changed { font-size: var(--text-xs); color: var(--ui-text-tertiary); }
+.duty__history-changed--yes { color: var(--ui-blue); font-weight: 600; }
+.duty__history-line { margin: 0; color: var(--ui-text-secondary); }
+.duty__history-props { margin: 2px 0 0; padding-left: 18px; color: var(--ui-text-secondary); }
+.duty__history-error { color: var(--ui-red); }
+
+.duty__dry {
+  padding: 6px var(--space-3); border-radius: var(--radius-md, 8px);
+  font-size: var(--text-sm);
+  background: color-mix(in srgb, var(--ui-yellow) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ui-yellow) 26%, transparent);
+  overflow-wrap: anywhere;
+}
+.duty__dry-title { font-weight: 600; }
+
+/* ── «Предлагаю дежурство» ───────────────────────────────────────────────── */
+
+.proposal {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: color-mix(in srgb, var(--ui-accent) 6%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 30%, var(--border));
+  border-left: 3px solid var(--ui-accent);
+  border-radius: var(--radius-lg);
+}
+.proposal__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.proposal__titlebox { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.proposal__kicker {
+  font-size: var(--text-xs); font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ui-accent);
+}
+.proposal__title { margin: 0; font-size: var(--text-md); font-weight: 600; overflow-wrap: anywhere; }
+.proposal__source { flex: 0 0 auto; }
+.proposal__why { margin: 0; font-size: var(--text-sm); line-height: 1.5; color: var(--ui-text-secondary); }
+.proposal__facts, .tpl__facts { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0; }
+.proposal__facts > div, .tpl__facts > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 180px; }
+.proposal__facts dt, .tpl__facts dt {
+  font-size: var(--text-xs); color: var(--ui-text-quaternary); text-transform: lowercase;
+}
+.proposal__facts dd, .tpl__facts dd { margin: 0; font-size: var(--text-sm); color: var(--ui-text-primary); overflow-wrap: anywhere; }
+.proposal__actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* ── Шаблоны ─────────────────────────────────────────────────────────────── */
+
+.tpl { display: grid; gap: var(--space-2); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tpl__card {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  padding: var(--space-3); background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+}
+.tpl__title { margin: 0; font-size: var(--text-sm); font-weight: 600; overflow-wrap: anywhere; }
+.tpl__for { margin: 0; }
+.tpl__card .btn { align-self: flex-start; margin-top: auto; }
+@media (max-width: 820px) { .tpl { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── Корзина ─────────────────────────────────────────────────────────────── */
+
+.trash {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--ui-bg-quaternary); border: 1px solid var(--ui-stroke-quaternary);
+  border-radius: var(--radius-lg);
+}
+.trash__title { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.trash__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.trash__row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: 6px var(--space-3); background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--radius-md, 8px);
+  flex-wrap: wrap;
+}
+.trash__info { display: flex; align-items: baseline; gap: 2px; min-width: 0; flex-wrap: wrap; }
+.trash__name { font-size: var(--text-sm); font-weight: 500; overflow-wrap: anywhere; }
+
+/* ── Выбор дела для «Сделать регулярным» ─────────────────────────────────── */
+
+.picker {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
+}
+.picker__title { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.picker__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.picker__btn {
+  display: flex; align-items: baseline; gap: 2px; width: 100%; min-width: 0;
+  padding: 6px var(--space-2); text-align: left; cursor: pointer;
+  font: inherit; color: inherit; background: var(--ui-bg-quaternary);
+  border: 1px solid transparent; border-radius: var(--radius-sm, 6px);
+  flex-wrap: wrap;
+}
+.picker__btn:hover { background: var(--ui-row-hover-background); border-color: var(--ui-stroke-secondary); }
+.picker__name { font-size: var(--text-sm); font-weight: 500; overflow-wrap: anywhere; }
+
+/* ── Мастер: шаги, поля, предпросмотр ────────────────────────────────────── */
+
+.dw {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4); background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  min-width: 0;
+}
+.dw__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.dw__headline { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dw__title { margin: 0; font-size: var(--text-lg, 1.15rem); font-weight: 600; }
+.dw__sub { margin: 0; }
+
+.dw__steps {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  margin: 0; padding: 0; list-style: none;
+}
+.dw__step { display: flex; align-items: center; gap: 4px; }
+.dw__step-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; cursor: pointer; font: inherit;
+  font-size: var(--text-xs); color: var(--ui-text-tertiary);
+  background: var(--ui-bg-quaternary); border: 1px solid var(--ui-stroke-quaternary);
+  border-radius: var(--radius-full, 999px);
+}
+.dw__step-btn:hover { border-color: var(--ui-stroke-secondary); color: var(--ui-text-primary); }
+.dw__step-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; border-radius: 50%;
+  font-size: var(--text-2xs, 11px); font-weight: 700;
+  background: var(--ui-stroke-quaternary); color: var(--ui-text-secondary);
+}
+.dw__step--now .dw__step-btn {
+  color: var(--ui-text-primary); font-weight: 600;
+  border-color: color-mix(in srgb, var(--ui-accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--ui-accent) 12%, transparent);
+}
+.dw__step--now .dw__step-n { background: var(--primary); color: var(--primary-foreground); }
+.dw__step--ok .dw__step-n { background: color-mix(in srgb, var(--ui-green) 30%, transparent); color: var(--ui-green); }
+.dw__step-line { width: 10px; height: 1px; background: var(--ui-stroke-tertiary); }
+
+.dw__body { display: flex; flex-direction: column; gap: var(--space-2); }
+.dw__body-title { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.dw__body-hint { margin: 0; }
+.dw__grid { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.dw__field { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 260px; }
+.dw__field--wide { flex-basis: 100%; }
+.dw__label { font-size: var(--text-xs); font-weight: 600; color: var(--ui-text-secondary); }
+.dw__hint { margin: 0; }
+.dw__input {
+  width: 100%; min-width: 0; padding: 6px 10px; font: inherit;
+  font-size: var(--text-sm); color: var(--ui-text-primary);
+  background: var(--ui-bg-quaternary); border: 1px solid var(--ui-stroke-secondary);
+  border-radius: var(--radius-md, 8px);
+}
+.dw__input:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 1px; }
+.dw__input--area { resize: vertical; line-height: 1.45; }
+.dw__choices { display: grid; gap: 6px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 880px) { .dw__choices { grid-template-columns: minmax(0, 1fr); } }
+.dw__choice {
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+  padding: var(--space-2) var(--space-3); cursor: pointer; font: inherit;
+  background: var(--ui-bg-quaternary); color: var(--ui-text-secondary);
+  border: 1px solid var(--ui-stroke-quaternary); border-radius: var(--radius-md, 8px);
+  min-width: 0;
+}
+.dw__choice:hover { border-color: var(--ui-stroke-secondary); }
+.dw__choice--on {
+  border-color: color-mix(in srgb, var(--ui-accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--ui-accent) 10%, transparent);
+  color: var(--ui-text-primary);
+}
+.dw__choice-title { font-size: var(--text-sm); font-weight: 600; }
+.dw__choice-hint { font-size: var(--text-xs); color: var(--ui-text-tertiary); line-height: 1.4; }
+
+.dw__chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.dw__chip {
+  padding: 3px 10px; cursor: pointer; font: inherit; font-size: var(--text-xs);
+  color: var(--ui-text-secondary); background: var(--ui-bg-quaternary);
+  border: 1px solid var(--ui-stroke-quaternary); border-radius: var(--radius-full, 999px);
+}
+.dw__chip--on {
+  color: var(--ui-text-primary); font-weight: 600;
+  border-color: color-mix(in srgb, var(--ui-accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--ui-accent) 12%, transparent);
+}
+
+.dw__toggles { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+.dw__toggle, .dw__check {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--text-sm); color: var(--ui-text-secondary); cursor: pointer;
+}
+.dw__check { margin-bottom: 6px; }
+.dw__summary {
+  margin: 0; padding: 6px var(--space-3); border-radius: var(--radius-md, 8px);
+  background: var(--ui-bg-quaternary); color: var(--ui-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.dw__alert {
+  margin: 0; padding: 6px var(--space-3); border-radius: var(--radius-md, 8px);
+  font-size: var(--text-sm);
+}
+.dw__alert--warn {
+  background: color-mix(in srgb, var(--ui-yellow) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ui-yellow) 30%, transparent);
+}
+.dw__alert--danger {
+  background: color-mix(in srgb, var(--ui-red) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ui-red) 32%, transparent);
+  color: var(--ui-text-primary);
+}
+
+.dw__gate { margin: 0; }
+.dw__gate--missing { color: var(--ui-yellow); }
+.dw__gate--ok { color: var(--ui-text-tertiary); }
+.dw__gate-title { font-weight: 600; }
+
+.dw__preview {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: var(--space-3); border-radius: var(--radius-md, 10px);
+  background: var(--ui-bg-quaternary);
+  border: 1px solid var(--ui-stroke-secondary);
+}
+.dw__preview-title {
+  margin: 0; display: flex; align-items: center; gap: 6px;
+  font-size: var(--text-sm); font-weight: 600;
+}
+.dw__command {
+  margin: 0; padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: var(--text-xs);
+  line-height: 1.5; color: var(--ui-text-primary);
+  background: var(--card); border: 1px solid var(--ui-stroke-quaternary);
+  border-radius: var(--radius-sm, 6px); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.dw__preview-note { margin: 0; }
+.dw__changes { display: flex; flex-direction: column; gap: 2px; }
+.dw__changes-title { font-weight: 600; color: var(--ui-text-secondary); }
+.dw__changes-list { margin: 0; padding-left: 18px; color: var(--ui-text-secondary); font-size: var(--text-sm); }
+
+.dw__foot {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding-top: var(--space-2); border-top: 1px solid var(--ui-stroke-quaternary);
+}
+.dw__foot .btn--primary:first-of-type { margin-left: auto; }
+
+.dw__from { margin: 0; }
+.dw__note { margin: 0; }
+
+/* Правило скрытия: у наших блоков и кнопок задан display, поэтому атрибут
+   `hidden` без этого правила не работает (кнопка «Далее» оставалась видимой
+   на последнем шаге мастера). */
+.duties [hidden] { display: none !important; }

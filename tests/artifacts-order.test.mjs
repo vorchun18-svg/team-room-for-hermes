@@ -11,7 +11,8 @@
  *     полное имя в `title`);
  *   • 30+ элементов и папка с вложенными файлами не ломают список;
  *   • ссылка на локальный файл внутри свода открывается в контексте комнаты
- *     (`POST /api/artifacts/open` с `room`) — раньше прямая ссылка отвечала 403.
+ *     (`POST /api/files/launch` с `room`, W26-D3; абсолютный путь — чип файла,
+ *     W26-D4) — раньше прямая ссылка отвечала 403.
  *
  * DOM — самодельный мини-DOM (tests/fake-dom.mjs), браузер не нужен.
  */
@@ -23,6 +24,7 @@ import {
   renderArtifacts as renderArtifactsRaw, artifactGroup, isFolderNode, artifactsCount, openArtifactPath,
 } from '../web/js/views/request-parts.js';
 import { mdBlock } from '../web/js/ui.js';
+import { installFoundWiring } from '../web/js/found.js';
 
 if (typeof FakeElement.prototype.remove !== 'function') {
   FakeElement.prototype.remove = function remove() {
@@ -42,13 +44,36 @@ function renderArtifacts(detailArg, ctx, opts) {
   return expandSections(renderArtifactsRaw(detailArg, ctx, opts));
 }
 
+/* Мини-`closest`: только те селекторы, которые реально спрашивают код-участник
+   (`mdBlock` и обработчик чипов `found.js`). Настоящий CSS-движок мини-DOM не
+   изображает — честный список того, что нужно тестам. */
+function nodeMatches(node, sel) {
+  const has = (name) => !!(node.hasAttribute && node.hasAttribute(name));
+  const cls = (name) => String(node.getAttribute('class') || '').split(/\s+/).includes(name);
+  const clsPart = (part) => String(node.getAttribute('class') || '').includes(part);
+  const tag = String(node.tagName || '').toLowerCase();
+  switch (sel) {
+    case 'a[data-path]': return tag === 'a' && has('data-path');
+    case '.md-file-chip[data-path]': return cls('md-file-chip') && has('data-path');
+    case '.md-file-chip': return cls('md-file-chip');
+    case '.md-url-chip': return cls('md-url-chip');
+    case '.found-card': return cls('found-card');
+    case '.md-file-chip__name': return cls('md-file-chip__name');
+    case '.found-card__name': return cls('found-card__name');
+    case '[data-path]': return has('data-path');
+    case '[data-file-owner]': return has('data-file-owner');
+    case '[class*="--open"]': return clsPart('--open');
+    case '[class*="--reveal"]': return clsPart('--reveal');
+    case '[class*="--copy"]': return clsPart('--copy');
+    default: return false;
+  }
+}
+
 FakeElement.prototype.closest = function closest(selector) {
-  const wantsAnchor = /a\[data-path\]/.test(String(selector));
+  const sels = String(selector).split(',').map((s) => s.trim()).filter(Boolean);
   let node = this;
   while (node && node.nodeType === 1) {
-    if (wantsAnchor && String(node.tagName).toLowerCase() === 'a' && node.hasAttribute('data-path')) {
-      return node;
-    }
+    if (sels.some((s) => nodeMatches(node, s))) return node;
     node = node.parentNode;
   }
   return null;
@@ -281,25 +306,147 @@ test('пустой список — блока нет', () => withDom(() => {
   assert.equal(renderArtifacts({ room: ROOM }, makeCtx(), {}), null);
 }));
 
+/* ── ссылка на локальный файл внутри свода (W20-A1 §1.4, W26-D3/D4, W26-QA1) ──
+ * Абсолютный путь в своде теперь ЧИП файла (`span.md-file-chip[data-path]`), а не
+ * `a[data-path]`: у чипа есть «Открыть · Показать в папке · Копировать путь».
+ * Открытие файла — `POST /api/files/launch {path, room, mode:"open"}`; комната
+ * берётся из контекста свода, а не из адреса. Эти три теста держат главное:
+ * путь доходит целиком (пробел, кириллица), ровно ОДИН запрос на клик, комната
+ * в теле запроса. */
+
+const FILE_WITH_SPACES = 'C:/Work/Rooms/кафе Лето/Письмо поставщику.docx';
+
+/** Чип файла в разметке свода (или null). */
+function chipOf(root) {
+  return byClass(root, 'md-file-chip')[0] || null;
+}
+
+/** Имя-нажатие внутри чипа: по нему человек «открывает» файл. */
+function chipName(chip) {
+  return byClass(chip, 'md-file-chip__name')[0] || null;
+}
+
+/** Синтетический клик: как настоящий — с целью и preventDefault. */
+function clickOn(node) {
+  const ev = { type: 'click', target: node, prevented: 0, stopped: 0,
+    preventDefault() { this.prevented += 1; },
+    stopPropagation() { this.stopped += 1; },
+    stopImmediatePropagation() { this.stopped += 1; } };
+  return ev;
+}
+
+/** Фальшивый документ для документного обработчика found.js (capture-слушатель). */
+function fakeWiringDoc() {
+  const handlers = [];
+  return {
+    __foundWired: false,
+    handlers,
+    addEventListener(type, fn) { if (type === 'click') handlers.push(fn); },
+    createElement(tag) { return new FakeElement(tag); },
+    querySelector() { return null; },
+    body: new FakeElement('body'),
+  };
+}
+
+/** Асинхронный вариант withDom: обработчик чипа отвечает промисом. */
+async function withDomAsync(fn) {
+  installFakeDom();
+  const saved = { fetch: globalThis.fetch, location: globalThis.location };
+  try { return await fn(); } finally {
+    uninstallFakeDom();
+    if (saved.fetch === undefined) delete globalThis.fetch; else globalThis.fetch = saved.fetch;
+    if (saved.location === undefined) delete globalThis.location; else globalThis.location = saved.location;
+  }
+}
+
+/** Подмена сети: считает запросы и отвечает «получилось». */
+function stubFetch(calls) {
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url: String(url), method: (opts && opts.method) || 'GET',
+      body: opts && opts.body ? JSON.parse(opts.body) : null });
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+}
+
 test('ссылка на локальный файл внутри свода открывается с комнатой (§1.4)', () => withDom(() => {
   const ctx = makeCtx();
-  const text = 'Итог: [письмо поставщику](C:/Work/Rooms/demo/Письмо-Ромашка.docx) готово.';
+  const text = 'Итог: [письмо поставщику](<' + FILE_WITH_SPACES + '>) готово.';
   const block = mdBlock(text, { openPath: (path) => openArtifactPath(ctx, path, ROOM) });
-  const anchor = walk(block, (el) => String(el.tagName).toLowerCase() === 'a')[0];
-  assert.ok(anchor, 'ссылка на локальный файл построена');
-  assert.equal(anchor.getAttribute('data-path'), 'C:/Work/Rooms/demo/Письмо-Ромашка.docx');
-  block.dispatch('click', { type: 'click', target: anchor, preventDefault() {} });
-  assert.equal(ctx.posts.length, 1, 'открытие идёт через /api/files/launch (W26-D3)');
+
+  const chip = chipOf(block);
+  assert.ok(chip, 'ссылка на абсолютный путь построена чипом файла');
+  assert.equal(chip.getAttribute('data-path'), FILE_WITH_SPACES,
+    'путь с пробелом и кириллицей сохранён целиком');
+  assert.equal(chip.getAttribute('title'), FILE_WITH_SPACES, 'полный путь — в подсказке');
+  const name = chipName(chip);
+  assert.ok(name, 'у чипа есть имя, по которому открывают файл');
+  assert.equal(textOf(name), 'письмо поставщику', 'метка ссылки не потеряна');
+  assert.ok(!walk(block, (el) => String(el.tagName).toLowerCase() === 'a'
+    && el.getAttribute('data-path') !== null).length, 'старой ссылки a[data-path] больше нет');
+
+  // Блок знает свою комнату — он и открывает файл (документный обработчик отступает).
+  assert.equal(block.getAttribute('data-file-owner'), '1',
+    'блок с openPath сам отвечает за открытие файлов внутри себя');
+
+  const ev = clickOn(name);
+  block.dispatch('click', ev);
+  assert.equal(ev.prevented, 1, 'переход по «#» отменён');
+  assert.equal(ctx.posts.length, 1, 'ровно один запрос: /api/files/launch (W26-D3)');
   assert.equal(ctx.posts[0].path, '/api/files/launch');
   assert.equal(ctx.posts[0].body.mode, 'open', 'ссылка открывает файл, а не папку');
   assert.equal(ctx.posts[0].body.room, ROOM, 'без комнаты сервер отвечал 403');
-  assert.equal(ctx.posts[0].body.path, 'C:/Work/Rooms/demo/Письмо-Ромашка.docx');
+  assert.equal(ctx.posts[0].body.path, FILE_WITH_SPACES, 'путь уходит без искажений');
 }));
 
-test('без openPath разметка свода работает как раньше', () => withDom(() => {
-  const block = mdBlock('см. [итог](C:/Work/Rooms/demo/07-Итог.md)');
-  const anchor = walk(block, (el) => String(el.tagName).toLowerCase() === 'a')[0];
-  assert.equal(anchor.getAttribute('data-path'), 'C:/Work/Rooms/demo/07-Итог.md');
-  // клик без комнаты не падает: обработчик по умолчанию открывает /api/file
-  block.dispatch('click', { type: 'click', target: anchor, preventDefault() {} });
-}));
+test('без openPath чип свода открывает файл общим обработчиком (комната из адреса)',
+  () => withDomAsync(async () => {
+    const block = mdBlock('см. [итог](C:/Work/Rooms/demo/07-Итог.md)');
+    const chip = chipOf(block);
+    assert.ok(chip, 'чип построен и без openPath');
+    assert.equal(chip.getAttribute('data-path'), 'C:/Work/Rooms/demo/07-Итог.md');
+    assert.equal(block.getAttribute('data-file-owner'), null,
+      'без openPath блок файлы не перехватывает — работает общий обработчик');
+
+    const doc = fakeWiringDoc();
+    const calls = [];
+    stubFetch(calls);
+    globalThis.location = { hash: '#/room/fn/request/r1' };
+    installFoundWiring(doc);
+    assert.equal(doc.handlers.length, 1, 'один слушатель на документ');
+
+    const ev = clickOn(chipName(chip));
+    doc.handlers[0](ev);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(calls.length, 1, 'один запрос на клик');
+    assert.equal(calls[0].url, '/api/files/launch', 'тот же маршрут, что у openPath');
+    assert.equal(calls[0].method, 'POST');
+    assert.equal(calls[0].body.mode, 'open');
+    assert.equal(calls[0].body.room, 'fn', 'комната из адреса — когда своей нет');
+    assert.equal(calls[0].body.path, 'C:/Work/Rooms/demo/07-Итог.md');
+  }));
+
+test('клик по чипу в своде не срабатывает дважды и берёт комнату свода',
+  () => withDomAsync(async () => {
+    const ctx = makeCtx();
+    const block = mdBlock('см. [итог](<' + FILE_WITH_SPACES + '>)',
+      { openPath: (path) => openArtifactPath(ctx, path, ROOM) });
+    const chip = chipOf(block);
+    const doc = fakeWiringDoc();
+    const calls = [];
+    stubFetch(calls);
+    // Адрес говорит про другую комнату: свод обязан открыть файл в СВОЕЙ.
+    globalThis.location = { hash: '#/room/other/request/r2' };
+    installFoundWiring(doc);
+
+    const ev = clickOn(chipName(chip));
+    doc.handlers[0](ev);           // capture-обработчик документа
+    block.dispatch('click', ev);   // обработчик блока (всплытие)
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(calls.length, 0, 'документный обработчик не перехватил клик');
+    assert.equal(ctx.posts.length, 1, 'один клик — один запрос, без двойного срабатывания');
+    assert.equal(ctx.posts[0].body.room, ROOM, 'комната свода, а не из адреса');
+    assert.equal(ctx.posts[0].body.mode, 'open');
+    assert.equal(ctx.posts[0].body.path, FILE_WITH_SPACES);
+  }));

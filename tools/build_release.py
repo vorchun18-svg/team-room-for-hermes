@@ -135,6 +135,10 @@ COPY_TOOLS = (
     "cdp.py",
     "e2e_questions.py",
     "window_spy.py",
+    # W27: mock_read/mock_write импортируют их — без них mock_server не поднимается
+    # и tests/test_mock_server.py падает на импорте в собранном релизе
+    "mock_delos.py",
+    "mock_duties_fe.py",
 )
 
 COPY_DOCS = (
@@ -210,6 +214,25 @@ def guard_paths() -> Path:
     if target == source or source in target.parents:
         raise SystemExit("ОТКАЗ: цель внутри исходника проекта")
     return pkg
+
+
+def clear_package(pkg: Path) -> None:
+    """Убирает прошлую сборку, не падая на занятом каталоге.
+
+    Windows не даёт удалить сам каталог, если он открыт в оболочке (cwd), но
+    содержимое удаляется нормально — поэтому чистим по одному узлу, а корень
+    оставляем (сборка идёт в тот же путь).
+    """
+    if not pkg.exists():
+        return
+    force_rmtree(pkg)
+    if not pkg.exists():
+        return
+    for child in list(pkg.iterdir()):
+        try:
+            force_rmtree(child) if child.is_dir() else child.unlink()
+        except OSError:
+            pass
 
 
 def force_rmtree(path: Path) -> None:
@@ -1014,8 +1037,8 @@ def build(args) -> int:
 
     if pkg.exists():
         print("  удаляю прошлую сборку")
-        force_rmtree(pkg)
-    pkg.mkdir(parents=True)
+        clear_package(pkg)
+    pkg.mkdir(parents=True, exist_ok=True)
 
     copied = 0
     for name in COPY_DIRS:

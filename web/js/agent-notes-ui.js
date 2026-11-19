@@ -421,7 +421,7 @@ export async function mountNotesEntries(host, ctx = {}, opts = {}) {
   const area = h('textarea', {
     class: 'input agent-note__area notes-entries__area', rows: opts.compact ? '2' : '3',
     spellcheck: 'false',
-    placeholder: 'Что делать иначе именно в этой комнате? Например: «Ornith слабая модель, '
+    placeholder: 'Что делать иначе именно в этой комнате? Например: «Локальная слабая модель, '
       + 'но локальная — простые задачи поручать ей».',
     'aria-label': 'Новая особенность для ' + profile,
   });

@@ -6,7 +6,7 @@
 сторож может убить НОРМАЛЬНЫЙ запуск, где разрешение можно выдать не тому профилю и где
 две одновременные записи теряют данные.
 
-Данные только вымышленные: кафе «Лето», профили `team-*`, поддельные `kanban.db`/`state.db`
+Данные только вымышленные: кафе «Лето», профили `исполнители`, поддельные `kanban.db`/`state.db`
 в песочнице (`tests.helpers.Sandbox`, `ApprovalCase`), CLI Hermes подменён шимом.
 
     python -m unittest tests.test_review_w22_23 -v
@@ -78,7 +78,7 @@ class GuardFalsePositiveTests(GuardBase):
     def test_provider_alias_same_model_is_not_killed(self):
         """Та же модель, другой ярлык провайдера (`custom` вместо `llamacpp`) — не остановка.
 
-        В реальных `sessions` профиля `ornith` модель `qwen36v` записана и как `llamacpp`,
+        В реальных `sessions` профиля `team-local` модель `qwen36v` записана и как `llamacpp`,
         и как `custom` (старые запуски). Убивать за это нормальную работу нельзя.
         """
         root = self.new_root("Свод по заявкам")

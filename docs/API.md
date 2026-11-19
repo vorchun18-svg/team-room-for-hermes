@@ -3219,7 +3219,7 @@ data-role="tech">`. Сохраняющий блок — `[data-action="settings-
 
 Разрешение «на вид» (`command_allowlist`) выдаётся на **класс** команд: один `pattern_key`
 закрывает все команды этого правила. Поэтому десять разных `python -c …` одного
-участника в одной карточке — это один вопрос, а не десять (у `ornith` на живой доске их
+участника в одной карточке — это один вопрос, а не десять (у `team-local` на живой доске их
 было 20 — список превращался в стену).
 
 Сервер отдаёт их **одной строкой** (`collapse`), если совпали карточка, участник и
@@ -3397,7 +3397,7 @@ YAML-список (или JSON-массив) записей `{название, 
 
 Правило Михаила (`Requirements-Mikhail.md`): всё, что показано как «ждёт вашего решения»,
 обязано иметь действие, которое реально что-то меняет. На скриншоте 8777 было иначе:
-`ornith хочет выполнить команду · execute_code · блокировалось 2 раза · ждёт вашего
+`team-local хочет выполнить команду · execute_code · блокировалось 2 раза · ждёт вашего
 решения` — и **ни одной кнопки**, причём карточка уже `done`. Разбор — Vault
 `Prep-2026-11-18-dead-ends-rail-duties.md` §1 (дефекты T1–T3).
 
@@ -3545,7 +3545,7 @@ python tools/check_dead_ends.py --selftest                            # пров
 
 ## W23-MODEL-GUARD — «Контроль моделей» (v1.2.0, WAVE23 §2)
 
-Жалоба 17.11: исполнитель `ornith` (локальная Qwen, бесплатно) выполнил карточку на
+Жалоба 17.11: исполнитель `team-local` (локальная Qwen, бесплатно) выполнил карточку на
 `anthropic/claude-sonnet-5-5` — $2,45 за один запуск. Причина: приложение клеило **модель
 руководителя** на корневую карточку в момент создания (исполнитель ещё неизвестен,
 `assignee=null`, статус `triage`), а когда Hermes назначал исполнителя, переопределение
@@ -3651,7 +3651,7 @@ expected_model(cfg, room, profile, card_id=None) -> {
  "stopped": {"t_375d5a5f": {"by": "user", "at": 1763381200, "reason": "остановлено пользователем"}},
  "unknown": {"t_11111111": 1763381200},
  "events": [{"at": 1763380000, "kind": "stopped", "card_id": "t_375d5a5f",
-             "root_id": "t_aaaaaaaa", "profile": "ornith",
+             "root_id": "t_aaaaaaaa", "profile": "team-local",
              "expected": {"provider": "llamacpp", "model": "qwen36v"},
              "actual": {"provider": "anthropic", "model": "claude-sonnet-5-5"},
              "cost_usd": 2.45,
@@ -3669,14 +3669,14 @@ expected_model(cfg, room, profile, card_id=None) -> {
 ```json
 {"room": "fn", "at": 1763381200,
  "members": [
-   {"profile": "ornith", "title": "Орнит — исполнитель",
+   {"profile": "team-local", "title": "Исполнитель на локальной модели",
     "expected": {"provider": "llamacpp", "model": "qwen36v", "reasoning": "",
                  "source": "profile", "base_url": "http://127.0.0.1:8090/v1"},
     "card_model": {"provider": "anthropic", "model": "claude-sonnet-5-5"},
     "last_run": {"provider": "anthropic", "model": "claude-sonnet-5-5",
                  "at": 1763378000, "cost_usd": 2.45, "card_id": "t_375d5a5f"},
     "ok": false,
-    "problem": "ornith: ожидалась qwen36v (llamacpp), запущено claude-sonnet-5-5 (anthropic)"},
+    "problem": "team-local: ожидалась qwen36v (llamacpp), запущено claude-sonnet-5-5 (anthropic)"},
    {"profile": "anna", "title": "Анна — руководитель",
     "expected": {"provider": "anthropic", "model": "claude-sonnet-5-5", "reasoning": "high",
                  "source": "room"},
@@ -3710,12 +3710,12 @@ expected_model(cfg, room, profile, card_id=None) -> {
 
 ```json
 "model_guard": [
-  {"at": 1763380000, "kind": "stopped", "card_id": "t_375d5a5f", "profile": "ornith",
+  {"at": 1763380000, "kind": "stopped", "card_id": "t_375d5a5f", "profile": "team-local",
    "expected": {"provider": "llamacpp", "model": "qwen36v"},
    "actual": {"provider": "anthropic", "model": "claude-sonnet-5-5"},
    "cost_usd": 2.45,
    "text": "Запуск шёл на claude-sonnet-5-5 вместо локальной qwen36v — остановлено и перезапущено на qwen36v"},
-  {"at": 1763379000, "kind": "fixed", "card_id": "t_375d5a5f", "profile": "ornith",
+  {"at": 1763379000, "kind": "fixed", "card_id": "t_375d5a5f", "profile": "team-local",
    "expected": {"provider": "llamacpp", "model": "qwen36v"},
    "actual": {"provider": "anthropic", "model": "claude-sonnet-5-5"}, "cost_usd": null,
    "text": "Модель карточки исправлена до запуска: claude-sonnet-5-5 → модель профиля (qwen36v)"}]
@@ -3740,7 +3740,7 @@ expected_model(cfg, room, profile, card_id=None) -> {
  "value": "Строгий контроль: 3 исправления и 1 остановка за сутки",
  "hint": "Запрос уходит только на модель из настроек агента — расхождения исправляются до запуска",
  "fix": null,
- "details": ["ornith: ожидалась qwen36v (llamacpp), запущено claude-sonnet-5-5"]}
+ "details": ["team-local: ожидалась qwen36v (llamacpp), запущено claude-sonnet-5-5"]}
 ```
 
 `status`: `ok` — расхождений нет; `warn` — есть карточки с расхождением или режим `warn`;
@@ -3886,7 +3886,7 @@ claim принадлежит другому хосту — чужой pid Hermes
 | `422` | `card_model`: модель не из каталога / провайдер не настроен | «Такой модели нет у провайдера «X» — выберите из списка» |
 | `400` | нет `task_id`, мусор в `model` | «Нужен task_id» |
 
-Журнал комнаты (`journal.jsonl`): «карточка t_… остановлена пользователем (ornith)»,
+Журнал комнаты (`journal.jsonl`): «карточка t_… остановлена пользователем (team-local)»,
 «карточка t_… продолжена», «модель карточки t_…: claude-sonnet-5-5 → qwen36v» (в записи
 `actor: "mikhail"` — видно, что действовал человек). Те же события — в `model_guard[]`
 запроса (`stopped_by_user`, `resumed`, `model_changed`).
@@ -3934,7 +3934,7 @@ claim принадлежит другому хосту — чужой pid Hermes
 * `GET /api/rooms/{id}/model-check`, `model_guard[]` в деталях, пункт диагностики и
   настройка комнаты — те же тесты через `App.dispatch`.
 * Живая проверка (только чтение реальных данных, после переноса на 8777): модуль
-  показывает для `t_375d5a5f` проблему «ornith: ожидалась qwen36v (llamacpp), запущено
+  показывает для `t_375d5a5f` проблему «team-local: ожидалась qwen36v (llamacpp), запущено
   claude-sonnet-5-5 (anthropic)».
 
 ## W24-DUTIES — «Дежурства» и «Здоровье интеграций» (v1.3.0-dev, WAVE24 §3.2–3.3)
@@ -4517,3 +4517,414 @@ result?{parts,files}, outbox?, found?, duties?, status?}`. `title` можно н
   по HTTP, замеры списка (p50 ≈ 3 мс, p95 ≈ 18 мс на 2 делах), отчёт
   `docs/status/delo-be.json`.
 * `python tools/check_conformance.py` — нарушений 0.
+
+## W27-AUTONOMY — уровни автономии комнаты (v1.4.0-dev, WAVE27 §2, пакет E5)
+
+Три уровня поверх **штатных** настроек Hermes: `careful` («Осторожный»), `working`
+(«Рабочий», по умолчанию), `free` («Свободный»). Комната хранит только выбор
+(`rooms.json` → `autonomy: {level, never, updated_at}`); сами настройки живут в
+профилях Hermes (`config.yaml`): `command_allowlist`, `approvals.deny`,
+`approvals.single_query_mode`. Запись — только в профили участников ЭТОЙ комнаты,
+только по `confirm: true`, всегда с копией старого конфига.
+
+### W27.1 Чтение: `GET /api/rooms/{id}/autonomy`
+
+```json
+{
+  "room": "r_leto", "level": "working", "level_label": "Рабочий",
+  "never": ["*rm -rf*", "…"], "updated_at": 1790000000,
+  "applied_level": "working", "applied_at": 1790000000,
+  "applies_to": ["anna-lead", "ivan-petrov"],
+  "profiles": [
+    {"profile": "ivan-petrov", "label": "Исполнитель по заявкам", "exists": true,
+     "allowlist": ["script execution via heredoc"],
+     "deny": [], "single_query_mode": "deny",
+     "auto_allowed": ["script execution via heredoc"]}
+  ],
+  "defaults": {"never": ["*rm -rf*", "…"],
+               "working_rules": ["script execution via -e/-c flag",
+                                 "script execution via heredoc"]},
+  "never_labels": {"*rm -rf*": "рекурсивное удаление (rm -rf)"},
+  "levels": [{"level": "careful", "label": "Осторожный", "hint": "…"}],
+  "preview": {
+    "careful": {"level": "careful", "label": "Осторожный", "unchanged": false,
+                "changes": ["…по-русски, что изменится…"],
+                "profiles": [{"profile": "…", "add": [], "remove": [], "deny": 0,
+                              "single_query_mode": null, "missing": false}]},
+    "working": {"…": "…"}, "free": {"…": "…"}
+  },
+  "at": 1790000000
+}
+```
+
+* `level` — выбранный уровень; у комнаты без записи — `working` (умолчание), при этом
+  **профили не меняются**: применяет только `POST`.
+* `applied_level` — что реально применялось последним (`data/state/autonomy-applied.json`);
+  пусто — «ещё не применяли».
+* `profiles[].single_query_mode` — как записано в профиле (пусто → показываем `deny`);
+  `exists: false` — профиля нет, писать некуда.
+* `preview.<уровень>.changes` — готовые русские строки для экрана «что изменится»
+  (сервер считает их по текущим конфигам, ничего не записывая). `profiles[]` — то же
+  машинно: `add`/`remove` (ключи списка разрешений), `deny` (сколько масок станет),
+  `single_query_mode` (`null` — не меняется).
+
+### W27.2 Запись: `POST /api/rooms/{id}/autonomy`
+
+```json
+{"level": "working", "never": ["*rm -rf*", "*git push*"], "confirm": true}
+```
+
+Без `confirm: true` — **`409 confirm_required`** с полем `detail.preview` (все три
+уровня) и `detail.confirm: true`: интерфейс показывает «что изменится» и только потом
+повторяет запрос.
+
+```json
+{"ok": true, "room": "r_leto", "level": "working", "level_label": "Рабочий",
+ "never": ["…"], "at": 1790000000,
+ "applied": [{"profile": "ivan-petrov", "ok": true,
+              "changes": ["«ivan-petrov»: в список разрешений добавится «script execution via heredoc»"],
+              "backup": "backups/autonomy/r_leto-ivan-petrov-20261118-231500.yaml",
+              "single_query_mode": "deny", "allowlist_size": 2, "deny_size": 0}],
+ "warnings": [], "message": "Уровень «Рабочий»: изменено профилей — 2."}
+```
+
+Что делает каждый уровень:
+
+| Уровень | `command_allowlist` | `approvals.single_query_mode` | `approvals.deny` |
+|---|---|---|---|
+| `careful` | снимаются записи Team Room (учёт в `data/state/autonomy-applied.json`) | `deny` | записи Team Room снимаются, свои остаются |
+| `working` | `+= ["script execution via -e/-c flag", "script execution via heredoc"]` | `deny` | без изменений |
+| `free` | те же два класса | `approve` | `never` + свои записи (не затираются) |
+
+Правила записи (жёсткие):
+
+* пишем **только** в `HERMES_HOME` профилей комнаты; в песочнице — в поддельный дом
+  (`<data>/hermes-home`), реальные конфиги не трогаются;
+* перед правкой — копия `config.yaml` в `data/backups/autonomy/<комната>-<профиль>-<время>.yaml`
+  (путь возвращается в `applied[].backup`);
+* правку делает сам Hermes (`hermes_cli.config.load_config → save_config`) отдельным
+  процессом (`server/approval_grant.py::op_apply`) — посторонние ключи конфига целы;
+* после записи сервер **перечитывает** конфиг: расхождения попадают в `warnings`
+  (`applied[].ok: false`), а не выдаются за успех;
+* hardline-пол Hermes (удаление корня, формат диска, fork-бомба, shutdown) не
+  снимается ни одним уровнем — он в коде Hermes, а не в конфиге;
+* ошибка записи по одному профилю не отменяет остальные (`applied[].ok: false` +
+  `warnings`); уровень комнаты записывается последним, чтобы настройка не врала;
+* отзыв = смена уровня (`careful` возвращает «как было» по учёту Team Room).
+
+`400` — нет/неизвестный `level` (`detail.allowed`), `never` не список, маска с
+переводом строки; `404` — комната не найдена; `409 confirm_required` — нет
+подтверждения, `409 no_profiles` — в комнате нет участников; `503 autonomy_unavailable` —
+конфиги профилей недоступны.
+
+### W27.3 Журнал: `GET /api/rooms/{id}/autonomy/journal?limit=60`
+
+«Что агенты сделали сами по уровню»: строка = профиль, класс, время, карточка.
+**Счётчика «нужно от вас» здесь нет** — журнал не пополняет очередь решений.
+
+```json
+{"room": "r_leto", "level": "working", "count": 2, "total": 2,
+ "items": [{"at": 1790000100, "kind": "decision", "level": "working",
+            "profile": "ivan-petrov", "class": "запуск скрипта через heredoc",
+            "card": "Собрать отчёт по заявкам", "severity": "routine",
+            "text": "уровень пропустил бы сам: запуск скрипта через heredoc — «once»"}],
+ "note": "Что агенты сделали сами по уровню. Это не «нужно от вас»: счётчик здесь не растёт.",
+ "at": 1790000200}
+```
+
+`kind`: `level` (смена уровня), `decision` (решение по блокировке), `auto`.
+`severity`: `critical` (разрушительные классы и «наружу» — показываются отдельно,
+заметно, с предпросмотром «что именно») | `routine`. То же поле появилось у каждой
+блокировки в деталях запроса (`approvals[].severity`) — состояние и действия оно не
+меняет.
+
+### W27.4 Подсказки: `GET /api/rooms/{id}/autonomy/suggest?days=90&limit=10`
+
+Обёртка `hermes approvals suggest --json` (только чтение; в тестах и в песочнице —
+подставной CLI). Разрушительные классы Hermes не предлагает никогда — это его правило.
+
+```json
+{"room": "r_leto", "profile": "anna-lead", "available": true, "count": 1,
+ "items": [{"pattern": "git *", "kind": "glob", "count": 4, "classes": ["git"],
+            "example": "git status", "already": false, "severity": "routine",
+            "text": "«git *» — одобряли 4 раз(а)"}],
+ "message": "Нашлось предложений: 1", "days": 90, "at": 1790000300}
+```
+
+`available: false` — CLI не найден/не ответил: `items: []` и русское `message`
+(это не ошибка страницы).
+
+### W27.5 Правило контракта
+
+`contract.approval_rule(room)` учитывает уровень комнаты: на «Рабочем» добавлена
+строка «запуск твоих скриптов (`python -c`, `python файл.py`, heredoc) и работа в
+папке комнаты разрешены — спрашивать их не нужно; удаление, реестр, `sudo`, отправка
+наружу остаются вопросом к человеку»; на «Свободном» — «запрещённое нельзя ни обойти,
+ни согласовать: задай вопрос в `open_questions`» (в этом режиме спросить некого).
+
+### W27.6 Проверки
+
+* `python -m unittest tests.test_autonomy` — 47 тестов: форма записи, умолчания
+  «только с моего да», вид блокировки (`critical`/`routine`), чтение профилей,
+  предпросмотр трёх уровней, 409 без подтверждения, запись `working`/`free`/`careful`
+  (включая «чужие записи целы» и «наши сняты»), идемпотентность, пропуск отсутствующего
+  профиля, честный отказ при ошибке записи, журнал, подсказки и проба через подставной
+  CLI, протокол `approval_grant.op_apply` (подставной `hermes_cli.config`), правило
+  контракта, вид в `approvals`, чтение старой комнаты без записи.
+* `python tools/probe_autonomy.py` — песочница с поддельным `HERMES_HOME` и подставным
+  CLI: 9 команд × 3 уровня; на «Рабочем» рутина (`python -c`, heredoc, `python файл.py`,
+  `git status`) проходит, критичное (`rm -rf`, `taskkill /F`, `sudo`, `curl … | sh`,
+  реестр) блокируется. Код возврата 0 — расхождений нет.
+
+## W27-DUTIES — «Дежурства комнаты» целиком (пакет W27-E7, §3 правил волны)
+
+Основа — штатный Hermes: расписание и запуск живут в `cron/jobs.json`, приложение
+**не хранит второй список расписаний**. Правила реакции, корзина и история — в
+`data/state/<room>/duties.json`; предложения — в `data/state/<room>/duty-proposals.json`.
+
+Все записи в Hermes идут ровно одной командой (`shell=False`, `HERMES_HOME` из
+конфигурации, таймаут 25 с):
+
+| действие приложения | команда |
+|---|---|
+| создание, возврат из корзины | `hermes cron create <schedule> [<prompt>] --name … --deliver room:<id> …` |
+| правка расписания/задания | `hermes cron edit <job_id> --schedule/--prompt/--name/--workdir …` |
+| пауза, возобновление, запуск | `hermes cron pause|resume|run <job_id>` |
+| удаление | `hermes cron remove <job_id>` |
+
+В тестах и песочнице CLI подставной: `duties.set_cli_runner(fn)`, `TEAMROOM_HERMES_BIN`,
+`TEAMROOM_DUTIES_DRY=1` (команда печатается, но не выполняется).
+
+### W27-DUTIES.1 `GET /api/duty-templates`
+
+Семь универсальных шаблонов (без терминов бизнеса): почта/ящик, папка, утренний обзор,
+страница/цена, сроки, еженедельный отчёт, выполнение шагов.
+
+```json
+{"generated_at": 1763500000,
+ "kinds": [{"id": "model|script|monitor", "title": "…"}],
+ "on_change": [{"id": "log|inbox|delo|step|question", "title": "…"}],
+ "levels": [{"id": "self|propose|ask", "title": "…"}],
+ "notify": [{"id": "today|room|windows", "title": "…"}],
+ "templates": [{"id": "mail", "title": "Проверять почту/ящик на новое", "why": "…",
+                "hint": "…", "kind_title": "…", "on_change_title": "…", "level_title": "…",
+                "schedule_human": "каждые 30 минут",
+                "wizard": {"kind": "monitor", "schedule": "*/30 * * * *", "prompt": "…",
+                           "script": "", "monitor_script": "room-mail.sh", "monitor_url": "",
+                           "changed_rule": "…", "on_change": "inbox", "level": "propose",
+                           "notify": ["today"], "catch_up": null, "continuity": true}}]}
+```
+
+### W27-DUTIES.2 `POST /api/rooms/{room}/duties`
+
+Поля мастера: `title`, `kind` (`model|script|monitor`), `schedule` (cron `0 9 * * 1-5`,
+`30m`, `every 2h`, `every day at 9am`), `prompt`, `script` (имя файла из каталога
+скриптов Hermes — без путей), `monitor_script`, `monitor_url`, `workdir` (полный путь),
+`skills`, `model`, `provider`, `catch_up`, `continuity`, `paused`, `changed_rule`,
+`on_change`, `level`, `notify`, `source` (`manual|manager|dictation|delo`), `template`.
+
+* `preview: true` → **200** `{command, argv, duty, rule, changes[], warnings[], next}` —
+  точная команда и что изменится; ничего не создаётся и CLI не зовётся.
+* `preview: false` без `confirm: true` → **409 `confirm_required`**
+  (`detail.command` — та же команда).
+* `preview: false, confirm: true` → **201** `{applied, job_id, command, duties[], rule,
+  changes[], warnings[], job}`; задание привязано к комнате (`rooms.json → duties`),
+  правило сохранено в `duties.json → rules[<job_id>]`.
+* Ошибки: `400 bad_request` (пустое название, неразборчивое расписание, скрипт с путём,
+  нет задания для модели, относительный `workdir`), `422 path_denied`, `502 cli_failed`
+  (ненулевой код Hermes — неудача не выдаётся за успех).
+
+Задание крона автоматически дополняется контрактом исполнителя — блоком `результат`
+(`contract.duty_result_block()`), иначе приложение не поймёт, что нашло дежурство.
+
+### W27-DUTIES.3 `PATCH /api/duties/{job_id}`
+
+`schedule`, `prompt`, `title`, `workdir`, `monitor_script`, `monitor_url` — через
+`hermes cron edit` (нужен `confirm: true`, иначе **409**); `changed_rule`, `on_change`,
+`level`, `notify`, `source`, `template` — только правило (внутреннее состояние,
+применяется сразу); `pause: true|false` — `cron pause|resume`; `run_now: true` —
+`cron run`. Ответ: `{ok, applied, job_id, command, argv, changes[], rule?, job?, text}`.
+`preview: true` — тот же ответ без применения.
+
+### W27-DUTIES.4 Корзина, история, пробный прогон
+
+* `DELETE /api/duties/{job_id}?confirm=true` → `cron remove`, задание снимается с
+  комнаты, запись с правилом уезжает в `trash[]` на 30 дней (`delete_after`).
+  Без `confirm` → **409** с `detail.note` «можно вернуть». Ответ: `{applied, command,
+  trash: {job_id, delete_after_text, days}}`.
+* `POST /api/duties/{job_id}/restore {confirm:true}` → `cron create` из корзины,
+  новое `job_id`, привязка и правило восстанавливаются (**201**). Без `confirm` — 409,
+  запись при этом остаётся в корзине. Просроченное (30 дней) — **410 `trash_expired`**.
+* `GET /api/duties/{job_id}/history` → `{job_id, room, rule, items: [{run_id, job_id, at,
+  changed, done, found, proposals[], links[], created[], on_change, level, silent}]}`
+  (новые сверху, до 40).
+* `POST /api/duties/{job_id}/dry_run` → `{ran:false, side_effects:"none", checks:{kind,
+  prompt, script, monitor_script, monitor_url, workdir}, last_result, last_excerpt,
+  command}`: ничего не запускает и не пишет, показывает, что проверяется и что нашлось
+  в прошлый раз.
+* `GET /api/duties?room=<id>` дополнен ключами `rules` (карта `job_id → правило`),
+  `trash[]` и `rule` у каждого пункта.
+* `POST /api/rooms/{room}/duties/process` — тот же проход, что делает тик сторожа
+  (`{processed, cards, self, silent, logs, skipped, limit}`); нужен кнопке «Обновить».
+
+### W27-DUTIES.5 Результат запуска → «Входящие» / Дело (§3)
+
+Машинный блок в конце ответа агента (```результат … ```): `изменилось: да|нет`,
+`сделано`, `обнаружено`, `предложения: [{что, почему, действие}]`, `ссылки`.
+
+`duty_rules.process_runs(room)` (тик сторожа, `watcher._duties_tick`):
+
+* лимит **≤ 5 обработок за тик**, идемпотентность по `run_id` (`<job_id>:<файл вывода>`);
+* `изменилось: нет` (или блока нет) → одна тихая строка в `history[]`, без «ждёт вас»;
+* `да` + `on_change`:
+  * `log` — только история;
+  * `inbox` / `question` — карточка во «Входящих» (`source:"duty"`, `duty:{job_id,
+    run_id, done, found, proposals, links, level, on_change, notify}`) с текстом
+    «Что выполнено / Что обнаружено / Предлагаю» и кнопками `accept | edit | reject |
+    make_rule` (+ `delete`);
+  * `delo` / `step` — при `level:"propose"|"ask"` та же карточка; при `level:"self"`
+    сразу создаётся Дело (обратимая запись внутри комнаты), карточки нет;
+* **наружу ничего не уходит**: ни письма, ни платежа, ни задачи в чужой системе —
+  только предложение человеку.
+
+Решение по карточке — `POST /api/rooms/{room}/duty-cards/{item_id} {action}`:
+`accept` (создаёт Дело, `resolution.delo_id`; повтор → **409 `already_decided`**),
+`edit` (текст «что сделать иначе»), `reject` («Не надо»), `make_rule` (правило
+→ `level:"self"`; правила нет → **409 `no_rule`**), `delete`. Неизвестная карточка —
+**404 `not_found`**.
+
+### W27-DUTIES.6 Предложения руководителя и диктовка
+
+* `GET /api/rooms/{room}/duty-proposals?state=proposed|all` → `{week_used, week_limit:2,
+  declined[], items:[{id, title, why, when, what, state, source, wizard, actions:
+  [create, edit, dismiss, never]}]}`. Перед чтением принимаются заготовки из «Входящих»
+  (`inbox.json → duties_drafts`, D9 `to_duty`) — один раз на заготовку.
+* `POST /api/duty-proposals/{id} {action, room}`: `create` (черновик мастера в `draft` +
+  `next` — крон создаёт только `POST …/duties` с `confirm`), `edit`, `dismiss`,
+  `never` («не предлагать такое» — название запоминается, повторные предложения
+  пропускаются с `skipped:true, reason:"declined"`). Больше двух предложений
+  руководителя за 7 дней → **409 `too_many_proposals`**.
+* Предложение от руководителя в контракте — необязательный блок
+  `contract.duty_proposal_rule()`; из Дела — `duty_rules.from_delo(cfg, room, delo_id)`
+  (кнопка «Сделать регулярным»).
+
+### W27.7 Проверки
+
+* `python -m unittest tests.test_duties_full` — 42 теста: шаблоны, предпросмотр,
+  обязательное «да», точный argv `create|edit|remove|pause|resume`, привязка и правило,
+  корзина 30 дней и возврат, пробный прогон без CLI, разбор блока `результат`
+  (русские и английские ключи, `да/нет/непонятно`), тихая строка и карточка с четырьмя
+  кнопками, Дело по `level:"self"`, идемпотентность по `run_id`, лимит 5 за тик,
+  лимит предложений 2 в неделю, «не предлагать такое», диктовка → черновик.
+* `python tools/probe_duties_full.py --port 8857` — песочница + подставной CLI:
+  30 проверок по HTTP, ни одного настоящего крона.
+
+## W27-STALE — единые состояния пунктов, «Не актуально»/«Вернуть», счётчик (v1.4.0-dev, WAVE27 §1, пакет E1)
+
+Основание — дефект 1 из `Vault/Projects/Developer/Team-Room/Defects-2026-11-18-evening-stale-needs-you.md`:
+сервер отдавал `approvals[].state = "closed"`, интерфейс знал только `pending` — двадцать
+закрытых пунктов рисовались как «ждёт вашего решения», счётчик не уменьшался, нажатие
+давало `409`. Теперь состояния пунктов живут в **одном** модуле `server/stale.py`, и сервер
+сам считает, что и сколько ждёт человека.
+
+### W27.1 Состояния (единственный словарь)
+
+| Пункт | Поле | Значения |
+|---|---|---|
+| вопрос | `open_questions[].state` | `open · answered · dismissed` |
+| решение | `decisions[].state` | `open (proposed) · answered (обсуждаем) · accepted · rejected · dismissed · done` |
+| шаг | `next_steps[].state` | `open · done · dismissed · cancelled` (`cancelled` = «снят по вашему ответу», в счётчик не входит) |
+| разрешение | `approvals[].state` | `pending · granted_once · granted_always · denied · expired · closed · dismissed` |
+
+Ждёт человека **только** `open` (у решения — `proposed`, у разрешения — `pending`).
+У каждого пункта появились поля:
+
+* `needs_you: bool` — правда ли он ждёт вас (учитывает наличие действия);
+* `closed: bool` — пункт закрыт (не «ждёт»);
+* `closed_reason` ∈ `card_finished · request_done · dismissed · superseded` +
+  `closed_reason_label` по-русски («работа завершена», «запрос завершён», …);
+* `actions: [{id:"dismiss", label:"Не актуально"}]` у ожидающего и
+  `[{id:"restore", label:"Вернуть"}]` у снятого.
+
+`status`/`answer_state` у пунктов не изменились — новые поля добавлены рядом.
+
+### W27.2 Счётчик запроса
+
+`GET /api/requests/{id}` → `needs_you_count`:
+
+```json
+"needs_you_count": {"questions": 1, "decisions": 1, "approvals": 0, "steps": 1, "total": 3}
+```
+
+Считает только пункты с действием; `questions` и `open_questions` — один источник (без
+двойного счёта). Интерфейс показывает это число и **не пересчитывает** список.
+Рядом: `stale: {request_finished, auto_close, open:{questions,decisions,approvals,steps,total},
+auto_closed, reasons, labels}` — `open` для кнопки «Закрыть все неактуальные (N)».
+
+`approvals_pending` и `approvals_actionable` остаются как были (W26-D1).
+
+### W27.3 «Не актуально» и «Вернуть» (одно действие на все виды)
+
+```
+POST /api/requests/{rid}/actions
+{ "action": "dismiss" | "restore",
+  "target": {"kind": "question|decision|approval|step", "id": "q_…|d_…|ap_…|ns_…|t_…:ns_…"},
+  "reason": "необязательно, ≤ 1000 знаков" }
+```
+
+* вопрос — отметка в реестре ответов комнаты (`dismissed` / снова `open`), в ветке метка
+  `[Михаил · закрыто как неактуальное: вопрос q_… «…»]`;
+* решение — тот же механизм, что «Снять — неактуально» / «Вернуть» (W20-D1);
+* разрешение — реестр разрешений (`approvals.act_block("dismiss")` / `approvals.restore`);
+* шаг — `steps_dropped` + статус пункта бэклога (`dismissed` / `open`).
+
+Ответ `200` — обновлённый пункт (`state`, `needs_you`) и `message`. Повторное нажатие —
+`409 already_decided` (`{"error":{"code":"already_decided","detail":{"state":…}}}`):
+для интерфейса это **не ошибка** — тихая перерисовка и один тост на причину.
+Пункт, решённый человеком (ответ, принятое решение, выполненный шаг), снять нельзя — `409`.
+
+### W27.4 Массовое «Закрыть все неактуальные»
+
+```
+POST /api/rooms/{room}/dismiss_stale  {"scope": "finished_requests"}
+→ { "ok": true, "scope": "finished_requests", "room": "…",
+    "closed": {"questions": 2, "decisions": 1, "approvals": 0, "steps": 3},
+    "already_closed": {…}, "total": 6, "requests": [{"request": "t_…", "closed": {…}}],
+    "errors": [], "message": "Закрыто как неактуальное: 6." }
+```
+
+Закрывает пункты запросов со статусом `done`/`archived`. Решённое человеком не трогает.
+Повторный вызов безопасен: уже закрытое попадает в `already_closed`, а не в ошибки.
+`scope` кроме `finished_requests` — `400`.
+
+### W27.5 Автозакрытие
+
+* **разрешения** у завершённой карточки закрываются сами — как раньше (`closed_reason:
+  card_finished`, W26-D1);
+* **все виды пунктов** у `archived`-запроса закрываются на чтении (`closed_reason:
+  request_done`, `auto_closed: true`) — в счётчик и в «Сегодня» они не входят;
+* у `done`-запроса автозакрытия **нет**: «руководитель завершил карточку, чтобы спросить» —
+  рабочее состояние «ждёт вашего слова», а не мусор. Такие пункты закрывает человек
+  («Не актуально» / массовая кнопка).
+
+### W27.6 «Сегодня»
+
+`GET /api/today` не показывает пункты `archived`-запросов (автозакрытие §W27.5). Ключи
+ответа не менялись — контракт W24-TODAY в силе.
+
+### W27.7 Сторож
+
+`python tools/check_dead_ends.py --base http://127.0.0.1:8851` теперь проверяет и это:
+
+* состояние пункта вне словаря §W27.1 — проблема (`kind: "state"`);
+* `needs_you_count` не совпадает с числом пунктов с действием — проблема (`kind: "counter"`);
+* `open` + `needs_you`, а действий нет — проблема (`kind: "dead_end"`);
+* `--selftest` проверяет сами проверки.
+
+### W27.8 Проверки
+
+* `python -m unittest tests.test_stale` — 24 теста: словарь состояний, счётчик,
+  автозакрытие (`archived` закрывает, `done` — нет), снять/вернуть вопрос, решение, шаг,
+  `409 already_decided`, `400/404` на плохую цель, массовое закрытие и его повтор,
+  рабочая комната не трогается, сторож понимает счётчик и состояния.
+* `python tools/check_dead_ends.py --selftest`.

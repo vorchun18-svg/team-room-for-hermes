@@ -95,37 +95,37 @@
       "rows": [
         {
           "channel": "Telegram (прямые)",
-          "price": 420.0,
-          "cost": 221.5,
+          "price": 42000.0,
+          "cost": 22150.0,
           "fee": 0,
-          "margin": 198.5,
+          "margin": 19850.0,
           "margin_pct": 47,
           "status": "active"
         },
         {
           "channel": "B2B-кофейни",
-          "price": 390.0,
-          "cost": 221.5,
+          "price": 39000.0,
+          "cost": 22150.0,
           "fee": 0,
-          "margin": 168.5,
+          "margin": 16850.0,
           "margin_pct": 43,
           "status": "next"
         },
         {
           "channel": "Развоз",
-          "price": 420.0,
-          "cost": 221.5,
+          "price": 42000.0,
+          "cost": 22150.0,
           "fee": 18,
-          "margin": 122.9,
+          "margin": 12290.0,
           "margin_pct": 29,
           "status": "next"
         },
         {
           "channel": "Едок",
-          "price": 420.0,
-          "cost": 221.5,
+          "price": 42000.0,
+          "cost": 22150.0,
           "fee": 23,
-          "margin": 101.9,
+          "margin": 10190.0,
           "margin_pct": 24,
           "status": "blocked"
         }
@@ -156,10 +156,10 @@
         {
           "name": "Маржа",
           "data": [
-            198.5,
-            168.5,
-            122.9,
-            101.9
+            19850.0,
+            16850.0,
+            12290.0,
+            10190.0
           ],
           "color": "#4f8cff"
         }
@@ -179,9 +179,9 @@
         {
           "name": "Себестоимость",
           "data": [
-            128.5,
-            73.0,
-            20.0
+            12850.0,
+            7300.0,
+            2000.0
           ]
         }
       ]

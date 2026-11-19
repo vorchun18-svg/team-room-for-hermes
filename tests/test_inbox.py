@@ -41,9 +41,9 @@ class InboxStorage(unittest.TestCase):
         self.assertFalse(path.exists())
 
     def test_add_writes_required_fields(self):
-        item = inbox_mod.add(self.cfg, ROOM, "  Проверить договор по Каладжинскому  ", "dictation")
+        item = inbox_mod.add(self.cfg, ROOM, "  Проверить договор по Альфе  ", "dictation")
         self.assertTrue(item["id"].startswith("in_"))
-        self.assertEqual(item["text"], "Проверить договор по Каладжинскому")
+        self.assertEqual(item["text"], "Проверить договор по Альфе")
         self.assertEqual(item["source"], "dictation")
         self.assertEqual(item["source_title"], "диктовка")
         self.assertEqual(item["status"], "new")

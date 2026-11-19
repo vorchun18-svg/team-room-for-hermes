@@ -248,6 +248,10 @@ ROUTE_METHODS = (
     (r"^/api/rooms/%s/backlog/.+/ask$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/backlog/.+$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/journal$" % _ROOM, ("GET",)),
+    # W27-E6: «Уровень автономии» комнаты — чтение трёх видов и применение уровня.
+    (r"^/api/rooms/%s/autonomy$" % _ROOM, ("GET", "POST")),
+    (r"^/api/rooms/%s/autonomy/journal$" % _ROOM, ("GET",)),
+    (r"^/api/rooms/%s/autonomy/suggest$" % _ROOM, ("GET",)),
     (r"^/api/rooms/%s/reports$" % _ROOM, ("GET",)),
     (r"^/api/rooms/%s/archive$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/members$" % _ROOM, ("POST",)),

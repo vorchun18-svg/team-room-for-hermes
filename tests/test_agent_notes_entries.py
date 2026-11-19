@@ -118,7 +118,7 @@ class EntriesTests(_Base):
 
     def test_leader_writes_to_himself(self):
         lead = self.room().get("orchestrator")
-        res = self.add(lead, "Ornith — слабая модель, но локальная: простые задачи ей")
+        res = self.add(lead, "Локальная модель слабая, но бесплатная: простые задачи ей")
         self.assertEqual(res["profile"], lead)
         self.assertTrue(notes_mod.get(self.cfg, ROOM, lead)["entries"])
 

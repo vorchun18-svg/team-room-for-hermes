@@ -336,7 +336,7 @@ test('композер: аватары команды подсказывают �
     const title = String(av.getAttribute('title') || '');
     assert.ok(title.length > 0, 'у аватара есть подсказка');
     assert.ok(title.includes(' — '), 'подсказка в виде «имя — роль»: ' + title);
-    assert.ok(!/^(team-|room-)/.test(title), 'системного id в подсказке нет');
+    assert.ok(!/^(?:biz|team|room)-/.test(title), 'системного id в подсказке нет');
     assert.ok(String(av.getAttribute('aria-label') || '').length > 0, 'подсказка доступна с клавиатуры');
   }
   // Подсказка собирает всю команду, а не только видимые пять.

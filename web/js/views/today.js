@@ -32,10 +32,11 @@ import { createSection } from './section-collapse.js';
 import { setTodayCount } from '../shell-sidebar.js';
 import { countNoun } from '../text-ru.js';
 import {
-  EMPTY_TEXT, FORMS, NEEDS_YOU_LIMIT, agoText, changedSummary, counterChips, dueRow, dueSoonText,
-  dutyProblemText, dutyRunText, dutyTone, healthProblems, isEmptyDay, needsYouCard, needsYouVisible,
-  runningRow,
+  EMPTY_TEXT, FORMS, NEEDS_YOU_LIMIT, agoText, actionableCount, changedSummary, counterChips, dueRow,
+  dueSoonText, dutyProblemText, dutyRunText, dutyTone, healthProblems, isEmptyDay, needsYouCard,
+  needsYouVisible, postponeOptions, runningRow, stepQueue,
 } from './today-model.js';
+import { applyStepAction, openStepQueue } from './step-focus.js';
 
 export const VIEW_CSS = 'css/view-today.css';
 
@@ -44,6 +45,13 @@ export const POLL_MS = 20000;
 
 /** Через сколько после показа отмечаем заход (ТЗ: 3 с). */
 export const SEEN_DELAY_MS = 3000;
+
+/**
+ * Через сколько после действия по шагу перечитываем `/api/today`.
+ * Ответ кэшируется на сервере до 10 с (`today.CACHE_TTL_S`): перечитать раньше —
+ * значит вернуть только что убранную строку. Числа до этого считаются локально.
+ */
+export const CACHE_SETTLE_MS = 11000;
 
 /* ─────────────────────────────────────────────────────────── мелкие детали */
 
@@ -124,22 +132,82 @@ function needsYouNode(card) {
   return node;
 }
 
-/** Строка «просрочено / ближайшие 3 дня». */
-function dueNode(row, kind) {
+/**
+ * Строка «просрочено / ближайшие 3 дня» — рабочая, а не постер (W27-E3).
+ *
+ * Что изменилось против W24: вся строка ведёт на шаг (`?step=ns_…`), у строки
+ * всегда видны быстрые действия из существующего механизма шагов (§1 W27) и
+ * подсказка «Открыть». Действия не перерисовывают секцию целиком: пункт уходит
+ * сразу, а числа приходят с сервера следующим опросом.
+ *
+ * @param {object} row элемент `overdue[]` / `due_soon[]`
+ * @param {'overdue'|'soon'} kind
+ * @param {{run:Function, openMenu:Function}} handlers
+ */
+function dueNode(row, kind, handlers) {
   const r = dueRow(row, kind);
-  const href = requestHash({ room: row && row.room, request_id: r.requestId });
+  const acts = handlers || {};
   const when = h('span', { class: ['today-row__when', 'tnum', 'today-row__when--' + r.tone] }, r.when);
-  return h('div', { class: 'today-row', 'data-key': 'due|' + kind + '|' + String(row && row.item_id || r.text) },
-    h('span', { class: 'today-row__mark', 'aria-hidden': 'true' }, icon(kind === 'overdue' ? 'clock' : 'calendar', { size: 13 })),
-    h('div', { class: 'today-row__main' },
-      h('div', { class: 'today-row__text' }, r.text),
-      h('div', { class: 'today-row__meta small muted' },
-        r.owner ? h('span', { class: 'today-row__owner' }, 'владелец: ' + r.owner) : null,
-        r.owner ? h('span', { class: 'today-row__dot' }, '·') : null,
-        href ? requestLink(href, r.roomTitle || 'запрос', 'today-row__room') : h('span', { class: 'today-row__room' }, r.roomTitle),
-        r.due ? h('span', { class: 'today-row__dot' }, '·') : null,
-        r.due ? h('span', { class: 'today-row__date tnum' }, 'срок ' + r.due) : null)),
-    when);
+  const openTitle = 'Открыть ' + (r.requestTitle || 'запрос')
+    + (r.stepId ? ' и показать этот шаг' : '');
+  const textNode = r.href
+    ? h('a', {
+      class: 'today-row__text today-row__link', href: r.href, title: openTitle,
+      'data-open-step': r.stepId || null,
+    }, r.text)
+    : h('div', { class: 'today-row__text' }, r.text);
+
+  const actsRow = h('div', { class: 'today-row__acts' });
+  if (r.actionable) {
+    const btn = (action, label, tone, title) => h('button', {
+      class: ['btn', 'btn--' + tone, 'btn--sm', 'today-row__act'],
+      type: 'button', 'data-act': action, title,
+      onclick: (ev) => {
+        if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
+        if (action === 'postpone' || action === 'assign') {
+          if (typeof acts.openMenu === 'function') acts.openMenu(rowNode, r, action);
+          return;
+        }
+        if (typeof acts.run === 'function') acts.run(rowNode, r, action, {});
+      },
+    }, label);
+    actsRow.append(
+      btn('done', 'Готово', 'primary', 'Отметить шаг сделанным'),
+      btn('postpone', 'Перенести срок…', 'ghost', 'Перенести срок: +1 день, пятница или своя дата'),
+      btn('dismiss', 'Не актуально', 'ghost', 'Снять шаг — он не нужен'),
+      btn('assign', 'Поручить…', 'ghost', 'Передать шаг другому участнику'));
+  }
+  const hint = r.href
+    ? h('a', { class: 'today-row__open', href: r.href, 'aria-label': openTitle },
+      'Открыть', icon('arrow-right', { size: 11 }))
+    : null;
+
+  const rowNode = h('div', {
+    class: ['today-row', 'today-row--' + kind, 'today-row--due', r.href ? 'today-row--clickable' : ''],
+    'data-key': 'due|' + kind + '|' + String(row && row.item_id || r.text),
+    'data-item-id': r.itemId || null,
+    'data-step-id': r.stepId || null,
+  },
+  h('span', { class: 'today-row__mark', 'aria-hidden': 'true' },
+    icon(kind === 'overdue' ? 'clock' : 'calendar', { size: 13 })),
+  h('div', { class: 'today-row__main' },
+    textNode,
+    h('div', { class: 'today-row__meta small muted' },
+      r.owner ? h('span', { class: 'today-row__owner' }, 'владелец: ' + r.owner) : null,
+      r.owner ? h('span', { class: 'today-row__dot' }, '·') : null,
+      h('span', { class: 'today-row__room' }, r.roomTitle),
+      r.due ? h('span', { class: 'today-row__dot' }, '·') : null,
+      r.due ? h('span', { class: 'today-row__date tnum' }, 'срок ' + r.due) : null,
+      hint ? h('span', { class: 'today-row__dot' }, '·') : null,
+      hint),
+    actsRow.childElementCount ? actsRow : null),
+  when,
+  // Растянутая ссылка: клик по любому месту строки (включая отступы) ведёт на
+  // шаг. Она ПОД содержимым (z-index), поэтому кнопки и ссылки остаются своими.
+  r.href ? h('a', {
+    class: 'today-row__hit', href: r.href, tabindex: '-1', 'aria-hidden': 'true',
+  }) : null);
+  return rowNode;
 }
 
 /** «Что изменилось»: три группы одним списком. */
@@ -229,6 +297,10 @@ export async function mount(el, ctx) {
   // «Показать все» — состояние ЭКРАНА, а не разметки: опрос раз в 20 с
   // пересобирает карточки, и раскрытый список не должен схлопываться сам.
   let showAll = false;
+  // W27-QA2: сколько неактуальных пунктов у завершённых запросов каждой комнаты
+  // (серверный предпросмотр `dismiss_stale`). Считается один раз за заход и после
+  // массового закрытия — маршрут собирает запросы комнаты, на каждом опросе это дорого.
+  let staleCounts = [];
 
   const chipsHost = h('div', { class: 'today__chips', id: 'today-chips' });
   const leadHost = h('p', { class: 'today__lead', id: 'today-lead' }, 'Загрузка…');
@@ -354,6 +426,65 @@ export async function mount(el, ctx) {
       'Проверки в порядке');
   }
 
+  /* --- массовое «Закрыть все неактуальные» (W27 §1, сценарий «Сегодня») --- */
+
+  /**
+   * Предпросмотр: сколько неактуальных пунктов у завершённых запросов в каждой комнате.
+   * Число даёт сервер (§1): клиент его не досчитывает по списку запросов.
+   */
+  async function loadStalePreview() {
+    const rooms = ((data && data.rooms) || []).map((room) => String((room && room.id) || '')).filter(Boolean);
+    const out = [];
+    for (const room of rooms) {
+      try {
+        const res = await apiRef.post('/api/rooms/' + encodeURIComponent(room) + '/dismiss_stale',
+          { scope: 'finished_requests', preview: true });
+        const total = Number((res && res.total) || 0);
+        if (total > 0) out.push({ room, total });
+      } catch { /* комната не ответила — кнопки для неё просто не будет */ }
+    }
+    staleCounts = out;
+  }
+
+  /** Одна кнопка на комнату: закрывает неактуальное у её завершённых запросов. */
+  function staleButtons() {
+    return staleCounts.map((entry) => {
+      const roomTitle = ((data && data.rooms) || []).find((r) => String(r && r.id) === entry.room);
+      const label = (roomTitle && roomTitle.title) || entry.room;
+      return h('button', {
+        class: 'btn btn--secondary btn--sm today__stale',
+        type: 'button',
+        'data-key': 'stale-' + entry.room,
+        title: 'Закрыть неактуальные пункты у завершённых запросов комнаты «' + label
+          + '»: счётчик «ждёт вас» обнулится, решённое вами останется',
+        onclick: (ev) => runDismissStale(ev && ev.currentTarget, entry.room),
+      }, 'Закрыть все неактуальные (' + entry.total + ')');
+    });
+  }
+
+  /**
+   * Закрыть все неактуальные у завершённых запросов комнаты и обновить экран.
+   * Ответ сервера — сколько закрыто по видам; число в тосте берём у него, а не своё.
+   */
+  async function runDismissStale(node, room) {
+    if (node) node.disabled = true;
+    try {
+      const res = await apiRef.post('/api/rooms/' + encodeURIComponent(room) + '/dismiss_stale',
+        { scope: 'finished_requests' });
+      const total = Number((res && res.total) || 0);
+      toast(total
+        ? 'Закрыто как неактуальное: ' + countNoun(total, FORMS.case) + '. Решённое вами осталось.'
+        : 'Неактуальных пунктов у завершённых запросов нет.', total ? 'ok' : 'warn');
+      await loadStalePreview();
+      render();
+      setTimeout(() => { if (!stopped) load(false).catch(() => { /* числа догонит опрос */ }); },
+        CACHE_SETTLE_MS);
+    } catch (err) {
+      if (node) node.disabled = false;
+      toast(String((err && err.message) || 'Не удалось закрыть неактуальное'), 'danger');
+    }
+  }
+
   function buildNeedsYou(nowSec) {
     const items = (data && data.needs_you) || [];
     const view = needsYouVisible(items, NEEDS_YOU_LIMIT);
@@ -375,20 +506,167 @@ export async function mount(el, ctx) {
       });
       cards.push(more);
     }
+    const stale = staleButtons();
+    if (stale.length) cards.push(h('div', { class: 'today__stale-row', 'data-key': 'stale-row' }, ...stale));
     fillSection(needsSec,
       view.total ? [{ text: countNoun(view.total, FORMS.case), tone: 'warn' }] : [],
-      view.total ? cards : [], EMPTY_TEXT.needs_you);
+      view.total || stale.length ? cards : [], EMPTY_TEXT.needs_you);
+  }
+
+  /* --- действия над строкой шага (существующий механизм, §1 W27) --------- */
+
+  /** Что сказать после действия — по-русски, без технических слов. */
+  const STEP_TOAST = {
+    done: 'Шаг отмечен сделанным — ушёл из «Просрочено»',
+    postpone: 'Срок перенесён — шаг остался в работе',
+    dismiss: 'Шаг снят как неактуальный',
+    assign: 'Шаг поручён — руководитель увидит ответ',
+  };
+
+  /**
+   * Выполнить действие над шагом и сразу убрать строку.
+   *
+   * Строку и число правим локально (мгновенно): сервер отдаёт `/api/today` из
+   * кэша до 10 с, поэтому немедленная перезагрузка вернула бы пункт на место —
+   * «нажал, а ничего не изменилось». Настоящие числа приходят опросом (и
+   * отложенной перезагрузкой после конца кэша).
+   */
+  async function runStep(rowNode, row, action, extra) {
+    if (rowNode) rowNode.classList.add('is-busy');
+    try {
+      const res = await applyStepAction(Object.assign({
+        api: apiRef, action, itemId: row.itemId, requestId: row.requestId, room: row.room,
+      }, extra || {}));
+      if (!res.ok) throw new Error(res.message || 'Не получилось изменить шаг');
+      toast(STEP_TOAST[action] || 'Готово', action === 'dismiss' ? 'warn' : 'ok');
+      if (rowNode && rowNode.parentNode) rowNode.parentNode.removeChild(rowNode);
+      applyLocally(row);
+      setTimeout(() => { if (!stopped) load(false).catch(() => { /* числа догонит опрос */ }); },
+        CACHE_SETTLE_MS);
+      return res;
+    } catch (err) {
+      if (rowNode) rowNode.classList.remove('is-busy');
+      toast((err && err.message) || 'Не удалось изменить шаг', 'danger');
+      return null;
+    }
+  }
+
+  /**
+   * Убрать строку из данных экрана и пересчитать числа — без ожидания сервера.
+   * «Перенести» убирает из просрочки, но пункт может остаться в «Ближайших»:
+   * поэтому чистим оба списка, а точное место покажет следующее обновление.
+   */
+  function applyLocally(row) {
+    if (!data || !row) return;
+    for (const key of ['overdue', 'due_soon']) {
+      const list = Array.isArray(data[key]) ? data[key] : [];
+      const left = list.filter((item) => String((item && item.item_id) || '') !== row.itemId);
+      if (left.length !== list.length) data[key] = left;
+    }
+    if (data.counters && typeof data.counters === 'object') {
+      data.counters.overdue = actionableCount(data.overdue);
+      data.counters.due_soon = (data.due_soon || []).length;
+    }
+    render();
+  }
+
+  /** Меню у строки: «Перенести срок…» (+1 день / пятница / дата) или «Поручить…». */
+  function openRowMenu(rowNode, row, kind) {
+    if (!rowNode) return;
+    const existing = rowNode.querySelector ? rowNode.querySelector('.today-row__menu') : null;
+    if (existing) {
+      const same = existing.getAttribute('data-menu') === kind;
+      if (existing.parentNode) existing.parentNode.removeChild(existing);
+      if (same) return;
+    }
+    const menu = h('div', { class: 'today-row__menu', 'data-menu': kind });
+    if (kind === 'postpone') {
+      for (const option of postponeOptions(row.dueRaw)) {
+        menu.appendChild(h('button', {
+          class: 'btn btn--ghost btn--sm', type: 'button', 'data-due': option.due,
+          onclick: () => runStep(rowNode, row, 'postpone', { due: option.due }),
+        }, option.label));
+      }
+      const input = h('input', { class: 'input input--sm', type: 'date', 'aria-label': 'Новый срок шага' });
+      menu.appendChild(h('div', { class: 'today-row__menu-row' }, input,
+        h('button', {
+          class: 'btn btn--secondary btn--sm', type: 'button', 'data-due': 'custom',
+          onclick: () => {
+            const value = String(input.value || '');
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) { toast('Выберите дату', 'warn'); return; }
+            runStep(rowNode, row, 'postpone', { due: value });
+          },
+        }, 'В эту дату')));
+    } else if (kind === 'assign') {
+      menu.appendChild(h('span', { class: 'small muted today-row__menu-k' }, 'Кому поручить:'));
+      const list = h('div', { class: 'today-row__menu-row' });
+      menu.appendChild(list);
+      list.appendChild(h('span', { class: 'small muted' }, 'Загружаем участников…'));
+      apiRef.get('/api/rooms/' + encodeURIComponent(row.room)).then((room) => {
+        const members = (room && Array.isArray(room.members) ? room.members : [])
+          .map((m) => String((m && m.profile) || '')).filter(Boolean);
+        const names = Array.from(new Set(['mikhail', ...members])).filter((name) => name !== row.owner);
+        list.replaceChildren();
+        if (!names.length) {
+          list.appendChild(h('span', { class: 'small muted' }, 'Некому поручить: в комнате нет участников'));
+          return;
+        }
+        for (const name of names) {
+          list.appendChild(h('button', {
+            class: 'btn btn--ghost btn--sm', type: 'button', 'data-owner': name,
+            onclick: () => runStep(rowNode, row, 'assign', { owner: name }),
+          }, name === 'mikhail' ? 'Михаил' : name));
+        }
+      }).catch(() => {
+        list.replaceChildren(h('span', { class: 'small muted' }, 'Список участников не загрузился'));
+      });
+    }
+    if (rowNode.querySelector && rowNode.querySelector('.today-row__main')) {
+      rowNode.querySelector('.today-row__main').appendChild(menu);
+    } else {
+      rowNode.appendChild(menu);
+    }
+  }
+
+  /** «Разобрать по очереди»: один шаг за раз, те же действия. */
+  function openQueue(rows) {
+    return openStepQueue({
+      rows,
+      ctx: { api: apiRef, toast },
+      onDone: (row) => {
+        // Экран под окном тоже должен похудеть сразу: строка уходит, числа — локально,
+        // точные данные придут после конца серверного кэша (см. runStep).
+        if (row) applyLocally(row);
+        setTimeout(() => { if (!stopped) load(false).catch(() => { /* догонит опрос */ }); },
+          CACHE_SETTLE_MS);
+      },
+    });
   }
 
   function buildDues(nowSec) {
     const overdue = (data && data.overdue) || [];
     const soon = (data && data.due_soon) || [];
+    const handlers = { run: runStep, openMenu: openRowMenu };
+    const overdueNodes = overdue.map((row) => dueNode(row, 'overdue', handlers));
+    const queueRows = stepQueue(data);
+    if (queueRows.length) {
+      const queueButton = h('button', {
+        class: 'btn btn--secondary btn--sm today__queue', type: 'button', 'data-key': 'due-queue',
+        title: 'Разобрать просроченное по одному: шаг, действия, дальше',
+        onclick: () => openQueue(queueRows),
+      }, icon('checklist', { size: 13 }), 'Разобрать по очереди',
+      h('span', { class: 'tnum today__queue-count' }, ' · ' + queueRows.length));
+      overdueNodes.push(queueButton);
+    }
+    // Счётчик «просрочено» — только по пунктам, которые можно закрыть (§1 W27).
+    const overCount = actionableCount(overdue);
     fillSection(overdueSec,
-      overdue.length ? [{ text: countNoun(overdue.length, FORMS.case), tone: 'danger' }] : [],
-      overdue.map((row) => dueNode(row, 'overdue')), EMPTY_TEXT.overdue);
+      overCount ? [{ text: countNoun(overCount, FORMS.case), tone: 'danger' }] : [],
+      overdueNodes, EMPTY_TEXT.overdue);
+    const soonCount = actionableCount(soon);
     fillSection(soonSec,
-      soon.length ? [{ text: countNoun(soon.length, FORMS.case), tone: 'info' }] : [],
-      soon.map((row) => dueNode(row, 'soon')), EMPTY_TEXT.due_soon);
+      soonCount ? [{ text: countNoun(soonCount, FORMS.case), tone: 'info' }] : [],
+      soon.map((row) => dueNode(row, 'soon', handlers)), EMPTY_TEXT.due_soon);
   }
 
   function buildChanged(nowSec) {
@@ -454,6 +732,10 @@ export async function mount(el, ctx) {
     duties = dutiesData || null;
     if (first) {
       bodyHost.replaceChildren(mainCol, sideCol);
+      // W27-QA2: число для «Закрыть все неактуальные (N)» спрашиваем у сервера один раз
+      // за заход (маршрут собирает запросы комнаты — на каждом опросе это дорого).
+      await loadStalePreview();
+      if (stopped) return;
     }
     render();
     const count = Number((data && data.counters && data.counters.needs_you) || 0);

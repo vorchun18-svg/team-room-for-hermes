@@ -66,7 +66,7 @@ PLAN_OWNER = "team-ops"
 CATALOG = {
     "providers": [
         {"id": "llamacpp", "label": "LlamaCPP", "configured": True,
-         "models": [{"id": "qwen36"}, {"id": "gemma4"}, {"id": "ornith"}]},
+         "models": [{"id": "qwen36"}, {"id": "gemma4"}, {"id": "team-local"}]},
         {"id": "ollama-cloud", "label": "Ollama Cloud", "configured": True,
          "models": [{"id": "glm-5.3-flash"}, {"id": "glm-5.3"}, {"id": "gpt-oss:20b"}]},
         {"id": "anthropic", "label": "Anthropic", "configured": True,
@@ -432,12 +432,12 @@ class RoomApiTests(_Base):
         payload = {"title": "Комната с моделями", "id": "models-room", "board": "team",
                    "orchestrator": "team-director",
                    "members": [{"profile": "team-lawyer", "role": "worker"}],
-                   "agent_models": {"team-lawyer": {"provider": "llamacpp", "model": "ornith",
+                   "agent_models": {"team-lawyer": {"provider": "llamacpp", "model": "team-local",
                                                    "reasoning": "max"}}}
         status, body, _h = self.app.dispatch("POST", "/api/rooms", {}, payload)
         self.assertEqual(status, 201, body)
         self.assertEqual(body["agent_models"]["team-lawyer"]["reasoning"], "max")
-        self.assertEqual(body["members"][0]["model_settings"]["model"], "ornith")
+        self.assertEqual(body["members"][0]["model_settings"]["model"], "team-local")
 
 
 # ---------------------------------------------------------------- карточки

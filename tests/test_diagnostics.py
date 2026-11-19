@@ -98,15 +98,15 @@ class StructureTests(unittest.TestCase):
                 self.fail("полный путь в значении пункта %s: %s" % (item["id"], value))
 
     def test_project_folder_item_when_room_given(self):
-        room = {"id": "cafe", "title": "AMI", "project_dir": ""}
+        room = {"id": "cafe", "title": "Лето", "project_dir": ""}
         data = diagnostics.report(self.sb.cfg, port=8896, board="team", room=room)
         project = next(item for item in data["checks"] if item["id"] == "project")
         self.assertEqual(project["status"], "warn")
-        self.assertIn("AMI", project["hint"])
+        self.assertIn("Лето", project["hint"])
         self.assertEqual(project["fix"]["kind"], "route")
 
     def test_room_with_existing_folder_is_ok(self):
-        room = {"id": "cafe", "title": "AMI", "project_dir": str(self.sb.data_dir)}
+        room = {"id": "cafe", "title": "Лето", "project_dir": str(self.sb.data_dir)}
         data = diagnostics.report(self.sb.cfg, port=8896, board="team", room=room)
         project = next(item for item in data["checks"] if item["id"] == "project")
         self.assertEqual(project["status"], "ok")

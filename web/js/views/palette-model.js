@@ -137,7 +137,9 @@ export function highlightSegments(text, query) {
   return out;
 }
 
-const TAB_ORDER = ['composer', 'team', 'roadmap', 'backlog', 'reports', 'journal'];
+/** Запасной порядок вкладок, если палитре не передали TABS. Должен совпадать
+    с router.TABS (это проверяет tests/vocab.test.mjs). */
+export const TAB_ORDER = ['composer', 'team', 'roadmap', 'backlog', 'delos', 'reports', 'journal', 'inbox', 'duties'];
 
 /**
  * Постоянные команды палитры.

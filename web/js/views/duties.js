@@ -17,6 +17,13 @@
 import { h, plural } from '../util.js';
 import { icon } from '../icons.js';
 import { ensureCss, errorBanner, skeleton, confirmDialog, promptDialog } from '../ui.js';
+import {
+  normalizeDraft, draftFromTemplate, draftFromProposal, draftFromDelo, draftFromRequest,
+  draftFromDuty, templatesFrom, outcomeLine, historyRow, historyLine, trashModel, trashTitle,
+  proposalModel, createBody, patchBody, previewModel, dryRunText, scheduleHuman, draftSummary,
+  SOURCE_LABELS, localCommand,
+} from './duty-model.js';
+import { createWizard, WIZARD_TITLES } from './duty-wizard.js';
 
 const VIEW_CSS = 'css/view-duties.css';
 
@@ -51,6 +58,13 @@ export const ACTIONS = {
   schedule: { label: 'Расписание…', short: 'Расписание' },
   bind: { label: 'Привязать к комнате', short: 'Привязать' },
   unbind: { label: 'Отвязать от комнаты', short: 'Отвязать' },
+  // W27-E8: полный набор действий дежурства комнаты.
+  edit: { label: 'Править', short: 'Править' },
+  dryrun: { label: 'Проверить сейчас', short: 'Проверить' },
+  duplicate: { label: 'Дублировать', short: 'Дублировать' },
+  history: { label: 'История', short: 'История' },
+  delete: { label: 'Удалить', short: 'Удалить', danger: true },
+  restore: { label: 'Вернуть', short: 'Вернуть' },
 };
 
 /* ─────────────────────────────────────────────────────── модель (без DOM) */
@@ -232,6 +246,18 @@ export function confirmText(action, item, schedule) {
     case 'schedule':
       return 'Отправить предложение сменить расписание на «' + (schedule || '…') + '»? '
         + 'Расписание в Hermes не изменится: это только предложение, применить его — вручную.';
+    case 'dryrun':
+      return 'Проверить «' + name + '» сейчас, ничего не записывая? '
+        + 'Это сухой прогон: покажет, что бы нашло, но во «Входящие» ничего не попадёт.';
+    case 'delete':
+      return 'Убрать «' + name + '» в корзину? Задание в Hermes будет удалено по вашей команде, '
+        + 'но вернуть его можно 30 дней — из корзины на этой же странице.';
+    case 'restore':
+      return 'Вернуть «' + name + '» из корзины? Расписание начнёт работать по-прежнему.';
+    case 'duplicate':
+      return 'Создать копию «' + name + '»? Копия появится на паузе — включите, когда проверите.';
+    case 'edit':
+      return 'Открыть правку «' + name + '»? Перед сохранением будет предпросмотр изменений.';
     default:
       return 'Подтвердить действие?';
   }
@@ -246,6 +272,48 @@ export function weekTotalsText(week) {
   if (doc.failed) text += ' · ' + doc.failed + ' с ошибкой';
   if (doc.missed) text += ' · ' + doc.missed + ' пропущено';
   return text;
+}
+
+/**
+ * Полный набор действий карточки (W27-E8): основные в один ряд, остальные —
+ * во второй. У каждого пункта есть действие — правило «без тупиков».
+ * @param {object} item дежурство
+ * @param {string} roomId текущая комната ('' — общий список)
+ */
+export function fullActionList(item, roomId) {
+  const doc = item && typeof item === 'object' ? item : {};
+  const bound = Array.isArray(doc.bound_rooms) ? doc.bound_rooms.map((x) => String(x)) : [];
+  const main = [
+    { id: 'run', label: ACTIONS.run.label, primary: true },
+    doc.enabled === false
+      ? { id: 'resume', label: ACTIONS.resume.label }
+      : { id: 'pause', label: ACTIONS.pause.label },
+    { id: 'edit', label: ACTIONS.edit.label },
+  ];
+  const more = [
+    { id: 'dryrun', label: ACTIONS.dryrun.label, secondary: true },
+    { id: 'history', label: ACTIONS.history.label, secondary: true },
+    { id: 'duplicate', label: ACTIONS.duplicate.label, secondary: true },
+  ];
+  if (roomId) {
+    more.push(bound.includes(String(roomId))
+      ? { id: 'unbind', label: ACTIONS.unbind.label, secondary: true }
+      : { id: 'bind', label: ACTIONS.bind.label, secondary: true });
+  }
+  more.push({ id: 'delete', label: ACTIONS.delete.label, secondary: true, danger: true });
+  return [...main, ...more];
+}
+
+/** Итог последнего запуска в карточке: «изменений нет» / «найдено 2 письма → предложено Дело». */
+export function outcomeBlock(item) {
+  const doc = item && typeof item === 'object' ? item : {};
+  const text = outcomeLine(doc);
+  const outcome = doc.outcome && typeof doc.outcome === 'object' ? doc.outcome : {};
+  const changed = String(outcome.changed || '').toLowerCase();
+  const kind = changed === 'да' || changed === 'yes' ? 'changed' : 'calm';
+  return h('p', { class: 'duty__outcome duty__outcome--' + kind, 'data-role': 'duty-outcome' },
+    icon(kind === 'changed' ? 'bell' : 'check', { size: 12 }),
+    h('span', { class: 'duty__outcome-text' }, ' ' + text));
 }
 
 /* ────────────────────────────────────────────────────────────── отрисовка */
@@ -307,8 +375,12 @@ export function renderDuty(item, opts = {}) {
     'data-job-id': String((item && item.job_id) || ''),
   });
 
+  const list = Array.isArray(opts.actions) ? opts.actions : actionList(item, roomId);
+  const acts = list.filter((act) => !act.secondary);
+  const extra = list.filter((act) => act.secondary);
+
   const actions = h('div', { class: 'duty__actions' });
-  for (const act of actionList(item, roomId)) {
+  for (const act of acts) {
     actions.appendChild(h('button', {
       class: 'btn ' + (act.primary ? 'btn--primary' : 'btn--secondary') + ' btn--sm',
       type: 'button',
@@ -320,6 +392,20 @@ export function renderDuty(item, opts = {}) {
       onclick: () => { if (typeof opts.onAction === 'function') opts.onAction(item, act.id); },
     }, act.label));
   }
+  if (extra.length) {
+    const more = h('div', { class: 'duty__actions duty__actions--more' });
+    for (const act of extra) {
+      more.appendChild(h('button', {
+        class: 'btn btn--ghost btn--sm' + (act.danger ? ' duty__danger' : ''),
+        type: 'button',
+        'data-action': act.id,
+        'data-job-id': String((item && item.job_id) || ''),
+        title: confirmText(act.id, item),
+        onclick: () => { if (typeof opts.onAction === 'function') opts.onAction(item, act.id); },
+      }, act.label));
+    }
+    actions.appendChild(more);
+  }
 
   const chips = h('div', { class: 'duty__chips' },
     chip(item && item.enabled === false ? 'выключено' : 'включено',
@@ -328,6 +414,8 @@ export function renderDuty(item, opts = {}) {
     ...(problem && problem.kind !== 'disabled_but_due'
       ? [chip(PROBLEM_LABELS[problem.kind] || 'замечание', 'fail', problem.text || '')]
       : []),
+    ...(item && item.source ? [chip(SOURCE_LABELS[String(item.source)] || 'своё',
+      'muted', 'Откуда взялось это дежурство')] : []),
     bound.length
       ? chip('комнат: ' + bound.length, 'muted',
         'Привязано к комнатам: ' + bound.join(', '))
@@ -376,7 +464,206 @@ export function renderDuty(item, opts = {}) {
     details.appendChild(h('p', { class: 'duty__excerpt-text' }, excerpt));
     card.appendChild(details);
   }
+
+  // W27-E8: итог последнего запуска одной фразой — то, ради чего открывают раздел.
+  if (item && item.outcome && typeof item.outcome === 'object') {
+    card.appendChild(outcomeBlock(item));
+  }
+  if (Array.isArray(opts.history)) {
+    card.appendChild(historyPanel(opts.history, {
+      jobId: String((item && item.job_id) || ''),
+      error: opts.historyError || '',
+      loading: !!opts.historyLoading,
+    }));
+  }
+  if (opts.dryRun) card.appendChild(dryRunBlock(opts.dryRun));
   return card;
+}
+
+/* ─────────────────────────────────────────── W27-E8: новые части экрана */
+
+/**
+ * История запусков дежурства: что нашла, что сделала, что предложила.
+ * @param {Array} items строки `GET /api/duties/{id}/history`
+ */
+export function historyPanel(items, opts = {}) {
+  const rows = (Array.isArray(items) ? items : []).map((one) => historyRow(one, timeText));
+  const box = h('section', { class: 'duty__history', 'data-role': 'duty-history' });
+  box.appendChild(h('h4', { class: 'duty__history-title' }, 'История запусков'));
+  if (opts.loading) {
+    box.appendChild(h('p', { class: 'small muted' }, 'Читаю историю…'));
+    return box;
+  }
+  if (opts.error) {
+    box.appendChild(h('p', { class: 'small duty__history-error' }, 'История не загрузилась: ' + opts.error));
+    return box;
+  }
+  if (!rows.length) {
+    box.appendChild(h('p', { class: 'small muted' },
+      'Запусков пока не было. Первый появится по расписанию — или нажмите «Запустить сейчас».'));
+    return box;
+  }
+  const list = h('ul', { class: 'duty__history-list' });
+  for (const row of rows) {
+    const item = h('li', {
+      class: 'duty__history-row' + (row.changed ? ' duty__history-row--changed' : ''),
+      'data-run-id': row.runId,
+    },
+    h('div', { class: 'duty__history-head' },
+      h('span', { class: 'duty__history-time' }, row.time || 'время неизвестно'),
+      h('span', {
+        class: 'duty__history-changed' + (row.changed ? ' duty__history-changed--yes' : ''),
+        title: row.changed ? 'Запуск нашёл изменение' : 'Изменений не было — тихая строка',
+      }, row.changedLabel)),
+    row.done ? h('p', { class: 'duty__history-line small' }, 'Что выполнено: ' + row.done) : null,
+    row.found ? h('p', { class: 'duty__history-line small' }, 'Что обнаружено: ' + row.found) : null,
+    ...(row.proposals.length
+      ? [h('ul', { class: 'duty__history-props' },
+        ...row.proposals.map((p) => h('li', { class: 'small' },
+          (p.what || 'предложение') + (p.why ? ' — ' + p.why : '')
+            + (p.action ? ' → ' + p.action : ''))))]
+      : []),
+    ...(row.created.length
+      ? [h('p', { class: 'duty__history-line small muted' }, 'Создано: ' + row.created.join(', '))]
+      : []));
+    list.appendChild(item);
+  }
+  box.appendChild(list);
+  return box;
+}
+
+/** Результат сухого прогона: «что бы нашла» — без побочных действий. */
+export function dryRunBlock(result) {
+  const doc = result && typeof result === 'object' ? result : {};
+  const text = dryRunText(doc);
+  return h('div', { class: 'duty__dry', 'data-role': 'duty-dry' },
+    h('span', { class: 'duty__dry-title' }, 'Проверка без записи: '),
+    h('span', {}, text),
+    h('span', { class: 'duty__dry-note small muted' },
+      ' Ничего не создано и не отправлено — это только предпросмотр.'));
+}
+
+/** Карточка «Предлагаю дежурство» с четырьмя действиями. */
+export function proposalCard(proposal, opts = {}) {
+  const doc = proposalModel(proposal);
+  const busy = !!opts.busy;
+  const card = h('article', {
+    class: 'proposal', 'data-proposal-id': doc.id, 'data-role': 'duty-proposal',
+  });
+  card.appendChild(h('header', { class: 'proposal__head' },
+    h('div', { class: 'proposal__titlebox' },
+      h('span', { class: 'proposal__kicker' }, 'Предлагаю дежурство'),
+      h('h3', { class: 'proposal__title' }, doc.title)),
+    h('span', { class: 'proposal__source small muted' }, doc.sourceLabel)));
+  if (doc.why) card.appendChild(h('p', { class: 'proposal__why' }, doc.why));
+  const facts = h('dl', { class: 'proposal__facts' });
+  if (doc.when) facts.appendChild(h('div', {}, h('dt', {}, 'Когда'), h('dd', {}, doc.when)));
+  if (doc.check) facts.appendChild(h('div', {}, h('dt', {}, 'Что проверять'), h('dd', {}, doc.check)));
+  if (doc.onChange) facts.appendChild(h('div', {}, h('dt', {}, 'При изменении'), h('dd', {}, doc.onChange)));
+  card.appendChild(facts);
+  const actions = h('div', { class: 'proposal__actions' });
+  const buttons = [
+    { id: 'accept', label: 'Создать', primary: true, title: 'Создать дежурство по этому предложению — с предпросмотром' },
+    { id: 'edit', label: 'Изменить', title: 'Открыть мастер с этим черновиком: поменять и сохранить' },
+    { id: 'dismiss', label: 'Не надо', title: 'Отклонить предложение. Дежурство не создаётся' },
+    { id: 'never', label: 'Не предлагать такое', title: 'Больше не предлагать дежурства этого образца' },
+  ];
+  for (const btn of buttons) {
+    actions.appendChild(h('button', {
+      class: 'btn ' + (btn.primary ? 'btn--primary' : 'btn--secondary') + ' btn--sm',
+      type: 'button', 'data-action': 'proposal-' + btn.id, 'data-proposal-id': doc.id,
+      title: btn.title,
+      ...(busy ? { disabled: true } : {}),
+      onclick: () => { if (typeof opts.onAction === 'function') opts.onAction(doc, btn.id); },
+    }, btn.label));
+  }
+  card.appendChild(actions);
+  if (doc.limitText) card.appendChild(h('p', { class: 'small muted' }, doc.limitText));
+  return card;
+}
+
+/** Шаблоны дежурств: карточки «взять за основу». */
+export function templateCards(templates, opts = {}) {
+  const list = Array.isArray(templates) ? templates : [];
+  const grid = h('div', { class: 'tpl', 'data-role': 'duty-templates' });
+  if (!list.length) {
+    grid.appendChild(h('p', { class: 'small muted' },
+      'Шаблоны не загрузились. Можно создать дежурство вручную — кнопка «Создать дежурство».'));
+    return grid;
+  }
+  for (const tpl of list) {
+    grid.appendChild(h('article', { class: 'tpl__card', 'data-template': tpl.id },
+      h('h3', { class: 'tpl__title' }, tpl.title),
+      tpl.for ? h('p', { class: 'tpl__for small muted' }, tpl.for) : null,
+      h('dl', { class: 'tpl__facts' },
+        tpl.when ? h('div', {}, h('dt', {}, 'Когда'), h('dd', {}, tpl.when)) : null,
+        tpl.change ? h('div', {}, h('dt', {}, 'Изменение'), h('dd', {}, tpl.change)) : null,
+        tpl.action ? h('div', {}, h('dt', {}, 'Что делает'), h('dd', {}, tpl.action)) : null),
+      h('button', {
+        class: 'btn btn--secondary btn--sm', type: 'button',
+        'data-action': 'use-template', 'data-template': tpl.id,
+        title: 'Открыть мастер с заполненными полями — можно поправить перед созданием',
+        onclick: () => { if (typeof opts.onPick === 'function') opts.onPick(tpl); },
+      }, 'Взять шаблон')));
+  }
+  return grid;
+}
+
+/** Корзина: что можно вернуть и сколько дней осталось. */
+export function trashPanel(items, opts = {}) {
+  const rows = trashModel(items, opts.now);
+  const box = h('section', { class: 'trash', 'data-role': 'duty-trash' });
+  box.appendChild(h('h3', { class: 'trash__title' }, trashTitle(items)));
+  if (!rows.length) {
+    box.appendChild(h('p', { class: 'small muted' },
+      'Корзина пуста. Удалённые дежурства хранятся 30 дней — их можно вернуть.'));
+    return box;
+  }
+  const list = h('ul', { class: 'trash__list' });
+  for (const row of rows) {
+    list.appendChild(h('li', { class: 'trash__row', 'data-job-id': row.jobId },
+      h('div', { class: 'trash__info' },
+        h('span', { class: 'trash__name' }, row.title),
+        h('span', { class: 'small muted' }, ' · ' + row.daysText)),
+      h('button', {
+        class: 'btn btn--secondary btn--sm', type: 'button',
+        'data-action': 'restore', 'data-job-id': row.jobId,
+        title: 'Вернуть дежурство: расписание снова начнёт работать',
+        onclick: () => { if (typeof opts.onRestore === 'function') opts.onRestore(row); },
+      }, ACTIONS.restore.label)));
+  }
+  box.appendChild(list);
+  return box;
+}
+
+/** Выбор Дела для «Сделать регулярным». */
+export function deloPicker(delos, opts = {}) {
+  const list = Array.isArray(delos) ? delos.filter((one) => one && typeof one === 'object') : [];
+  const box = h('section', { class: 'picker', 'data-role': 'delo-picker' });
+  box.appendChild(h('h3', { class: 'picker__title' }, 'Сделать регулярным из дела'));
+  box.appendChild(h('p', { class: 'small muted' },
+    'Выберите дело — мастер заполнится его названием. Ничего не создаётся до подтверждения.'));
+  if (!list.length) {
+    box.appendChild(h('p', { class: 'small muted' },
+      'В этой комнате дел нет — тогда проще создать дежурство с нуля.'));
+  } else {
+    const rows = h('ul', { class: 'picker__list' });
+    for (const delo of list.slice(0, 12)) {
+      rows.appendChild(h('li', { class: 'picker__row' },
+        h('button', {
+          class: 'picker__btn', type: 'button', 'data-delo': String(delo.id || ''),
+          onclick: () => { if (typeof opts.onPick === 'function') opts.onPick(delo); },
+        },
+        h('span', { class: 'picker__name' }, String(delo.title || delo.name || 'дело')),
+        h('span', { class: 'small muted' }, ' · ' + String(delo.status_label || delo.status || '')))));
+    }
+    box.appendChild(rows);
+  }
+  box.appendChild(h('button', {
+    class: 'btn btn--ghost btn--sm', type: 'button', 'data-action': 'picker-cancel',
+    onclick: () => { if (typeof opts.onCancel === 'function') opts.onCancel(); },
+  }, 'Отмена'));
+  return box;
 }
 
 /* ─────────────────────────────────────────────────────────────── вьюха */
@@ -394,13 +681,22 @@ export async function mount(el, ctx) {
   };
   const roomId = String((ctx && ctx.route && ctx.route.roomId) || '').trim();
   const roomTitle = (ctx && ctx.room && ctx.room.title) || '';
+  const query = (ctx && ctx.route && ctx.route.query) || {};
 
   let stopped = false;
   let data = null;
+  let templates = [];
   let onlyRoom = !!roomId;
   let busy = '';
   let expanded = '';
   let error = null;
+  let mode = 'list';                 // list | wizard | templates | trash | picker
+  let wizard = null;
+  let openJob = '';                  // чья история раскрыта
+  const historyCache = {};           // job_id → {items, loading, error}
+  const dryCache = {};               // job_id → ответ сухого прогона
+  let pickerDelos = null;
+  let proposalBusy = '';
 
   const title = h('h1', { class: 'duties__title' }, 'Дежурства');
   const lead = h('p', { class: 'duties__lead muted' },
@@ -412,31 +708,63 @@ export async function mount(el, ctx) {
     onclick: () => load(),
   }, icon('refresh', { size: 13 }), 'Обновить');
 
+  const createBtn = h('button', {
+    class: 'btn btn--primary', type: 'button', 'data-action': 'duty-create',
+    title: 'Мастер: что проверять → когда → что считать изменением → что делать',
+    onclick: () => openWizard(normalizeDraft({
+      mode: 'create', room: roomId, source: 'manual',
+    })),
+  }, icon('add', { size: 13 }), 'Создать дежурство');
+
+  const templatesBtn = h('button', {
+    class: 'btn btn--secondary', type: 'button', 'data-action': 'duty-templates',
+    onclick: () => { mode = mode === 'templates' ? 'list' : 'templates'; renderAll(); },
+  }, icon('library', { size: 13 }), 'Шаблоны');
+
+  const trashBtn = h('button', {
+    class: 'btn btn--secondary', type: 'button', 'data-action': 'duties-trash',
+    onclick: () => { mode = mode === 'trash' ? 'list' : 'trash'; renderAll(); },
+  }, icon('trash', { size: 13 }), 'Корзина');
+
+  const regularBtn = h('button', {
+    class: 'btn btn--secondary', type: 'button', 'data-action': 'duty-from-delo',
+    title: 'Взять Дело комнаты и сделать из него регулярную проверку',
+    onclick: () => openPicker(),
+  }, icon('checklist', { size: 13 }), 'Сделать регулярным из дела');
+
   const filterBtn = h('button', {
     class: 'btn btn--secondary', type: 'button', 'data-action': 'duties-filter',
     onclick: () => { onlyRoom = !onlyRoom; renderFilter(); load(); },
   }, icon('folder-opened', { size: 13 }));
 
   const summaryEl = h('div', { class: 'duties__summary', role: 'status', 'aria-live': 'polite' });
+  const proposalsEl = h('div', { class: 'duties__proposals', 'data-role': 'duties-proposals' });
   const weekEl = h('div', { class: 'duties__week' });
   const detailEl = h('div', { class: 'duties__day', 'data-role': 'duties-day' });
+  const templatesEl = h('div', { class: 'duties__templates', hidden: true });
+  const wizardEl = h('div', { class: 'duties__wizard', 'data-role': 'duty-wizard-host', hidden: true });
+  const pickerEl = h('div', { class: 'duties__picker', hidden: true });
   const listEl = h('div', { class: 'duties__list', 'data-role': 'duties-list' });
+  const trashEl = h('div', { class: 'duties__trash', hidden: true });
   const noteEl = h('p', { class: 'duties__note small muted' },
-    'Запуск, пауза и возобновление идут штатной командой Hermes — и только после вашего «да». '
-      + 'Правка расписания сохраняется как предложение: Hermes её не применяет.');
+    'Расписание ведёт Hermes: создание, правка, пауза и удаление — штатной командой и только после вашего «да». '
+      + 'Перед созданием всегда есть предпросмотр точной команды.');
 
   const head = h('header', { class: 'duties__head' },
     h('div', { class: 'duties__headline' }, title, lead),
-    h('div', { class: 'duties__head-actions' }, filterBtn, refreshBtn));
+    h('div', { class: 'duties__head-actions' },
+      createBtn, templatesBtn, trashBtn, regularBtn, filterBtn, refreshBtn));
 
   const weekHead = h('div', { class: 'duties__section-head' },
     h('h2', { class: 'duties__section-title' }, 'Неделя'),
     h('span', { class: 'duties__section-hint small muted' }, 'запуски по дням, как в Mission Control'));
 
+  const listHead = h('h2', { class: 'duties__section-title duties__section-title--list' }, 'Список дежурств');
+
+  const weekBlocks = h('div', { class: 'duties__weekblock' }, weekHead, weekEl, detailEl);
   const root = h('div', { class: 'view__inner duties' },
-    head, summaryEl, weekHead, weekEl, detailEl,
-    h('h2', { class: 'duties__section-title duties__section-title--list' }, 'Список дежурств'),
-    listEl, noteEl);
+    head, proposalsEl, summaryEl, weekBlocks,
+    wizardEl, templatesEl, pickerEl, listHead, listEl, trashEl, noteEl);
   el.appendChild(root);
 
   function renderFilter() {
@@ -457,6 +785,7 @@ export async function mount(el, ctx) {
     const items = (data && data.items) || [];
     const summary = dutiesSummary(items);
     const week = weekModel(data && data.week);
+    const trashCount = Array.isArray(data && data.trash) ? data.trash.length : 0;
     summaryEl.replaceChildren(
       summaryChip(countText(summary.total, ['дежурство', 'дежурства', 'дежурств']), 'plain',
         'Всего дежурств в этом списке'),
@@ -467,6 +796,23 @@ export async function mount(el, ctx) {
       summaryChip(weekTotalsText(week), 'muted', 'Запуски за текущую неделю'),
       ...(week.error ? [summaryChip('неделя не посчитана', 'fail', week.error)] : []));
     summaryEl.appendChild(h('p', { class: 'duties__verdict' }, verdictText(summary, week)));
+    trashBtn.replaceChildren(icon('trash', { size: 13 }), trashTitle(data && data.trash));
+    trashBtn.setAttribute('aria-pressed', mode === 'trash' ? 'true' : 'false');
+    templatesBtn.setAttribute('aria-pressed', mode === 'templates' ? 'true' : 'false');
+    if (trashCount) trashBtn.classList.add('btn--has-count');
+    else trashBtn.classList.remove('btn--has-count');
+  }
+
+  function renderProposals() {
+    const list = Array.isArray(data && data.proposals) ? data.proposals : [];
+    proposalsEl.replaceChildren();
+    proposalsEl.hidden = !list.length;
+    for (const proposal of list) {
+      proposalsEl.appendChild(proposalCard(proposal, {
+        busy: proposalBusy === String(proposal.id || ''),
+        onAction: actOnProposal,
+      }));
+    }
   }
 
   function renderWeekGrid() {
@@ -519,41 +865,88 @@ export async function mount(el, ctx) {
             : 'В этот день запусков не было.')));
   }
 
+  function renderTemplates() {
+    templatesEl.hidden = mode !== 'templates';
+    if (templatesEl.hidden) return;
+    templatesEl.replaceChildren(
+      h('div', { class: 'duties__section-head' },
+        h('h2', { class: 'duties__section-title' }, 'Шаблоны дежурств'),
+        h('span', { class: 'duties__section-hint small muted' },
+          'готовые заготовки: откроется мастер с заполненными полями')),
+      templateCards(templates, { onPick: (tpl) => openWizard(draftFromTemplate(tpl.raw || tpl, roomId), WIZARD_TITLES.template) }));
+  }
+
+  function renderTrash() {
+    trashEl.hidden = mode !== 'trash';
+    if (trashEl.hidden) return;
+    trashEl.replaceChildren(trashPanel((data && data.trash) || [], {
+      onRestore: restoreDuty,
+    }));
+  }
+
+  function renderPicker() {
+    pickerEl.hidden = mode !== 'picker';
+    if (pickerEl.hidden) return;
+    pickerEl.replaceChildren(deloPicker(pickerDelos || [], {
+      onPick: (delo) => openWizard(draftFromDelo(delo, roomId), WIZARD_TITLES.delo),
+      onCancel: () => { mode = 'list'; renderAll(); },
+    }));
+  }
+
   function renderList() {
     const items = (data && data.items) || [];
     listEl.replaceChildren();
+    listHead.hidden = mode !== 'list';
+    listEl.hidden = mode !== 'list';
+    if (mode !== 'list') return;
     if (!items.length) {
       listEl.appendChild(h('div', { class: 'card duties__empty' },
         icon('clock', { size: 22 }),
         h('div', { class: 'empty__title' }, onlyRoom && roomId
           ? 'К этой комнате дежурства ещё не привязаны' : 'Дежурств пока нет'),
         h('p', { class: 'empty__text' },
-          onlyRoom && roomId
-            ? 'Покажите все дежурства Hermes и привяжите нужные — они появятся здесь.'
-            : 'Дежурства берутся из Hermes: задания по расписанию (cron). Если их нет, их сначала создают в Hermes.'),
+          'Дежурство — это регулярная проверка: «следи за ящиком и скажи, если появилось новое». '
+            + 'Создайте своё (четыре шага) или возьмите готовый шаблон.'),
         h('div', { class: 'empty__actions' },
+          h('button', {
+            class: 'btn btn--primary', type: 'button', 'data-action': 'duty-create',
+            onclick: () => openWizard(normalizeDraft({ mode: 'create', room: roomId })),
+          }, 'Создать дежурство'),
+          h('button', {
+            class: 'btn btn--secondary', type: 'button', 'data-action': 'duty-templates',
+            onclick: () => { mode = 'templates'; renderAll(); },
+          }, 'Шаблоны'),
           ...(onlyRoom && roomId
             ? [h('button', {
-              class: 'btn btn--primary', type: 'button', 'data-action': 'duties-show-all',
+              class: 'btn btn--secondary', type: 'button', 'data-action': 'duties-show-all',
               onclick: () => { onlyRoom = false; renderFilter(); load(); },
             }, 'Показать все дежурства')]
             : []),
           h('button', {
             class: 'btn btn--secondary', type: 'button', 'data-action': 'duties-refresh',
             onclick: () => load(),
-          }, icon('refresh', { size: 13 }), 'Обновить'),
-          h('a', { class: 'btn btn--secondary', href: '#/settings/diagnostics' },
-            icon('debug-disconnect', { size: 13 }), 'Проверка системы'))));
+          }, icon('refresh', { size: 13 }), 'Обновить'))));
       return;
     }
     const nowSec = Math.floor(Date.now() / 1000);
     const problems = items.filter((one) => dutyState(one).kind === 'fail');
     const others = items.filter((one) => dutyState(one).kind !== 'fail');
-    const addGroup = (title, list) => {
+    const addGroup = (groupTitle, list) => {
       if (!list.length) return;
-      listEl.appendChild(h('h3', { class: 'duties__group' }, title));
+      listEl.appendChild(h('h3', { class: 'duties__group' }, groupTitle));
       for (const item of list) {
-        listEl.appendChild(renderDuty(item, { roomId, now: nowSec, onAction: doAction }));
+        const jobId = String(item.job_id || '');
+        const cache = historyCache[jobId] || {};
+        listEl.appendChild(renderDuty(item, {
+          roomId,
+          now: nowSec,
+          actions: fullActionList(item, roomId),
+          onAction: doAction,
+          history: openJob === jobId ? (cache.items || []) : null,
+          historyError: cache.error || '',
+          historyLoading: !!cache.loading,
+          dryRun: dryCache[jobId] || null,
+        }));
       }
     };
     addGroup('Требуют внимания', problems);
@@ -561,8 +954,19 @@ export async function mount(el, ctx) {
   }
 
   function renderAll() {
+    const wizardOpen = mode === 'wizard';
+    root.setAttribute('data-mode', mode);
+    createBtn.setAttribute('aria-pressed', wizardOpen ? 'true' : 'false');
+    renderFilter();
     renderSummary();
+    renderProposals();
+    weekBlocks.hidden = wizardOpen;
     renderWeekGrid();
+    renderTemplates();
+    renderTrash();
+    renderPicker();
+    wizardEl.hidden = !wizardOpen;
+    if (!wizardOpen) wizardEl.replaceChildren();
     renderList();
   }
 
@@ -570,10 +974,15 @@ export async function mount(el, ctx) {
     if (!api) return;
     listEl.replaceChildren(skeleton(3));
     try {
-      const query = onlyRoom && roomId ? '?room=' + encodeURIComponent(roomId) : '?room=all';
-      const fresh = await api.get('/api/duties' + query);
+      const params = onlyRoom && roomId ? '?room=' + encodeURIComponent(roomId) : '?room=all';
+      const jobs = [api.get('/api/duties' + params)];
+      if (!templates.length) {
+        jobs.push(api.get('/api/duty-templates').catch(() => ({ items: [] })));
+      }
+      const [fresh, tpl] = await Promise.all(jobs);
       if (stopped) return;
       data = fresh && typeof fresh === 'object' ? fresh : { items: [], week: {} };
+      if (tpl) templates = templatesFrom(tpl);
       error = null;
       renderAll();
     } catch (err) {
@@ -587,14 +996,146 @@ export async function mount(el, ctx) {
     }
   }
 
+  /* ── мастер ─────────────────────────────────────────────────────────── */
+
+  function openWizard(draft, heading, opts = {}) {
+    mode = 'wizard';
+    const step = Number(opts.step);
+    wizard = createWizard({
+      draft,
+      title: heading || WIZARD_TITLES[draft && draft.jobId ? 'edit' : 'create'],
+      onCancel: () => closeWizard(),
+      onPreview: (current) => previewDraft(current),
+      onSubmit: (current) => submitDraft(current),
+      toast,
+    });
+    if (Number.isFinite(step) && step > 0) wizard.goto(step);
+    wizardEl.replaceChildren(wizard.el);
+    renderAll();
+    if (opts.autoPreview) wizard.preview();
+    if (typeof wizardEl.scrollIntoView === 'function') {
+      wizardEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+  }
+
+  function closeWizard() {
+    wizard = null;
+    mode = 'list';
+    wizardEl.replaceChildren();
+    renderAll();
+  }
+
+  /** Предпросмотр: сервер присылает точную команду; локальная копия — запасной путь. */
+  async function previewDraft(draft) {
+    const normalized = normalizeDraft(draft);
+    if (normalized.mode === 'edit') {
+      const model = previewModel({}, normalized);
+      return { ok: true, command: model.command, changes: model.changes, note: model.note };
+    }
+    if (!roomId) {
+      const model = previewModel({}, normalized);
+      return { ...model, ok: false, error: 'Комната не выбрана — создавать дежурство некуда.' };
+    }
+    try {
+      const answer = await api.post('/api/rooms/' + encodeURIComponent(roomId) + '/duties',
+        createBody(normalized, { preview: true }));
+      const preview = (answer && answer.preview) || answer || {};
+      return { ...preview, ok: preview.ok !== false };
+    } catch (err) {
+      const model = previewModel({}, normalized);
+      return {
+        ok: true,
+        command: model.command,
+        changes: model.changes,
+        note: 'Сервер предпросмотр не прислал (' + ((err && err.message) || 'ошибка') + '). '
+          + 'Команда собрана в интерфейсе — при создании сервер выполнит свою.',
+      };
+    }
+  }
+
+  async function submitDraft(draft) {
+    const normalized = normalizeDraft(draft);
+    busy = normalized.mode === 'edit' ? 'edit' : 'create';
+    try {
+      if (normalized.mode === 'edit') {
+        const res = await api.patch('/api/duties/' + encodeURIComponent(normalized.jobId), patchBody(normalized));
+        if (stopped) return;
+        const changed = Array.isArray(res && res.changed) ? res.changed : [];
+        toast(changed.length ? 'Сохранено: ' + changed.join(', ') : 'Изменения сохранены', 'ok');
+      } else {
+        const res = await api.post('/api/rooms/' + encodeURIComponent(roomId) + '/duties',
+          createBody(normalized, { preview: false }));
+        if (stopped) return;
+        toast((res && res.text) || 'Дежурство создано', 'ok');
+        if (normalized.from && normalized.from.kind === 'proposal' && normalized.from.id) {
+          try {
+            await api.post('/api/duties/proposals/' + encodeURIComponent(normalized.from.id) + '/actions',
+              { action: 'accept', job_id: (res && res.item && res.item.job_id) || '' });
+          } catch { /* предложение могло быть уже закрыто — это не мешает созданию */ }
+        }
+      }
+      closeWizard();
+      await load();
+    } finally {
+      busy = '';
+    }
+  }
+
+  /* ── действия над дежурством ─────────────────────────────────────────── */
+
   async function doAction(item, actionId) {
     if (!api || busy) return;
-    const name = (item && item.name) || 'дежурство';
+    const jobId = String((item && item.job_id) || '');
+    if (actionId === 'edit') {
+      openWizard(draftFromDuty(item, roomId), WIZARD_TITLES.edit);
+      return;
+    }
+    if (actionId === 'duplicate') {
+      const source = draftFromDuty(item, roomId);
+      const copy = normalizeDraft({
+        ...source, mode: 'create', jobId: '', started_paused: true,
+        title: (source.title || 'дежурство') + ' (копия)',
+      });
+      openWizard(copy, WIZARD_TITLES.create);
+      toast('Копия откроется на паузе — проверите и включите', 'info');
+      return;
+    }
+    if (actionId === 'history') {
+      await toggleHistory(jobId);
+      return;
+    }
+    if (actionId === 'dryrun') {
+      await dryRun(item);
+      return;
+    }
+    if (actionId === 'delete') {
+      const ok = await confirmDialog({
+        title: ACTIONS.delete.label,
+        text: confirmText('delete', item),
+        confirmLabel: 'Убрать в корзину',
+        danger: true,
+      });
+      if (!ok) return;
+      busy = 'delete';
+      try {
+        await api.del('/api/duties/' + encodeURIComponent(jobId));
+        if (stopped) return;
+        toast('Дежурство в корзине — вернуть можно 30 дней', 'ok');
+        openJob = '';
+        await load();
+      } catch (err) {
+        if (!stopped) toast((err && err.message) || 'Не удалось убрать дежурство', 'danger');
+      } finally {
+        busy = '';
+      }
+      return;
+    }
+
     let schedule = '';
     if (actionId === 'schedule') {
       const answer = await promptDialog({
         title: 'Изменить расписание — предложение',
-        label: 'Новое расписание для «' + name + '»',
+        label: 'Новое расписание для «' + ((item && item.name) || 'дежурство') + '»',
         initial: (item && (item.schedule || item.schedule_human)) || '',
         hint: 'Например: 0 9 * * 1-5 или every 2h. Это предложение: расписание в Hermes не меняется.',
         submitLabel: 'Предложить',
@@ -619,9 +1160,10 @@ export async function mount(el, ctx) {
       const body = { action: actionId, confirm: true };
       if (roomId) body.room = roomId;
       if (schedule) body.schedule = schedule;
-      const res = await api.post('/api/duties/' + encodeURIComponent(String(item.job_id)) + '/actions', body);
+      const res = await api.post('/api/duties/' + encodeURIComponent(jobId) + '/actions', body);
       if (stopped) return;
       toast((res && res.text) || 'Готово', res && res.applied ? 'ok' : 'info');
+      delete dryCache[jobId];
       await load();
     } catch (err) {
       if (stopped) return;
@@ -632,8 +1174,145 @@ export async function mount(el, ctx) {
     }
   }
 
+  async function toggleHistory(jobId) {
+    if (!jobId) return;
+    if (openJob === jobId) {
+      openJob = '';
+      renderList();
+      return;
+    }
+    openJob = jobId;
+    const cached = historyCache[jobId];
+    if (!cached || !cached.items) {
+      historyCache[jobId] = { items: [], loading: true, error: '' };
+      renderList();
+      try {
+        const res = await api.get('/api/duties/' + encodeURIComponent(jobId) + '/history');
+        if (stopped) return;
+        const items = Array.isArray(res && res.items) ? res.items : [];
+        historyCache[jobId] = { items, loading: false, error: '' };
+      } catch (err) {
+        historyCache[jobId] = {
+          items: [], loading: false,
+          error: (err && err.message) || 'сервер не ответил',
+        };
+      }
+      renderList();
+      return;
+    }
+    renderList();
+  }
+
+  async function dryRun(item) {
+    const jobId = String((item && item.job_id) || '');
+    busy = 'dryrun';
+    try {
+      const res = await api.post('/api/duties/' + encodeURIComponent(jobId) + '/dry_run', {});
+      if (stopped) return;
+      dryCache[jobId] = res || { ok: true };
+      toast('Проверка выполнена — ничего не записано', 'info');
+      renderList();
+    } catch (err) {
+      if (!stopped) toast((err && err.message) || 'Проверка не удалась', 'danger');
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function restoreDuty(row) {
+    if (!api || busy) return;
+    const ok = await confirmDialog({
+      title: ACTIONS.restore.label,
+      text: confirmText('restore', { name: row.title }),
+      confirmLabel: 'Вернуть',
+    });
+    if (!ok) return;
+    busy = 'restore';
+    try {
+      await api.post('/api/duties/' + encodeURIComponent(row.jobId) + '/restore', {});
+      if (stopped) return;
+      toast('Дежурство возвращено', 'ok');
+      await load();
+    } catch (err) {
+      if (!stopped) toast((err && err.message) || 'Не удалось вернуть дежурство', 'danger');
+    } finally {
+      busy = '';
+    }
+  }
+
+  /* ── предложения руководителя ────────────────────────────────────────── */
+
+  async function actOnProposal(proposal, actionId) {
+    if (!api || proposalBusy) return;
+    const id = String(proposal.id || '');
+    if (actionId === 'edit') {
+      openWizard(draftFromProposal(proposal, roomId), WIZARD_TITLES.proposal);
+      return;
+    }
+    if (actionId === 'accept') {
+      // Предпросмотр обязателен: открываем мастер сразу на последнем шаге.
+      openWizard(draftFromProposal(proposal, roomId), WIZARD_TITLES.proposal,
+        { step: 3, autoPreview: true });
+      return;
+    }
+    proposalBusy = id;
+    renderProposals();
+    try {
+      const res = await api.post('/api/duties/proposals/' + encodeURIComponent(id) + '/actions',
+        { action: actionId === 'never' ? 'never' : 'dismiss' });
+      if (stopped) return;
+      toast(actionId === 'never'
+        ? 'Больше не будем предлагать такие дежурства'
+        : ((res && res.text) || 'Предложение отклонено'), 'info');
+      await load();
+    } catch (err) {
+      if (!stopped) toast((err && err.message) || 'Не удалось ответить на предложение', 'danger');
+    } finally {
+      proposalBusy = '';
+      renderProposals();
+    }
+  }
+
+  /* ── «Сделать регулярным» ────────────────────────────────────────────── */
+
+  async function openPicker() {
+    mode = 'picker';
+    pickerDelos = null;
+    renderAll();
+    if (!roomId) return;
+    try {
+      const res = await api.get('/api/rooms/' + encodeURIComponent(roomId) + '/delos');
+      if (stopped) return;
+      pickerDelos = Array.isArray(res && res.items) ? res.items : [];
+    } catch {
+      pickerDelos = [];
+    }
+    renderPicker();
+  }
+
+  /** Переход из Дела/запроса: `#/room/<id>/duties?delo=…` или `?request=…`. */
+  async function openFromLink() {
+    const deloId = String(query.delo || '').trim();
+    const requestId = String(query.request || '').trim();
+    if (!deloId && !requestId) return;
+    try {
+      if (deloId) {
+        const delo = await api.get('/api/delos/' + encodeURIComponent(deloId));
+        if (stopped) return;
+        openWizard(draftFromDelo(delo, roomId), WIZARD_TITLES.delo);
+      } else {
+        const req = await api.get('/api/requests/' + encodeURIComponent(requestId));
+        if (stopped) return;
+        openWizard(draftFromRequest(req, roomId), WIZARD_TITLES.request);
+      }
+    } catch (err) {
+      if (!stopped) toast((err && err.message) || 'Не удалось открыть черновик', 'warn');
+    }
+  }
+
   renderFilter();
   await load();
+  await openFromLink();
 
   return {
     unmount() {
@@ -643,7 +1322,6 @@ export async function mount(el, ctx) {
   };
 }
 
-/** Вердикт по сводке: одна строка человеческим языком. */
 export function verdictText(summary, week) {
   const doc = summary || { total: 0, problems: 0, off: 0, running: 0 };
   if (!doc.total) return 'Дежурств нет — это не ошибка: просто ничего не идёт по расписанию.';

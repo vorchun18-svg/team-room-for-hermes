@@ -24,9 +24,11 @@ import re as _re
 import time as _time
 
 try:  # пакетный и «плоский» импорт
+    from . import stale as stale_mod
     from .app_common import err
     from .http_util import ApiError
 except ImportError:  # pragma: no cover
+    import stale as stale_mod     # type: ignore
     from app_common import err  # type: ignore
     from http_util import ApiError  # type: ignore
 
@@ -36,6 +38,8 @@ ROUTES = [
     ("GET", r"/api/approvals/trusts", "h_approvals_trusts"),
     ("POST", r"/api/approvals/untrust", "h_approvals_untrust"),
     ("POST", r"/api/approvals/tidy", "h_approvals_tidy"),
+    # W27-E1 §1: массовое «Закрыть все неактуальные» — только у завершённых запросов.
+    ("POST", r"/api/rooms/(?P<room>[^/]+)/dismiss_stale", "h_dismiss_stale"),
 ]
 
 #: Сколько знаков заметки пользователя принимаем (подпись к решению).
@@ -69,25 +73,148 @@ class ApprovalRoutes:
         W26-D1: ``approvals_pending`` и ``needs_you`` считают только строки с действием —
         недоговорная блокировка и жёсткий запрет не «ждёт вашего решения».
         """
-        if not isinstance(detail, dict) or not self._has_mod("approvals"):
+        if not isinstance(detail, dict):
             return
         root_id = str(detail.get("id") or (rec or {}).get("root_id") or "")
-        if not root_id:
+        if self._has_mod("approvals") and root_id:
+            try:
+                mod = self.mod("approvals")
+                items = mod.collect(self.cfg, room, root_id, (rec or {}).get("extra_cards"))
+            except Exception as exc:        # noqa: BLE001 - страница важнее разрешений
+                self.log.warning("разрешения %s: %s" % (root_id, exc))
+                detail.setdefault("approvals", [])
+                detail.setdefault("approvals_pending", 0)
+            else:
+                detail["approvals"] = items
+                waiting = mod.pending(items)        # W26-D1: только «можно разрешить» + действие
+                detail["approvals_pending"] = len(waiting)
+                detail["approvals_actionable"] = len(mod.actionable(items))
+                if waiting:
+                    detail["needs_you"] = True
+        # W27-E1 §1: состояния всех пунктов и серверный счётчик — ОДИН проход в конце,
+        # после вопросов, решений, шагов и разрешений (иначе счётчик считался бы по части).
+        self._stale_view(detail, rec)
+
+    def _stale_view(self, detail: dict, rec: dict | None = None) -> None:
+        """Единые состояния пунктов и `needs_you_count` (W27-E1 §1).
+
+        Ничего не пишет: завершённый запрос закрывает свои пункты на чтении
+        (``closed_reason: request_done``), поэтому «залипнуть» в счётчике они не
+        могут. Сбой разметки не роняет страницу — состояния вторичны.
+        """
+        if not isinstance(detail, dict):
             return
         try:
-            mod = self.mod("approvals")
-            items = mod.collect(self.cfg, room, root_id, (rec or {}).get("extra_cards"))
-        except Exception as exc:            # noqa: BLE001 - страница важнее разрешений
-            self.log.warning("разрешения %s: %s" % (root_id, exc))
-            detail.setdefault("approvals", [])
-            detail.setdefault("approvals_pending", 0)
-            return
-        detail["approvals"] = items
-        waiting = mod.pending(items)        # W26-D1: только «можно разрешить» + действие
-        detail["approvals_pending"] = len(waiting)
-        detail["approvals_actionable"] = len(mod.actionable(items))
-        if waiting:
-            detail["needs_you"] = True
+            stale_mod.decorate(detail)
+        except Exception as exc:            # noqa: BLE001 - страница важнее разметки
+            self.log.warning("состояния пунктов %s: %s" % (detail.get("id"), exc))
+
+    # --- массовое «Закрыть все неактуальные» (W27-E1 §1) ---------------------
+    def h_dismiss_stale(self, query, body, room):
+        """``POST /api/rooms/{room}/dismiss_stale {scope:"finished_requests"}``.
+
+        Закрывает пункты завершённых запросов комнаты (``done``/``archived``):
+        вопрос, решение, разрешение и шаг получают отметку «неактуально» со своей
+        причиной. Решённое человеком (ответ, принятое решение, выполненный шаг) не
+        трогается: такие пункты и так не ждут. Ответ — сколько закрыто по видам.
+
+        Повторный вызов безопасен: уже закрытое возвращает 409 `already_decided`,
+        это не ошибка и в счётчики не попадает.
+        """
+        body = body if isinstance(body, dict) else {}
+        scope = str(body.get("scope") or "finished_requests").strip()
+        if scope not in stale_mod.STALE_SCOPES:
+            raise err(400, "scope: finished_requests", field="scope",
+                      allowed=list(stale_mod.STALE_SCOPES), value=scope[:40])
+        # W27-QA2 (§1): предпросмотр — сколько неактуальных пунктов закроется, БЕЗ записи.
+        # Нужен кнопке «Закрыть все неактуальные (N)» на «Сегодня»: число берётся у сервера,
+        # клиент его не досчитывает по списку.
+        preview = bool(body.get("preview"))
+        room_dict = self._room(str(room))
+        room_id = str(room_dict.get("id") or room)
+        closed = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0}
+        already = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0}
+        errors: list = []
+        touched: list = []
+        for rec in self._records(room_id, quiet=True) or []:
+            rid = str((rec or {}).get("root_id") or "")
+            if not rid:
+                continue
+            try:
+                detail = self._detail(room_dict, rid, (rec or {}).get("extra_cards"),
+                                      (rec or {}).get("critic"), (rec or {}).get("answers"))
+            except ApiError as exc:
+                errors.append({"request": rid, "why": str(exc.message)[:160]})
+                continue
+            if not (stale_mod.request_finished((detail or {}).get("status"))
+                    or (detail or {}).get("archived")):
+                continue
+            # Разметка БЕЗ автозакрытия: так видны пункты, которые ещё лежат в данных
+            # открытыми, — их и закрываем. Иначе закрывать было бы нечего.
+            stale_mod.decorate(detail, request_status="")
+            targets = stale_mod.open_targets(detail)
+            if not targets:
+                continue
+            per = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0}
+            for target in targets:
+                key = {"question": "questions", "decision": "decisions",
+                       "approval": "approvals", "step": "steps"}[target["kind"]]
+                if preview:
+                    # Уже снятый человеком шаг (`steps_dropped`) запись отвергнет
+                    # (`409 already_decided`) — в предпросмотре его тоже не считаем,
+                    # иначе кнопка обещает больше, чем закроет.
+                    if target["kind"] == "step":
+                        dropped = {str(x) for x in ((rec or {}).get("steps_dropped") or [])}
+                        bare = str(target["id"]).split(":", 1)[-1]
+                        if bare in dropped:
+                            continue
+                    per[key] += 1
+                    continue
+                try:
+                    status, _payload, _headers = self._stale_action(
+                        room_dict, rec or {}, rid,
+                        {"action": "dismiss", "reason": "запрос завершён",
+                         "target": {"kind": target["kind"], "id": target["id"]}}, "dismiss")
+                except ApiError as exc:
+                    if exc.status == 409:
+                        already[key] += 1        # уже не ждёт — не ошибка
+                    else:
+                        errors.append({"request": rid, "kind": target["kind"],
+                                       "id": target["id"], "why": str(exc.message)[:160]})
+                    continue
+                if status == 200:
+                    per[key] += 1
+                    if target["kind"] in ("question", "decision"):
+                        # реестр ответов только что переписан — перечитываем запись,
+                        # иначе следующее снятие перезапишет предыдущее своим снимком
+                        rec = self._reload_record(room_id, rid) or rec
+            for key in per:
+                closed[key] += per[key]
+            if per["questions"] or per["decisions"] or per["approvals"] or per["steps"]:
+                touched.append({"request": rid, "closed": dict(per)})
+        total = sum(closed.values())
+        payload = {"ok": True, "scope": scope, "room": room_id, "closed": closed,
+                   "already_closed": already, "requests": touched, "errors": errors,
+                   "total": total, "at": int(_time.time()),
+                   "message": (("Неактуальных пунктов у завершённых запросов: %d." % total)
+                               if preview else
+                               ("Закрыто как неактуальное: %d." % total) if total
+                               else "Неактуальных пунктов у завершённых запросов нет.")}
+        if preview:
+            payload["preview"] = True
+            payload.pop("requests", None)
+            payload.pop("already_closed", None)
+        return 200, payload, {"Cache-Control": "no-store"}
+
+    def _reload_record(self, room_id: str, rid: str) -> dict | None:
+        """Свежая запись реестра по id запроса (после записи в реестр ответов)."""
+        try:
+            for row in self._records(room_id, quiet=True) or []:
+                if str((row or {}).get("root_id") or "") == str(rid):
+                    return row
+        except Exception:                   # noqa: BLE001 - уборка вторична
+            return None
+        return None
 
     # --- действие «разрешить/запретить» (W22 §2.2, W26-D1) ------------------
     def _approval_action(self, room: dict, rec: dict, rid: str, body: dict) -> tuple:

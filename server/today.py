@@ -52,8 +52,14 @@ URGENT_STALL_MIN = 20
 ACTIVE_STATUSES = ("working", "reviewing", "synthesizing")
 #: Статусы пунктов, которые ещё ждут действия (как в «От вас нужно»).
 WAITING_STATUSES = ("open", "asked")
+#: Статусы запроса, у которых пункты не показываются вовсе (W27-E1 §1).
+AUTO_CLOSED_REQUESTS = ("archived",)
 #: Виды ожидания контракта §3.1 + W25-M2 (карточка не отвечает).
 KINDS = ("question", "decision", "approval", "step", "draft", "failure", "stalled")
+#: Виды пунктов, которые «Ждёт вас» берёт из самого запроса (W27-FIX). Шаги сюда не
+#: входят: у них своё место — «Просрочено/Ближайшие», а в «ждёт вас» они дублировали
+#: бы счётчик меню.
+EXACT_KINDS = ("question", "decision", "approval")
 #: Имя файла отметки захода внутри `data/state`.
 STATE_FILE = "today.json"
 #: Короткая подсказка «что с этим делать» для каждого вида ожидания.
@@ -91,6 +97,19 @@ class Sources:
     def backlog(self, room: dict) -> list[dict]:
         """Пункты «От вас нужно» комнаты (с наложенными ответами)."""
         return []
+
+    def waiting(self, room: dict) -> dict | None:
+        """Точные пункты «ждёт вас» по запросам комнаты (W27-FIX).
+
+        ``{root_id: [{kind, id, text, since}, …]}`` — только вопрос и решение,
+        которые правда ждут человека (состояние ``open``/``proposed`` и есть
+        действие). Это тот же расчёт, из которого страница запроса берёт
+        ``needs_you_count`` (`server/stale.py`), поэтому числа «Сегодня» и запроса
+        совпадают. Разрешения экран берёт своим источником (``approvals``) — здесь
+        их нет, чтобы не посчитать дважды. ``None`` — источник недоступен: экран
+        считает по индексу бэклога, как раньше.
+        """
+        return None
 
     def states(self, room: dict) -> dict:
         """``{root_id: {status, finished_at, started_at, members_working, since, error}}``."""
@@ -240,35 +259,91 @@ def build(sources, last_visit_at=None, now=None) -> dict:
         def request_title(root_id: str) -> str:
             return titles.get(root_id) or ""
 
-        # 1) «Ждёт вас»: вопросы, решения, шаги, предложение этапов
+        def request_finished(root_id: str) -> bool:
+            """Запрос убран (`archived`) — его пункты ждать некому (W27-E1 §1).
+
+            Только `archived`: у `done` бывает открытый вопрос, и это рабочее
+            состояние «руководитель завершил карточку, чтобы спросить», а не мусор.
+            """
+            status = str(state_of(str(root_id or "")).get("status") or "").lower()
+            return status in AUTO_CLOSED_REQUESTS
+
+        # 1) «Ждёт вас»: вопросы, решения, разрешения. W27-FIX: точные пункты берутся
+        #    из самих запросов (тот же расчёт, что `needs_you_count` страницы), а не из
+        #    индекса бэклога: в индексе id вопросов расходятся с карточками, и закрытые
+        #    вопросы висели как «ждёт вас». Индекс остаётся запасным путём (источник не
+        #    отдал точных пунктов) и источником сроков/предложения этапов.
         room_needs = 0
-        for item in items:
-            status = str(item.get("status") or "open")
-            if status not in WAITING_STATUSES:
-                continue                      # закрытое и отклонённое не ждёт
-            kind = str(item.get("kind") or "")
-            owner = str(item.get("owner") or "")
-            if kind == "phases_proposal":
-                # предложение этапов руководителем: ждёт решения человека, хотя
-                # владелец в данных — руководитель комнаты (§1 «От вас нужно»)
-                kind_out = "decision"
-            elif owner == HUMAN and kind == "open_question":
-                kind_out = "question"
-            elif owner == HUMAN and kind == "decision":
-                kind_out = "decision"
-            elif owner == HUMAN and kind == "next_step":
-                kind_out = "step"
-            else:
-                continue                      # пункт не про человека — не его забота
-            request_id = str(item.get("source_request") or "")
-            at = _as_int(item.get("created_at")) or _as_int(item.get("updated_at")) or now
-            needs.append({"room": room_id, "room_title": room_title,
-                          "request_id": request_id,
-                          "request_title": request_title(request_id),
-                          "kind": kind_out, "text": _text(item.get("text")),
-                          "since": at, "urgent": _urgent(kind_out, at, now),
-                          "recommended": RECOMMENDED.get(kind_out)})
-            room_needs += 1
+        exact = _safe(lambda: sources.waiting(room), None)
+        exact = exact if isinstance(exact, dict) else None
+        seen_items: set = set()
+        if exact is not None:
+            for root_id in sorted(exact):
+                if request_finished(root_id):
+                    continue                  # W27-E1: запрос убран — ждать некому
+                for entry in _dicts(exact.get(root_id)):
+                    kind_out = str(entry.get("kind") or "")
+                    if kind_out not in EXACT_KINDS:
+                        continue              # шаги — в «Просрочено/Ближайшие»
+                    ident = str(entry.get("id") or "")
+                    key = (root_id, kind_out, ident)
+                    if ident and key in seen_items:
+                        continue
+                    if ident:
+                        seen_items.add(key)
+                    at = (_as_int(entry.get("since")) or _as_int(state_of(root_id).get("since"))
+                          or now)
+                    needs.append({"room": room_id, "room_title": room_title,
+                                  "request_id": root_id,
+                                  "request_title": request_title(root_id),
+                                  "kind": kind_out, "text": _text(entry.get("text")),
+                                  "since": at, "urgent": _urgent(kind_out, at, now),
+                                  "recommended": RECOMMENDED.get(kind_out)})
+                    room_needs += 1
+            # предложение этапов живёт только в индексе: у него нет запроса (§1)
+            for item in items:
+                if str(item.get("kind") or "") != "phases_proposal":
+                    continue
+                if str(item.get("status") or "open") not in WAITING_STATUSES:
+                    continue
+                at = _as_int(item.get("created_at")) or _as_int(item.get("updated_at")) or now
+                needs.append({"room": room_id, "room_title": room_title,
+                              "request_id": str(item.get("source_request") or ""),
+                              "request_title": request_title(str(item.get("source_request") or "")),
+                              "kind": "decision", "text": _text(item.get("text")),
+                              "since": at, "urgent": _urgent("decision", at, now),
+                              "recommended": RECOMMENDED["decision"]})
+                room_needs += 1
+        else:
+            for item in items:
+                status = str(item.get("status") or "open")
+                if status not in WAITING_STATUSES:
+                    continue                  # закрытое и отклонённое не ждёт
+                if request_finished(str(item.get("source_request") or "")):
+                    continue                  # W27-E1: запрос завершён — пункт не ждёт никого
+                kind = str(item.get("kind") or "")
+                owner = str(item.get("owner") or "")
+                if kind == "phases_proposal":
+                    # предложение этапов руководителем: ждёт решения человека, хотя
+                    # владелец в данных — руководитель комнаты (§1 «От вас нужно»)
+                    kind_out = "decision"
+                elif owner == HUMAN and kind == "open_question":
+                    kind_out = "question"
+                elif owner == HUMAN and kind == "decision":
+                    kind_out = "decision"
+                elif owner == HUMAN and kind == "next_step":
+                    kind_out = "step"
+                else:
+                    continue                  # пункт не про человека — не его забота
+                request_id = str(item.get("source_request") or "")
+                at = _as_int(item.get("created_at")) or _as_int(item.get("updated_at")) or now
+                needs.append({"room": room_id, "room_title": room_title,
+                              "request_id": request_id,
+                              "request_title": request_title(request_id),
+                              "kind": kind_out, "text": _text(item.get("text")),
+                              "since": at, "urgent": _urgent(kind_out, at, now),
+                              "recommended": RECOMMENDED.get(kind_out)})
+                room_needs += 1
 
         # 2) «Ждёт вас»: запросы разрешения (участник упёрся в блокировку)
         for approval in approvals:
@@ -282,6 +357,8 @@ def build(sources, last_visit_at=None, now=None) -> dict:
                 continue
             if approval.get("actionable") is False or approval.get("closed"):
                 continue
+            if request_finished(str(approval.get("request_id") or approval.get("root_id") or "")):
+                continue                      # W27-E1: запрос завершён — блокировка закрыта
             request_id = str(approval.get("request_id") or approval.get("root_id") or "")
             who = _text(approval.get("member_title") or approval.get("profile") or "", 60)
             what = _text(approval.get("description") or "", TEXT_MAX)
@@ -339,20 +416,31 @@ def build(sources, last_visit_at=None, now=None) -> dict:
         for item in items:
             if str(item.get("status") or "open") not in WAITING_STATUSES:
                 continue
+            if request_finished(str(item.get("source_request") or "")):
+                continue                      # W27-E1: у убранного запроса срок не ждёт
             due = _due(item.get("due"))
             if due is None:
                 continue
             days = (today - due).days
+            request_id = str(item.get("source_request") or "") or None
+            # W27-E3: строке «Сегодня» нужны не только срок и текст — ей нужен
+            # переход (название запроса) и признак «это ещё можно закрыть».
             base = {"room": room_id, "room_title": room_title,
                     "item_id": str(item.get("id") or ""), "text": _text(item.get("text")),
-                    "owner": str(item.get("owner") or ""), "due": due.isoformat()}
-            request_id = str(item.get("source_request") or "") or None
+                    "owner": str(item.get("owner") or ""), "due": due.isoformat(),
+                    "request_title": request_title(request_id or ""),
+                    "kind": str(item.get("kind") or ""),
+                    "state": str(item.get("status") or "open"),
+                    # без id пункта закрывать нечего: у строки не будет действия
+                    "actionable": bool(item.get("id"))}
             if days > 0:
                 overdue.append(dict(base, days_overdue=days, request_id=request_id))
-                room_overdue += 1
+                if base["actionable"]:
+                    room_overdue += 1
             elif -days <= DUE_HORIZON_DAYS:
                 soon.append(dict(base, days_left=-days, request_id=request_id))
-                room_soon += 1
+                if base["actionable"]:
+                    room_soon += 1
 
         # 5) «Идёт сейчас» и «что изменилось» — по состоянию корней и реестру
         room_running = 0
@@ -406,7 +494,11 @@ def build(sources, last_visit_at=None, now=None) -> dict:
     return {
         "generated_at": now,
         "last_visit_at": last,
-        "counters": {"needs_you": len(needs), "overdue": len(overdue), "due_soon": len(soon),
+        # W27-E3: «просрочено» считает только закрываемое — пункт без действия
+        # не должен числиться за человеком (§1 W27, правило «без тупиков»).
+        "counters": {"needs_you": len(needs),
+                     "overdue": sum(1 for row in overdue if row.get("actionable")),
+                     "due_soon": len(soon),
                      "running": len(running),
                      "changed": len(finished) + new_requests + new_answers + len(failures)},
         "needs_you": needs,
@@ -463,5 +555,5 @@ def mark_seen(cfg, now=None) -> dict:
 
 __all__ = ["HUMAN", "TEXT_MAX", "DUE_HORIZON_DAYS", "CACHE_TTL_S", "SEEN_MIN_GAP_S",
            "URGENT_AFTER_S", "URGENT_STALL_MIN", "ACTIVE_STATUSES", "WAITING_STATUSES",
-           "KINDS", "RECOMMENDED",
+           "KINDS", "EXACT_KINDS", "RECOMMENDED",
            "STATE_FILE", "Sources", "build", "state_path", "last_visit", "mark_seen"]

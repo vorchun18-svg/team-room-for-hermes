@@ -232,7 +232,13 @@ test('группа: один вопрос на причину, в строке �
   const all = pres.join('\n');
   assert.ok(all.includes('python -c "print(2)"'));
   assert.ok(all.includes(APPROVAL.command.slice(0, 40)));
-  assert.equal(buttons(card).length, 3, 'три решения — по строке, а не по каждой команде');
+  assert.equal(byAttr(card, 'data-decision', 'once').length
+    + byAttr(card, 'data-decision', 'always').length
+    + byAttr(card, 'data-decision', 'deny').length, 3,
+  'три решения — по строке, а не по каждой команде');
+  // W27-E2 §1: у ждущего разрешения есть и «Не актуально» — счётчик обнуляется
+  // без «принятия решения» (строка-группа закрывается целиком).
+  assert.equal(byAttr(card, 'data-action', 'approval-dismiss').length, 1);
 });
 
 test('группа: решение уходит с необязательным group, старый вид — без него', () => {
@@ -326,7 +332,9 @@ test('grantable:false (execute_code) — «нельзя штатно», но т�
 test('три решения: точные подписи, у «всегда» — подсказка про отзыв', () => {
   const card = approvalCard(APPROVAL, { onDecide: async () => ({ ok: true }) });
   const labels = buttons(card).map((b) => text(b).trim());
-  assert.deepEqual(labels, ['Разрешить один раз', 'Разрешать всегда', 'Запретить']);
+  // W27-E2 §1: четвёртая кнопка — «Не актуально» (убрать пункт без решения,
+  // с возвратом). Сами решения по-прежнему три и с теми же словами.
+  assert.deepEqual(labels, ['Разрешить один раз', 'Разрешать всегда', 'Запретить', 'Не актуально']);
   assert.deepEqual(APPROVAL_DECISIONS.map((d) => d.label),
     [APPROVALS_RU.once, APPROVALS_RU.always, APPROVALS_RU.deny]);
   const always = byAttr(card, 'data-decision', 'always')[0];
@@ -380,16 +388,22 @@ test('«Разрешать всегда»: итог говорит, где от�
 
 /* ────────────────────────────────────────────── 5. ошибки человеческим языком */
 
-test('409: «уже решено» человеческим текстом, без кода, кнопки снова живые', async () => {
+test('409 already_decided: тихая перерисовка, без красной плашки и без кода', async () => {
   const card = approvalCard(APPROVAL, {
-    onDecide: async () => { const e = new Error('http_409'); e.status = 409; throw e; },
+    onDecide: async () => { const e = new Error('http_409'); e.status = 409; e.code = 'already_decided'; throw e; },
   });
   const btn = byAttr(card, 'data-decision', 'deny')[0];
   btn.dispatch('click', { type: 'click', target: btn });
   await tick();
   await tick();
   const body = text(card);
-  assert.match(body, /Это разрешение уже решено/);
+  // W27-E2 §1: 409 — не ошибка человека, а устаревший экран: ни «красной» строки
+  // с текстом ошибки, ни кнопок решений (решать нечего), состояние уточняется.
+  assert.match(body, /Уже решено — обновляю состояние/);
+  assert.ok(!/Это разрешение уже решено — страница обновится/.test(body),
+    'красной плашки больше нет');
+  assert.equal(card.getAttribute('data-ap-conflict'), 'already_decided');
+  assert.equal(card.getAttribute('data-ap-state'), 'unknown');
   assert.ok(!/http_409/.test(body), 'служебный код наружу не попал');
   assert.equal(approvalErrorText({ status: 422 }), 'Разрешить нельзя: команда запрещена политикой '
     + 'безопасности Hermes или не найдена программа Hermes этого участника');

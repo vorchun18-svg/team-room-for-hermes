@@ -794,6 +794,15 @@ from server.routes_delo import install_delo_routes                              
 
 install_delo_routes(App, ROUTES)
 
+# --- уровни автономии комнаты (W27 §2, пакет E5) -------------------------------
+# ``GET/POST /api/rooms/{id}/autonomy``, ``…/autonomy/journal``, ``…/autonomy/suggest``
+# — server/autonomy.py, server/routes_autonomy.py. Запись в профили — только в их
+# ``config.yaml`` (в песочнице — поддельный дом), копия старого файла — в
+# ``data/backups/autonomy/``; реальные профили читаются только на чтение.
+from server.routes_autonomy import install_autonomy_routes                        # noqa: E402
+
+install_autonomy_routes(App, ROUTES)
+
 
 # --- сервер ----------------------------------------------------------------
 class TeamRoomServer(ThreadingHTTPServer):

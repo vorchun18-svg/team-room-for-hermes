@@ -54,7 +54,9 @@ ACTION_ALLOWED = ("dispatch", "comment", "answer", "unblock", "reassign", "rewor
                   "approval",
                   # W23-MG1 §2.8: действия над ОДНОЙ карточкой — остановить, продолжить,
                   # сменить модель (как кнопки остановки в самом Hermes).
-                  "card_stop", "card_resume", "card_model")
+                  # W27-E1 §1: «Не актуально» / «Вернуть» для вопроса, решения,
+                  # разрешения и шага — цель в target{kind,id}.
+                  "card_stop", "card_resume", "card_model", "dismiss", "restore")
 ACTION_REQUIRED = {"answer": ("question_id",), "reassign": ("task_id", "profile"),
                    "answer_remind": ("question_id",), "step_drop": ("step_id",),
                    "step_agree": ("step_id",), "step_comment": ("step_id",),

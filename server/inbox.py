@@ -42,7 +42,7 @@ KIND_TITLES = {
     "note": "Справка",
 }
 #: Источники записи: диктовка (микрофон) или набрано руками.
-SOURCES = {"dictation": "диктовка", "manual": "вручную"}
+SOURCES = {"dictation": "диктовка", "manual": "вручную", "duty": "дежурство"}
 STATUSES = ("new", "processing", "processed", "deleted")
 #: Сколько знаков принимаем в одну запись (защита от вставки мегабайта).
 MAX_TEXT = 4000
@@ -58,6 +58,16 @@ PROPOSAL_ACTIONS = [
     {"id": "accept", "label": "Принять"},
     {"id": "edit", "label": "Изменить"},
     {"id": "reject", "label": "Отклонить"},
+]
+
+#: Кнопки карточки результата дежурства (W27-E7 §3). Само решение выполняет
+#: `server/duty_rules.decide_card` — здесь только подписи, чтобы карточка не
+#: осталась без действий.
+DUTY_CARD_ACTIONS = [
+    {"id": "accept", "label": "Принять"},
+    {"id": "edit", "label": "Изменить"},
+    {"id": "reject", "label": "Не надо"},
+    {"id": "make_rule", "label": "Сделать правилом"},
 ]
 
 
@@ -208,6 +218,10 @@ def _public(item: dict) -> dict:
         "note": str(item.get("note") or ""),
         "actions": _actions_for(item),
     }
+    # W27-E7: у результата дежурства наружу идёт ещё и машинный блок (что нашло,
+    # что предлагает, к какому запуску относится) — из него рисуется карточка.
+    if isinstance(item.get("duty"), dict):
+        out["duty"] = item["duty"]
     return out
 
 
@@ -216,6 +230,15 @@ def _actions_for(item: dict) -> list:
     status = str(item.get("status") or "new")
     proposal = item.get("proposal") if isinstance(item.get("proposal"), dict) else None
     waiting = bool(proposal and proposal.get("state") == "waiting")
+    # W27-E7: результат дежурства — свои четыре кнопки (принять/изменить/не надо/правилом).
+    # Решение по ним принимает `duty_rules.decide_card` (маршрут
+    # `POST /api/rooms/{room}/duty-cards/{item_id}`), а не общий разбор входящего.
+    if isinstance(item.get("duty"), dict):
+        if status == "deleted":
+            return [{"id": "restore", "label": "Вернуть"}]
+        if not waiting or status not in ("new", "processing"):
+            return [{"id": "delete", "label": "Удалить"}]
+        return [dict(one) for one in DUTY_CARD_ACTIONS] + [{"id": "delete", "label": "Удалить"}]
     actions = []
     if status == "deleted":
         return [{"id": "restore", "label": "Вернуть"}]

@@ -225,7 +225,7 @@ def check_thread(c: Check, thread, where: str, ids: list) -> None:
             label = str(item.get("author_label") or "")
             c.ok(label and label != item.get("author"), tp,
                  "подпись агента должна быть человеческой ролью, а не именем профиля")
-            if str(item.get("author") or "").startswith("team-"):
+            if str(item.get("author") or "").startswith(("biz-", "team-")):
                 c.ok("·" in label, tp, "подпись агента Лето — «Имя · роль» (Глеб · руководитель комнаты)")
         if isinstance(item.get("id"), str):
             c.ok(item["id"] not in seen, tp, f"id {item['id']} повторяется в ленте")

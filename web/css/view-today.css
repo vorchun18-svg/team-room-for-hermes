@@ -204,6 +204,16 @@
 .today__kind { font-size: var(--text-2xs); }
 .today__urgent { font-size: var(--text-2xs); }
 .today__more { margin-top: var(--space-3); align-self: flex-start; }
+/* W27-QA2: «Закрыть все неактуальные (N)» — по одной кнопке на комнату; переносится,
+   а не растягивает колонку (без горизонтальной прокрутки). */
+.today__stale-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  min-width: 0;
+}
+.today__stale { max-width: 100%; white-space: normal; text-align: left; }
 
 /* ── Строки (сроки, «идёт сейчас») ──────────────────────────────────────── */
 .today-row {
@@ -354,4 +364,115 @@
   .today-sec--health { break-inside: avoid; }
   .today-card, .today-quiet { background: transparent; }
   .today__foot { display: none; }
+}
+
+/* ══ W27-E3: «Просрочено» и «Ближайшие» — рабочий список ══════════════════
+ *
+ * Было: строка-постер (текст, у которого нечего нажать). Стало: вся строка —
+ * переход к шагу (`today-row__hit`), в строке быстрые действия и всегда видимая
+ * подсказка «Открыть». Правила:
+ *   • растянутая ссылка лежит ПОД содержимым (z-index: 0): кнопки и текстовые
+ *     ссылки остаются кликабельными и не «проваливаются» в переход;
+ *   • действия — в потоке под текстом, поэтому ничего не наезжает и не требует
+ *     горизонтальной прокрутки на узком виде;
+ *   • меню (срок/исполнитель) — в том же потоке, не всплывашка поверх экрана:
+ *     её не надо ловить курсором и она не уезжает за край.
+ */
+.today-row--due { position: relative; border-radius: var(--radius-sm); }
+.today-row--due > *:not(.today-row__hit) { position: relative; z-index: 1; }
+.today-row__hit {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+}
+.today-row--clickable { cursor: pointer; }
+.today-row--clickable:hover { background: var(--ui-row-hover-background); }
+.today-row--clickable:hover .today-row__text { text-decoration: underline; }
+.today-row--due.is-busy { opacity: .55; pointer-events: none; }
+.today-row__open {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--ui-text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.today-row--clickable:hover .today-row__open { color: var(--ui-text-primary); }
+.today-row__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+/* Кнопки в строке мельче обычных: строка — список, а не панель действий. */
+.today-row__act { padding: 1px var(--space-2); font-size: var(--text-2xs); }
+.today-row__menu {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-secondary);
+}
+.today-row__menu-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+.today-row__menu-k { margin-right: var(--space-1); }
+/* Своя дата: поле не должно быть шире меню на узком виде. */
+.today-row__menu .input { max-width: 11rem; }
+.today__queue { margin-top: var(--space-3); align-self: flex-start; }
+.today__queue-count { color: var(--ui-text-secondary); }
+
+/* ── «Разобрать по очереди»: одна карточка шага ─────────────────────────── */
+.stepq { max-width: 34rem; width: min(34rem, calc(100vw - var(--space-6))); }
+.stepq__counter { margin-left: auto; margin-right: var(--space-2); white-space: nowrap; }
+.stepq__body { display: flex; flex-direction: column; gap: var(--space-3); }
+.stepq__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-secondary);
+}
+.stepq__card--danger { border-left-color: var(--danger); }
+.stepq__text { margin: 0; font-size: var(--text-md); line-height: 1.45; overflow-wrap: anywhere; }
+.stepq__when { color: var(--danger-ink); }
+.stepq__card--soon .stepq__when { color: var(--warn-ink); }
+.stepq__meta { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.stepq__dot { opacity: .6; }
+.stepq__link { color: var(--ui-text-secondary); text-decoration: none; }
+.stepq__link:hover { text-decoration: underline; }
+.stepq__acts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.stepq__form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.stepq__form .input { max-width: 11rem; }
+.stepq__done-title { margin: 0 0 var(--space-1); font-size: var(--text-md); }
+.stepq__foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.stepq__hint { margin-left: auto; }
+
+/* ── Подсветка шага, к которому пришли по ссылке (?step=ns_…) ───────────── */
+.is-step-focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  animation: step-focus-pulse 1.2s ease-out 2;
+}
+@keyframes step-focus-pulse {
+  0% { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+  100% { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .is-step-focus { animation: none; }
+}
+
+@container view (max-width: 640px) {
+  .today-row__acts { gap: 2px; }
+  .today-row__act { width: auto; }
+  .stepq__hint { display: none; }
 }

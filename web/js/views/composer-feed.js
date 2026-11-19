@@ -77,7 +77,7 @@ function personName(id) {
   const raw = String(id == null ? '' : id).trim();
   if (!raw) return '';
   if (raw === 'mikhail') return 'Михаил';
-  return raw.replace(/^(?:biz|room)-/, '');
+  return raw.replace(/^(?:biz|team|room)-/, '');
 }
 
 function escapeSel(value) {

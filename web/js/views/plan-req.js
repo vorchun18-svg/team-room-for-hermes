@@ -127,7 +127,7 @@ export function whoName(id) {
   if (!raw) return '';
   if (raw === 'mikhail') return 'Михаил';
   if (raw === 'manager' || raw === 'director') return 'руководитель комнаты';
-  return raw.replace(/^(?:biz|room)-/, '');
+  return raw.replace(/^(?:biz|team|room)-/, '');
 }
 
 /** Одна строка из многострочного текста, не длиннее `max` знаков. */

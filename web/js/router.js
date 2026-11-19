@@ -4,7 +4,8 @@
  * Маршруты:
  *   #/                          — обзор комнат (views/rooms.js)
  *   #/room/<id>                 — комната, вкладка по умолчанию «Запрос»
- *   #/room/<id>/<tab>           — вкладка: composer|team|roadmap|backlog|reports|journal
+ *   #/room/<id>/<tab>           — вкладка: composer|team|roadmap|backlog|delos|
+ *                                 reports|journal|inbox|duties (порядок — TABS)
  *   #/room/<id>/request/<root>  — страница запроса
  *   #/search?q=<текст>          — глобальный поиск
  *   #/settings                  — настройки
@@ -22,15 +23,19 @@ import { TAB_TITLES } from './text-ru.js';
 // Дальше переименована в «От вас нужно»: там вопросы и решения, которые ждут человека.
 export const TABS = [
   { id: 'composer', title: TAB_TITLES.composer, icon: 'comment-discussion' },
-  // W26-D9: вкладка «Входящие» — записи комнаты (диктовка/вручную) и их разбор.
-  { id: 'inbox', title: TAB_TITLES.inbox, icon: 'inbox' },
-  // W26-D6: «Дела» — вкладка комнаты (тот же экран, что #/delos, но по комнате).
-  { id: 'delos', title: TAB_TITLES.delos, icon: 'checklist' },
   { id: 'team', title: TAB_TITLES.team, icon: 'organization' },
   { id: 'roadmap', title: TAB_TITLES.roadmap, icon: 'map' },
   { id: 'backlog', title: TAB_TITLES.backlog, icon: 'arrow-circle-right' },
+  // W26-QA1: «Дела» стоят рядом с «От вас нужно» — это две рабочие вкладки
+  // («что ждёт решения» и «что за дела в работе»), к ним и возвращаются чаще.
+  // W26-D6: «Дела» — вкладка комнаты (тот же экран, что #/delos, но по комнате).
+  { id: 'delos', title: TAB_TITLES.delos, icon: 'checklist' },
   { id: 'reports', title: TAB_TITLES.reports, icon: 'report' },
   { id: 'journal', title: TAB_TITLES.journal, icon: 'history' },
+  // W26-D9: «Входящие» — записи комнаты (диктовка/вручную) и их разбор.
+  // Новые служебные вкладки — в хвосте: шапку не забивают, на узком виде
+  // первыми уходят в «Ещё ▾».
+  { id: 'inbox', title: TAB_TITLES.inbox, icon: 'inbox' },
   // W26-D8: дежурства — задания Hermes по расписанию для этой комнаты.
   { id: 'duties', title: TAB_TITLES.duties, icon: 'clock' },
 ];

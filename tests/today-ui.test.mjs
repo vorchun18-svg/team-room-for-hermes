@@ -23,10 +23,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import {
-  EMPTY_TEXT, NEEDS_YOU_LIMIT, agoText, changedSummary, counterChips, dueRow, dueSoonText,
-  dutyProblemText, dutyRunText, dutyTone, dutiesProblemCount, healthProblems, isEmptyDay,
-  kindLabel, needsYouCard, needsYouVisible, overdueText, runningRow, shortDate, sortNeedsYou,
+  EMPTY_TEXT, NEEDS_YOU_LIMIT, actionableCount, agoText, changedSummary, counterChips, dueRow,
+  dueSoonText, dutyProblemText, dutyRunText, dutyTone, dutiesProblemCount, healthProblems,
+  isEmptyDay, kindLabel, localStepId, needsYouCard, needsYouVisible, overdueText,
+  postponeOptions, runningRow, shortDate, sortNeedsYou, stepHash, stepQueue,
 } from '../web/js/views/today-model.js';
+// W27-E3: якорь шага и действия над шагом (переиспользуют механизм шагов).
+import { focusStep, stepFromRoute } from '../web/js/views/step-focus.js';
 import { parseHash } from '../web/js/router.js';
 import { parseRouteHash } from '../web/js/route-memory.js';
 import { dayTitle, updatedText } from '../web/js/views/today.js';
@@ -347,4 +350,99 @@ test('#/today разбирается и роутером, и памятью ма
   assert.equal(parseHash('#/search?q=1').name, 'search');
   assert.equal(parseHash('#/settings').view, 'settings');
   assert.equal(parseHash('#/room/cafe/team').name, 'room');
+});
+
+/* ══ W27-E3: «Просрочено»/«Ближайшие» — переход и действия ═══════════════
+ *
+ * Дефект 2 (18.11, вечер): строка была постером — клик по делу ничего не делал,
+ * действий не было вовсе. Здесь закреплено то, что должно быть у КАЖДОЙ строки:
+ * адрес шага и хотя бы одно действие.
+ */
+
+test('W27-E3: у строки срока есть переход на шаг и четыре действия', () => {
+  const row = dueRow({
+    room: 'r1', room_title: 'Студия', item_id: 't_abc:ns_2', text: 'Прислать логотип',
+    owner: 'mikhail', due: '2026-11-11', days_overdue: 7, request_id: 't_abc',
+    request_title: 'Сайт студии', actionable: true,
+  }, 'overdue');
+  assert.equal(row.stepId, 'ns_2');
+  assert.equal(row.href, '#/room/r1/request/t_abc?step=ns_2');
+  assert.equal(row.actionable, true);
+  assert.deepEqual(row.actions, ['done', 'postpone', 'dismiss', 'assign']);
+  assert.equal(row.when, 'просрочено на 7 дней');
+  assert.equal(row.requestTitle, 'Сайт студии');
+});
+
+test('W27-E3: без запроса строка ведёт в «От вас нужно» комнаты (переход есть всегда)', () => {
+  const row = dueRow({ room: 'r1', item_id: 'ns_9', text: 'Позвонить', due: '2026-11-10', days_overdue: 2 }, 'overdue');
+  assert.equal(row.href, '#/room/r1/backlog');
+  assert.equal(row.actionable, true, 'шаг бэклога закрываем и без запроса');
+});
+
+test('W27-E3: пункт без id не закрывается и не числится в счётчике', () => {
+  const rows = [
+    { room: 'r1', item_id: 't_1:ns_1', due: '2026-11-10', days_overdue: 2 },
+    { room: 'r1', item_id: '', due: '2026-11-10', days_overdue: 2 },
+    { room: 'r1', item_id: 't_1:ns_3', due: '2026-11-10', days_overdue: 2, actionable: false },
+  ];
+  assert.deepEqual(dueRow(rows[1], 'overdue').actions, []);
+  assert.equal(actionableCount(rows), 1);
+  assert.equal(stepQueue({ overdue: rows }).length, 1, 'в очередь идёт только закрываемое');
+});
+
+test('W27-E3: id шага и адрес у соседних видов не путаются', () => {
+  assert.equal(localStepId('t_abc:ns_4'), 'ns_4');
+  assert.equal(localStepId('ns_4'), 'ns_4');
+  assert.equal(localStepId(''), '');
+  assert.equal(stepHash({}), '');
+  assert.equal(stepHash({ room: 'r1', requestId: 't_1', stepId: 'ns_1' }), '#/room/r1/request/t_1?step=ns_1');
+});
+
+test('W27-E3: «Перенести срок» — +1 день и пятница, в прошлое не переносим', () => {
+  // пятница 13.11.2026, просроченный срок
+  const friday = new Date(2026, 10, 13, 10, 0);
+  const options = postponeOptions('2026-11-11', friday);
+  assert.equal(options[0].key, 'plus1');
+  assert.equal(options[0].due, '2026-11-14', '+1 день считается от сегодня, не от прошлого срока');
+  assert.equal(options[1].key, 'friday');
+  assert.equal(options[1].due, '2026-11-20', 'в пятницу — следующая пятница');
+  // в среду: завтра не пятница — обе кнопки разные
+  const wed = postponeOptions('2026-11-01', new Date(2026, 10, 18, 9, 0));
+  assert.equal(wed[0].due, '2026-11-19');
+  assert.equal(wed[1].due, '2026-11-20');
+  assert.ok(wed[1].label.startsWith('пятница — '));
+  // срок в будущем не «ускоряем»: считаем от него (26.11 чт → +1 = 27.11 пт)
+  assert.equal(postponeOptions('2026-11-26', new Date(2026, 10, 18)).length, 1,
+    '+1 день попадает на пятницу — второй кнопки-дубля нет');
+});
+
+test('W27-E3: очередь «по очереди» — просрочка, затем ближайшие', () => {
+  const rows = stepQueue({
+    overdue: [{ room: 'r1', item_id: 't_1:ns_1', text: 'a', due: '2026-11-10', days_overdue: 8 }],
+    due_soon: [{ room: 'r1', item_id: 't_1:ns_2', text: 'b', due: '2026-11-19', days_left: 1 }],
+  });
+  assert.deepEqual(rows.map((r) => r.text), ['a', 'b']);
+  assert.equal(rows[0].when, 'просрочено на 8 дней');
+});
+
+test('W27-E3: якорь шага читается из адреса и не ломает старые ссылки', () => {
+  assert.equal(stepFromRoute(parseHash('#/room/r1/request/t_1?step=ns_2')), 'ns_2');
+  assert.equal(stepFromRoute(parseHash('#/room/r1/request/t_1?step=t_1%3Ans_5')), 'ns_5');
+  assert.equal(stepFromRoute(parseHash('#/room/r1/request/t_1')), '');
+  assert.equal(stepFromRoute(null), '');
+});
+
+test('W27-E3: подсветка шага ставится на найденный шаг и молчит о пропавшем', () => {
+  const classes = new Set();
+  const row = {
+    tagName: 'DIV', classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) },
+    closest: () => row, setAttribute: () => {}, hasAttribute: () => true, focus: () => {},
+    scrollIntoView: () => {},
+  };
+  const target = { getAttribute: () => 'ns_2', closest: () => row };
+  const root = { querySelectorAll: () => [target] };
+  assert.equal(focusStep(root, 'ns_2', { scroll: false, pulse: false }), true);
+  assert.ok(classes.has('is-step-focus'));
+  assert.equal(focusStep(root, 'ns_9', { scroll: false, pulse: false }), false);
+  assert.equal(focusStep(null, 'ns_2'), false);
 });

@@ -61,7 +61,7 @@ const ENTRIES = [
     created_at: 1700000000, used_count: 2, pinned: true,
   },
   {
-    id: 'n_2', text: 'Ornith — слабая модель, но локальная: простые задачи ей', source: 'leader',
+    id: 'n_2', text: 'Локальная модель слабая, но бесплатная: простые задачи ей', source: 'leader',
     origin: 'комментарий Михаила', created_at: 1700000000, used_count: 0, pinned: false,
   },
 ];
@@ -104,7 +104,7 @@ test('редактор: список записей, счётчики и пол�
   const ui = await mountNotesEntries(host, {}, { profile: 'team-lawyer', entries: ENTRIES });
   const text = host.textContent;
   assert.match(text, /Всегда проверяй по закону X/);
-  assert.match(text, /Ornith — слабая модель/);
+  assert.match(text, /Локальная модель слабая, но бесплатная/);
   assert.match(text, /записей 2 из 24/);
   assert.match(text, new RegExp('из ' + MAX_TEXT + ' знаков'));
   assert.match(text, /Действует только в этой комнате/);

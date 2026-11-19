@@ -41,6 +41,8 @@ from pathlib import Path
 #: Пределы входных значений: ключ списка — обычная строка описания правила.
 MAX_KEY = 200
 MAX_COMMAND = 8000
+#: Сколько масок «только с моего да» принимаем (уровень «Свободный»).
+MAX_KEYS = 200
 #: Сколько ждать импорт Hermes (его дерево большое, но не бесконечное).
 MAX_ALLOWLIST = 500
 
@@ -325,8 +327,86 @@ def op_untrust(req: dict) -> dict:
             "changed": after != "approve"}
 
 
+def op_apply(req: dict) -> dict:
+    """Применить уровень автономии комнаты к ОДНОМУ профилю (W27-E5, §2).
+
+    Одна запись — три ключа штатного конфига Hermes: список разрешений
+    (``command_allowlist``), список «только с моего да» (``approvals.deny``) и
+    поведение запусков без человека (``approvals.single_query_mode``). Правку делает
+    сам Hermes (``hermes_cli.config.load_config`` → ``save_config``), поэтому
+    посторонние ключи и их форма не меняются.
+
+    ``None`` в ``deny``/``single_query_mode`` — «не трогать»; ``""`` в
+    ``single_query_mode`` — убрать ключ (вернуть умолчание Hermes).
+    """
+    home = _clean_home(req.get("home"))
+    add = [_clean_key(key) for key in (req.get("allowlist_add") or [])]
+    remove = [_clean_key(key) for key in (req.get("allowlist_remove") or [])]
+    deny = req.get("deny")
+    if deny is not None:
+        if not isinstance(deny, list):
+            raise GrantError("Список «только с моего да» должен быть списком масок",
+                             "bad_request")
+        deny = [_clean_key(mask) for mask in deny][:MAX_KEYS]
+    mode = req.get("single_query_mode")
+    if mode is not None:
+        mode = str(mode).strip().lower()
+        if mode not in ("approve", "deny", ""):
+            raise GrantError("single_query_mode: нужно approve, deny или пусто",
+                             "bad_request")
+    if not add and not remove and deny is None and mode is None:
+        return {"ok": True, "op": "apply", "home": str(home), "changed": False,
+                "allowlist": _read_allowlist(home)}
+    tree = _hermes_tree(home, str(req.get("tree") or ""))
+    before = _read_allowlist(home)
+    before_mode = _read_single_query_mode(home)
+    _prepare(home, tree)
+    try:
+        from hermes_cli.config import load_config, save_config    # noqa: PLC0415
+    except Exception as exc:                                        # noqa: BLE001
+        raise GrantError("Hermes не импортируется (%s)" % (str(exc)[:200] or "ошибка"),
+                         "no_hermes") from exc
+    try:
+        config = load_config()
+    except Exception as exc:                                        # noqa: BLE001
+        raise GrantError("Не удалось прочитать настройки профиля: %s" % str(exc)[:200],
+                         "failed") from exc
+    if not isinstance(config, dict):
+        config = {}
+    current = config.get("command_allowlist")
+    if not isinstance(current, list):
+        current = _read_allowlist(home)
+    current = [str(item) for item in current if isinstance(item, str)]
+    kept = [key for key in current if key not in remove]
+    for key in add:
+        if key not in kept:
+            kept.append(key)
+    config["command_allowlist"] = kept
+    approvals = config.get("approvals")
+    approvals = dict(approvals) if isinstance(approvals, dict) else {}
+    if deny is not None:
+        approvals["deny"] = list(deny)
+    if mode is not None:
+        if mode:
+            approvals["single_query_mode"] = mode
+        else:
+            approvals.pop("single_query_mode", None)
+    config["approvals"] = approvals
+    try:
+        save_config(config)
+    except Exception as exc:                                        # noqa: BLE001
+        raise GrantError("Не удалось сохранить настройки профиля: %s" % str(exc)[:200],
+                         "failed") from exc
+    after = _read_allowlist(home)
+    return {"ok": True, "op": "apply", "home": str(home),
+            "allowlist": after[:MAX_ALLOWLIST], "changed": after != before,
+            "single_query_mode": _read_single_query_mode(home),
+            "previous_single_query_mode": before_mode,
+            "deny": list(approvals.get("deny") or [])[:MAX_ALLOWLIST]}
+
+
 OPS = {"list": op_list, "add": op_add, "remove": op_remove, "check": op_check,
-       "trust": op_trust, "untrust": op_untrust}
+       "trust": op_trust, "untrust": op_untrust, "apply": op_apply}
 
 
 def run(req: dict) -> dict:

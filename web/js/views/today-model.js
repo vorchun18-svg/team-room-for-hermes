@@ -163,24 +163,151 @@ export function needsYouCard(item, now = Math.floor(Date.now() / 1000)) {
 
 /* ───────────────────────────────────────────────────── просрочка/сроки */
 
+/** Что можно сделать со шагом прямо из строки (§1 W27: шаги, четыре действия). */
+export const STEP_ACTIONS = ['done', 'postpone', 'dismiss', 'assign'];
+
+/** Подписи быстрых действий — один словарь для строки и режима «по очереди». */
+export const STEP_ACTION_LABELS = {
+  done: 'Готово',
+  postpone: 'Перенести срок…',
+  dismiss: 'Не актуально',
+  assign: 'Поручить…',
+  open: 'Открыть',
+};
+
 /**
- * Строка «просрочено» или «ближайшие 3 дня».
+ * Адрес шага: страница запроса с якорем шага (`?step=ns_…`).
+ * Без запроса — вкладка «От вас нужно» комнаты: переход есть всегда.
+ * @param {{room?:string, requestId?:string, stepId?:string}} ref
+ * @returns {string} хэш или '' (нет комнаты — вести некуда)
+ */
+export function stepHash(ref) {
+  const it = ref || {};
+  const room = String(it.room || '');
+  const rid = String(it.requestId || '');
+  const sid = String(it.stepId || '');
+  if (!room) return '';
+  const base = rid
+    ? '#/room/' + encodeURIComponent(room) + '/request/' + encodeURIComponent(rid)
+    : '#/room/' + encodeURIComponent(room) + '/backlog';
+  return sid && rid ? base + '?step=' + encodeURIComponent(sid) : base;
+}
+
+/** `t_x:ns_1` → `ns_1` (id шага в плане запроса); `ns_1` остаётся собой. */
+export function localStepId(itemId) {
+  const text = String(itemId || '');
+  const at = text.indexOf(':');
+  return at >= 0 ? text.slice(at + 1) : text;
+}
+
+/**
+ * Строка «просрочено» или «ближайшие 3 дня» — со всем, что нужно строке:
+ * переход, действия, id шага в плане.
+ *
+ * W27-E3: раньше это был «постер» (текст без действий). Теперь у каждой строки
+ * есть адрес (`href`) и набор действий (`actions`), а «закрываемость» (`actionable`)
+ * решает, идёт ли строка в счётчик «просрочено».
+ *
  * @param {object} row элемент overdue[] / due_soon[]
  * @param {'overdue'|'soon'} kind
- * @returns {{text, owner, when, roomTitle, requestId, tone}}
+ * @returns {{text, owner, when, due, dueRaw, room, roomTitle, requestId, requestTitle,
+ *            itemId, stepId, href, actionable, actions, tone}}
  */
 export function dueRow(row, kind) {
   const it = row || {};
   const overdue = kind === 'overdue';
+  const itemId = String(it.item_id || '');
+  const requestId = String(it.request_id || '');
+  // Закрыть пункт можно там, где он живёт: шаг бэклога (`<rid>:ns_1`) знает
+  // свой статус и срок; строка без id — только показать.
+  const actionable = it.actionable === false ? false : Boolean(itemId);
+  const room = String(it.room || '');
+  const stepId = localStepId(itemId);
   return {
     text: String(it.text || ''),
     owner: String(it.owner || ''),
     when: overdue ? overdueText(it) : dueSoonText(it),
     due: shortDate(it.due),
+    dueRaw: String(it.due || ''),
+    room,
     roomTitle: String(it.room_title || it.room || ''),
-    requestId: String(it.request_id || ''),
+    requestId,
+    requestTitle: String(it.request_title || ''),
+    itemId,
+    stepId,
+    href: stepHash({ room, requestId, stepId }),
+    actionable,
+    actions: actionable ? STEP_ACTIONS.slice() : [],
     tone: overdue ? 'danger' : 'warn',
   };
+}
+
+/** Сколько строк ещё можно закрыть (счётчик «просрочено» — только по ним). */
+export function actionableCount(rows) {
+  return list(rows).filter((row) => (row || {}).actionable !== false && (row || {}).item_id).length;
+}
+
+/** `YYYY-MM-DD` из Date (местная дата, без времени). */
+export function isoDate(d) {
+  const date = d instanceof Date ? d : new Date(d === undefined ? Date.now() : d);
+  const pad = (n) => String(n).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+}
+
+/** `YYYY-MM-DD` + N дней (в календарных сутках, без часовых поясов). */
+export function addDays(iso, days) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  const base = m
+    ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+    : new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+  base.setDate(base.getDate() + Number(days || 0));
+  return isoDate(base);
+}
+
+/** «19.11» — срок в подписи кнопки (год на экране «сегодня» лишний). */
+function dueChip(iso) {
+  return shortDate(iso);
+}
+
+/**
+ * Варианты «Перенести срок…»: +1 день, пятница, своя дата.
+ *
+ * Срок не назначаем в прошлое: считаем от «сегодня» или от текущего срока —
+ * что позже. Пятница — ближайшая будущая (если сегодня пятница, следующая).
+ *
+ * @param {string} [dueIso] текущий срок строки `YYYY-MM-DD`
+ * @param {Date|number} [now]
+ * @returns {Array<{key:string, label:string, due:string}>}
+ */
+export function postponeOptions(dueIso, now) {
+  const date = now instanceof Date ? now : new Date(now === undefined ? Date.now() : now);
+  const today = isoDate(date);
+  const start = /^\d{4}-\d{2}-\d{2}$/.test(String(dueIso || '')) && String(dueIso) > today
+    ? String(dueIso) : today;
+  const out = [];
+  const plus1 = addDays(start, 1);
+  out.push({ key: 'plus1', label: '+1 день — ' + dueChip(plus1), due: plus1 });
+  // Пятница: 5 = пятница; 0 — воскресенье.
+  const weekday = new Date(start + 'T00:00:00').getDay();
+  let shift = (5 - weekday + 7) % 7;
+  if (shift === 0) shift = 7;
+  const friday = addDays(start, shift);
+  if (friday !== plus1) out.push({ key: 'friday', label: 'пятница — ' + dueChip(friday), due: friday });
+  return out;
+}
+
+/**
+ * Очередь «Разобрать по очереди»: просроченное, затем ближайшее; только то,
+ * что можно закрыть (строка без действия в очередь не попадает — незачем).
+ * @param {object} data ответ /api/today
+ * @returns {Array<object>} строки `dueRow`
+ */
+export function stepQueue(data) {
+  const d = data || {};
+  const rows = [];
+  for (const row of list(d.overdue)) rows.push(dueRow(row, 'overdue'));
+  for (const row of list(d.due_soon)) rows.push(dueRow(row, 'soon'));
+  return rows.filter((row) => row.actionable && row.href);
 }
 
 /* ───────────────────────────────────────────────────────── здоровье */
@@ -351,7 +478,9 @@ export function isEmptyDay(data) {
 
 export default {
   TODAY_SECTIONS, KIND_LABELS, PROBLEM_LABELS, EMPTY_TEXT, NEEDS_YOU_LIMIT,
+  STEP_ACTIONS, STEP_ACTION_LABELS,
   agoText, overdueText, dueSoonText, shortDate, kindLabel, sortNeedsYou, needsYouVisible,
-  needsYouCard, dueRow, healthProblems, changedSummary, runningRow, dutyTone, dutyRunText,
+  needsYouCard, dueRow, stepHash, localStepId, actionableCount, isoDate, addDays,
+  postponeOptions, stepQueue, healthProblems, changedSummary, runningRow, dutyTone, dutyRunText,
   dutyProblemText, dutiesProblemCount, counterChips, isEmptyDay,
 };

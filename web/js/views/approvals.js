@@ -29,6 +29,11 @@ import { ensureCss, confirmDialog } from '../ui.js';
 import { countNoun, APPROVALS_RU } from '../text-ru.js';
 // W26-D2: один стор запроса на всю страницу — «одно действие — везде».
 import { requestStoreFor, bindLive } from './request-store.js';
+// W27-E2 §1: состояния, причины закрытия и тихий 409 — одно мнение на всю страницу.
+import {
+  closedReasonText, isAlreadyDecided, isGone, staleSummary, needsYouCount,
+  dismissBody, restoreBody,
+} from './stale-model.js';
 
 export const APPROVALS_CSS = 'css/approvals.css';
 
@@ -61,10 +66,18 @@ export const APPROVAL_STATES = {
   granted_always: { label: APPROVALS_RU.states.granted_always, tone: 'ok' },
   denied: { label: APPROVALS_RU.states.denied, tone: 'danger' },
   expired: { label: APPROVALS_RU.states.expired, tone: 'muted' },
+  // W27-E2 §1: `closed` — сервер закрыл пункт сам (работа карточки закончена или
+  // запрос выполнен). Интерфейс ОБЯЗАН знать это состояние: дефект 18.11 вечером
+  // был ровно в том, что `closed` не значился в списке и строка рисовалась как
+  // `pending` — «ждёт вашего решения» без единого способа решить.
+  closed: { label: 'работа завершена', tone: 'muted' },
   // W26-D2: исходы «нельзя штатно» — у человека есть рычаги, и они видны словами.
   hinted: { label: 'подсказано участнику', tone: 'info' },
   dismissed: { label: 'закрыто как неактуальное', tone: 'muted' },
   acked: { label: 'скрыто', tone: 'muted' },
+  // W27-E2 §1: слово, которого интерфейс не знает, — НЕ «ждёт вас». Так безопаснее:
+  // счётчик и список не зовут решать то, о чём экран ничего не знает.
+  unknown: { label: 'состояние неизвестно', tone: 'muted' },
 };
 
 /** Что значит состояние — одна подсказка на все карточки. */
@@ -77,10 +90,15 @@ export const APPROVAL_STATE_HINTS = {
     + 'Отозвать можно в Настройках → Разрешения агентов.',
   denied: 'Вы запретили команду: участник будет искать другой способ.',
   expired: 'Время одноразового разрешения вышло — команда снова под вопросом.',
+  closed: 'Пункт закрыт сервером: работа карточки закончена (или запрос выполнен). '
+    + 'Решать здесь нечего — строка только для памяти; её можно вернуть кнопкой «Вернуть», '
+    + 'если пункт снова стал нужен.',
   hinted: 'Участнику отправлена подсказка в ветку карточки: сделать то же через файл и терминал. '
     + 'Блокировка снята с вас, работа продолжается.',
   dismissed: 'Пункт закрыт как неактуальный: ждать его некому, в счётчиках его нет.',
   acked: 'Строка убрана с экрана: это был не вопрос к вам, а информация о жёстком запрете.',
+  unknown: 'Экран не знает такого состояния — поэтому пункт не считается «ждёт вас». '
+    + 'Обновите страницу: если состояние свежее, оно появится.',
 };
 
 /** Вид команды человеческими словами (без техники). */
@@ -193,7 +211,29 @@ export function approvalActionsFor(a) {
       hint: APPROVALS_RU.alwaysHint },
     { action: 'deny', decision: 'deny', label: APPROVALS_RU.deny, tone: 'btn--ghost',
       hint: 'Участник не выполнит команду и будет искать другой способ' },
+    // W27-E2 §1: «Не актуально» есть у КАЖДОГО ждущего пункта, не только у
+    // «нельзя штатно». Счётчик обнуляется без «принятия решения» — с возвратом.
+    { action: 'dismiss', label: 'Не актуально', tone: 'btn--ghost',
+      hint: 'Убрать из «Нужен ваш ответ» и из счётчиков, не решая: пункт останется в «Закрытые», '
+        + 'и его можно вернуть одной кнопкой' },
   ];
+}
+
+/**
+ * Действия у пункта, который уже не ждёт человека (W27-E2 §1): «Вернуть».
+ * Закрытое сервером и снятое человеком возвращаются одним и тем же действием.
+ * @param {object} a запрос разрешения
+ * @returns {Array<{action:string,label:string,tone:string,hint:string}>}
+ */
+export function approvalStaleActions(a) {
+  if (!isRestorable(a)) return [];
+  const state = approvalState(a);
+  const why = closedReasonText(a) || (state === 'dismissed' ? 'закрыто как неактуальное' : '');
+  return [{
+    action: 'restore', label: 'Вернуть', tone: 'btn--ghost',
+    hint: 'Снова поставить пункт в «Нужен ваш ответ», если он опять нужен'
+      + (why ? ' — сейчас: ' + why : ''),
+  }];
 }
 
 
@@ -209,10 +249,21 @@ const LONG_COMMAND = 240;
 
 /* ─────────────────────────────────────────────── чистые помощники (тесты) */
 
-/** Состояние запроса: неизвестное значение считаем «ждёт» (лучше спросить). */
+/**
+ * Состояние запроса разрешения.
+ *
+ * W27-E2 §1 (дефект 1): раньше ЛЮБОЕ незнакомое слово считалось «ждёт» — и 20
+ * закрытых разрешений висели в счётчике как «27», а кнопки решений вели в 409.
+ * Теперь так: знаем слово — берём его; не знаем — `unknown` (не «ждёт вас»).
+ * Записи без `state` (старый сервер) и с `answered/decided_at` читаются как решённые.
+ */
 export function approvalState(a) {
-  const raw = String((a && (a.state || a.status)) || '').trim().toLowerCase();
-  return APPROVAL_STATES[raw] ? raw : 'pending';
+  const src = a && typeof a === 'object' ? a : {};
+  const raw = String(src.state || src.status || '').trim().toLowerCase();
+  if (raw && Object.prototype.hasOwnProperty.call(APPROVAL_STATES, raw)) return raw;
+  if (src.decided_at || src.answered === true || src.grant_scope) return 'granted_once';
+  if (src.card_state === 'done' || src.card_state === 'archived') return 'closed';
+  return 'unknown';
 }
 
 /** Запрос ещё ждёт решения человека. */
@@ -220,9 +271,42 @@ export function isPending(a) {
   return approvalState(a) === 'pending';
 }
 
+/** Пункт закрыт сервером (`closed`) — решать нечего, но можно вернуть. */
+export function isClosed(a) {
+  return approvalState(a) === 'closed';
+}
+
+/** Пункт можно вернуть в работу («Вернуть» у закрытого и снятого). */
+export function isRestorable(a) {
+  const state = approvalState(a);
+  return state === 'closed' || state === 'dismissed' || state === 'expired';
+}
+
 /** Только те, что ждут решения. */
 export function pendingApprovals(list) {
   return (Array.isArray(list) ? list : []).filter(isPending);
+}
+
+/** Закрытые сервером строки — для свёрнутого списка «Закрытые». */
+export function closedApprovals(list) {
+  return (Array.isArray(list) ? list : []).filter(isClosed);
+}
+
+/** Сколько строк у запроса закрыто и почему — для подписи свёрнутого списка. */
+export function closedSummary(list) {
+  const items = Array.isArray(list) ? list.filter(isClosed) : [];
+  const reasons = new Map();
+  for (const a of items) {
+    const text = closedReasonText(a) || 'работа завершена';
+    reasons.set(text, (reasons.get(text) || 0) + 1);
+  }
+  // Одна причина — говорим её без числа (число уже в «Закрытые: N запросов»);
+  // несколько причин — с числами, чтобы было видно, чего больше.
+  const many = reasons.size > 1;
+  const detail = Array.from(reasons.entries())
+    .map(([text, n]) => (many ? text + ' · ' + String(n) : text))
+    .join(', ');
+  return { count: items.length, text: detail };
 }
 
 /**
@@ -434,8 +518,12 @@ export function grantsSummary(items) {
 
 /* ─────────────────────────────────────────────────────────── вид карточки */
 
+function stateMeta(state) {
+  return APPROVAL_STATES[state] || APPROVAL_STATES.unknown;
+}
+
 function chipTone(state) {
-  return (APPROVAL_STATES[state] || APPROVAL_STATES.pending).tone;
+  return stateMeta(state).tone;
 }
 
 function stateChip(state, deadEnd) {
@@ -449,7 +537,7 @@ function stateChip(state, deadEnd) {
       title: 'Это не вопрос к вам: ' + DEAD_END_RU.floor.hint,
     }, 'информация');
   }
-  const meta = APPROVAL_STATES[state] || APPROVAL_STATES.pending;
+  const meta = stateMeta(state);
   return h('span', {
     class: 'chip chip--' + meta.tone + ' ap__state',
     'data-ap-state': state,
@@ -635,15 +723,16 @@ export function approvalCard(approval, opts = {}) {
   /** Подменить кнопки итогом: человек видит, что решение принято, сразу. */
   function showResult(text, tone) {
     result.replaceChildren(h('div', { class: 'ap__result-line ap__result-line--' + (tone || 'ok') },
-      icon(tone === 'danger' ? 'circle-slash' : 'check', { size: 12 }),
+      icon(tone === 'danger' ? 'circle-slash' : tone === 'muted' ? 'history' : 'check', { size: 12 }),
       h('span', null, text)));
     actions.replaceChildren();
     const chip = node.querySelector ? node.querySelector('.ap__state') : null;
     if (chip) {
-      chip.setAttribute('class', 'chip chip--' + chipTone(state) + ' ap__state');
+      const meta = stateMeta(state);
+      chip.setAttribute('class', 'chip chip--' + meta.tone + ' ap__state');
       chip.setAttribute('data-ap-state', state);
-      chip.setAttribute('title', 'Состояние: ' + (APPROVAL_STATES[state] || APPROVAL_STATES.pending).label);
-      chip.textContent = (APPROVAL_STATES[state] || APPROVAL_STATES.pending).label;
+      chip.setAttribute('title', 'Состояние: ' + meta.label);
+      chip.textContent = meta.label;
     }
     node.setAttribute('data-ap-state', state);
     node.setAttribute('class', 'ap ap--' + state + (compact ? ' ap--compact' : '')
@@ -651,6 +740,22 @@ export function approvalCard(approval, opts = {}) {
     const extra = stateHint(state);
     if (extra) body.appendChild(extra);
   }
+
+  /**
+   * Итог «пункт уже решён» (W27-E2 §1): не ошибка человека, а устаревший экран.
+   * Никаких красных плашек: чип меняется на «состояние уточняется», а стор
+   * перечитывает сервер — строка уходит в «Закрытые» сама.
+   */
+  function settleDecided(err) {
+    errorBox.replaceChildren();
+    state = 'unknown';
+    showResult('Уже решено — обновляю состояние', 'muted');
+    node.setAttribute('data-ap-conflict', 'already_decided');
+    if (typeof opts.onConflict === 'function') {
+      try { opts.onConflict(err); } catch { /* сверка — не условие работы */ }
+    }
+  }
+
 
   /** Одно нажатие = один запрос. Пока идёт — кнопки выключены. */
   async function run(decision) {
@@ -672,14 +777,15 @@ export function approvalCard(approval, opts = {}) {
       showResult(decisionResultText(decision, res, a), decision === 'deny' ? 'danger' : 'ok');
     } catch (err) {
       setBusy(false);
+      // W27-E2 §1: 409 already_decided — тихая перерисовка, НЕ красная плашка.
+      if (isAlreadyDecided(err)) {
+        settleDecided(err);
+        return;
+      }
       const text = approvalErrorText(err);
       errorBox.replaceChildren(h('div', { class: 'ap__error-line' }, icon('warning', { size: 12 }),
         h('span', null, text)));
-      // 409: итог уже известен — страница обновится по опросу, кнопки гасим.
-      if (Number(err && err.status) === 409) {
-        state = 'expired';
-        setBusy(false);
-      }
+      if (isGone(err)) state = 'unknown';
       if (typeof opts.toast === 'function') opts.toast(text, 'danger');
     }
   }
@@ -712,20 +818,28 @@ export function approvalCard(approval, opts = {}) {
 
   /** Действие по блокировке, которую нельзя снять разрешением (W26 §D1). */
   async function runOther(action, extra) {
-    if (busy || state !== 'pending') return;
+    if (busy) return;
+    // «Вернуть» доступно и у закрытого пункта — состояние не `pending`.
+    if (action !== 'restore' && state !== 'pending') return;
     setBusy(true);
     errorBox.replaceChildren();
     try {
       const res = typeof opts.onAction === 'function' ? await opts.onAction(a, action, extra) : { ok: true };
       state = { hint_agent: 'hinted', dismiss: 'dismissed', ack: 'acked',
-        trust_profile: 'granted_always' }[action] || 'pending';
+        trust_profile: 'granted_always', restore: 'pending' }[action] || 'pending';
       if (res && res.approval && res.approval.state && APPROVAL_STATES[res.approval.state]) {
         state = String(res.approval.state);
       }
       showResult(actionResultText(action, extra, res),
         action === 'dismiss' || action === 'ack' ? 'muted' : 'ok');
+      // «Вернуть» возвращает кнопки решений — пункт снова ждёт человека.
+      if (action === 'restore') paintActions();
     } catch (err) {
       setBusy(false);
+      if (isAlreadyDecided(err)) {
+        settleDecided(err);
+        return;
+      }
       const text = approvalErrorText(err);
       errorBox.replaceChildren(h('div', { class: 'ap__error-line' }, icon('warning', { size: 12 }),
         h('span', null, text)));
@@ -771,7 +885,27 @@ export function approvalCard(approval, opts = {}) {
   /** Кнопки пункта: по одному набору на каждый вид блокировки. */
   function paintActions() {
     actions.replaceChildren();
-    if (state !== 'pending') return;
+    // W27-E2 §1: у закрытого/снятого пункта тоже есть действие — «Вернуть».
+    if (state !== 'pending') {
+      const stale = approvalStaleActions(Object.assign({}, a, { state }));
+      if (!stale.length) return;
+      for (const item of stale) {
+        const btn = h('button', {
+          type: 'button',
+          class: 'btn btn--sm ' + item.tone + ' ap__act ap__act--restore',
+          'data-action': 'approval-' + item.action,
+          'data-ap-state': state,
+          title: item.hint,
+          'aria-label': item.label + ': ' + approvalHeadline(a),
+        }, icon('history', { size: 12 }), item.label);
+        btn.addEventListener('click', (ev) => {
+          if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+          runOther(item.action, {});
+        });
+        actions.appendChild(btn);
+      }
+      return;
+    }
     if (!canAct) {
       actions.appendChild(h('div', { class: 'ap__hint small muted' },
         'Действия доступны на странице запроса.'));
@@ -833,6 +967,12 @@ export function stateLine(a, state) {
   if (st === 'acked') return 'Скрыто';
   if (st === 'denied') return 'Запрещено — участник будет искать другой способ';
   if (st === 'expired') return 'Срок разрешения истёк — участник снова спросит';
+  // W27-E2 §1: закрытое сервером — с причиной словами, а не «ждёт вашего решения».
+  if (st === 'closed') {
+    const why = closedReasonText(a);
+    return 'Закрыто автоматически' + (why ? ' — ' + why : ' — работа завершена');
+  }
+  if (st === 'unknown') return 'Состояние уточняется — обновите страницу';
   return 'Ждёт вашего решения';
 }
 
@@ -1028,6 +1168,30 @@ export function createApprovals(R = {}) {
     return Array.isArray(R.detail && R.detail.approvals) ? R.detail.approvals : [];
   }
 
+  /** Тот же тост, что у страницы: массовое закрытие говорит о результате. */
+  const optsToast = toast;
+
+  /**
+   * «Закрыть все неактуальные» (W27-E2 §1): неактуальное у завершённых запросов
+   * комнаты. Через стор, если он умеет, иначе — прямым запросом.
+   * @returns {Promise<{closed:{questions:number,decisions:number,approvals:number,steps:number}}>}
+   */
+  function dismissStale() {
+    if (store && typeof store.dismissStale === 'function') {
+      return store.dismissStale().then((res) => {
+        afterServer();
+        return res;
+      });
+    }
+    if (!api || typeof api.post !== 'function') throw new Error('Нет связи с приложением');
+    const room = roomId || String((ctx.room && ctx.room.id) || '');
+    return api.post('/api/rooms/' + encodeURIComponent(room) + '/dismiss_stale',
+      { scope: 'finished_requests' }).then((res) => {
+      if (refresh) refresh({ force: true, quiet: true }).catch(() => {});
+      return res;
+    });
+  }
+
   /** Догнать состояние страницы после ответа сервера (тихо, без экрана загрузки). */
   function afterServer() {
     if (!store || typeof store.sync !== 'function') return;
@@ -1052,9 +1216,27 @@ export function createApprovals(R = {}) {
 
   /**
    * Действие по блокировке, которую нельзя снять разрешением
-   * (`hint_agent` / `trust_profile` / `dismiss` / `ack`) — W26 §D1.
+   * (`hint_agent` / `trust_profile` / `dismiss` / `ack` / `restore`) — W26 §D1, §1 W27.
    */
   function act(a, action, extra) {
+    const id = String((a && a.id) || '');
+    // W27-E2 §1: «Не актуально» и «Вернуть» — общий контракт `target:{kind,id}`,
+    // один и тот же для вопроса, решения и разрешения.
+    if (action === 'restore' || action === 'dismiss') {
+      const body = action === 'restore' ? restoreBody('approval', id) : dismissBody('approval', id);
+      if (store && typeof store.targetAction === 'function') {
+        return store.targetAction('approvals', id, action).then((res) => {
+          afterServer();
+          return res;
+        });
+      }
+      if (!api) throw new Error('Нет связи с приложением');
+      return api.post('/api/requests/' + encodeURIComponent(rid) + '/actions', body)
+        .then((res) => {
+          if (refresh) refresh({ force: true, quiet: true }).catch(() => {});
+          return res;
+        });
+    }
     if (store) {
       return store.approvalAction(a, action, extra).then((res) => {
         if (action !== 'ack') afterServer();
@@ -1082,6 +1264,8 @@ export function createApprovals(R = {}) {
       toast,
       onDecide: (decision) => decide(a, decision),
       onAction: (item, action, extra) => act(item || a, action, extra),
+      // W27-E2 §1: 409 — не ошибка, а «перерисуйся»: тихая сверка со сервером.
+      onConflict: () => afterServer(),
     });
   }
 
@@ -1103,26 +1287,45 @@ export function createApprovals(R = {}) {
   function paintBlock(block) {
     block.replaceChildren();
     const list = all();
+    const detail = (store && store.get().detail) || R.detail || null;
     // W26-D2: «скрыто» (ack) — строка только для этого экрана, в список не идёт.
     const visible = list.filter((a) => approvalState(a) !== 'acked');
     const waiting = waitingApprovals(visible);
     const floor = floorApprovals(visible);
-    const done = visible.filter((a) => !isPending(a));
-    block.setAttribute('class', 'card ap-block' + (waiting.length ? ' ap-block--active' : '')
-      + (floor.length && !waiting.length ? ' ap-block--info' : ''));
+    // W27-E2 §1: закрытые сервером — отдельно от решённых человеком: у них причина.
+    const closed = closedApprovals(visible);
+    const done = visible.filter((a) => !isPending(a) && !isClosed(a));
+    // W27-E2 §1: число в шапке блока — с сервера (`needs_you_count.approvals`),
+    // а не пересчитанное по списку. Список и число не должны спорить: именно
+    // расхождение дало «27» из 20 закрытых разрешений.
+    const server = needsYouCount(detail);
+    const count = server ? server.approvals : waiting.length;
+    const stale = staleSummary(detail || {}, { isWaiting });
+    block.setAttribute('class', 'card ap-block' + (count ? ' ap-block--active' : '')
+      + (floor.length && !count ? ' ap-block--info' : ''));
     block.appendChild(h('div', { class: 'ap-block__head' },
       h('div', { class: 'ap-block__title-row' },
         h('span', { class: 'ap-block__title' }, icon('shield', { size: 15 }), APPROVALS_RU.requestTitle),
-        waiting.length
-          ? h('span', { class: 'chip chip--warn ap-block__count tnum', title: approvalsWaitingLabel(waiting.length) },
-            String(waiting.length))
-          : h('span', { class: 'chip chip--muted ap-block__count' }, 'все решены')),
+        count
+          ? h('span', {
+            class: 'chip chip--warn ap-block__count tnum',
+            'data-needs-you': 'approvals',
+            title: approvalsWaitingLabel(count) + (server ? ' (по счёту сервера)' : ''),
+          }, String(count))
+          : h('span', { class: 'chip chip--muted ap-block__count', 'data-needs-you': 'approvals' },
+            'все решены')),
       h('p', { class: 'ap-block__lead small muted' },
-        waiting.length
+        count
           ? 'Участник упёрся в запрет Hermes: команда помечена как опасная, а запуск без человека '
             + 'не может спросить сам. У каждого пункта есть действие — после него работа продолжится.'
           : 'Запросы разрешений по этой карточке уже решены. Отозвать постоянные разрешения можно '
             + 'в Настройках → Разрешения агентов.')));
+
+    // W27-E2 §1: массовое «Закрыть все неактуальные (N)» — только у завершённого
+    // запроса: сервер закрывает неактуальное и не трогает решённое человеком.
+    if (stale.finished && stale.total > 0) {
+      block.appendChild(staleRow(stale.total));
+    }
 
     if (waiting.length) {
       const box = h('div', { class: 'ap-block__list ap-block__list--live', 'data-approvals-live': '' });
@@ -1140,6 +1343,24 @@ export function createApprovals(R = {}) {
       block.appendChild(box);
     }
 
+    // «Закрытые» — свёрнутый список с причиной (дефект 1: 20 закрытых разрешений
+    // висели как «ждёт вашего решения»; теперь они здесь и молчат).
+    if (closed.length) {
+      const box = h('div', { class: 'ap-block__list ap-block__list--closed', 'data-approvals-closed': '' });
+      for (const a of closed) box.appendChild(cardFor(a, false));
+      const why = closedSummary(closed).text;
+      block.appendChild(h('details', { class: 'ap-block__done ap-block__closed', 'data-ap-closed': String(closed.length) },
+        h('summary', { class: 'ap-block__done-sum small muted' },
+          icon('chevron-right', { size: 11 }),
+          'Закрытые: ' + countNoun(closed.length, ['запрос', 'запроса', 'запросов']),
+          why ? h('span', { class: 'ap-block__closed-why' }, ' · ' + why) : null),
+        h('p', { class: 'ap-block__closed-hint small muted' },
+          'Закрыто сервером: работа карточки закончена. У каждого пункта есть «Вернуть», '
+          + 'если он снова стал нужен.'),
+        box));
+      return;
+    }
+
     if (done.length) {
       const box = h('div', { class: 'ap-block__list ap-block__list--done' });
       for (const a of done) box.appendChild(cardFor(a, false));
@@ -1153,6 +1374,49 @@ export function createApprovals(R = {}) {
         block.appendChild(box);
       }
     }
+  }
+
+  /**
+   * Строка «Закрыть все неактуальные (N)» (W27-E2 §1).
+   * Закрывает неактуальные пункты завершённых запросов комнаты и не трогает
+   * решённое человеком. Ответ `{closed:{questions,decisions,approvals,steps}}`.
+   */
+  function staleRow(total) {
+    const text_ = h('div', { class: 'ap-block__stale-text small muted' },
+      icon('history', { size: 12 }),
+      h('span', null, 'Работа по запросу закончена — неактуальные пункты можно закрыть разом: '
+        + 'счётчик «ждёт вас» обнулится, решённое человеком останется.'));
+    const btn = h('button', {
+      type: 'button', class: 'btn btn--secondary btn--sm ap-block__stale-btn',
+      'data-action': 'dismiss-stale',
+      title: 'Закрыть неактуальное у всех завершённых запросов комнаты (с возвратом)',
+    }, icon('circle-x', { size: 12 }), 'Закрыть все неактуальные (' + String(total) + ')');
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      try {
+        const res = await dismissStale();
+        const closedN = res && res.closed
+          ? [res.closed.questions, res.closed.decisions, res.closed.approvals, res.closed.steps]
+            .reduce((sum, n) => sum + (Number(n) || 0), 0)
+          : 0;
+        if (typeof optsToast === 'function') {
+          optsToast(closedN
+            ? 'Закрыто неактуальных: ' + String(closedN) + ' — вернуть можно в «Закрытые»'
+            : 'Неактуальных пунктов не осталось', 'ok');
+        }
+        afterServer();
+      } catch (err) {
+        btn.disabled = false;
+        if (isAlreadyDecided(err)) return;
+        if (typeof optsToast === 'function') {
+          optsToast(String((err && err.message) || 'Не удалось закрыть неактуальные'), 'danger');
+        }
+      }
+    });
+    return h('div', {
+      class: 'ap-block__stale', role: 'group', 'aria-label': 'Неактуальные пункты',
+    }, text_, btn);
   }
 
   /**

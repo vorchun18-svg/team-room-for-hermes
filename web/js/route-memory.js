@@ -64,6 +64,93 @@ export function isRouteHash(hash) {
   return Boolean(h) && !isBareHash(h);
 }
 
+/* ─────────────────────────────────────────── W27-E4: «Стартовая страница» */
+
+/** Ключ localStorage: что открывать при запуске приложения. */
+export const START_KEY = 'teamroom.start';
+/** «Сегодня» — свод по всем комнатам (умолчание). */
+export const START_TODAY = 'today';
+/** «Комнаты» — обзор комнат (`#/`). */
+export const START_ROOMS = 'rooms';
+/** «Последнее место» — маршрут, на котором человек остановился. */
+export const START_LAST = 'last';
+
+/** Значения стартовой страницы — один список на настройки, каркас и тесты. */
+export const START_OPTIONS = [
+  { value: START_TODAY, label: 'Сегодня', hint: 'свод: что ждёт вас и что идёт' },
+  { value: START_ROOMS, label: 'Комнаты', hint: 'список комнат и быстрый запрос' },
+  { value: START_LAST, label: 'Последнее место', hint: 'там, где вы остановились' },
+];
+
+/**
+ * Привести значение стартовой страницы к известному.
+ * Старые записи (`'last'` / `'today'`) читаются как есть; мусор → «Сегодня».
+ * @param {*} value
+ * @returns {'today'|'rooms'|'last'}
+ */
+export function normalizeStartPref(value) {
+  const v = String(value == null ? '' : value).trim();
+  if (v === START_ROOMS) return START_ROOMS;
+  if (v === START_LAST) return START_LAST;
+  return START_TODAY;
+}
+
+/**
+ * Какой адрес открыть при запуске — ОДНО решение до первой отрисовки (W27-E4).
+ *
+ * Правила (дефект 3: «страница прыгает», «на `#/` ничто не ведёт»):
+ *   1. явный адрес в строке (`#/room/…`, `#/today`, `#/settings`) сильнее настройки;
+ *   2. явный «дом» `#/` НИКОГДА не перекидывается — человек сам открыл «Комнаты»;
+ *   3. пустой адрес (`''`, `'#'`) — стартовая страница из настроек:
+ *      «Комнаты» → `#/`, «Последнее место» → память маршрута, «Сегодня» → `#/today`;
+ *   4. «Сегодня» без списка комнат решать нечем — `ready:false`, каркас показывает
+ *      заглушку и ждёт `/api/rooms` (адрес при этом не меняется).
+ *
+ * @param {{urlHash?:string, startPref?:string, stored?:object|string|null,
+ *          roomIds?:string[]|null, tabIds?:string[], requestOk?:boolean|null,
+ *          defaultRoom?:string, defaultTab?:string}} opts
+ * @returns {{hash:string, ready:boolean, why:string}}
+ */
+export function planStart(opts = {}) {
+  const o = opts || {};
+  const rawUrl = String(o.urlHash == null ? '' : o.urlHash).trim();
+  const pref = normalizeStartPref(o.startPref);
+  const roomIds = Array.isArray(o.roomIds) ? o.roomIds : null;
+  const base = {
+    stored: o.stored,
+    roomIds: roomIds || [],
+    tabIds: o.tabIds,
+    requestOk: o.requestOk,
+    defaultRoom: o.defaultRoom,
+    defaultTab: o.defaultTab,
+  };
+
+  // 1. Явный маршрут в адресе — deep link, настройка его не перебивает.
+  if (!isBareHash(rawUrl)) {
+    return {
+      hash: chooseHash(Object.assign({}, base, { urlHash: rawUrl })),
+      ready: true,
+      why: 'deep-link',
+    };
+  }
+  // 2. Явный «дом»: остаёмся на «Комнатах», даже если стартовая — «Сегодня».
+  if (rawUrl === '#/') return { hash: '#/', ready: true, why: 'explicit-home' };
+
+  // 3. Пустой адрес — решает настройка.
+  if (pref === START_ROOMS) return { hash: '#/', ready: true, why: 'pref-rooms' };
+  if (pref === START_LAST) {
+    return {
+      hash: chooseHash(Object.assign({}, base, { urlHash: '' })),
+      ready: true,
+      why: 'pref-last',
+    };
+  }
+  // 4. «Сегодня»: без списка комнат решение неполное (пустой свод бессмыслен).
+  if (!roomIds) return { hash: '', ready: false, why: 'wait-rooms' };
+  if (!roomIds.length) return { hash: '#/', ready: true, why: 'pref-today-no-rooms' };
+  return { hash: '#/today', ready: true, why: 'pref-today' };
+}
+
 function decode(part) {
   try { return decodeURIComponent(part); } catch { return part; }
 }

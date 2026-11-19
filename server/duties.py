@@ -29,10 +29,12 @@ from pathlib import Path
 try:                                     # import server.duties
     from . import rooms as rooms_mod
     from . import worklog as worklog_mod
+    from . import proc as proc_mod
     from .http_util import mask_secrets
 except ImportError:                      # python server/app.py (плоский импорт)
     import rooms as rooms_mod            # type: ignore
     import worklog as worklog_mod        # type: ignore
+    import proc as proc_mod              # type: ignore
     from http_util import mask_secrets   # type: ignore
 
 #: Сколько знаков вывода показываем как «краткий итог».
@@ -900,7 +902,8 @@ def week(cfg, room=None, now: int | None = None, start=None) -> dict:
 # --------------------------------------------------- действия (W26-D8, по клику)
 
 #: Действие → аргумент штатного CLI Hermes (`hermes cron <…>`).
-CLI_ACTIONS = {"run": "run", "pause": "pause", "resume": "resume"}
+CLI_ACTIONS = {"run": "run", "pause": "pause", "resume": "resume",
+               "remove": "remove"}
 #: Все действия маршрута.
 ACTIONS = ("run", "pause", "resume", "bind", "unbind", "schedule")
 ACTION_LABELS = {"run": "Запустить сейчас", "pause": "Пауза", "resume": "Возобновить",
@@ -955,16 +958,18 @@ def _default_runner(cfg):
         if home not in ("", "."):
             env["HERMES_HOME"] = home
         try:
-            proc = subprocess.run([binary] + list(args), capture_output=True, text=True,
-                                  timeout=ACTION_TIMEOUT_S, env=env, shell=False)
+            # W26-QA1: запуск только через server/proc.py — он один ставит «без окна»
+            # (CREATE_NO_WINDOW) и запрещает shell. Прямой subprocess.run мигал консолью.
+            done = proc_mod.run([binary] + list(args), capture_output=True, text=True,
+                                timeout=ACTION_TIMEOUT_S, env=env)
         except FileNotFoundError:
             return {"code": 127, "out": "", "err": "команда hermes не найдена"}
         except subprocess.TimeoutExpired:
             return {"code": 124, "out": "", "err": "команда не ответила за %d с" % ACTION_TIMEOUT_S}
         except OSError as exc:
             return {"code": 126, "out": "", "err": str(exc)[:200]}
-        return {"code": int(proc.returncode), "out": str(proc.stdout or "").strip()[:400],
-                "err": str(proc.stderr or "").strip()[:400]}
+        return {"code": int(done.returncode), "out": str(done.stdout or "").strip()[:400],
+                "err": str(done.stderr or "").strip()[:400]}
 
     return run
 
@@ -1133,11 +1138,733 @@ def act(cfg, room, job_id, action, *, confirm=False, schedule="", runner=None,
     return out
 
 
+# --------------------------------------- создание, правка, удаление (W27-E7)
+
+#: Шаги мастера: что проверять (``model|script|monitor``), когда, что считать
+#: изменением, что делать. Крон создаётся только по «предпросмотр → да».
+KIND_TITLES = {"model": "Модель по заданию", "script": "Скрипт без модели",
+               "monitor": "Слежение за изменением"}
+SCHEDULE_HINTS = ("30m", "every 2h", "0 9 * * 1-5", "*/15 * * * *", "every day at 9am")
+PROMPT_MAX = 4000
+NAME_MAX = 120
+#: Сколько знаков задания показываем в карточке.
+PROMPT_SHOW = 400
+
+_CRON_FIELD_RE = re.compile(r"^[0-9*/,\-]+$")
+_SHORT_STEP_RE = re.compile(r"^(\d+)\s*(s|m|h|d)$", re.I)
+_EVERY_RE = re.compile(r"^every\s+(\d+)\s*(s|m|h|d)$", re.I)
+_EVERY_AT_RE = re.compile(r"^every\s+day\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$", re.I)
+_SCRIPT_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
+
+
+def normalize_schedule(value) -> str:
+    """Расписание для `hermes cron`: cron-выражение, «30m», «every 2h», «every day at 9am»."""
+    text = " ".join(str(value or "").split())
+    if not text:
+        raise DutiesError("Нужно расписание — например «0 9 * * 1-5» или «every 2h»",
+                          400, "schedule_required",
+                          {"field": "schedule", "examples": list(SCHEDULE_HINTS)})
+    if len(text) > 80:
+        raise DutiesError("Расписание слишком длинное", 400, "bad_request",
+                          {"field": "schedule", "limit": 80})
+    parts = text.split()
+    if len(parts) == 5:
+        for part in parts:
+            if not _CRON_FIELD_RE.fullmatch(part) or len(part) > 20:
+                raise DutiesError("Расписание не разобрать: «%s»" % text, 400, "bad_request",
+                                  {"field": "schedule", "examples": list(SCHEDULE_HINTS)})
+        return text
+    if _SHORT_STEP_RE.fullmatch(text) or _EVERY_RE.fullmatch(text) or _EVERY_AT_RE.fullmatch(text):
+        return text
+    if text.lower().startswith("every "):
+        if _INTERVAL_RE.fullmatch(text.lower()):
+            return text
+    raise DutiesError("Расписание не разобрать: «%s»" % text, 400, "bad_request",
+                      {"field": "schedule", "examples": list(SCHEDULE_HINTS)})
+
+
+def _kind(payload: dict) -> str:
+    """Вид задания по полям мастера (по умолчанию — модель по заданию)."""
+    raw = str(payload.get("kind") or "").strip().lower()
+    if raw in KIND_TITLES:
+        return raw
+    if payload.get("monitor_script") or payload.get("monitor_url"):
+        return "monitor"
+    if payload.get("script") and payload.get("no_agent"):
+        return "script"
+    return "model"
+
+
+def _script(value, field: str = "script") -> str:
+    """Имя скрипта в каталоге скриптов Hermes: без путей и переходов вверх."""
+    name = str(value or "").strip().replace("\\", "/")
+    if not name:
+        return ""
+    if "/" in name or name.startswith(".") or ".." in name:
+        raise DutiesError("Скрипт указывается именем файла из каталога скриптов Hermes "
+                          "(например room-mail.sh), без путей", 400, "bad_request",
+                          {"field": field, "value": name[:80]})
+    if not _SCRIPT_RE.fullmatch(name):
+        raise DutiesError("Недопустимое имя скрипта", 400, "bad_request",
+                          {"field": field, "value": name[:80]})
+    return name
+
+
+def _workdir(cfg, room, value) -> str:
+    """Рабочая папка задания: абсолютный путь без переходов вверх, внутри комнаты."""
+    text = str(value or "").strip().strip('"')
+    if not text:
+        return ""
+    if len(text) > 260:
+        raise DutiesError("Путь рабочей папки слишком длинный", 400, "bad_request",
+                          {"field": "workdir", "limit": 260})
+    if ".." in text.replace("\\", "/").split("/"):
+        raise DutiesError("В пути рабочей папки нельзя «..»", 400, "bad_request",
+                          {"field": "workdir"})
+    if not (re.match(r"^[A-Za-z]:[\\/]", text) or text.startswith("/")):
+        raise DutiesError("Нужен полный путь рабочей папки", 400, "bad_request",
+                          {"field": "workdir", "examples": ["C:/Work/Rooms/demo"]})
+    try:                                  # реальная проверка прав — если конфиг настоящий
+        import config as cfg_mod          # type: ignore
+        if hasattr(cfg_mod, "path_allowed"):
+            allowed = cfg_mod.path_allowed(cfg, text)
+            if allowed is None:
+                raise DutiesError("Рабочая папка вне разрешённых мест комнаты", 422,
+                                  "path_denied", {"field": "workdir", "value": text[:200]})
+    except DutiesError:
+        raise
+    except Exception:                     # noqa: BLE001 - проверка прав необязательна
+        pass
+    return text
+
+
+def _prompt_with_contract(prompt: str) -> str:
+    """Задание + контракт исполнителя (блок `результат`), если его ещё нет."""
+    text = str(prompt or "").strip()
+    marker = "```результат"
+    if marker in text:
+        return text
+    try:
+        from . import contract as contract_mod
+    except ImportError:                   # pragma: no cover - плоский импорт
+        try:
+            import contract as contract_mod   # type: ignore
+        except ImportError:
+            return text
+    block = contract_mod.duty_result_block()
+    return (text + "\n\n" + block).strip() if text else block
+
+
+def wizard_payload(cfg, room, payload: dict) -> dict:
+    """Проверить поля мастера и собрать одно описание дежурства (без вызова CLI)."""
+    data = payload if isinstance(payload, dict) else {}
+    name = " ".join(str(data.get("title") or data.get("name") or "").split())[:NAME_MAX].strip()
+    if not name:
+        raise DutiesError("Нужно название дежурства", 400, "bad_request",
+                          {"missing": ["title"]})
+    kind = _kind(data)
+    schedule = normalize_schedule(data.get("schedule"))
+    prompt = str(data.get("prompt") or data.get("task") or "").strip()
+    script = _script(data.get("script"), "script")
+    monitor_script = _script(data.get("monitor_script"), "monitor_script")
+    monitor_url = str(data.get("monitor_url") or "").strip()
+    if monitor_url and not re.match(r"^https?://[^\s]+$", monitor_url):
+        raise DutiesError("Нужен адрес вида https://…", 400, "bad_request",
+                          {"field": "monitor_url"})
+    if kind == "script" and not script:
+        raise DutiesError("Для дежурства-скрипта нужен скрипт (например room-mail.sh)",
+                          400, "bad_request", {"missing": ["script"]})
+    if kind == "monitor" and not (monitor_script or monitor_url):
+        raise DutiesError("Для слежения нужен скрипт или адрес страницы", 400, "bad_request",
+                          {"missing": ["monitor_script|monitor_url"]})
+    if kind in ("model", "monitor") and not prompt:
+        raise DutiesError("Нужно задание — что именно проверять", 400, "bad_request",
+                          {"missing": ["prompt"]})
+    if len(prompt) > PROMPT_MAX:
+        raise DutiesError("Задание слишком длинное: до %d знаков" % PROMPT_MAX, 400,
+                          "bad_request", {"field": "prompt", "limit": PROMPT_MAX})
+    skills = data.get("skills")
+    skills = [str(one).strip()[:60] for one in skills if str(one or "").strip()] \
+        if isinstance(skills, list) else []
+    out = {
+        "title": name,
+        "kind": kind,
+        "schedule": schedule,
+        "schedule_human": schedule_human(schedule),
+        "prompt": _prompt_with_contract(prompt) if prompt else "",
+        "prompt_short": _trim(prompt, PROMPT_SHOW),
+        "script": script,
+        "monitor_script": monitor_script,
+        "monitor_url": monitor_url,
+        "workdir": _workdir(cfg, room, data.get("workdir")),
+        "skills": skills[:6],
+        "model": str(data.get("model") or "").strip()[:80],
+        "provider": str(data.get("provider") or "").strip()[:40],
+        "catch_up": data.get("catch_up") if isinstance(data.get("catch_up"), bool) else None,
+        "continuity": bool(data.get("continuity", True)),
+        "paused": bool(data.get("paused")),
+        "room": str((room or {}).get("id") or ""),
+        "deliver": "room:%s" % str((room or {}).get("id") or ""),
+        "changed_rule": " ".join(str(data.get("changed_rule") or "").split())[:300],
+        "on_change": str(data.get("on_change") or "inbox").strip().lower(),
+        "level": str(data.get("level") or "propose").strip().lower(),
+        "notify": list(data.get("notify") or []) if isinstance(data.get("notify"), list) else [],
+        "source": str(data.get("source") or "manual").strip().lower(),
+        "template": str(data.get("template") or "").strip()[:40],
+    }
+    if not out["room"]:
+        raise DutiesError("Дежурство создаётся внутри комнаты", 400, "room_required")
+    return out
+
+
+def create_argv(ready: dict) -> list[str]:
+    """Точная команда `hermes cron create …` для готового описания (без запуска)."""
+    argv = ["cron", "create", ready["schedule"]]
+    if ready.get("prompt") and ready["kind"] in ("model", "monitor"):
+        argv.append(ready["prompt"])
+    if ready.get("name") or ready.get("title"):
+        argv += ["--name", ready.get("title") or ""]
+    if ready.get("deliver"):
+        argv += ["--deliver", ready["deliver"]]
+    if ready["kind"] == "script":
+        argv += ["--script", ready["script"], "--no-agent"]
+    if ready.get("monitor_script"):
+        argv += ["--monitor-script", ready["monitor_script"]]
+    if ready.get("monitor_url"):
+        argv += ["--monitor-url", ready["monitor_url"]]
+    if ready.get("workdir"):
+        argv += ["--workdir", ready["workdir"]]
+    for skill in ready.get("skills") or []:
+        argv += ["--skill", skill]
+    if ready.get("catch_up") is True:
+        argv += ["--catch-up", "on"]
+    elif ready.get("catch_up") is False:
+        argv += ["--catch-up", "off"]
+    if ready.get("continuity"):
+        argv.append("--continuity")
+    if ready.get("model"):
+        argv += ["--model", ready["model"]]
+    if ready.get("provider"):
+        argv += ["--provider", ready["provider"]]
+    if ready.get("paused"):
+        argv.append("--paused")
+    return argv
+
+
+def edit_argv(job_id: str, ready: dict, changed: set) -> list[str]:
+    """`hermes cron edit <id> …` — только те поля, что человек действительно менял."""
+    argv = ["cron", "edit", str(job_id)]
+    if "schedule" in changed:
+        argv += ["--schedule", ready["schedule"]]
+    if "prompt" in changed:
+        argv += ["--prompt", ready["prompt"]]
+    if "title" in changed:
+        argv += ["--name", ready["title"]]
+    if "workdir" in changed:
+        argv += ["--workdir", ready["workdir"]]
+    if "monitor_script" in changed:
+        argv += ["--monitor-script", ready["monitor_script"]]
+    if "monitor_url" in changed:
+        argv += ["--monitor-url", ready["monitor_url"]]
+    return argv
+
+
+def argv_display(argv) -> str:
+    """Команда для человека: с кавычками вокруг аргументов с пробелами."""
+    parts = [cli_bin()]
+    for arg in argv or []:
+        text = str(arg)
+        parts.append('"%s"' % text.replace('"', "'") if (" " in text or "\n" in text) else text)
+    return " ".join(parts)
+
+
+def _changes(ready: dict) -> list[str]:
+    """Что изменится — списком по-русски (для предпросмотра)."""
+    out = ["В Hermes появится задание «%s»." % ready["title"],
+           "Расписание: %s (%s)." % (ready["schedule_human"], ready["schedule"]),
+           "Вид: %s." % KIND_TITLES.get(ready["kind"], ready["kind"])]
+    if ready["kind"] == "script":
+        out.append("Запускается скрипт %s без модели (дешево, без токенов)." % ready["script"])
+    if ready.get("monitor_script") or ready.get("monitor_url"):
+        what = ready.get("monitor_script") or ready.get("monitor_url")
+        out.append("Слежение за «%s»: если ничего не изменилось, модель не запускается." % what)
+        if ready.get("continuity"):
+            out.append("Каждый запуск видит итог прошлого («что изменилось с прошлого раза»).")
+    if ready.get("workdir"):
+        out.append("Рабочая папка: %s." % ready["workdir"])
+    out.append("Итог запуска придёт в комнату (deliver room:%s)." % ready["room"])
+    out.append("При изменении: %s." % {"log": "только запись в журнал",
+                                      "inbox": "карточка в «Входящие»",
+                                      "delo": "предложение создать Дело",
+                                      "step": "предложение шага в Деле",
+                                      "question": "вопрос вам"}.get(ready["on_change"],
+                                                                    ready["on_change"]))
+    out.append("Уровень: %s." % {"self": "сам (обратимое внутри комнаты)",
+                                 "propose": "предложить", "ask": "спросить"}
+               .get(ready["level"], ready["level"]))
+    return out
+
+
+def _warnings(ready: dict) -> list[str]:
+    """Честные предупреждения: что человеку стоит знать до «Создать»."""
+    out: list[str] = []
+    if not ready.get("changed_rule"):
+        out.append("Не описано, что считать изменением: дежурство будет опираться на модель.")
+    if ready["on_change"] in ("delo", "step") and ready["level"] == "self":
+        out.append("Уровень «сам»: Дело создаётся без вопроса — но только внутри комнаты "
+                   "и обратимо. Наружу ничего не уходит.")
+    if ready["on_change"] in ("delo", "step") and ready["level"] != "self":
+        out.append("Дело не создаётся само: сначала карточка «Принять».")
+    if ready["kind"] == "model" and not ready.get("continuity"):
+        out.append("Сверка с прошлым запуском выключена: возможны повторы.")
+    out.append("Кроны запускает Hermes: пока Hermes выключен, запусков не будет.")
+    return out
+
+
+def preview(cfg, room, payload: dict) -> dict:
+    """Предпросмотр создания: точная команда, что изменится, чего ждать."""
+    ready = wizard_payload(cfg, room, payload)
+    argv = create_argv(ready)
+    rule_view = None
+    try:
+        from . import duty_rules as rules_mod
+    except ImportError:                   # pragma: no cover
+        try:
+            import duty_rules as rules_mod   # type: ignore
+        except ImportError:
+            rules_mod = None
+    if rules_mod is not None:
+        try:
+            rule_view = rules_mod.check_rule(ready)
+        except Exception:                 # noqa: BLE001 - правило проверит PATCH
+            rule_view = None
+    return {"ok": True, "preview": True, "applied": False,
+            "command": argv_display(argv), "argv": argv,
+            "duty": {key: ready[key] for key in ("title", "kind", "schedule", "schedule_human",
+                                                 "prompt_short", "script", "monitor_script",
+                                                 "monitor_url", "workdir", "deliver",
+                                                 "continuity", "catch_up", "paused")},
+            "rule": {"changed_rule": ready["changed_rule"], "on_change": ready["on_change"],
+                     "level": ready["level"], "notify": ready["notify"],
+                     "source": ready["source"], "template": ready["template"]},
+            "changes": _changes(ready), "warnings": _warnings(ready),
+            "next": "Чтобы создать, повторите с preview:false и confirm:true."}
+
+
+def _new_job_id(cfg, before: set, out: str) -> str:
+    """Номер созданного задания: из вывода CLI («Created job: …») или по разнице `jobs.json`."""
+    found = re.search(r"Created job:\s*([A-Za-z0-9_.-]{1,64})", str(out or ""))
+    if found:
+        return found.group(1)
+    fresh = sorted(job_ids(cfg) - set(before or set()))
+    return fresh[0] if len(fresh) == 1 else ""
+
+
+def _bind(cfg, room, job_id, on: bool = True) -> list[str]:
+    """Привязать/отвязать дежурство к комнате (только реестр комнат)."""
+    room_dict = room if isinstance(room, dict) else {}
+    current = [str(one) for one in (room_dict.get("duties") or [])]
+    wanted = list(current)
+    if on and job_id not in wanted:
+        wanted.append(job_id)
+    if not on:
+        wanted = [one for one in wanted if one != job_id]
+    if not room_dict.get("id"):
+        return wanted
+    try:
+        updated = rooms_mod.update_room(cfg, str(room_dict["id"]), {"duties": wanted}) or {}
+    except Exception as exc:              # noqa: BLE001 - ошибку реестра отдаём как свою
+        raise DutiesError(str(getattr(exc, "message", None) or exc
+                              or "Не удалось сохранить привязку"), 400, "bad_request") from exc
+    return [str(one) for one in (updated.get("duties") or wanted)]
+
+
+def _call_cli_ok(cfg) -> bool:
+    """Можно ли звать CLI (``False`` в пробном режиме `TEAMROOM_DUTIES_DRY`)."""
+    return not dry_run_on(cfg)
+
+
+def create(cfg, room, payload: dict, *, preview_only=False, confirm=False, runner=None,
+           now: int | None = None) -> dict:
+    """``POST /api/rooms/{id}/duties`` — создать дежурство через `hermes cron create`.
+
+    * ``preview_only=True`` — только предпросмотр (ничего не меняется);
+    * иначе нужен ``confirm=True``: без него ``409 confirm_required`` с предпросмотром.
+    """
+    now = int(now if now is not None else time.time())
+    view = preview(cfg, room, payload)
+    ready = wizard_payload(cfg, room, payload)
+    if preview_only:
+        return view
+    if not confirm:
+        raise DutiesError("Дежурство создаётся в Hermes — подтвердите создание",
+                          409, "confirm_required",
+                          {"action": "create", "preview": view["duty"],
+                           "command": view["command"]})
+    argv = create_argv(ready)
+    out = {"ok": True, "preview": False, "applied": False, "dry": False,
+           "command": argv_display(argv), "job_id": None, "room": ready["room"],
+           "changes": view["changes"], "warnings": view["warnings"], "generated_at": now}
+    before = job_ids(cfg)
+    if dry_run_on(cfg):
+        out["dry"] = True
+        out["text"] = "Пробный режим: «%s» не выполнялась." % out["command"]
+        return out
+    result = (runner or runner_for(cfg))(argv)
+    code = int(result.get("code") or 0)
+    if code != 0:
+        raise DutiesError("Hermes не создал дежурство: «%s» вернула код %d"
+                          % (out["command"], code), 502, "cli_failed",
+                          {"command": out["command"], "code": code,
+                           "err": str(result.get("err") or "")[:300],
+                           "out": str(result.get("out") or "")[:300]})
+    job_id = _new_job_id(cfg, before, result.get("out") or "")
+    if not job_id:
+        out["text"] = ("Hermes ответил, но номер задания не назвал — откройте раздел "
+                       "«Дежурства» и привяжите его к комнате вручную.")
+        out["warnings"] = list(out["warnings"]) + [out["text"]]
+        return out
+    out["applied"] = True
+    out["job_id"] = job_id
+    out["text"] = "Дежурство создано: «%s»." % ready["title"]
+    try:
+        out["duties"] = _bind(cfg, room, job_id, True)
+    except DutiesError as exc:
+        out["warnings"] = list(out["warnings"]) + [exc.message]
+    try:
+        from . import duty_rules as rules_mod
+    except ImportError:                   # pragma: no cover
+        rules_mod = None          # type: ignore
+    if rules_mod is not None:
+        try:
+            out["rule"] = rules_mod.public_rule(rules_mod.set_rule(
+                cfg, ready["room"], job_id,
+                {"changed_rule": ready["changed_rule"], "on_change": ready["on_change"],
+                 "level": ready["level"], "notify": ready["notify"],
+                 "source": ready["source"], "template": ready["template"]}))
+        except Exception as exc:          # noqa: BLE001 - правило не должно терять крон
+            out["warnings"] = list(out["warnings"]) + [
+                "Задание создано, а правило не сохранилось: %s" % str(exc)[:160]]
+    out["job"] = _item_of(cfg, job_id)
+    return out
+
+
+def _ready_from_job(cfg, job: dict, room_id: str) -> dict:
+    """Описание дежурства из записи `jobs.json` (для правки и для корзины)."""
+    schedule = str(job.get("schedule_display") or "")
+    if not schedule and isinstance(job.get("schedule"), dict):
+        schedule = str(job["schedule"].get("display") or job["schedule"].get("expr") or "")
+    prompt = str(job.get("prompt") or "")
+    return {
+        "title": str(job.get("name") or job.get("id") or ""),
+        "kind": ("script" if job.get("no_agent") else
+                 "monitor" if (job.get("monitor_script") or job.get("monitor_url")) else "model"),
+        "schedule": schedule or "0 9 * * *",
+        "schedule_human": schedule_human(schedule),
+        "prompt": prompt,
+        "prompt_short": _trim(prompt, PROMPT_SHOW),
+        "script": str(job.get("script") or ""),
+        "monitor_script": str(job.get("monitor_script") or ""),
+        "monitor_url": str(job.get("monitor_url") or ""),
+        "workdir": str(job.get("workdir") or ""),
+        "skills": [str(one) for one in (job.get("skills") or []) if str(one or "").strip()],
+        "model": str(job.get("model") or ""),
+        "provider": str(job.get("provider") or ""),
+        "catch_up": job.get("catch_up") if isinstance(job.get("catch_up"), bool) else None,
+        "continuity": bool(job.get("continuity")),
+        "paused": not bool(job.get("enabled")),
+        "room": str(room_id or ""),
+        "deliver": str(job.get("deliver") or ""),
+        "changed_rule": "", "on_change": "inbox", "level": "propose", "notify": [],
+        "source": "manual", "template": "",
+    }
+
+
+#: Какие поля `PATCH` меняет через Hermes (остальные — только внутреннее правило).
+PATCH_CLI_FIELDS = ("schedule", "prompt", "title", "workdir", "monitor_script", "monitor_url")
+#: Какие поля меняют только правило (Hermes не трогаем).
+PATCH_RULE_FIELDS = ("changed_rule", "on_change", "level", "notify", "source", "template")
+
+
+def patch(cfg, job_id, room, payload: dict, *, preview_only=False, confirm=False,
+          runner=None, now: int | None = None) -> dict:
+    """``PATCH /api/duties/{job_id}`` — расписание/задание/правило/пауза.
+
+    Правка через Hermes (`hermes cron edit|pause|resume`) — только по подтверждению.
+    Правка правила — внутреннее состояние: применяется сразу и обратимо.
+    """
+    now = int(now if now is not None else time.time())
+    data = payload if isinstance(payload, dict) else {}
+    job = _job_by_id(cfg, job_id)
+    room_id = str((room or {}).get("id") or "")
+    ready = _ready_from_job(cfg, job, room_id)
+    changed: set = set()
+    for key in PATCH_CLI_FIELDS:
+        if key not in data:
+            continue
+        value = data.get(key)
+        if key == "schedule":
+            value = normalize_schedule(value)
+        elif key == "title":
+            value = " ".join(str(value or "").split())[:NAME_MAX]
+        elif key == "prompt":
+            value = _prompt_with_contract(str(value or ""))
+        elif key == "workdir":
+            value = _workdir(cfg, room, value)
+        elif key in ("monitor_script",):
+            value = _script(value, key)
+        elif key == "monitor_url":
+            value = str(value or "").strip()
+            if value and not re.match(r"^https?://[^\s]+$", value):
+                raise DutiesError("Нужен адрес вида https://…", 400, "bad_request",
+                                  {"field": "monitor_url"})
+        if str(value or "") != str(ready.get(key) or ""):
+            ready[key] = value
+            changed.add(key)
+    pause = data.get("pause")
+    pause_wanted = None
+    if isinstance(pause, bool):
+        pause_wanted = pause if pause != bool(ready.get("paused")) else None
+    rule_changed = any(key in data for key in PATCH_RULE_FIELDS)
+    wants_resume_now = data.get("run_now") is True
+    if not changed and pause_wanted is None and not rule_changed and not wants_resume_now:
+        return {"ok": True, "applied": False, "job_id": str(job_id), "generated_at": now,
+                "text": "Менять нечего: поля те же.", "changes": []}
+    plan: list[str] = []
+    argv: list[str] = []
+    if changed:
+        argv = edit_argv(job_id, ready, changed)
+        plan.append("Изменится задание в Hermes: %s." % ", ".join(sorted(changed)))
+    if pause_wanted is not None:
+        action = "pause" if pause_wanted else "resume"
+        argv = cli_command(action, job_id) if not argv else argv
+        if changed:                       # edit и pause — два вызова, не смешиваем
+            plan.append("Отдельно: %s." % ("пауза" if pause_wanted else "возобновление"))
+        else:
+            plan.append("Задание будет %s." % ("на паузе" if pause_wanted else "снова по расписанию"))
+    if wants_resume_now and not changed and pause_wanted is None:
+        argv = cli_command("run", job_id)
+        plan.append("Задание запустится вне расписания.")
+    view = {"ok": True, "applied": False, "preview": bool(preview_only), "job_id": str(job_id),
+            "command": argv_display(argv) if argv else None, "argv": argv,
+            "changes": plan, "rule_changed": rule_changed,
+            "duty": {key: ready.get(key) for key in ("title", "kind", "schedule",
+                                                     "schedule_human", "prompt_short",
+                                                     "workdir", "continuity", "paused")},
+            "warnings": [], "generated_at": now}
+    if preview_only:
+        view["next"] = "Чтобы применить, повторите с confirm:true."
+        return view
+    if not argv and not rule_changed:
+        view["text"] = "Менять нечего."
+        return view
+    if argv and not confirm:
+        raise DutiesError("Правка дежурства меняет Hermes — подтвердите", 409,
+                          "confirm_required",
+                          {"action": "patch", "job_id": str(job_id),
+                           "command": view["command"], "changes": plan})
+    if not argv:                          # только правило: Hermes не трогаем
+        view["applied"] = True
+    elif not _call_cli_ok(cfg):           # пробный режим: печатаем команду, не выполняем
+        view["dry"] = True
+        view["text"] = "Пробный режим: «%s» не выполнялась." % view["command"]
+        return view
+    result = (runner or runner_for(cfg))(argv) if argv else {"code": 0}
+    code = int(result.get("code") or 0)
+    if code != 0:
+        raise DutiesError("Hermes не применил правку: «%s» вернула код %d"
+                          % (view["command"], code), 502, "cli_failed",
+                          {"command": view["command"], "code": code,
+                           "err": str(result.get("err") or "")[:300]})
+    if changed and pause_wanted is not None:      # второй вызов отдельно
+        call = cli_command("pause" if pause_wanted else "resume", job_id)
+        result = (runner or runner_for(cfg))(call)
+        if int(result.get("code") or 0) != 0:
+            raise DutiesError("Правка применена, а пауза — нет: код %s"
+                              % result.get("code"), 502, "cli_failed",
+                              {"command": argv_display(call)})
+    view["applied"] = bool(argv)
+    if rule_changed:
+        try:
+            from . import duty_rules as rules_mod
+        except ImportError:               # pragma: no cover
+            rules_mod = None          # type: ignore
+        if rules_mod is not None:
+            rule_now = rules_mod.rule(cfg, room_id, job_id) or {}
+            merged = dict(rule_now)
+            merged.update({key: data[key] for key in PATCH_RULE_FIELDS if key in data})
+            view["rule"] = rules_mod.public_rule(
+                rules_mod.set_rule(cfg, room_id, job_id, merged, base=rule_now or None))
+            view["applied"] = True
+    view["text"] = "Правка применена." if view["applied"] else "Ничего не изменилось."
+    view["job"] = _item_of(cfg, job_id)
+    return view
+
+
+def remove(cfg, job_id, room, *, confirm=False, runner=None, now: int | None = None) -> dict:
+    """``DELETE /api/duties/{job_id}`` — убрать крон и положить дежурство в корзину."""
+    now = int(now if now is not None else time.time())
+    job = _job_by_id(cfg, job_id)
+    room_id = str((room or {}).get("id") or "")
+    item = _item_of(cfg, job_id) or {"job_id": str(job_id),
+                                     "name": str(job.get("name") or job_id)}
+    ready = _ready_from_job(cfg, job, room_id)
+    command = argv_display(["cron", "remove", str(job_id)])
+    if not confirm:
+        raise DutiesError("Удаление дежурства останавливает его в Hermes — подтвердите", 409,
+                          "confirm_required",
+                          {"action": "remove", "job_id": str(job_id), "command": command,
+                           "note": "Дежурство уедет в корзину на 30 дней — его можно вернуть."})
+    if dry_run_on(cfg):
+        return {"ok": True, "applied": False, "dry": True, "job_id": str(job_id),
+                "command": command, "text": "Пробный режим: «%s» не выполнялась." % command,
+                "generated_at": now}
+    result = (runner or runner_for(cfg))(cli_command("remove", job_id))
+    code = int(result.get("code") or 0)
+    if code != 0:
+        raise DutiesError("Hermes не удалил дежурство: код %d" % code, 502, "cli_failed",
+                          {"command": command, "code": code,
+                           "err": str(result.get("err") or "")[:300]})
+    out = {"ok": True, "applied": True, "job_id": str(job_id), "command": command,
+           "generated_at": now}
+    try:
+        out["duties"] = _bind(cfg, room, job_id, False)
+    except DutiesError as exc:
+        out["warnings"] = [exc.message]
+    try:
+        from . import duty_rules as rules_mod
+    except ImportError:                   # pragma: no cover
+        rules_mod = None          # type: ignore
+    if rules_mod is not None:
+        try:
+            row = rules_mod.trash_add(cfg, room_id, job_id, item, ready, now)
+            out["trash"] = {"job_id": str(job_id), "delete_after_text": row["delete_after_text"],
+                            "days": rules_mod.TRASH_DAYS}
+        except Exception as exc:          # noqa: BLE001 - корзина не должна мешать удалению
+            out["warnings"] = list(out.get("warnings") or []) + [
+                "Задание удалено, а в корзину не попало: %s" % str(exc)[:160]]
+    out["text"] = ("Дежурство удалено. Вернуть можно из корзины в течение %d дней."
+                   % 30)
+    return out
+
+
+def restore(cfg, room, job_id, *, confirm=False, runner=None, now: int | None = None) -> dict:
+    """``POST /api/duties/{job_id}/restore`` — вернуть дежурство из корзины."""
+    now = int(now if now is not None else time.time())
+    try:
+        from . import duty_rules as rules_mod
+    except ImportError:                   # pragma: no cover
+        rules_mod = None          # type: ignore
+    if rules_mod is None:
+        raise DutiesError("Корзина недоступна", 503, "unavailable")
+    row = rules_mod.trash_take(cfg, room_id_of_room(room), job_id, now)
+    if row is None:
+        raise DutiesError("В корзине такого дежурства нет", 404, "not_found",
+                          {"job_id": str(job_id)[:64]})
+    ready = dict(row.get("payload") or {})
+    if not ready.get("title"):
+        ready = _ready_from_job(cfg, {"id": job_id, "name": row.get("name")}, 
+                                room_id_of_room(room))
+    ready["room"] = room_id_of_room(room)
+    ready["deliver"] = "room:%s" % ready["room"]
+    command = argv_display(create_argv(ready))
+    if not confirm:
+        # вернуть в корзину — чтобы не потерять запись, если человек передумал
+        rules_mod.trash_add(cfg, ready["room"], job_id, row.get("item") or {}, ready, now,
+                                rule=row.get("rule"))
+        raise DutiesError("Возврат создаёт задание в Hermes заново — подтвердите", 409,
+                          "confirm_required",
+                          {"action": "restore", "job_id": str(job_id), "command": command})
+    before = job_ids(cfg)
+    if dry_run_on(cfg):
+        rules_mod.trash_add(cfg, ready["room"], job_id, row.get("item") or {}, ready, now,
+                                rule=row.get("rule"))
+        return {"ok": True, "applied": False, "dry": True, "command": command,
+                "text": "Пробный режим: «%s» не выполнялась." % command, "generated_at": now}
+    result = (runner or runner_for(cfg))(create_argv(ready))
+    if int(result.get("code") or 0) != 0:
+        rules_mod.trash_add(cfg, ready["room"], job_id, row.get("item") or {}, ready, now,
+                                rule=row.get("rule"))
+        raise DutiesError("Hermes не вернул дежурство: код %s" % result.get("code"), 502,
+                          "cli_failed", {"command": command,
+                                         "err": str(result.get("err") or "")[:300]})
+    new_id = _new_job_id(cfg, before, result.get("out") or "") or job_id
+    out = {"ok": True, "applied": True, "job_id": new_id, "old_job_id": str(job_id),
+           "command": command, "generated_at": now,
+           "text": "Дежурство возвращено и снова идёт по расписанию."}
+    try:
+        out["duties"] = _bind(cfg, room, new_id, True)
+    except DutiesError as exc:
+        out["warnings"] = [exc.message]
+    stored = row.get("rule") if isinstance(row.get("rule"), dict) else {}
+    if stored:
+        try:
+            rules_mod.set_rule(cfg, ready["room"], new_id, stored)
+        except Exception:                 # noqa: BLE001 - правило восстановим по PATCH
+            pass
+    out["job"] = _item_of(cfg, new_id)
+    return out
+
+
+def room_id_of_room(room) -> str:
+    """id комнаты из словаря или строки."""
+    if isinstance(room, dict):
+        return str(room.get("id") or "")
+    return str(room or "")
+
+
+def dry_run(cfg, job_id) -> dict:
+    """``POST /api/duties/{job_id}/dry_run`` — «покажи, что бы нашла», без запуска.
+
+    Ничего не запускаем и ничего не пишем: у задания могут быть побочные действия
+    (файлы, отправка), а «пробный прогон» не должен их делать. Отдаём, что именно
+    проверяется, что нашлось в прошлый раз и как запустить по-настоящему, если нужно.
+    """
+    job = _job_by_id(cfg, job_id)
+    last = excerpt(cfg, job_id)
+    result = None
+    files = output_files(cfg, job_id)
+    if files:
+        try:
+            text = files[-1].read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        try:
+            from . import duty_rules as rules_mod
+        except ImportError:               # pragma: no cover
+            rules_mod = None          # type: ignore
+        if rules_mod is not None and text:
+            result = rules_mod.parse_result(text)
+    return {"ok": True, "job_id": str(job_id), "ran": False,
+            "side_effects": "none",
+            "name": str(job.get("name") or job_id),
+            "schedule_human": schedule_human(job.get("schedule_display"), job.get("schedule")),
+            "checks": {"kind": ("script" if job.get("no_agent") else
+                                "monitor" if (job.get("monitor_script") or job.get("monitor_url"))
+                                else "model"),
+                       "prompt": _trim(str(job.get("prompt") or ""), PROMPT_SHOW),
+                       "script": str(job.get("script") or ""),
+                       "monitor_script": str(job.get("monitor_script") or ""),
+                       "monitor_url": str(job.get("monitor_url") or ""),
+                       "workdir": str(job.get("workdir") or "")},
+            "last_result": result,
+            "last_excerpt": last,
+            "command": argv_display(cli_command("run", job_id)),
+            "text": ("Пробный прогон не запускается: у задания могут быть побочные действия. "
+                     "Вот что оно проверяет и что нашло в прошлый раз. Запустить по-настоящему — "
+                     "кнопкой «Запустить сейчас».")}
+
+
 __all__ = ["ACTION_LABELS", "ACTION_TIMEOUT_S", "ACTIONS", "CLI_ACTIONS", "DutiesError",
-           "EXCERPT_MAX", "MAX_BOUND", "MISSED_WINDOW_S", "PROPOSALS_MAX", "RECENT_MAX",
-           "STALE_GRACE_S", "TOKEN_MARKS", "WEEK_DAY_JOBS", "WEEK_FULL", "WEEK_LABELS",
-           "act", "bound_rooms", "check_duties", "cli_bin", "cli_command", "cli_display",
-           "dry_run_on", "excerpt", "executions", "home_of", "interval_seconds", "items",
-           "job_ids", "job_ids_of_hermes", "jobs", "mask", "output_files", "plural",
-           "problems", "proposals", "proposals_path", "reset_cli_runner", "runner_for",
-           "schedule_human", "set_cli_runner", "set_room_duties", "token_hits", "week"]
+           "EXCERPT_MAX", "KIND_TITLES", "MAX_BOUND", "MISSED_WINDOW_S", "NAME_MAX",
+           "PATCH_CLI_FIELDS", "PATCH_RULE_FIELDS", "PROMPT_MAX", "PROPOSALS_MAX", "RECENT_MAX",
+           "SCHEDULE_HINTS", "STALE_GRACE_S", "TOKEN_MARKS", "WEEK_DAY_JOBS", "WEEK_FULL",
+           "WEEK_LABELS",
+           "act", "argv_display", "bound_rooms", "check_duties", "cli_bin", "cli_command",
+           "cli_display", "create", "create_argv", "dry_run", "dry_run_on", "edit_argv",
+           "excerpt", "executions", "home_of", "interval_seconds", "items",
+           "job_ids", "job_ids_of_hermes", "jobs", "mask", "normalize_schedule", "output_files",
+           "patch", "plural", "preview", "problems", "proposals", "proposals_path", "remove",
+           "reset_cli_runner", "restore", "room_id_of_room", "runner_for",
+           "schedule_human", "set_cli_runner", "set_room_duties", "token_hits", "week",
+           "wizard_payload"]

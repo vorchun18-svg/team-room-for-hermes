@@ -320,3 +320,37 @@
   .roomdlg__person-actions { grid-column: 1; grid-row: auto; justify-content: flex-start; }
   .roomdlg__person-who { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 }
+
+/* ============================================================================
+   W27-E4: «Быстрый запрос» на странице «Комнаты».
+
+   Стартовая страница — не витрина: запрос пишется здесь же (одно поле + выбор
+   комнаты), рядом «Надиктовать» и «Входящие» выбранной комнаты. Те же токены,
+   что у карточек комнат; никакой горизонтальной прокрутки на узком виде.
+   ========================================================================== */
+.rooms-quick {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--card);
+}
+.rooms-quick__head { display: flex; align-items: center; gap: var(--space-2); }
+.rooms-quick__head .codicon { color: var(--accent-strong); }
+.rooms-quick__title { font-size: var(--text-base); font-weight: 600; }
+.rooms-quick__body { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.rooms-quick__row { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; flex-wrap: wrap; }
+.rooms-quick__select {
+  flex: 0 1 240px; min-width: 140px; height: var(--control-md);
+  padding: 0 var(--space-2); border-radius: var(--radius-md);
+  border: 1px solid var(--ui-stroke-primary); background: var(--ui-bg-primary); color: inherit;
+}
+.rooms-quick__text {
+  flex: 1 1 320px; min-width: 0; min-height: 40px; max-height: 160px;
+  padding: var(--space-2); border-radius: var(--radius-md);
+  border: 1px solid var(--ui-stroke-primary); background: var(--ui-bg-primary);
+  color: inherit; font: inherit; resize: vertical;
+}
+.rooms-quick__text:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.rooms-quick__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.rooms-quick__note { flex: 1 1 220px; min-width: 0; margin: 0; }
+.rooms-quick .is-disabled { opacity: .55; pointer-events: none; }

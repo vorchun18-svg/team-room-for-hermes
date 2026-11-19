@@ -247,7 +247,7 @@ test('shortId trims long kanban ids', () => {
 test('initials build avatar labels', () => {
   assert.equal(initials('Михаил Петров'), 'МП');
   assert.equal(initials('lawyer'), 'LA');
-  assert.equal(initials('team-director'), 'BD');
+  assert.equal(initials('team-director'), 'TD');
   assert.equal(initials('  '), '?');
   assert.equal(initials('Василий'), 'ВА');
 });

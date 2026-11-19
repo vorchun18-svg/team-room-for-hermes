@@ -51,7 +51,9 @@ CONTRACT_KEYS = {"generated_at", "last_visit_at", "counters", "needs_you", "over
                  "due_soon", "running", "changed", "rooms"}
 NEEDS_KEYS = {"room", "room_title", "request_id", "request_title", "kind", "text",
               "since", "urgent", "recommended"}
-DUE_KEYS = {"room", "room_title", "item_id", "text", "owner", "due", "request_id"}
+DUE_KEYS = {"room", "room_title", "item_id", "text", "owner", "due", "request_id",
+            # W27-E3: строке нужен переход и признак «можно закрыть»
+            "request_title", "kind", "state", "actionable"}
 RUNNING_KEYS = {"room", "room_title", "request_id", "request_title", "members_working", "since"}
 CHANGED_KEYS = {"finished", "new_requests", "new_answers", "failures"}
 ROOM_KEYS = {"id", "title", "needs_you", "overdue", "running"}
@@ -66,7 +68,7 @@ class FakeSources(today.Sources):
     """
 
     def __init__(self, rooms=None, requests=None, backlog=None, states=None,
-                 approvals=None, plans=None, broken=(), raise_on=None):
+                 approvals=None, plans=None, broken=(), raise_on=None, waiting=None):
         self._rooms = rooms or []
         self._requests = requests or {}
         self._backlog = backlog or {}
@@ -75,6 +77,8 @@ class FakeSources(today.Sources):
         self._plans = plans or {}
         self._broken = set(broken)
         self._raise_on = raise_on or ""
+        # W27-FIX: точные пункты «ждёт вас» по запросам; None — источника нет (бэклог)
+        self._waiting = waiting
         self.calls = {"requests": 0, "backlog": 0, "states": 0}
 
     def _check(self, room, what: str):
@@ -93,6 +97,12 @@ class FakeSources(today.Sources):
         self._check(room, "backlog")
         self.calls["backlog"] += 1
         return self._backlog.get(room.get("id"), [])
+
+    def waiting(self, room):
+        self._check(room, "waiting")
+        if self._waiting is None:
+            return None
+        return self._waiting.get(room.get("id"), {})
 
     def states(self, room):
         self._check(room, "states")
@@ -342,6 +352,77 @@ class TodayBuildTests(unittest.TestCase):
             self.assertNotIn(word, blob)
 
 
+# ------------------------------------------------- «ждёт вас» из самого запроса ---
+class TodayExactItemsTests(unittest.TestCase):
+    """W27-FIX: точные открытые пункты запроса — вместо устаревшего индекса бэклога.
+
+    Дефект (перенос на боевые данные): у запроса `needs_you_count = {questions: 2,
+    steps: 2, total: 4}`, а «Сегодня» показывало ноль — индекс бэклога хранил id
+    вопросов прошлой версии свода, и открытые вопросы в нём не совпадали с карточкой.
+    Теперь «Ждёт вас» берёт пункты из того же расчёта, что счётчик запроса; шаги в
+    «Ждёт вас» не идут (они в «Просрочено/Ближайшие»).
+    """
+
+    def _sources(self, waiting):
+        return FakeSources(
+            rooms=[_room(ROOM_A, "Сайт студии")],
+            requests={ROOM_A: [_rec("t_a1", "Годовой отчёт", NOW - 3 * DAY)]},
+            states={ROOM_A: {"t_a1": _state("needs_you", NOW - 3 * DAY)}},
+            waiting={ROOM_A: waiting},
+            backlog={ROOM_A: [
+                # индекс отстал: вопрос отвечен, но в бэклоге всё ещё «open»
+                _item("t_a1:q_old", "open_question", "Какой домен берём?", "mikhail",
+                      request_id="t_a1", at=NOW - 4 * DAY),
+                # шаг с человеком: его место — «Просрочено», не «Ждёт вас»
+                _item("t_a1:ns_1", "next_step", "Согласовать структуру страниц", "mikhail",
+                      due=TWO_DAYS_AGO, request_id="t_a1", at=NOW - 4 * DAY),
+            ]},
+        )
+
+    def test_answered_question_is_not_waiting_and_steps_are_not_cards(self):
+        sources = self._sources({"t_a1": [
+            {"kind": "question", "id": "q_open", "text": "Нужна ли английская версия?",
+             "since": NOW - 2 * DAY},
+            {"kind": "decision", "id": "d_open", "text": "Берём ли подрядчика?",
+             "since": NOW - 3600},
+            {"kind": "step", "id": "ns_1", "text": "Согласовать структуру страниц",
+             "since": NOW - 3600},
+        ]})
+        view = today.build(sources, last_visit_at=NOW - DAY, now=NOW)
+        kinds = [item["kind"] for item in view["needs_you"]]
+        self.assertEqual(kinds, ["question", "decision"], view["needs_you"])
+        self.assertEqual([item["text"] for item in view["needs_you"]],
+                         ["Нужна ли английская версия?", "Берём ли подрядчика?"])
+        # отвеченный вопрос из индекса бэклога в «Ждёт вас» не попадает
+        self.assertNotIn("Какой домен берём?", [item["text"] for item in view["needs_you"]])
+        self.assertEqual(view["counters"]["needs_you"], 2)
+        self.assertEqual(view["counters"]["needs_you"], len(view["needs_you"]))
+        self.assertEqual(view["rooms"][0]["needs_you"], 2)
+        # шаг остался в «Просрочено» — там его и ждут
+        self.assertEqual([row["item_id"] for row in view["overdue"]], ["t_a1:ns_1"])
+
+    def test_exact_items_keep_request_link_and_kind_keys(self):
+        sources = self._sources({"t_a1": [
+            {"kind": "question", "id": "q_open", "text": "Нужна ли английская версия?",
+             "since": NOW - 2 * DAY}]})
+        view = today.build(sources, last_visit_at=NOW - DAY, now=NOW)
+        card = view["needs_you"][0]
+        self.assertEqual(set(card), NEEDS_KEYS)
+        self.assertEqual(card["room"], ROOM_A)
+        self.assertEqual(card["request_id"], "t_a1")
+        self.assertEqual(card["request_title"], "Годовой отчёт")   # есть куда перейти
+        self.assertTrue(card["urgent"])                            # ждёт больше суток
+
+    def test_archived_request_items_do_not_wait(self):
+        sources = self._sources({"t_a1": [
+            {"kind": "question", "id": "q_open", "text": "Нужна ли английская версия?",
+             "since": NOW - 2 * DAY}]})
+        sources._states[ROOM_A]["t_a1"] = _state("archived", NOW - 3 * DAY)
+        view = today.build(sources, last_visit_at=NOW - DAY, now=NOW)
+        self.assertEqual(view["needs_you"], [])
+        self.assertEqual(view["counters"]["needs_you"], 0)
+
+
 # ------------------------------------------------------------ фикстура N3 ---
 class TodayFixtureTests(unittest.TestCase):
     """Сверка формы ответа с фикстурой интерфейса `fixtures/today.json` (N3).
@@ -539,6 +620,25 @@ class _AppCase(unittest.TestCase):
             "text": title, "created_at": _board_now()})
         return root
 
+    def _request_with_questions(self, room, title, questions):
+        """Запрос, у которого карточка участника завершена с вопросами руководителю.
+
+        Вопросы живут там, где их пишут агенты — в `metadata` завершённой карточки
+        (`server/normalize.py` → `open_questions`). Именно этот источник читает
+        страница запроса и, начиная с W27-FIX, «Сегодня».
+        """
+        room_id = room["id"]
+        root = self.sa.card(title, LEAD, status="todo", tenant="room:" + room_id)
+        child = self.sa.card(title + ": часть 1", WORKER, status="running",
+                             tenant="room:" + room_id, parent=root)
+        self.sa.finish(child, "Работа сделана, нужны ваши ответы.",
+                       {"open_questions": [{"text": text, "for": "mikhail"}
+                                           for text in questions]})
+        registry.add_request(self.cfg, room_id, {
+            "root_id": root, "slug": "r-fix-" + root, "title": title, "text": title,
+            "created_at": _board_now()})
+        return root
+
     def _backlog(self, room_id, items):
         path = Path(self.cfg.data_dir) / "state" / room_id / "backlog.json"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -558,6 +658,11 @@ class _AppCase(unittest.TestCase):
         self.assertEqual(status, 200, body)
         return body
 
+    def _post(self, path, body=None):
+        """POST через диспетчер приложения (W27-E3: действия по шагу)."""
+        status, payload, _headers = self.app.dispatch("POST", path, {}, body or {})
+        return status, payload
+
 class TodayApiTests(_AppCase):
     """`GET /api/today` и `POST /api/today/seen` через настоящий `App` в песочнице."""
 
@@ -568,12 +673,16 @@ class TodayApiTests(_AppCase):
         self.assertIn(self.room_a["id"], [room["id"] for room in body["rooms"]])
         self.assertIsInstance(body["needs_you"], list)
 
-    def test_question_from_backlog_waits_for_human(self):
-        root = self._request(self.room_a, "Годовой отчёт")
-        self._backlog(self.room_a["id"], [
-            {"id": root + ":q_1", "kind": "open_question", "text": "Нужна ли английская версия?",
-             "owner": "mikhail", "status": "open", "source_request": root,
-             "created_at": _board_now() - 60}])
+    def test_question_from_card_waits_for_human(self):
+        """Вопрос из карточки запроса — «ждёт вас» (W27-FIX: источник — сам запрос).
+
+        Раньше пункты брались из индекса бэклога; после переноса на боевые данные id
+        вопросов в индексе разошлись с карточками, и «Сегодня» показывало ноль при
+        двух открытых вопросах в запросе. Теперь вопрос кладётся туда, где он живёт
+        на самом деле — в `metadata` карточки участника.
+        """
+        root = self._request_with_questions(self.room_a, "Годовой отчёт",
+                                            ["Нужна ли английская версия?"])
         body = self._get()
         found = [item for item in body["needs_you"] if item["request_id"] == root]
         self.assertTrue(found, body["needs_you"])
@@ -581,6 +690,45 @@ class TodayApiTests(_AppCase):
         self.assertEqual(found[0]["room"], self.room_a["id"])
         self.assertTrue(found[0]["request_title"])
         self.assertGreaterEqual(body["counters"]["needs_you"], 1)
+
+    def test_answered_question_leaves_needs_you_and_count_matches(self):
+        """W27-FIX: отвеченный вопрос не ждёт, открытый — ждёт; число = счётчик запроса.
+
+        Жёсткая проверка дефекта: у запроса два вопроса, на один ответили. «Сегодня»
+        обязано показать ОДИН пункт, и это же число (без шагов) — у комнаты. Число
+        карточек запроса сверяется с `needs_you_count` страницы запроса: два источника
+        одного факта не имеют права расходиться.
+        """
+        room = rooms_mod.create_room(self.cfg, {"title": "Счётчик ожиданий",
+                                                "orchestrator": LEAD,
+                                                "members": [{"profile": WORKER, "role": "worker"}]})
+        root = self._request_with_questions(room, "Проверка доступа",
+                                            ["Нужна ли английская версия?",
+                                             "Какой домен берём?"])
+        detail = self._get("/api/requests/" + root)
+        questions = {item["text"]: str(item["id"]) for item in detail["open_questions"]}
+        self.assertEqual(len(questions), 2, detail["open_questions"])
+        status, payload = self._post("/api/requests/%s/actions" % root,
+                                     {"action": "answer",
+                                      "question_id": questions["Какой домен берём?"],
+                                      "text": "Берём example.ru"})
+        self.assertEqual(status, 200, payload)
+        self._today_cache_clear()
+
+        body = self._get()
+        cards = [item for item in body["needs_you"] if item["request_id"] == root]
+        self.assertEqual(len(cards), 1, cards)
+        self.assertEqual(cards[0]["kind"], "question")
+        self.assertIn("английская", cards[0]["text"])
+        self.assertNotIn("домен", " ".join(item["text"] for item in cards))
+        # число карточек запроса = серверный счётчик запроса без шагов
+        counts = self._get("/api/requests/" + root)["needs_you_count"]
+        self.assertEqual(counts["questions"], 1)
+        self.assertEqual(counts["total"] - counts["steps"], len(cards))
+        # у комнаты — то же число, что у «Сегодня» (меню/бейдж считают так же)
+        room_row = [row for row in body["rooms"] if row["id"] == room["id"]][0]
+        self.assertEqual(room_row["needs_you"], len(cards))
+        self.assertEqual(body["counters"]["needs_you"], len(body["needs_you"]))
 
     def test_overdue_step_counts(self):
         root = self._request(self.room_a, "Ремонт офиса: смета")
@@ -594,6 +742,73 @@ class TodayApiTests(_AppCase):
         self.assertEqual(rows[0]["days_overdue"], 2)
         self.assertEqual(rows[0]["owner"], "mikhail")
         self.assertEqual(body["counters"]["overdue"], len(body["overdue"]))
+
+    def test_overdue_row_has_way_in_and_action(self):
+        """W27-E3: у строки «Просрочено» есть переход и она закрываема.
+
+        Дефект 2 (18.11, вечер): строка была постером — ни перехода, ни действий.
+        Сервер обязан отдать всё, что нужно строке: комнату, запрос с названием,
+        вид пункта, состояние и признак «это ещё можно закрыть».
+        """
+        root = self._request(self.room_a, "Ремонт офиса: смета")
+        self._backlog(self.room_a["id"], [
+            {"id": root + ":ns_1", "kind": "next_step", "text": "Согласовать смету",
+             "owner": "mikhail", "status": "open", "due": _days_ago(2),
+             "source_request": root, "created_at": _board_now() - 600},
+            # без id закрывать нечего — в счётчик такая строка не идёт
+            {"id": "", "kind": "next_step", "text": "Строка без пункта",
+             "owner": "mikhail", "status": "open", "due": _days_ago(1),
+             "source_request": root, "created_at": _board_now() - 600}])
+        body = self._get()
+        rows = [row for row in body["overdue"] if row["room"] == self.room_a["id"]]
+        self.assertEqual(len(rows), 2, "строка без id всё равно видна")
+        by_text = {row["text"]: row for row in rows}
+        real = by_text["Согласовать смету"]
+        self.assertTrue(real["actionable"])
+        self.assertTrue(real["request_title"], "у строки есть куда перейти")
+        self.assertEqual(real["state"], "open")
+        self.assertEqual(real["kind"], "next_step")
+        self.assertFalse(by_text["Строка без пункта"]["actionable"])
+        # Счётчик «просрочено» считает только закрываемое (§1 W27).
+        self.assertEqual(body["counters"]["overdue"], 1)
+        self.assertLessEqual(body["counters"]["overdue"], len(body["overdue"]))
+
+    def test_overdue_counter_drops_after_step_done(self):
+        """W27-E3: «Готово» в «Сегодня» = статус шага в бэклоге — счётчик падает."""
+        root = self._request(self.room_a, "Ремонт офиса: смета")
+        item_id = root + ":ns_1"
+        self._backlog(self.room_a["id"], [
+            {"id": item_id, "kind": "next_step", "text": "Согласовать смету",
+             "owner": "mikhail", "status": "open", "due": _days_ago(2),
+             "source_request": root, "created_at": _board_now() - 600}])
+        self.assertEqual(self._get()["counters"]["overdue"], 1)
+        status, _ = self._post("/api/rooms/%s/backlog/%s" % (self.room_a["id"], item_id),
+                              {"status": "done"})
+        self.assertEqual(status, 200)
+        self._today_cache_clear()          # ответ /api/today кэшируется на 10 с
+        body = self._get()
+        self.assertEqual(body["overdue"], [], "сделанный шаг не висит в «Просрочено»")
+        self.assertEqual(body["counters"]["overdue"], 0)
+
+    def test_overdue_postpone_moves_due(self):
+        """W27-E3: «Перенести срок» тем же бэклог-эндпоинтом меняет срок строки."""
+        root = self._request(self.room_a, "Ремонт офиса: смета")
+        item_id = root + ":ns_1"
+        self._backlog(self.room_a["id"], [
+            {"id": item_id, "kind": "next_step", "text": "Согласовать смету",
+             "owner": "mikhail", "status": "open", "due": _days_ago(2),
+             "source_request": root, "created_at": _board_now() - 600}])
+        future = _days_ago(-3)
+        status, _ = self._post("/api/rooms/%s/backlog/%s" % (self.room_a["id"], item_id),
+                              {"status": "open", "due": future})
+        self.assertEqual(status, 200)
+        self._today_cache_clear()
+        body = self._get()
+        self.assertEqual(body["overdue"], [])
+        soon = [row for row in body["due_soon"] if row["item_id"] == item_id]
+        self.assertEqual(len(soon), 1, "перенесённый срок попал в «Ближайшие»")
+        self.assertEqual(soon[0]["due"], future)
+        self.assertTrue(soon[0]["actionable"])
 
     def test_running_request_shows_members(self):
         self._request(self.room_a, "Сайт студии: структура")
@@ -669,9 +884,16 @@ class TodayPerfTests(_AppCase):
                 title = "%s: запрос %d" % (room["title"], index + 1)
                 root = cls.sa.card(title, LEAD, status="todo", tenant="room:" + room["id"])
                 if index % 3 == 0:
-                    cls.sa.decompose(root, [{"title": title + ": часть", "assignee": WORKER,
-                                             "status": "running"}], assignee=LEAD)
+                    kids = cls.sa.decompose(root, [{"title": title + ": часть", "assignee": WORKER,
+                                                    "status": "running"}], assignee=LEAD)
                     status = "working"
+                    if index == 0:
+                        # W27-FIX: «Ждёт вас» берёт пункты из запроса, поэтому у одного
+                        # запроса комнаты есть настоящий открытый вопрос в metadata —
+                        # так замер включает и сборку детали, а не только индекс.
+                        cls.sa.finish(kids[0], "Работа идёт, нужен ваш ответ.",
+                                      {"open_questions": [{"text": "Уточнить объём работ",
+                                                           "for": "mikhail"}]})
                 elif index % 3 == 1:
                     cls.sa.finish(root, "Готово")
                     status = "done"

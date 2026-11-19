@@ -233,8 +233,20 @@ export function decisionPayload(decision, outcome, text = '') {
  */
 export async function postDecision({ api, requestId, decision, outcome, text = '' } = {}) {
   if (!api || typeof api.post !== 'function') throw new Error('Нет связи с сервером');
-  return api.post(`/api/requests/${encodeURIComponent(String(requestId || ''))}/actions`,
+  const rid = String(requestId || '');
+  const res = await api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
     decisionPayload(decision, outcome, text));
+  // W26-QA2: решение принято — сообщаем каркасу (`teamroom:request-changed`), чтобы
+  // «От вас нужно», бейджи и меню пересчитали число сразу. Раньше это делал только
+  // стор запроса, а «Принять» шло мимо него — счётчики отставали на полминуты.
+  try {
+    if (typeof document !== 'undefined' && typeof document.dispatchEvent === 'function'
+      && typeof CustomEvent === 'function') {
+      document.dispatchEvent(new CustomEvent('teamroom:request-changed',
+        { detail: { rid, source: 'decision', outcome: String(outcome || '') } }));
+    }
+  } catch { /* событие — удобство, не условие */ }
+  return res;
 }
 
 function outcomeMeta(outcome) {

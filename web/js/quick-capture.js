@@ -272,17 +272,21 @@ export function installQuickCapture(deps = {}) {
   let keyHandler = null;
   if (doc && typeof doc.addEventListener === 'function') {
     keyHandler = (ev) => {
-      if (!ev || ev.defaultPrevented) return;
+      if (!ev) return;
       if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
       if (inField(ev.target) || inField(doc.activeElement)) return;
       const key = ev.key;
       if (key === 'n' || key === 'N' || key === 'т' || key === 'Т') {
         if (bar.classList.contains('hidden')) return;
+        // W26-QA2: клавиша N обещана как «к записи во входящие» — поэтому она
+        // срабатывает и тогда, когда кто-то раньше (композер) уже пометил событие
+        // обработанным: иначе N в комнате уводила курсор в поле запроса, а полоса
+        // «Надиктовать» оставалась нетронутой. Слушаем в фазе перехвата.
         if (ev.preventDefault) ev.preventDefault();
         try { field.focus(); } catch { /* ignore */ }
       }
     };
-    doc.addEventListener('keydown', keyHandler);
+    doc.addEventListener('keydown', keyHandler, true);
   }
 
   const host = (deps.host && typeof deps.host.appendChild === 'function' ? deps.host : app);

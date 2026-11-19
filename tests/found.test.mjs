@@ -137,7 +137,7 @@ test('foundSection находит раздел и не съедает следу
 test('путь в своде → чип, адрес → ссылка-чип, текст не теряется', () => {
   const src = 'Макет: `C:/Работа/Проект Витрина/Макет витрины — финал.md`. Источник: https://example.org/x.';
   const out = formatSvod(src);
-  assert.match(out, /\[C:\/Демо\/Проект Витрина\/Макет витрины — финал\.md\]\(<file:/);
+  assert.match(out, /\[C:\/Работа\/Проект Витрина\/Макет витрины — финал\.md\]\(<file:/);
   assert.match(out, /\[https:\/\/example\.org\/x\]\(https:\/\/example\.org\/x "tr-chip"\)/);
   assert.equal(svodPlainText(out), svodPlainText(src), 'ничего не пропало');
   const html = renderMarkdown(out);

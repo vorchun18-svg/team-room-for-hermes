@@ -566,6 +566,7 @@ class StreamBodyTests(PlanBase):
         self.assertEqual(labels["Смета"], ("team-cfo", "Экономика"))
         self.assertEqual(labels["Свод"][1], "руководитель комнаты")
         for _owner, label in labels.values():
+            self.assertNotIn("biz-", label)
             self.assertNotIn("team-", label)
         self.ingest([mkstream("Рецептура")])
         stored = plan.load(self.cfg, self.room["id"])

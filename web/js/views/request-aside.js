@@ -39,6 +39,11 @@ import { blockedCards, inboxSummary } from './backlog-model.js';
 import { createApprovals } from './approvals.js';
 import { foldCard, foldState, setFoldState } from './aside-fold.js';
 import { requestStoreFor, bindLive } from './request-store.js';
+// W27-E2 §1: счётчик с сервера, «Не актуально» с возвратом, тихий 409.
+import {
+  needsYouCount, staleSummary, dismissBody, restoreBody, isAlreadyDecided, toastOnce,
+  closedReasonText, isFinishedRequest,
+} from './stale-model.js';
 import { noticeLine, markRequestSeen } from './reaction-notice.js';
 import {
   CHAIN_HINT, decisionActions, decisionAnswerOf, decisionMutedActions, decisionNotice,
@@ -320,6 +325,62 @@ export function createAside(R) {
   }
 
   /**
+   * «Не актуально» / «Вернуть» для вопроса (W27-E2 §1).
+   *
+   * Раньше убрать вопрос можно было только у пункта-кандидата («Это не вопрос»).
+   * Теперь у каждого вопроса есть «Не актуально» с возвратом: счётчик обнуляется,
+   * не отвечая, а вопрос остаётся в «Закрытые» и возвращается одной кнопкой.
+   *
+   * @param {object} q вопрос
+   * @param {'dismiss'|'restore'} action
+   * @param {HTMLElement} [btn]
+   */
+  async function staleQuestion(q, action, btn) {
+    if (!q || !q.id) return;
+    if (btn) btn.disabled = true;
+    try {
+      if (storeRef && typeof storeRef.targetAction === 'function') {
+        await storeRef.targetAction('questions', String(q.id), action);
+      } else {
+        await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
+          action === 'restore' ? restoreBody('question', q.id) : dismissBody('question', q.id));
+      }
+      ctx.toast(action === 'restore'
+        ? 'Вопрос вернулся в «Нужен ваш ответ»'
+        : 'Вопрос убран из «Нужен ваш ответ» — вернуть можно в «Закрытые»', 'ok');
+      await refresh({ force: true, quiet: true });
+    } catch (err) {
+      if (btn) btn.disabled = false;
+      // 409 already_decided — тихо: экран просто устарел, стор уже перечитал данные.
+      if (isAlreadyDecided(err)) return;
+      toastOnce(ctx.toast, 'question-stale', (err && err.message) || 'Не удалось изменить вопрос', 'danger');
+    }
+  }
+
+  /**
+   * Строка «Не актуально» / «Вернуть» у вопроса.
+   * @param {object} q
+   * @returns {HTMLElement|null}
+   */
+  function questionStaleRow(q) {
+    const state = qState(q);
+    const restore = state === 'dismissed' || q.dismissed === true;
+    const btn = h('button', {
+      type: 'button', class: 'btn btn--ghost btn--sm req-q__stale',
+      'data-action': restore ? 'question-restore' : 'question-stale',
+      'data-question-id': String(q.id || ''),
+      title: restore
+        ? 'Вернуть вопрос в «Нужен ваш ответ»'
+        : 'Убрать из «Нужен ваш ответ», не отвечая: вопрос останется в «Закрытые», вернуть можно одной кнопкой',
+    }, icon(restore ? 'history' : 'circle-x', { size: 11 }), restore ? 'Вернуть' : 'Не актуально');
+    btn.addEventListener('click', (ev) => {
+      if (ev && ev.preventDefault) ev.preventDefault();
+      staleQuestion(q, restore ? 'restore' : 'dismiss', btn);
+    });
+    return h('div', { class: 'req-q__stale-row', 'data-key': 'qstale' }, btn);
+  }
+
+  /**
    * Строка под вопросом: откуда он и, для пункта-кандидата, кнопка «Это не вопрос».
    * @param {object} q
    * @returns {HTMLElement|null}
@@ -544,6 +605,14 @@ export function createAside(R) {
       src.setAttribute('data-key', 'qsrc');
       row.appendChild(src);
     }
+    // W27-E2 §1: «Не актуально» у каждого вопроса — убрать из «Нужен ваш ответ»,
+    // не отвечая (с возвратом из «Закрытые»). Встречный вопрос не снимаем: он
+    // ждёт пояснения, и это действие человека.
+    if (state !== 'waiting_explanation') {
+      const stale = questionStaleRow(q);
+      stale.setAttribute('data-key', 'qstale');
+      row.appendChild(stale);
+    }
     if (answered) {
       const block = answerBlock(q, state);
       block.setAttribute('data-key', 'qans');
@@ -765,6 +834,74 @@ export function createAside(R) {
   }
 
   /**
+   * Строка «Закрыть все неактуальные (N)» (W27-E2 §1).
+   *
+   * Завершённый запрос: пункты ждут человека, хотя работа уже сделана. Массовое
+   * действие сервера закрывает их и НЕ трогает решённое человеком — поэтому это
+   * не «удалить», а «убрать из счёта, оставив в истории».
+   */
+  function staleActionRow(total) {
+    const btn = h('button', {
+      type: 'button', class: 'btn btn--secondary btn--sm req-side__stale-btn',
+      'data-action': 'dismiss-stale',
+      title: 'Закрыть неактуальное у всех завершённых запросов комнаты. '
+        + 'Решённое человеком останется; закрытое можно вернуть',
+    }, icon('circle-x', { size: 12 }), 'Закрыть все неактуальные (' + String(total) + ')');
+    btn.addEventListener('click', async (ev) => {
+      if (ev && ev.preventDefault) ev.preventDefault();
+      if (btn.disabled) return;
+      btn.disabled = true;
+      try {
+        let res = null;
+        if (storeRef && typeof storeRef.dismissStale === 'function') res = await storeRef.dismissStale();
+        else if (ctx.api) {
+          res = await ctx.api.post(`/api/rooms/${encodeURIComponent(R.roomId)}/dismiss_stale`,
+            { scope: 'finished_requests' });
+        }
+        const n = res && res.closed
+          ? ['questions', 'decisions', 'approvals', 'steps']
+            .reduce((sum, key) => sum + (Number(res.closed[key]) || 0), 0)
+          : 0;
+        toastOnce(ctx.toast, 'dismiss-stale',
+          n ? 'Закрыто неактуальных: ' + String(n) + ' — вернуть можно кнопкой «Вернуть»'
+            : 'Неактуальных пунктов не осталось', n ? 'ok' : 'info');
+        await refresh({ force: true, quiet: true });
+      } catch (err) {
+        btn.disabled = false;
+        if (isAlreadyDecided(err)) return;
+        toastOnce(ctx.toast, 'dismiss-stale', (err && err.message) || 'Не удалось закрыть неактуальные', 'danger');
+      }
+    });
+    return h('div', { class: 'req-side__stale', role: 'group', 'aria-label': 'Неактуальные пункты' },
+      h('div', { class: 'req-side__stale-text small muted' },
+        icon('history', { size: 12 }),
+        h('span', null, 'Работа по запросу закончена. Неактуальное можно закрыть разом: '
+          + 'счётчик «ждёт вас» обнулится, решённое вами останется.')),
+      btn);
+  }
+
+  /**
+   * «Закрытые» — свёрнутый список снятых вопросов с причиной и «Вернуть»
+   * (W27-E2 §1: у каждого пункта, ушедшего из «Нужен ваш ответ», есть возврат).
+   */
+  function closedQuestions(list) {
+    if (!Array.isArray(list) || !list.length) return null;
+    const rows = list.map((q) => {
+      const why = closedReasonText(q) || 'закрыто как неактуальное';
+      return h('div', { class: 'req-side__closed-row', 'data-closed-question': String(q.id || '') },
+        h('div', { class: 'req-side__closed-text' },
+          h('div', { class: 'req-side__closed-q' }, firstLine(q.text, 120)),
+          h('div', { class: 'small muted' }, why)),
+        questionStaleRow(Object.assign({}, q, { state: 'dismissed', dismissed: true })));
+    });
+    return h('details', { class: 'req-side__closed', 'data-closed-questions': String(list.length) },
+      h('summary', { class: 'req-side__closed-sum small muted' },
+        icon('chevron-right', { size: 11 }),
+        'Закрытые вопросы: ' + String(list.length)),
+      h('div', { class: 'req-side__closed-body' }, rows));
+  }
+
+  /**
    * Содержимое «Нужен ваш ответ»: только пункты с действием (W26 §1, T1).
    * Перерисовывается из стора, не дожидаясь опроса страницы.
    */
@@ -776,9 +913,17 @@ export function createAside(R) {
       h('span', { class: 'req-side__fold-title' }, 'Нужен ваш ответ'),
       h('span', {
         class: 'chip chip--' + (total ? 'warn' : 'muted') + ' req-side__fold-count tnum',
-        title: total ? 'Из чего складывается число: ' + view.inbox.full : 'Сейчас от вас ничего не нужно',
+        'data-needs-you': 'total',
+        title: (total ? 'Из чего складывается число: ' + view.inbox.full : 'Сейчас от вас ничего не нужно')
+          + (view.inbox.fromServer ? ' · счёт сервера' : ''),
       }, String(total)));
     fill(box);
+
+    // W27-E2 §1: массовое закрытие неактуального у завершённого запроса — в самом
+    // верху колонки: человек видит, что счётчик можно обнулить одним действием.
+    if (view.stale && view.stale.total > 0) {
+      box.appendChild(staleActionRow(view.stale.total));
+    }
 
     if (total) {
       box.appendChild(h('div', {
@@ -790,6 +935,8 @@ export function createAside(R) {
     if (!total) {
       box.appendChild(h('div', { class: 'req-side__body' },
         h('div', { class: 'req-aside-empty' }, 'Сейчас от вас ничего не нужно: команда продолжает работу.')));
+      const quietClosed = closedQuestions(view.dismissedQs);
+      if (quietClosed) box.appendChild(quietClosed);
       const quiet = resendBlock(view.resend);
       if (quiet) box.appendChild(quiet);
       return;
@@ -845,6 +992,9 @@ export function createAside(R) {
 
     const foot = resendBlock(view.resend);
     if (foot) box.appendChild(foot);
+    // W27-E2 §1: «Закрытые» — внизу, свёрнуто, с причиной и возвратом.
+    const closedBox = closedQuestions(view.dismissedQs);
+    if (closedBox) box.appendChild(closedBox);
   }
 
   /* ── решения руководителя: принять / отклонить / обсудить (W19-D2, B-20) ── */
@@ -1172,6 +1322,10 @@ export function createAside(R) {
 
     const openQs = questions.filter((q) => q && qOpen(q));
     const answeredQs = questions.filter((q) => q && !qOpen(q) && (q.answer || q.answered));
+    // W27-E2 §1: снятые вопросы («Не актуально»/«Это не вопрос») — в «Закрытые»,
+    // с причиной и кнопкой «Вернуть», а не молча мимо экрана.
+    const dismissedQs = questions.filter((q) => q && !qOpen(q)
+      && (qState(q) === 'dismissed' || q.dismissed === true));
     const openDecisions = decisions.filter((d) => d && decisionOpen(d));
     const closedDecisions = decisions.filter((d) => d && !decisionOpen(d));
     // Заблокированные задачи этой ветки: тот же источник, что у вкладки «От вас нужно».
@@ -1180,7 +1334,9 @@ export function createAside(R) {
     // W22-AP2: запросы разрешений агентам — отдельный вид элемента «Нужен ваш ответ».
     const approvals = approvalsUI.pending();
 
-    const inbox = inboxSummary({ questions: openQs, decisions: openDecisions, blocked, approvals });
+    const inbox = inboxSummary({ questions: openQs, decisions: openDecisions, blocked, approvals,
+      // W27-E2 §1: число «ждёт вас» — с сервера (`needs_you_count`), не пересчёт.
+      counts: needsYouCount(detail) });
     const summary = (detail.answers && detail.answers.summary) || {};
     // W21-Q1 (B-45): автообновление свода включено? Тогда ответы забирает
     // руководитель сам, и кнопка досылки не нужна. Нет поля — считаем выключенным
@@ -1188,7 +1344,13 @@ export function createAside(R) {
     const live = (detail.synthesis && detail.synthesis.live) || {};
     return {
       steps, questions, decisions, future,
-      openQs, answeredQs, openDecisions, closedDecisions, blocked, inbox, approvals,
+      openQs, answeredQs, dismissedQs, openDecisions, closedDecisions, blocked, inbox, approvals,
+      counts: needsYouCount(detail),
+      // W27-E2 §1: сколько пунктов можно закрыть разом у завершённого запроса.
+      stale: staleSummary(detail, {
+        isOpenQuestion: (q) => Boolean(q) && !q.answered && !q.dismissed,
+        isOpenDecision: (d) => Boolean(d) && decisionOpen(d),
+      }),
       resend: {
         can_resend: Boolean(summary.can_resend),
         pending: Number(summary.resend_pending) || 0,
@@ -1269,10 +1431,50 @@ export function createAside(R) {
 
     // Понятно, к чему относится колонка (WAVE8, Д3): только этот запрос + выход в комнату.
     const backlogHref = `#/room/${encodeURIComponent(R.roomId)}/backlog?request=${encodeURIComponent(R.detail.id)}`;
+    /**
+     * W26-QA2: «Дело из запроса» — дело открывается одним нажатием.
+     * До этого из карточки запроса в «Дела» пути не было: человек видел «Все дела
+     * комнаты →», а создать дело мог только API-вызовом (тупик по правилу «без
+     * тупиков»). Одно дело на запрос: если оно уже есть, сервер отвечает 409 с id —
+     * ведём в существующее, а не показываем ошибку.
+     */
+    async function openDelo(btn) {
+      const apiRef = (ctx && ctx.api) || null;
+      const go = (ctx && ctx.navigate) || null;
+      const say = (ctx && ctx.toast) || (() => {});
+      if (!apiRef || !R.roomId) return;
+      if (btn && btn.disabled) return;
+      if (btn) btn.disabled = true;
+      try {
+        const res = await apiRef.post('/api/rooms/' + encodeURIComponent(R.roomId) + '/delos',
+          { request_id: rid });
+        const id = String((res && (res.id || (res.item && res.item.id))) || '');
+        say(id ? 'Дело открыто — этапы, результат и письмо наружу' : 'Дело открыто', 'ok');
+        if (id && go) go('#/delo/' + encodeURIComponent(id));
+      } catch (err) {
+        const details = (err && (err.details || err.detail)) || null;
+        const id = String((details && ((details.detail && details.detail.id) || details.id)) || '');
+        if (id) {
+          say('Дело по этому запросу уже есть — открываю его', 'info');
+          if (go) go('#/delo/' + encodeURIComponent(id));
+        } else {
+          say((err && err.message) || 'Не удалось открыть дело', 'error');
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
     wrap.append(h('div', { class: 'req-aside__scope row row--between row--wrap row--tight' },
       h('span', { class: 'req-aside__scope-title' }, 'По этому запросу'),
-      h('a', { class: 'req-aside__scope-link', href: backlogHref, title: 'Все дела комнаты: шаги, вопросы, решения' },
-        'Все дела комнаты →')));
+      h('span', { class: 'req-aside__scope-acts row row--tight' },
+        h('button', {
+          class: 'btn btn--ghost btn--sm req-aside__delo', type: 'button',
+          title: 'Открыть дело по этому запросу: этапы, результат, письмо наружу',
+          onclick: (e) => openDelo(e && e.currentTarget),
+        }, 'Дело из запроса'),
+        h('a', { class: 'req-aside__scope-link', href: backlogHref, title: 'Все дела комнаты: шаги, вопросы, решения' },
+          'Все дела комнаты →'))));
 
     // Закреплённый блок: то, что ждёт Михаила, — первым и всегда раскрытым.
    

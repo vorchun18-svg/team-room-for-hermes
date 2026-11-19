@@ -480,6 +480,10 @@ class Watcher:
             #      истекли или чья карточка завершилась. Модели не запускаются,
             #      подпроцесс Hermes — только когда срок действительно вышел.
             self._approvals_sweep(room, stats)
+            # 3.6) W27-E7 §3: результаты дежурств комнаты — тихая строка в журнале или
+            #      карточка «Что выполнено / Что обнаружено / Предлагаю» (лимит ≤ 5 за тик,
+            #      идемпотентность по run_id, наружу ничего не уходит).
+            self._duties_tick(room, stats)
             # 4) карта проекта (WAVE 9): очередь направлений — одна строка, ошибки не валят тик
             try:
                 self.app.call("plan", "tick", ((self.cfg, room_id), {"room": room}))
@@ -742,6 +746,31 @@ class Watcher:
             return
         if int(res.get("revoked") or 0):
             stats["approvals_revoked"] = int(stats.get("approvals_revoked") or 0) + int(res["revoked"])
+
+    def _duties_tick(self, room: dict, stats: dict) -> None:
+        """Результаты дежурств комнаты → журнал / «Входящие» / Дело (W27-E7 §3).
+
+        Дешёвая операция без моделей: читаем свежие выводы привязанных заданий,
+        разбираем блок `результат` и по правилу комнаты кладём карточку. Лимит
+        и идемпотентность — внутри `duty_rules.process_runs`; ошибка шага тик не валит.
+        """
+        try:
+            func = self.app.fn("duty_rules", "process_runs")
+        except Exception as exc:                        # noqa: BLE001 - старая сборка
+            if not _module_missing(exc):
+                stats["errors"] += 1
+                self._fail("дежурства комнаты %s" % (room or {}).get("id"), exc)
+            return
+        try:
+            res = func(self.cfg, room) or {}
+        except Exception as exc:                        # noqa: BLE001 - дежурства вторичны
+            stats["errors"] += 1
+            self._fail("результаты дежурств %s" % (room or {}).get("id"), exc)
+            return
+        for key, name in (("processed", "duty_runs"), ("cards", "duty_cards"),
+                          ("self", "duty_self")):
+            if int(res.get(key) or 0):
+                stats[name] = int(stats.get(name) or 0) + int(res[key])
 
     def _agent_models_room(self, room: dict, stats: dict) -> None:
         """Модель комнаты на ВСЕ её карточки + сверка факта (WAVE10, WAVE13 пакет A).

@@ -511,9 +511,29 @@ export function mdBlock(src, opts = {}) {
   try { checkChips(el); } catch { /* без сети чипы остаются обычными */ }
 
   const customOpen = typeof o.openPath === 'function' ? o.openPath : null;
+  // W26-QA1: чип файла (`span.md-file-chip[data-path]`) внутри блока, знающего свою
+  // комнату, открывает САМ блок — через `openPath` заказчика (страница запроса
+  // передаёт открытие с комнатой). Документный обработчик found.js такие блоки не
+  // перехватывает (`data-file-owner`), поэтому клик даёт ровно один запрос и всегда
+  // с комнатой свода, а не с комнатой «из адреса». Без `openPath` чипы ведёт
+  // документный обработчик — как раньше в остальных местах.
+  if (customOpen) el.setAttribute('data-file-owner', '1');
   el.addEventListener('click', (ev) => {
     const target = ev && ev.target;
     if (!target || typeof target.closest !== 'function') return;
+    const chip = target.closest('.md-file-chip[data-path]');
+    if (chip) {
+      // «Показать в папке» и «Копировать путь» — не открытие файла: их ведёт
+      // общий обработчик чипов (found.js), здесь только открытие.
+      if (target.closest('[class*="--reveal"], [class*="--copy"]')) return;
+      if (!customOpen) return;
+      const chipPath = chip.getAttribute('data-path');
+      if (!chipPath) return;
+      ev.preventDefault();
+      const opened = customOpen(chipPath);
+      if (opened && typeof opened.catch === 'function') opened.catch(() => {});
+      return;
+    }
     const link = target.closest('a[data-path]');
     if (!link) return;
     ev.preventDefault();

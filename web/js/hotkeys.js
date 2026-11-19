@@ -34,6 +34,38 @@ import { RAIL_EVENT } from './shell-rail.js';
  */
 const RAIL_KEYS = new Set(['b', 'B', 'и', 'И']);
 
+/* ── W27-E4: клавиши G, H — «Все комнаты» ───────────────────────────────── */
+
+/**
+ * Событие «перейти по адресу» (W27-E4): его шлют клавиши (G, H) и другие места,
+ * которым не нужен доступ к роутеру. Слушает каркас (app.js) и вызывает
+ * `navigate(detail.hash)`. Адрес — внутренний хэш (`#/…`).
+ */
+export const NAV_EVENT = 'teamroom:navigate';
+
+/** Сколько ждём вторую клавишу последовательности (G → H), мс. */
+export const SEQUENCE_MS = 1500;
+
+/**
+ * Попросить каркас перейти по адресу.
+ * @param {string} hash
+ * @param {Document} [doc]
+ * @returns {boolean} событие отправлено?
+ */
+export function requestNavigate(hash, doc) {
+  const target = doc || (typeof globalThis !== 'undefined' ? globalThis.document : null);
+  const value = String(hash || '').trim();
+  if (!value || !target || typeof target.dispatchEvent !== 'function') return false;
+  try {
+    const Ctor = typeof CustomEvent === 'function' ? CustomEvent : null;
+    if (!Ctor) return false;
+    target.dispatchEvent(new Ctor(NAV_EVENT, { bubbles: true, detail: { hash: value } }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Попросить каркас свернуть/развернуть меню. Событие слушает `shell-rail.js`
  * (installShellRail), поэтому клавиша не зависит от каркаса app.js и работает
@@ -79,6 +111,7 @@ export const HOTKEY_HELP = [
   { keys: ['Ctrl + K'], what: 'поиск и команды' },
   { keys: ['/'], what: 'поиск по комнате' },
   { keys: ['N'], what: 'новый запрос' },
+  { keys: ['G', 'H'], what: 'все комнаты — список комнат, создание комнаты и быстрый запрос' },
   { keys: ['G', 'R'], what: 'вкладки по очереди: после G — R запрос, T команда, M карта, Д «от вас нужно», O отчёты, J журнал' },
   { keys: ['G', 'T'], what: 'вне комнаты — экран «Сегодня»; в комнате это вкладка «Команда» (там «Сегодня» — G, S)' },
   { keys: ['Esc'], what: 'закрыть окно, меню или выдвижное меню комнат' },
@@ -347,6 +380,22 @@ export function installHotkeys(opts = {}) {
     if (ev.altKey) return;
     if (isTypingTarget(ev.target)) return;                // в полях молчим
     const key = String(ev.key || '');
+    const code = String(ev.code || '');
+
+    // W27-E4: G, H — «Все комнаты» (`#/`). Первая клавиша только взводит
+    // ожидание, вторая — переходит. Раскладка не важна: смотрим и букву, и
+    // физическую клавишу (в русской раскладке это «п» и «р»).
+    const isG = key === 'g' || key === 'G' || key === 'п' || key === 'П' || code === 'KeyG';
+    const isH = key === 'h' || key === 'H' || key === 'р' || key === 'Р' || code === 'KeyH';
+    const now = Date.now();
+    if (isH && gotoAt && now - gotoAt <= SEQUENCE_MS) {
+      gotoAt = 0;
+      if (typeof ev.preventDefault === 'function') ev.preventDefault();
+      requestNavigate('#/', doc);
+      return;
+    }
+    if (isG) { gotoAt = now; return; }
+    gotoAt = 0;
 
     if (key === '?') {
       if (typeof ev.preventDefault === 'function') ev.preventDefault();
@@ -386,6 +435,9 @@ export function installHotkeys(opts = {}) {
 }
 
 let installed = null;
+
+/** W27-E4: когда была нажата первая клавиша последовательности (G → H), мс. */
+let gotoAt = 0;
 
 /** Для тестов и перезагрузки представления: снять установленный обработчик. */
 export function uninstallHotkeys() {

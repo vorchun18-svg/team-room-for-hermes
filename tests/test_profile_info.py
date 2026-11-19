@@ -111,8 +111,8 @@ class ParseDescriptionTests(unittest.TestCase):
                 self.assertEqual(profile_info.parse_description(value), {"name": "", "job": ""})
 
     def test_multiline_description_is_one_line(self):
-        got = profile_info.parse_description("Ornith — локальный помощник\n(вторая строка)")
-        self.assertEqual(got["name"], "Ornith")
+        got = profile_info.parse_description("Локальная — локальный помощник\n(вторая строка)")
+        self.assertEqual(got["name"], "Локальная")
         self.assertEqual(got["job"], "локальный помощник (вторая строка)")
 
 

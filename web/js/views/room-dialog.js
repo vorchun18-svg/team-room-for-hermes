@@ -52,6 +52,8 @@ const DLG_TABS = [
   { id: 'main', title: 'Основное', icon: 'edit' },
   { id: 'members', title: 'Состав', icon: 'organization' },
   { id: 'work', title: 'Работа', icon: 'play-circle' },
+  // W27-E6: «Уровень автономии» — что участник делает сам, а что спрашивает.
+  { id: 'autonomy', title: 'Автономия', icon: 'shield' },
   { id: 'project', title: 'Проект', icon: 'map' },
   { id: 'files', title: 'Файлы', icon: 'folder' },
 ];
@@ -64,6 +66,7 @@ const FOCUS_TAB = {
   files: 'files',
   members: 'members',
   work: 'work',
+  autonomy: 'autonomy',
   main: 'main',
 };
 
@@ -361,6 +364,29 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   const workPanel = panels.get('work');
   const projectPanel = panels.get('project');
   const filesPanel = panels.get('files');
+  const autonomyPanel = panels.get('autonomy');
+
+  /* ── W27-E6 «Автономия» ────────────────────────────────────────────────
+     Содержимое вкладки живёт в своём файле (views/autonomy.js): уровни,
+     предпросмотр «что изменится», список «только с моего да», журнал и
+     критичные запросы. Здесь только место и понятный отказ, если файл не
+     загрузился, — у вкладки всегда есть текст, а не пустота. */
+  if (!isEdit) {
+    autonomyPanel.appendChild(h('div', { class: 'roomdlg__hint' },
+      'Новая комната начнёт с уровня «Рабочий»: свои скрипты и файлы комнаты участник делает сам, '
+      + 'удаление и отправку наружу — спрашивает. Уровень меняется здесь же после создания комнаты.'));
+  } else {
+    const autonomyHost = h('div', { class: 'roomdlg__autonomy' });
+    autonomyPanel.appendChild(autonomyHost);
+    import('./autonomy.js')
+      .then((m) => m.mountAutonomyPanel(autonomyHost, { api, toast, store, navigate }, roomId))
+      .catch(() => {
+        autonomyHost.replaceChildren();
+        autonomyHost.appendChild(h('div', { class: 'roomdlg__hint' },
+          'Не удалось открыть уровень автономии. Закройте окно и откройте «Настройки комнаты» '
+          + 'заново — уровень, список «только с моего да» и журнал подтянутся.'));
+      });
+  }
 
   const errBanner = h('div', { class: 'roomdlg__error' });
   form.insertBefore(errBanner, form.firstChild);
@@ -1553,7 +1579,8 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   } else if (focusTarget === 'project_dir') {
     pathInput.focus();
     try { pathInput.setSelectionRange(pathInput.value.length, pathInput.value.length); } catch { /* ignore */ }
-  } else if (focusTarget === 'members' || focusTarget === 'work' || focusTarget === 'project') {
+  } else if (focusTarget === 'members' || focusTarget === 'work' || focusTarget === 'project'
+    || focusTarget === 'autonomy') {
     const first = panels.get(focusTarget).querySelector
       ? panels.get(focusTarget).querySelector('input, select, button')
       : null;

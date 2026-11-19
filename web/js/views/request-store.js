@@ -23,6 +23,9 @@
  * Модуль чистый: ни DOM, ни fetch. Тесты — `node --test tests/request-store.test.mjs`.
  */
 
+// W27-E2 §1: «Не актуально»/«Вернуть» — тела по общему контракту, 409 — не ошибка.
+import { dismissBody, restoreBody, isAlreadyDecided, needsYouCount } from './stale-model.js';
+
 /** Событие «состояние запроса изменилось» (браузер). */
 export const REQUEST_CHANGED = 'teamroom:request-changed';
 
@@ -285,6 +288,15 @@ export function createRequestStore(opts = {}) {
       return res;
     } catch (err) {
       if (saved) replace(kind, id, saved);
+      // W27-E2 §1: `409 already_decided` — не ошибка, а устаревший экран. Откатываем
+      // оптимистичную правку, тихо сверяемся с сервером и отдаём «уже решено»
+      // вместо исключения: наверху из него получалась красная плашка (девять подряд).
+      if (isAlreadyDecided(err)) {
+        state.error = null;
+        touch('conflict');
+        try { await sync(); } catch { /* сверка не удалась — опрос страницы догонит */ }
+        return { ok: true, already_decided: true, detail: state.detail };
+      }
       state.error = err || new Error('action failed');
       touch('rollback');
       throw err;
@@ -432,6 +444,92 @@ export function createRequestStore(opts = {}) {
     });
   }
 
+  /* ── W27-E2 §1: «Не актуально» и «Вернуть» одним путём для всех видов ───── */
+
+  /** Вид пункта в теле действия: срез → `target.kind` контракта §1. */
+  const TARGET_KIND = {
+    approvals: 'approval', questions: 'question', decisions: 'decision', steps: 'step',
+  };
+
+  /** Что показать сразу, пока сервер не ответил (по виду и действию). */
+  const STALE_FIELDS = {
+    approvals: { dismiss: { state: 'dismissed' }, restore: { state: 'pending', decided_at: null } },
+    questions: {
+      dismiss: { state: 'dismissed', dismissed: true },
+      restore: { state: 'open', dismissed: false, open: true },
+    },
+    decisions: {
+      dismiss: { open: false, status: 'dismissed' },
+      restore: { open: true, status: 'proposed' },
+    },
+    steps: { dismiss: { state: 'dismissed' }, restore: { state: 'open' } },
+  };
+
+  /** Элемент из ответа сервера (у каждого вида своё поле, порядок — от точного к общему). */
+  function answeredItem(res, slice) {
+    if (!res || typeof res !== 'object') return null;
+    const single = { approvals: 'approval', questions: 'question', decisions: 'decision', steps: 'step' };
+    return res[single[slice]] || res.item || null;
+  }
+
+  /**
+   * «Не актуально» / «Вернуть» для вопроса, решения, разрешения, шага.
+   *
+   * `POST /api/requests/{rid}/actions {action:"dismiss"|"restore", target:{kind,id}}`.
+   * Ответ сервера главный; 409 `already_decided` = «уже так» — тихо.
+   *
+   * @param {'approvals'|'questions'|'decisions'|'steps'} slice
+   * @param {string} id
+   * @param {'dismiss'|'restore'} action
+   * @param {{reason?:string}} [extra]
+   */
+  function targetAction(slice, id, action, extra = {}) {
+    const kind = String(slice || '');
+    const kindName = TARGET_KIND[kind] || kind;
+    const body = String(action) === 'restore'
+      ? restoreBody(kindName, id)
+      : dismissBody(kindName, id, extra && extra.reason);
+    const optimistic = (STALE_FIELDS[kind] && STALE_FIELDS[kind][String(action)]) || {};
+    return dispatch({
+      kind,
+      id: String(id || ''),
+      key: 'stale-' + String(action) + ':' + kind + ':' + String(id || ''),
+      fields: Object.assign({}, optimistic),
+      request: () => act(body),
+      apply: (res) => {
+        const item = answeredItem(res, kind);
+        if (item) patch(kind, id, item, { quiet: true });
+      },
+    });
+  }
+
+  /**
+   * Массово «Закрыть все неактуальные» (W27-E2 §1): неактуальное у завершённых
+   * запросов комнаты. Решённое человеком сервер не трогает.
+   * @returns {Promise<{closed:{questions:number,decisions:number,approvals:number,steps:number}}>}
+   */
+  async function dismissStale(scope = 'finished_requests') {
+    if (!state.api || typeof state.api.post !== 'function') {
+      const err = new Error('Нет связи с приложением');
+      err.code = 'offline';
+      throw err;
+    }
+    if (!state.roomId) {
+      const err = new Error('Неизвестна комната запроса');
+      err.code = 'no_room';
+      throw err;
+    }
+    const res = await state.api.post('/api/rooms/' + encodeURIComponent(state.roomId)
+      + '/dismiss_stale', { scope: String(scope || 'finished_requests') });
+    try { await sync(); } catch { /* опрос страницы догонит */ }
+    return res || { closed: { questions: 0, decisions: 0, approvals: 0, steps: 0 } };
+  }
+
+  /** Число «ждёт вас» с сервера (`needs_you_count`) или `null` у старого сервера. */
+  function needsYou() {
+    return needsYouCount(state.detail);
+  }
+
   /** Перечитать состояние с сервера (если страница умеет). */
   async function sync() {
     if (state.refresh) return state.refresh({ force: true, quiet: true });
@@ -461,6 +559,10 @@ export function createRequestStore(opts = {}) {
     answerQuestion,
     decisionAction,
     stepAction,
+    // W27-E2 §1: «Не актуально» / «Вернуть» / массовое закрытие / счётчик сервера.
+    targetAction,
+    dismissStale,
+    needsYou,
     sync,
     destroy,
     get rev() { return state.rev; },

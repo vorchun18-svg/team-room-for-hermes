@@ -296,7 +296,9 @@ export function inlineScan(src, ctx, depth) {
           const raw = src.slice(i + 1, close);
           const label = inlineScan(raw, ctx, depth + 1);
           flush();
-          out += linkHtml(dest.url, label, dest.title, raw.replace(/\*\*|__|~~|`/g, '').trim());
+          // W26-QA2: в метке может быть `\\` (путь с `\` на конце) — человеку он
+          // показывается одним символом, как в источнике.
+          out += linkHtml(dest.url, label, dest.title, raw.replace(/\\\\/g, '\\').replace(/\*\*|__|~~|`/g, '').trim());
           i = dest.end;
           continue;
         }

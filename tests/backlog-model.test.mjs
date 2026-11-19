@@ -229,7 +229,7 @@ test('filterJournal фильтрует по типу и ищет по текст
   assert.deepEqual(decisions.map((e) => e.kind), ['decision_proposed']);
   assert.equal(filterJournal(items, { type: 'all' }).length, items.length);
   assert.equal(filterJournal(items, { q: 'упаковк' }).length, 2);
-  assert.equal(filterJournal(items, { q: 'BIZ-OPS' }).length >= 1, true, 'автор ищется без учёта регистра');
+  assert.equal(filterJournal(items, { q: 'TEAM-OPS' }).length >= 1, true, 'автор ищется без учёта регистра');
   assert.equal(filterJournal(items, { q: '  ' }).length, items.length);
   assert.equal(filterJournal(null, {}).length, 0);
   assert.equal(journalMatchesType({ kind: 'room_created' }, 'requests'), false);

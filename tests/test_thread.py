@@ -192,7 +192,9 @@ class ThreadReadTests(_Base):
         rid = self.rid("done_modern")
         items = thread_mod.get_thread(self.cfg, rid, room=self.room())
         for item in items:
+            self.assertNotIn("biz-", item["author_label"], item)
             self.assertNotIn("team-", item["author_label"], item)
+            self.assertNotIn("biz-", item["text"] if item["kind"] == "event" else "")
             self.assertNotIn("team-", item["text"] if item["kind"] == "event" else "")
         lead_items = [i for i in items if i["author"] == "team-director"]
         if lead_items:

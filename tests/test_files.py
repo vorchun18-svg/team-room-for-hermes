@@ -242,7 +242,7 @@ class FilesTest(unittest.TestCase):
         `list2cmdline` в `explorer "/select,C:\\…\\файл.md"` — проводник такую
         строку не понимает и открывает «Документы».
         """
-        name = "2026-11-18 Каладжинское 2 — итог.md"
+        name = "2026-11-18 Проект Альфа — итог.md"
         p = self.make(name, "# итог")
         with mock.patch.object(files.subprocess, "Popen") as popen:
             self.assertTrue(files.reveal(self.cfg, str(p)))

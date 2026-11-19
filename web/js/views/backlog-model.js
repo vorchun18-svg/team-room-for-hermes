@@ -288,13 +288,31 @@ export function inboxCount({ questions = [], decisions = [], blocked = [], appro
  * @param {{questions?:Array, decisions?:Array, blocked?:Array, approvals?:Array}} parts
  * @returns {{total:number, questions:number, blocked:number, decisions:number, approvals:number, text:string, full:string}}
  */
-export function inboxSummary({ questions = [], decisions = [], blocked = [], approvals = [] } = {}) {
-  const q = Array.isArray(questions) ? questions.length : 0;
+export function inboxSummary({ questions = [], decisions = [], blocked = [], approvals = [], counts = null } = {}) {
+  // W27-E2 §1: если сервер прислал `needs_you_count`, показываем ЕГО числа, а не
+  // пересчёт по списку: список и счётчик расходились (20 закрытых разрешений дали
+  // «27»). Пересчёт остаётся только для старого сервера без этого поля.
+  const server = counts && typeof counts === 'object' ? counts : null;
+  const fromServer = (value, list) => {
+    if (!server) return Array.isArray(list) ? list.length : 0;
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+  };
+  const q = fromServer(server && server.questions, questions);
   const b = Array.isArray(blocked) ? blocked.length : 0;
-  const d = Array.isArray(decisions) ? decisions.length : 0;
+  const d = fromServer(server && server.decisions, decisions);
   // W22-AP2: запрос разрешения агенту — такое же дело, ждущее человека.
-  const a = Array.isArray(approvals) ? approvals.length : 0;
-  const total = q + b + d + a;
+  // W27-E2 §1: защита от повторения дефекта — даже если сюда положили все строки
+  // разрешений, в счёт идут только `pending`: закрытые/снятые не «ждут».
+  const approvalsWaiting = (Array.isArray(approvals) ? approvals : [])
+    .filter((a) => a && (a.state === undefined || a.state === null
+      || String(a.state).toLowerCase() === 'pending'));
+  const a = fromServer(server && server.approvals, approvalsWaiting);
+  const sum = q + b + d + a;
+  // W27-FIX: число меню/бейджа — всегда «вопросы + блокировки + решения + разрешения».
+  // Шаги (`needs_you_count.steps`) в него не входят: они живут в «Просрочено/Ближайшие»,
+  // и «Сегодня» для комнаты считает то же самое — два числа обязаны совпадать.
+  const total = sum;
   const nouns = (n, forms) => n + ' ' + pluralWord(n, forms);
   const parts = [];
   if (q) parts.push(nouns(q, ['вопрос', 'вопроса', 'вопросов']));
@@ -307,6 +325,7 @@ export function inboxSummary({ questions = [], decisions = [], blocked = [], app
     blocked: b,
     decisions: d,
     approvals: a,
+    fromServer: Boolean(server),
     text: parts.join(' · '),
     full: parts.length ? nouns(total, ['дело', 'дела', 'дел']) + ': ' + parts.join(' · ') : '',
   };

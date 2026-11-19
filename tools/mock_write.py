@@ -14,6 +14,7 @@ from mock_versions import normalize_v2
 import mock_backlog
 import mock_delos
 import mock_notes
+import mock_duties_fe   # W27-E8: дежурства комнаты
 import mock_paths
 import mock_plan
 import mock_stt
@@ -39,6 +40,8 @@ WORKLOG_MODE_LABELS = {"full": "Подробно (с рассуждениями)
 # вымышленное). Сколько запросов показать, задаётся в строке запуска:
 #   MOCK_APPROVALS=12 python tools/mock_server.py --port 8854
 APPROVAL_DEMO_RIDS = {"t_5c8e4a02"}
+# W27-E2: завершённая карточка с 20 ЗАКРЫТЫМИ разрешениями — стенд дефекта 1.
+CLOSED_APPROVAL_DEMO_RIDS = {"t_a1b2c3d4"}
 _AP_MEMBERS = [("team-ops", "Анна"), ("team-lawyer", "Лев"), ("team-critic", "Марина")]
 
 
@@ -135,6 +138,60 @@ def demo_approvals(rid: str) -> list:
             "expires_at": None,
         })
     return items
+def demo_closed_approvals(rid: str, count: int = 20) -> list:
+    """Закрытые разрешения завершённой карточки (W27-E2, дефект 1).
+
+    Ровно то, из-за чего пакет и появился: у готового запроса 20 запросов разрешений
+    со `state:"closed"` и `closed_reason:"card_finished"`. Раньше интерфейс такого
+    состояния не знал, рисовал их как «ждёт вашего решения» и складывал в счётчик —
+    у человека выходило «27» и девять красных плашек 409.
+
+    Демо-данные вымышленные: «Контрагент А», пути `C:/Work/Rooms/demo`.
+    """
+    reasons = [("terminal", "запуск скрипта сборки отчёта", "script execution via heredoc"),
+               ("terminal", "чтение выгрузки заказов", "script execution via -e/-c flag")]
+    stamps = []
+    base = now() - 5400
+    items = []
+    for i in range(max(1, int(count))):
+        kind, desc, pattern = reasons[i % len(reasons)]
+        profile, member = _AP_MEMBERS[i % len(_AP_MEMBERS)]
+        # 15 «можно разрешить» + 5 «нельзя штатно» — как в боевых данных дефекта.
+        workaround = i >= count - 5
+        items.append({
+            "id": "ap_closed_%03d" % i,
+            "task_id": rid,
+            "profile": profile,
+            "member_title": member,
+            "kind": "execute_code" if workaround else kind,
+            "command": ("python -c \"import csv;print(sum(1 for _ in csv.DictReader("
+                        "open('C:/Work/Rooms/demo/orders.csv'))))\""
+                        if workaround else
+                        "python tools/build_report.py --input C:/Work/Rooms/demo/orders.csv "
+                        "--output C:/Work/Rooms/demo/report.html"),
+            "description": desc,
+            "pattern_key": "execute_code" if workaround else pattern,
+            "floor": False,
+            "grantable": not workaround,
+            "dead_end": "workaround" if workaround else "grantable",
+            "actions": (["hint_agent", "trust_profile", "dismiss"] if workaround
+                        else ["once", "always", "deny"]),
+            # W27-E2 §1: сервер уже закрыл пункт — решать нечего.
+            "state": "closed",
+            "closed_reason": "card_finished",
+            "closed_at": base + i * 30,
+            "at": base + i * 30,
+            "decided_at": base + i * 30 + 20,
+            "card_state": "done",
+            "count": 1,
+            "note": "",
+            "card_title": "Собрать отчёт по упаковке за неделю",
+            "expires_at": None,
+        })
+        stamps.append(items[-1]["id"])
+    return items
+
+
 def collapse_approvals(items: list) -> list:
     """Схлопнуть одинаковые по причине блокировки (W22-ST) — как сервер.
 
@@ -498,13 +555,38 @@ class MockWrite:
                 "error": None, "at": now()}
 
     # --- W22-AP2: демо-разрешения агентам (память процесса) -----------------
+    # W27-E2 §1: реестр «не актуально» — как реестр ответов на сервере.
+    # Деталь запроса собирается из фикстур (копия на каждый GET), поэтому отметка
+    # «снято» должна жить отдельно от неё, иначе кнопка «Закрыть все неактуальные»
+    # отчитывалась бы о закрытии, а список оставался прежним.
+    def stale_overrides(self, rid: str) -> dict:
+        store = getattr(self, "stale_dismissed", None)
+        if not isinstance(store, dict):
+            store = {}
+            self.stale_dismissed = store
+        return store.setdefault(str(rid), {})
+
+    def remember_stale(self, rid: str, kind: str, item_id: str, on: bool, reason: str = "") -> None:
+        bucket = self.stale_overrides(rid).setdefault(str(kind), {})
+        key = str(item_id)
+        if on:
+            bucket[key] = reason or "dismissed"
+        else:
+            bucket.pop(key, None)
+
     def _approvals_for(self, rid: str) -> list:
         store = getattr(self, "approvals_demo", None)
         if not isinstance(store, dict):
             store = {}
             self.approvals_demo = store
         if rid not in store:
-            store[rid] = demo_approvals(rid) if rid in APPROVAL_DEMO_RIDS else []
+            if rid in APPROVAL_DEMO_RIDS:
+                store[rid] = demo_approvals(rid)
+            elif rid in CLOSED_APPROVAL_DEMO_RIDS:
+                # W27-E2: 20 закрытых разрешений у завершённой карточки (дефект 1).
+                store[rid] = demo_closed_approvals(rid)
+            else:
+                store[rid] = []
         return store[rid]
 
     def approval_grants(self) -> list:
@@ -537,7 +619,84 @@ class MockWrite:
         return {"ok": True, "removed": before - len(store), "profile": profile,
                 "pattern_key": pattern}
 
+    def dismiss_stale(self, room: str, body: dict) -> dict:
+        """Закрыть неактуальное у завершённых запросов комнаты (W27-E2 §1).
+
+        Правило §1: закрываются только пункты запросов со статусом done/archived;
+        решённое человеком (`granted_*`, `denied`, `accepted`, `rejected`) не
+        трогается — это история, а не мусор. Возврат — действием `restore`.
+        """
+        scope = str((body or {}).get("scope") or "finished_requests").strip()
+        if scope not in ("finished_requests",):
+            raise ApiError(400, "bad_request", "scope: finished_requests",
+                           {"field": "scope", "allowed": ["finished_requests"]})
+        closed = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0}
+        seen = set()
+        for rid, raw in list(getattr(self, "requests", {}).items()) + list(getattr(self, "live", {}).items()):
+            if rid in seen:
+                continue
+            seen.add(rid)
+            try:
+                detail = self.detail(rid)
+            except Exception:  # noqa: BLE001 — одна карточка не мешает остальным
+                continue
+            if str(detail.get("room") or "") != str(room):
+                continue
+            if str(detail.get("status") or "") not in ("done", "archived") and not detail.get("archived"):
+                continue
+            stamp = now()
+            for q in detail.get("open_questions") or []:
+                if isinstance(q, dict) and not q.get("answered") and not q.get("dismissed"):
+                    q["dismissed"] = True
+                    q["state"] = "dismissed"
+                    q["closed_reason"] = "request_done"
+                    self.remember_stale(rid, "question", str(q.get("id") or ""), True, "request_done")
+                    closed["questions"] += 1
+            for d in detail.get("decisions") or []:
+                if isinstance(d, dict) and not d.get("dismissed") and not d.get("superseded") \
+                        and (d.get("open") is True or str(d.get("status") or "proposed") == "proposed"):
+                    d["open"] = False
+                    d["status"] = "dismissed"
+                    d["dismissed"] = True
+                    d["closed_reason"] = "request_done"
+                    self.remember_stale(rid, "decision", str(d.get("id") or ""), True, "request_done")
+                    closed["decisions"] += 1
+            items = self._approvals_for(rid)
+            for a in items:
+                if isinstance(a, dict) and str(a.get("state")) == "pending":
+                    a["state"] = "dismissed"
+                    a["closed_reason"] = "request_done"
+                    a["decided_at"] = stamp
+                    self.remember_stale(rid, "approval", str(a.get("id") or ""), True, "request_done")
+                    closed["approvals"] += 1
+            for s in detail.get("next_steps") or []:
+                if isinstance(s, dict) and str(s.get("state") or "open") == "open":
+                    s["state"] = "dismissed"
+                    s["closed_reason"] = "request_done"
+                    self.remember_stale(rid, "step", str(s.get("id") or ""), True, "request_done")
+                    closed["steps"] += 1
+        total = sum(closed.values())
+        return {"ok": True, "scope": scope, "room": room, "closed": closed, "total": total,
+                "message": ("Закрыто неактуальных: %d" % total if total
+                            else "Неактуальных пунктов не осталось"),
+                "at": now()}
+
     def post(self, path: str, query: dict, body: dict) -> tuple:
+        # W27-E8: дежурства комнаты — мастер (предпросмотр и создание), корзина,
+        # сухой прогон, действия и ответы на предложения. Демо-состояние в памяти.
+        m = re.fullmatch(r"/api/duties/proposals/([A-Za-z0-9_.-]{1,64})/actions", path)
+        if m:
+            return 200, mock_duties_fe.proposal_action(self, m.group(1), body)
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/duties", path)
+        if m:
+            return 200, mock_duties_fe.create(self, m.group(1), body)
+        m = re.fullmatch(r"/api/duties/([A-Za-z0-9_.-]{1,64})/(restore|dry_run|actions)", path)
+        if m:
+            if m.group(2) == "restore":
+                return 200, mock_duties_fe.restore(self, m.group(1))
+            if m.group(2) == "dry_run":
+                return 200, mock_duties_fe.dry_run(self, m.group(1))
+            return 200, mock_duties_fe.act(self, m.group(1), body)
         # W26-D5: дела — создание и действия (демо в памяти, форма как у сервера)
         m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/delos", path)
         if m:
@@ -545,8 +704,16 @@ class MockWrite:
         m = re.fullmatch(r"/api/delos/(dl_[A-Za-z0-9]{2,24})/actions", path)
         if m:
             return 200, mock_delos.act(m.group(1), body or {})
+        # W27-E6: «Уровень автономии» (контракт §2) — только с confirm:true.
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/autonomy", path)
+        if m:
+            return 200, self.autonomy_apply(m.group(1), body or {})
         if path == "/api/approvals/revoke":
             return 200, self.revoke_approval(body or {})     # W22-AP2
+        # W27-E2 §1: массово «Закрыть все неактуальные» у завершённых запросов комнаты.
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/dismiss_stale", path)
+        if m:
+            return 200, self.dismiss_stale(m.group(1), body or {})
         if path == "/api/stt/learn":
             raw = check_str(body, "raw", required=True, maxlen=MAX_NOTE)
             final = check_str(body, "final", default="", maxlen=20000, allow_empty=True)
@@ -672,6 +839,9 @@ class MockWrite:
         raise ApiError(404, "not_found", "Неизвестный эндпоинт", {"path": path})
 
     def patch(self, path: str, query: dict, body: dict) -> tuple:
+        m = re.fullmatch(r"/api/duties/([A-Za-z0-9_.-]{1,64})", path)
+        if m:                       # W27-E8: правка расписания/задания/правила
+            return 200, mock_duties_fe.patch(self, m.group(1), body)
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/members/([a-z0-9_.-]{2,40})", path)
         if m:
             return 200, self.pin_member(m.group(1), m.group(2), body or {})   # W19 B-28
@@ -789,6 +959,9 @@ class MockWrite:
                 "title_locked": saved["title_locked"]}
 
     def delete(self, path: str, query: dict, body: dict) -> tuple:
+        m = re.fullmatch(r"/api/duties/([A-Za-z0-9_.-]{1,64})", path)
+        if m:                       # W27-E8: удаление → корзина на 30 дней
+            return 200, mock_duties_fe.delete(self, m.group(1))
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes/entries/([A-Za-z0-9_-]{2,40})", path)
         if m:
             data = dict(body or {})
@@ -1330,7 +1503,9 @@ class MockWrite:
                    "answers_resend", "decision", "svod_refresh", "question_dismiss", "approval",
                    "card_stop", "card_resume", "card_model",
                    # W26-D2: рычаги для блокировок, которые нельзя снять разрешением
-                   "hint_agent", "trust_profile", "dismiss"]
+                   "hint_agent", "trust_profile", "dismiss",
+                   # W27-E2 §1: «Не актуально»/«Вернуть» с `target:{kind,id}`
+                   "restore"]
         if action not in allowed:
             raise ApiError(400, "bad_request", "Неизвестное действие", {"action": action, "allowed": allowed})
         extra = {"ok": True, "action": action}
@@ -1440,6 +1615,105 @@ class MockWrite:
                 "message": str(extra.get("text") or ""),
                 "detail": {"paused": str(node.get("status") or "") == "paused"},
             })
+        elif action in ("dismiss", "restore") and isinstance(body.get("target"), dict):
+            # W27-E2 §1: ОДНО действие на все виды пунктов — вопрос, решение,
+            # разрешение, шаг. `target:{kind,id}`; «уже так» — 409 already_decided,
+            # который клиент гасит тихо (перерисовка вместо красной плашки).
+            tgt = body.get("target") or {}
+            kind = str(tgt.get("kind") or "").strip().lower()
+            tid = str(tgt.get("id") or "").strip()
+            if not tid:
+                raise ApiError(400, "bad_request", "Нужен target.id", {"field": "target.id"})
+            reason = str(body.get("reason") or "").strip()
+            stamp = now()
+            item = None
+            if kind == "approval":
+                items = self._approvals_for(rid)
+                item = next((x for x in items if str(x.get("id")) == tid), None)
+                if item is None:
+                    raise ApiError(404, "not_found", "Запрос разрешения не найден", {"approval_id": tid})
+                if action == "dismiss":
+                    if str(item.get("state")) != "pending":
+                        raise ApiError(409, "already_decided", "Пункт уже не ждёт решения",
+                                       {"approval_id": tid, "state": item.get("state")})
+                    item["state"] = "dismissed"
+                    item["closed_reason"] = "dismissed"
+                    item["decided_at"] = stamp
+                else:
+                    if str(item.get("state")) == "pending":
+                        raise ApiError(409, "already_decided", "Пункт уже ждёт решения",
+                                       {"approval_id": tid, "state": "pending"})
+                    item["state"] = "pending"
+                    item["decided_at"] = None
+                    item.pop("closed_reason", None)
+            elif kind == "question":
+                item = next((q for q in detail.get("open_questions") or []
+                             if str(q.get("id")) == tid), None)
+                if item is None:
+                    raise ApiError(404, "not_found", "Вопрос не найден", {"question_id": tid})
+                if action == "dismiss":
+                    if item.get("answered") or item.get("dismissed"):
+                        raise ApiError(409, "already_decided", "Вопрос уже не ждёт ответа",
+                                       {"question_id": tid})
+                    item["dismissed"] = True
+                    item["state"] = "dismissed"
+                    item["closed_reason"] = "dismissed"
+                    item["dismissed_at"] = stamp
+                else:
+                    if not item.get("dismissed"):
+                        raise ApiError(409, "already_decided", "Вопрос и так ждёт ответа",
+                                       {"question_id": tid})
+                    item["dismissed"] = False
+                    item["state"] = "open"
+                    item.pop("closed_reason", None)
+                    item.pop("dismissed_at", None)
+            elif kind == "decision":
+                item = next((d for d in detail.get("decisions") or []
+                             if str(d.get("id")) == tid), None)
+                if item is None:
+                    raise ApiError(404, "not_found", "Решение не найдено", {"decision_id": tid})
+                if action == "dismiss":
+                    if item.get("open") is False or str(item.get("status")) != "proposed":
+                        raise ApiError(409, "already_decided", "Решение уже не ждёт слова",
+                                       {"decision_id": tid, "status": item.get("status")})
+                    item["open"] = False
+                    item["status"] = "dismissed"
+                    item["dismissed"] = True
+                    item["closed_reason"] = "dismissed"
+                else:
+                    if item.get("open") is True or str(item.get("status")) == "proposed":
+                        raise ApiError(409, "already_decided", "Решение и так ждёт слова",
+                                       {"decision_id": tid})
+                    item["open"] = True
+                    item["status"] = "proposed"
+                    item["dismissed"] = False
+                    item.pop("closed_reason", None)
+            elif kind == "step":
+                item = next((s for s in detail.get("next_steps") or []
+                             if str(s.get("id")) == tid), None)
+                if item is None:
+                    raise ApiError(404, "not_found", "Шаг не найден", {"step_id": tid})
+                if action == "dismiss":
+                    if str(item.get("state")) == "dismissed":
+                        raise ApiError(409, "already_decided", "Шаг уже убран", {"step_id": tid})
+                    item["state"] = "dismissed"
+                    item["closed_reason"] = "dismissed"
+                else:
+                    item["state"] = "open"
+                    item.pop("closed_reason", None)
+            else:
+                raise ApiError(400, "bad_request", "target.kind: question|decision|approval|step",
+                               {"field": "target.kind", "kind": kind})
+            detail.setdefault("timeline", []).append(
+                {"at": stamp, "kind": kind, "task_id": rid, "actor": "mikhail",
+                 "text": ("Пункт закрыт как неактуальный" if action == "dismiss"
+                          else "Пункт возвращён в работу") + ((" · " + reason) if reason else "")})
+            # Отметка живёт в реестре: деталь собирается заново на каждый GET.
+            self.remember_stale(rid, kind, tid, action == "dismiss", reason)
+            extra.update({kind: dict(item) if isinstance(item, dict) else item,
+                          "target": {"kind": kind, "id": tid},
+                          "message": ("Закрыто как неактуальное: вернуть можно в «Закрытые»"
+                                      if action == "dismiss" else "Пункт снова ждёт вашего решения")})
         elif action == "approval":
             # W22-AP2: «Разрешить один раз / Разрешать всегда / Запретить».
             aid = (check_str(body, "approval_id", required=True, maxlen=40) or "").strip()
@@ -1453,7 +1727,9 @@ class MockWrite:
                 raise ApiError(404, "not_found", "Запрос разрешения не найден",
                                {"approval_id": aid})
             if ap.get("state") != "pending":
-                raise ApiError(409, "conflict", "Разрешение уже решено",
+                # W27-E2 §1: код `already_decided` — клиент гасит его тихо
+                # (перерисовка), а не красной плашкой.
+                raise ApiError(409, "already_decided", "Разрешение уже решено",
                                {"approval_id": aid, "state": ap.get("state")})
             if ap.get("floor"):
                 raise ApiError(422, "unprocessable",
@@ -1518,7 +1794,9 @@ class MockWrite:
             if ap is None:
                 raise ApiError(404, "not_found", "Запрос разрешения не найден", {"approval_id": aid})
             if ap.get("state") != "pending":
-                raise ApiError(409, "conflict", "Разрешение уже решено",
+                # W27-E2 §1: код `already_decided` — клиент гасит его тихо
+                # (перерисовка), а не красной плашкой.
+                raise ApiError(409, "already_decided", "Разрешение уже решено",
                                {"approval_id": aid, "state": ap.get("state")})
             dead = str(ap.get("dead_end") or ("floor" if ap.get("floor") else
                                               "grantable" if ap.get("grantable") else "workaround"))
@@ -2095,3 +2373,46 @@ class MockWrite:
         raw = (check_str(body, "path", required=True, maxlen=1000) or "").strip()
         path = self.resolve_shared_path(raw)   # тот же белый список, что у GET /api/file
         return {"ok": True, "path": path, "revealed": False}
+    # --- W27-E6: применение уровня автономии (контракт §2) -------------------
+    def autonomy_apply(self, room_id: str, body: dict) -> dict:
+        """POST /api/rooms/{id}/autonomy — без confirm:true отвечаем 409 и предпросмотром.
+
+        В демо «применение» — память процесса и поле `autonomy` в записи комнаты;
+        в профили участников мок не пишет никогда (это делает сервер E5).
+        """
+        room = self.room(room_id)
+        level = str(body.get("level") or "").strip()
+        if level not in self.AUTONOMY_LEVELS:
+            raise ApiError(400, "bad_request", "Уровень: осторожный, рабочий или свободный",
+                           {"field": "level", "allowed": list(self.AUTONOMY_LEVELS)})
+        never = None
+        if isinstance(body.get("never"), list):
+            never = []
+            for raw in body["never"]:
+                text = " ".join(str(raw or "").split())
+                if not text:
+                    continue
+                if len(text) > 120:
+                    raise ApiError(400, "bad_request", "Запись списка длиннее 120 знаков",
+                                   {"field": "never"})
+                if text.lower() not in [x.lower() for x in never]:
+                    never.append(text)
+        payload = self.autonomy_payload(room_id)
+        if body.get("confirm") is not True:
+            raise ApiError(409, "confirm_required",
+                           "Уровень меняется только с подтверждением — сначала покажите предпросмотр",
+                           {"level": level, "preview": {level: payload["preview"][level]}})
+        state = self.autonomy_state(room_id)
+        state["level"] = level
+        state["never"] = list(never if never is not None else state["never"])
+        state["updated_at"] = now()
+        applied = [{"profile": row["profile"], "member_title": row["member_title"],
+                    "allowlist": row["allowlist"], "single_query_mode": row["single_query_mode"],
+                    "deny": row["deny"]}
+                   for row in self._autonomy_profiles(room, level, state["never"])]
+        room["autonomy"] = {"level": level, "never": list(state["never"]),
+                            "updated_at": state["updated_at"]}
+        return {"ok": True, "room": room_id, "level": level, "never": list(state["never"]),
+                "applied": applied, "updated_at": state["updated_at"],
+                "backup": "data/backups/autonomy/%s-%d.yaml" % (room_id, int(state["updated_at"])),
+                "mock": True}
