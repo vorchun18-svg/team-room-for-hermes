@@ -603,8 +603,29 @@ def _synthesis(ctx: dict, nodes: list, extra_cards: list) -> tuple:
     if state == "none":
         warnings.append({"code": "no_synthesis", "message": "Запрос завершён, но текста ответа в run'ах нет.",
                          "detail": {"rid": ctx["root_id"]}})
+    svod_meta = _svod_public(canon)
     return ({"state": state, "version": version, "text_md": text, "author": author, "at": at,
-             "source_task": source, "legacy": legacy, "history": history}, canon, warnings)
+             "source_task": source, "legacy": legacy, "history": history,
+             # W28b (дефект 9): готовая резолюция свода (`metadata.svod.short`) — блок
+             # «Коротко» показывает её как есть, без эвристики и без обрыва «…».
+             **({"metadata": {"svod": svod_meta}} if svod_meta else {})}, canon, warnings)
+
+
+def _svod_public(canon: dict) -> dict:
+    """`metadata.svod` канона → поля для интерфейса (W28b). Молча, без импорта-цикла."""
+    try:
+        raw = (canon or {}).get("extra", {}).get("svod") if isinstance(canon, dict) else None
+        if not isinstance(raw, dict):                      # старый канон: svod мог остаться сверху
+            raw = (canon or {}).get("svod") if isinstance(canon, dict) else None
+        if not isinstance(raw, dict):
+            return {}
+        try:
+            from . import contract as _contract
+        except ImportError:                                # pragma: no cover — плоский импорт
+            import contract as _contract  # type: ignore
+        return _contract.svod_public_metadata(raw)
+    except Exception:                                      # noqa: BLE001 — карточка важнее поля
+        return {}
 
 
 def _critic_block(nodes: list, extra_cards: list, room, ctx: dict, enabled=None) -> dict:

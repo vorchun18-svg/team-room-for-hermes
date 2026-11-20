@@ -185,7 +185,10 @@
   font-size: var(--text-sm);
 }
 .req-answer__ver-text { min-width: 0; }
-.req-answer__body { max-width: 720px; min-width: 0; }
+/* W28b (дефект 8): здесь стоял `max-width: 720px` — вторая рамка, из-за которой
+   свод на широком окне занимал узкую полоску. Меру строки держит сам текст
+   (web/css/svod.css, `--svod-measure`), карточка идёт во всю ширину колонки. */
+.req-answer__body { max-width: none; min-width: 0; }
 .req-answer__body .markdown { font-size: calc(var(--text-md) + 1px); line-height: 1.72; }
 .req-answer__body .markdown > :first-child { margin-top: 0; }
 .req-answer__body .markdown h2 { margin-top: 1.5em; font-size: var(--text-lg); }

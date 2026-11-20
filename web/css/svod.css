@@ -23,11 +23,14 @@
 
 .req-answer.card .req-answer__body .markdown,
 .tr-md {
-  /* W25-L1 (R5 §9 п. 4): строка свода 45–80 знаков на всех ширинах вида.
-   * Было 86ch — замер на эталонном запросе дал 84 знака (docs/shots/w25-l1/).
-   * 70ch на 16 px даёт ≈ 68 знаков: 1ch — ширина «0», кириллица уже, поэтому
-   * буквальные 72ch давали бы больше. Порог проверяется tools/probe_w25_modes.py. */
-  max-width: 70ch;
+  /* W28b (дефект 8): свод занимает ВСЮ ширину колонки. Раньше здесь стоял
+   * жёсткий `max-width: 70ch` (канон волны 25, R5 §9 п. 4) — на окне 1366+ px
+   * он оставлял пустое поле слева и справа, хотя дерево работ, «Найдено» и
+   * вложения шли во всю ширину. Теперь меру строки держит не контейнер, а сам
+   * текст: `--svod-measure` ниже (≈70–120 знаков, растёт с окном и никогда не
+   * выходит за колонку). Таблицы, списки-блоки, «Найдено» и плашки — во всю
+   * ширину. Замер — tools/probe_w25_modes.py, снимки — docs/shots/w28-svod/. */
+  max-width: none;
   font-size: var(--text-md);               /* 16 px: строка ≈ 67 знаков в колонке вида */
   line-height: 1.62;                       /* R5 §7.10: 15,5–16 px / 1,62 */
   color: var(--foreground);
@@ -54,6 +57,30 @@
 
 .req-answer.card .req-answer__body .markdown > p:first-child,
 .tr-md > p:first-child { margin-top: 0; }
+
+/* ── адаптивная мера строки (W28b, дефект 8) ─────────────────────────────
+ * Предел строки живёт у текста, а не у контейнера: он растёт вместе с окном
+ * (≈70 знаков в узкой колонке, до 120 в широкой) и никогда не выходит за
+ * колонку — `100%` внутри `min()` и есть страховка от горизонтальной прокрутки.
+ * Таблицы (`table`), блоки кода (`pre`), списки-блоки, «Найдено» и плашки
+ * (`blockquote`, `.md-callout`) под правило НЕ попадают — они во всю ширину. */
+.req-answer.card,
+.tr-md { --svod-measure: min(120ch, 100%); }
+
+.req-answer.card .req-answer__body .markdown p,
+.req-answer.card .req-answer__body .markdown li,
+.req-answer.card .req-answer__body .markdown h1,
+.req-answer.card .req-answer__body .markdown h2,
+.req-answer.card .req-answer__body .markdown h3,
+.req-answer.card .req-answer__body .markdown h4,
+.req-answer.card .req-answer__body .markdown dd,
+.tr-md p,
+.tr-md li,
+.tr-md h1,
+.tr-md h2,
+.tr-md h3,
+.tr-md h4,
+.tr-md dd { max-width: var(--svod-measure); }
 
 /* ── заголовки: иерархия и воздух ──────────────────────────────────────── */
 
@@ -268,7 +295,9 @@
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
   background: var(--ui-bg-tertiary);
-  max-width: 72ch;
+  /* W28b: плашка идёт по ширине колонки (как таблицы и «Найдено»), а меру
+     строки внутри держит её собственный текст — см. .svod-head__text. */
+  max-width: none;
 }
 
 .svod-head__title {
@@ -283,11 +312,22 @@
 
 .svod-head__text {
   display: block;
+  /* W28b: та же адаптивная мера, что у свода, — длинная строка не «разъезжается»
+     на 1920 px, а на узком окне ограничение ничего не отнимает. */
+  max-width: var(--svod-measure, min(120ch, 100%));
   font-size: calc(var(--text-md) + 1px);
   line-height: 1.55;
   color: var(--foreground);
   text-wrap: pretty;
   overflow-wrap: anywhere;
+}
+
+/* W28b (дефект 9): вместо обрыва «…» — раскрытие остатка резолюции. */
+.svod-head__text[hidden] { display: none; }   /* у .svod-head__text свой display: block */
+.svod-head__more {
+  margin-top: var(--space-2);
+  padding-left: 0;
+  font-size: var(--text-sm);
 }
 
 /* ── строка состояния свода (одна, без дублей) ─────────────────────────── */
@@ -359,10 +399,11 @@
 }
 
 @media (max-width: 700px) {
-  /* W25-L1 (R5 §9 п. 4): мера строки не снимается — на 683 px она давала 84 знака.
-     Ниже 560 px колонка и так уже 70ch, ограничение ничего не отнимает. */
+  /* W28b: прежний канон «не больше 70ch» снят — мера строки адаптивная
+     (`--svod-measure: min(120ch, 100%)`), и на 683 px она даёт всю ширину
+     колонки. Здесь правило больше не нужно: контейнер и так уже, чем 120ch. */
   .req-answer.card .req-answer__body .markdown,
-  .tr-md { max-width: 70ch; }
+  .tr-md { max-width: none; }
 }
 
 /* ── печать: свод как документ ─────────────────────────────────────────── */

@@ -11,7 +11,7 @@ import { icon } from '../icons.js';
 import { fileUrl } from '../api.js';
 import { emptyState, skeleton, mdBlock, copyText, buildDialog, ensureCss } from '../ui.js';
 import { enhanceAll } from '../dictation-auto.js';
-import { svodParts } from '../svod-format.js';
+import { svodParts, headlineSplit } from '../svod-format.js';
 import {
   personName, profileName, criticOf, synthesisOf, versionsOf, latestVersion, wrapTables, devDetails,
 } from './request-util.js';
@@ -653,13 +653,32 @@ export function createAnswer(R) {
     return live ? (String(live.state || '') || 'fresh') : '';
   }
 
-  /** Карточка «Коротко» над сводом: одна мысль, один раз (W24-N1 §2.2). */
+  /** Карточка «Коротко» над сводом: одна мысль, один раз (W24-N1 §2.2).
+   *
+   * W28b (дефект 9): текст законченный, без «…». Если резолюция длинная,
+   * видна первая часть по целым предложениям, остальное — по «Читать далее»
+   * (раскрытие вместо обрыва посреди мысли). */
   function headlineBlock(headline) {
     const text = String(headline || '').trim();
     if (!text) return null;
-    return h('div', { class: 'svod-head', 'data-svod': 'headline' },
+    const { lead, rest } = headlineSplit(text);
+    const box = h('div', { class: 'svod-head', 'data-svod': 'headline' },
       h('span', { class: 'svod-head__title', title: SVOD_RU.headlineTitle }, SVOD_RU.headline),
-      h('span', { class: 'svod-head__text' }, text));
+      h('span', { class: 'svod-head__text' }, lead));
+    if (!rest) return box;
+    const tail = h('span', { class: 'svod-head__text', hidden: true }, (lead ? ' ' : '') + rest);
+    const more = h('button', {
+      type: 'button', class: 'btn btn--link btn--sm svod-head__more',
+      'data-svod': 'headline-more', 'aria-expanded': 'false',
+    }, SVOD_RU.more);
+    more.addEventListener('click', () => {
+      const open = more.getAttribute('aria-expanded') !== 'true';
+      more.setAttribute('aria-expanded', open ? 'true' : 'false');
+      more.textContent = open ? SVOD_RU.less : SVOD_RU.more;
+      if (open) tail.removeAttribute('hidden'); else tail.setAttribute('hidden', '');
+    });
+    box.append(tail, more);
+    return box;
   }
 
   function buildAnswer() {

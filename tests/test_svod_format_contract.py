@@ -3,6 +3,8 @@
 
 Проверяем три вещи:
   * блок «Как оформлять итог» есть и он короткий (не раздувает карточку);
+  * блок требует резолюцию ``metadata.short`` (W28b, дефект 9), а сервер отдаёт
+    интерфейсу только ``short``/``headline`` — остальное остаётся в metadata;
   * он попадает в карточку руководителя (запрос, доработка) и в карточку
     исполнителя (тело направления из карты проекта);
   * он не дублируется и не ломает уже существующие части контракта.
@@ -111,6 +113,37 @@ class SummaryFormatRuleTest(unittest.TestCase):
         self.assertEqual(body.count(rule), 1)
         self.assertIn("Направление: Главная страница", body)
         self.assertIn("итог верни как обычно", body)
+
+    def test_rule_demands_a_complete_short_resolution(self):
+        """W28b (дефект 9): «Коротко» — готовое поле свода, а не обрезка первого абзаца.
+
+        Правило обязано назвать поле (``metadata.short``) и предел: без этого модель
+        снова пришлёт резолюцию одной строкой, а интерфейс будет собирать её сам.
+        """
+        rule = contract.summary_format_rule()
+        self.assertIn("short", rule)
+        self.assertIn(str(contract.SVOD_SHORT_MAX), rule)
+        self.assertIn("Коротко", rule)
+        self.assertIn("предложени", rule, "сказано, что нужны законченные предложения")
+        self.assertLessEqual(contract.SVOD_SHORT_MAX, 700, "предел резолюции — до 700 знаков")
+
+    def test_public_svod_metadata_carries_only_what_the_ui_reads(self):
+        """Сервер отдаёт интерфейсу только резолюцию свода, а не всю metadata.
+
+        ``metadata.svod`` модели содержит заметку версии, список изменений и флаги;
+        в карточку ответа они не нужны — иначе ответ растёт на служебные поля.
+        """
+        meta = {"short": "  Готово. Осталось согласовать сроки.  ", "note": "учтено",
+                "changes": ["пересчитали смету"], "decisions_full": True, "headline": "Старое имя."}
+        self.assertEqual(contract.svod_public_metadata(meta),
+                         {"short": "Готово. Осталось согласовать сроки.", "headline": "Старое имя."})
+        self.assertEqual(contract.svod_public_metadata(None), {})
+        self.assertEqual(contract.svod_public_metadata("мусор"), {})
+        self.assertEqual(contract.svod_public_metadata({"note": "поля нет"}), {},
+                         "нет резолюции — пусто, интерфейс соберёт «Коротко» сам")
+        long_text = "Проверено по документам. " * 200
+        cut = contract.svod_public_metadata({"short": long_text})["short"]
+        self.assertLessEqual(len(cut), contract.SVOD_SHORT_MAX, "длинное поле не раздувает ответ")
 
     def test_block_does_not_break_card_size_budget(self):
         """Прирост тела карточки от блока — ровно длина блока, без «эха»."""

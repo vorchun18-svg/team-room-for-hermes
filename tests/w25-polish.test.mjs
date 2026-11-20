@@ -182,3 +182,18 @@ test('вкладка: в разметке одно число — дела, жд
   assert.match(notice, /reaction-badge reaction-badge--dot/);
   assert.ok(!/node\.textContent = text\.label/.test(notice), 'число реакций больше не печатается на вкладке');
 });
+
+/* ── 5. Свод во всю ширину колонки (W28b, дефект 8) ─────────────────────── */
+
+test('свод: канон «строка 68 знаков» снят — колонка занимает всю ширину', () => {
+  const SVOD_CSS = read('web/css/svod.css');
+  // W25-L1 держал 70ch у контейнера: на 1366+ px это давало узкую полоску
+  // с пустым полем слева и справа. Теперь предел живёт у текста и растёт с окном.
+  assert.ok(!/max-width:\s*70ch\s*;/.test(SVOD_CSS), 'жёсткого 70ch у свода больше нет');
+  assert.match(SVOD_CSS, /--svod-measure:\s*min\(120ch, 100%\)/, 'мера строки адаптивная');
+  assert.match(SVOD_CSS, /\.req-answer\.card \.req-answer__body \{ max-width: none; \}/);
+  // узкое окно не возвращает прежний предел
+  assert.ok(!/@media \(max-width: 700px\)[\s\S]{0,300}max-width: 70ch/.test(SVOD_CSS));
+  // вторая рамка карточки (720px) тоже снята
+  assert.match(REQ_CSS, /\.req-answer__body \{ max-width: none; min-width: 0; \}/);
+});

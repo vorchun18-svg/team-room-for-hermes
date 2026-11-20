@@ -11,9 +11,11 @@
  *    `md.js` рисует их как `blockquote.md-callout`;
  *  * пути Windows/Unix и ссылки → `code`; уже код и блоки кода не трогаются;
  *  * готовый хороший свод не меняется (идемпотентность «на глаз»);
- *  * «Коротко»: metadata.svod.headline, первый абзац ≤ 240, первое предложение;
+ *  * «Коротко»: metadata.svod.short (старое headline), иначе целые предложения первого
+ *    абзаца до 700 знаков — никогда не обрывается «…» (W28b, дефект 9);
  *  * три свойства на случайных вставках (детерминизм/идемпотентность/текст);
- *  * CSS свода: колонка чтения, кегль, интервал, плашки, печать, тёмная тема.
+ *  * CSS свода: ширина колонки и адаптивная мера строки (W28b, дефект 8), кегль,
+ *    интервал, плашки, печать, тёмная тема.
  */
 
 import test from 'node:test';
@@ -25,7 +27,8 @@ import { dirname, join } from 'node:path';
 import {
   formatSvod, svodPlainText, svodHeadline, svodParts, wrapPaths,
   splitSentences, inlineEnumeration, formatParagraph, matchCalloutLabel,
-  SVOD_HEADLINE_MAX, SVOD_MAX_PARAGRAPH,
+  fitSentences, headlineSplit,
+  SVOD_HEADLINE_MAX, SVOD_HEADLINE_VISIBLE, SVOD_MAX_PARAGRAPH,
 } from '../web/js/svod-format.js';
 import { renderMarkdown, calloutKind } from '../web/js/md.js';
 
@@ -221,26 +224,104 @@ test('таблицы, списки и заголовки остаются как
 
 /* ── «Коротко» ─────────────────────────────────────────────────────────── */
 
-test('«Коротко» берёт metadata.svod.headline', () => {
+test('«Коротко» берёт metadata.svod.headline (старое имя поля)', () => {
   const head = svodHeadline(fixture('svod_wall.md'), { headline: 'Ремонт укладывается в 3,4 млн' });
   assert.deepEqual(head, { text: 'Ремонт укладывается в 3,4 млн', source: 'metadata' });
 });
 
-test('«Коротко» — первый абзац ≤ 240 знаков', () => {
+test('«Коротко» берёт metadata.svod.short (W28b, дефект 9)', () => {
+  const short = 'Ремонт укладывается в 3,4 млн. Подрядчик подтвердил срок до 20 марта. '
+    + 'Согласовать акт нужно до пятницы.';
+  const head = svodHeadline(fixture('svod_wall.md'), { short });
+  assert.deepEqual(head, { text: short, source: 'metadata' });
+  // старое поле не перебивает новое
+  const both = svodHeadline('текст', { short: 'Новое поле.', headline: 'Старое поле.' });
+  assert.equal(both.text, 'Новое поле.');
+});
+
+test('«Коротко» из metadata: длинное поле режется по предложениям, без «…»', () => {
+  const sentence = 'Результат по разделу подтверждён и зафиксирован в акте.';
+  const short = Array.from({ length: 40 }, () => sentence).join(' ');
+  const head = svodHeadline('свод', { short });
+  assert.ok(head.text.length <= SVOD_HEADLINE_MAX, `длина ${head.text.length} > ${SVOD_HEADLINE_MAX}`);
+  assert.ok(!head.text.includes('…'), 'троеточия быть не должно');
+  assert.ok(head.text.endsWith('.'), 'мысль закончена');
+  const taken = splitSentences(head.text).length;
+  assert.ok(taken >= 2, 'взято несколько предложений');
+  assert.ok(head.text.length + 1 + sentence.length > SVOD_HEADLINE_MAX,
+    'лишнего не взято: следующее предложение уже не влезает');
+});
+
+test('«Коротко» — целый первый абзац до предела, без обрыва', () => {
   const head = svodHeadline('Короткий вывод по отчёту.\n\nДальше подробности.');
   assert.equal(head.text, 'Короткий вывод по отчёту.');
   assert.equal(head.source, 'paragraph');
 });
 
-test('«Коротко» не длиннее 240 знаков и не повторяется в тексте', () => {
+test('«Коротко»: длинный абзац — целые предложения, никогда «…»', () => {
+  const sentences = [
+    'Смета сходится с договором до последней строки.',
+    'Подрядчик подтвердил сроки до двадцатого марта.',
+    'Акт приёмки подписан обеими сторонами.',
+    'Осталось согласовать график платежей на второй квартал.',
+    'Риск один: поставка оборудования может сдвинуться на неделю.',
+    'Тогда работы по монтажу придётся перенести.',
+    'Деньги на это уже заложены в бюджете.',
+    'Отчёт по расходам готов и лежит в папке проекта.',
+  ];
+  const more = ['Платежи разложены по месяцам и согласованы с бухгалтерией.',
+    'Каждый этап закрывается актом и фотографией результата.',
+    'Закупка идёт через проверенного поставщика со склада в городе.',
+    'Резерв на непредвиденные работы оставлен в размере десяти процентов.',
+    'Вопросов, на которые нет ответа, к концу недели не осталось.',
+    'Следующая сверка назначена на первое число и займёт полдня.'];
+  const md = sentences.concat(more).join(' ');
+  assert.ok(md.length > SVOD_HEADLINE_MAX, 'исходный абзац длиннее предела');
+  const head = svodHeadline(md);
+  assert.equal(head.source, 'sentences');
+  assert.ok(head.text.length <= SVOD_HEADLINE_MAX, `длина ${head.text.length} > ${SVOD_HEADLINE_MAX}`);
+  assert.ok(!head.text.includes('…'), 'обрыв «…» запрещён');
+  assert.ok(head.text.endsWith('.'), 'мысль закончена');
+  // это ровно первые предложения источника, а не нарезка по символам
+  assert.ok(md.startsWith(head.text), 'взяты целые предложения с начала');
+});
+
+test('«Коротко»: одно сверхдлинное предложение показывается целиком (без «…»)', () => {
   const long = 'А'.repeat(900) + ' конец.';
   const head = svodHeadline(long);
-  assert.ok(head.text.length <= SVOD_HEADLINE_MAX);
+  assert.ok(!head.text.includes('…'), 'троеточия быть не должно');
+  assert.ok(head.text.endsWith('конец.'), 'предложение не разрезано');
+});
+
+test('«Коротко» и текст: первая мысль не повторяется дословно (W28b)', () => {
   const parts = svodParts(fixture('svod_good.md'));
   assert.match(parts.headline, /Отчёт можно сдавать/);
   assert.doesNotMatch(parts.body, /Отчёт можно сдавать/);
   assert.doesNotMatch(parts.body, /## Коротко/);
   assert.match(parts.body, /## Что сделано/);
+
+  // «Коротко» взяло часть первого абзаца — остаток остаётся в своде, дубля нет
+  const md = 'Первая мысль свода закончена. Вторая мысль тоже закончена. '
+    + 'Третья мысль идёт дальше. Четвёртая мысль завершает абзац.';
+  const cut = svodParts(md, { short: 'Первая мысль свода закончена. Вторая мысль тоже закончена.' });
+  assert.equal(cut.headline, 'Первая мысль свода закончена. Вторая мысль тоже закончена.');
+  assert.doesNotMatch(cut.body, /Первая мысль/, 'показанное в «Коротко» не повторяется');
+  assert.match(cut.body, /Третья мысль идёт дальше/, 'непоказанное осталось в своде');
+});
+
+test('«Читать далее»: видимая часть — целые предложения, остаток без потерь', () => {
+  const s = (n) => `Мысль номер ${n} сформулирована полностью, проверена по документам `
+    + 'и подтверждена ответственным за раздел.';
+  const text = [1, 2, 3, 4, 5, 6].map(s).join(' ');
+  assert.ok(text.length > SVOD_HEADLINE_VISIBLE, 'резолюция длиннее видимой части');
+  const { lead, rest } = headlineSplit(text);
+  assert.ok(lead && rest, 'длинная резолюция раскрывается');
+  assert.ok(lead.length <= 400, `видимая часть ${lead.length}`);
+  assert.ok(!lead.includes('…') && lead.endsWith('.'), 'видимая часть закончена');
+  assert.equal(`${lead} ${rest}`, text, 'раскрытие не теряет и не добавляет текст');
+  // короткая резолюция не прячется
+  assert.deepEqual(headlineSplit('Одна мысль.'), { lead: 'Одна мысль.', rest: '' });
+  assert.deepEqual(headlineSplit(''), { lead: '', rest: '' });
 });
 
 test('«Коротко» не появляется у пустого свода', () => {
@@ -288,4 +369,23 @@ test('три свойства на случайных вставках (дете
 test('formatParagraph — пустой абзац ничего не добавляет', () => {
   assert.deepEqual(formatParagraph(''), []);
   assert.deepEqual(formatParagraph('   '), []);
+});
+
+/* ── CSS: свод во всю ширину колонки (W28b, дефект 8) ──────────────────── */
+
+test('CSS: у свода нет жёсткого предела ширины, мера строки — адаптивная', () => {
+  const css = readFileSync(join(HERE, '..', 'web', 'css', 'svod.css'), 'utf8');
+  const req = readFileSync(join(HERE, '..', 'web', 'css', 'view-request.css'), 'utf8');
+  // прежний канон «строка 68 знаков» снят: он и давал узкую полоску на 1366+
+  assert.ok(!/max-width:\s*70ch\s*;/.test(css), 'жёсткого 70ch больше нет');
+  assert.match(css, /max-width:\s*none;[\s\S]{0,120}font-size: var\(--text-md\)/, 'контейнер во всю ширину');
+  assert.match(css, /--svod-measure:\s*min\(120ch, 100%\)/, 'адаптивный предел строки');
+  // текст ограничен по мере, а таблицы — нет (они идут во всю ширину)
+  const measureBlock = css.slice(css.indexOf('--svod-measure: min('), css.indexOf('/* ── заголовки'));
+  assert.match(measureBlock, /\.markdown p,/);
+  assert.ok(!/table/.test(measureBlock), 'таблицы под предел меры не попадают');
+  assert.match(css, /\.svod-head \{[\s\S]{0,400}max-width: none;/, 'плашка «Коротко» — по ширине колонки');
+  // вторая рамка (720px) снята
+  assert.ok(!/\.req-answer__body \{ max-width: 720px/.test(req));
+  assert.match(req, /\.req-answer__body \{ max-width: none; min-width: 0; \}/);
 });

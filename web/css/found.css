@@ -206,7 +206,9 @@
 .found-card__badge {
   padding: 0 7px;
   border-radius: 999px;
-  font-size: 0.78em;
+  /* W28b: 0.78em давал 10,92 px — мельче предела читаемости (ui_audit, п. 12).
+     Нижняя граница 11 px, на крупном кегле метка растёт как прежде. */
+  font-size: max(11px, 0.78em);
   line-height: 1.6;
   border: 1px solid var(--border);
   color: var(--muted-foreground);

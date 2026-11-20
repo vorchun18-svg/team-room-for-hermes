@@ -33,8 +33,15 @@
 
 /** Длиннее этого абзац режется по предложениям. */
 export const SVOD_MAX_PARAGRAPH = 450;
-/** Сколько знаков в «Коротко». */
-export const SVOD_HEADLINE_MAX = 240;
+/** Сколько знаков в «Коротко» — предел ПО ЦЕЛЫМ предложениям (W28b, дефект 9).
+ *
+ * Было 240 и обрезка с «…»: блок обрывался посреди мысли, и человек всё равно
+ * перечитывал свод. Теперь предел 700, режем только по границам предложений;
+ * если места мало — интерфейс показывает «Читать далее» (`headlineSplit`),
+ * а не троеточие. Смысл: короткая резолюция обязана быть законченной. */
+export const SVOD_HEADLINE_MAX = 700;
+/** Сколько знаков «Коротко» видно до «Читать далее». */
+export const SVOD_HEADLINE_VISIBLE = 400;
 /** Сколько пунктов нужно, чтобы инлайн-перечень стал списком. */
 export const SVOD_MIN_ITEMS = 3;
 /** Больше этого предложений в одном абзаце не собираем. */
@@ -597,10 +604,90 @@ export function svodPlainText(md) {
 
 /* ── «Коротко» ────────────────────────────────────────────────────────── */
 
-function clip(text, max) {
+/** Снять с начала абзаца ту часть, которую уже показали в «Коротко» (W28b).
+ *
+ * Раньше блок убирался только при полном совпадении — если «Коротко» брало два
+ * предложения из четырёх, они показывались дважды. Теперь отрезаем ровно те
+ * предложения, из которых собрана карточка: остаток остаётся в своде.
+ *
+ * @param {string} mdText абзац в markdown
+ * @param {string} headText текст «Коротко» (без разметки)
+ * @returns {string} остаток абзаца ('' — если он весь ушёл в «Коротко»)
+ */
+function dropHeadPrefix(mdText, headText) {
+  const head = String(headText || '').replace(/\s+/g, ' ').trim();
+  const src = String(mdText || '').trim();
+  if (!head || !src) return src;
+  const sentences = splitSentences(src);
+  if (!sentences.length) return src;
+  if (sentences.length === 1) {
+    return svodPlainText(src).replace(/\s+/g, ' ').trim() === head ? '' : src;
+  }
+  let acc = '';
+  for (let i = 0; i < sentences.length; i += 1) {
+    acc = acc ? acc + ' ' + sentences[i] : sentences[i];
+    const plain = svodPlainText(acc).replace(/\s+/g, ' ').trim();
+    if (plain === head) return sentences.slice(i + 1).join(' ').trim();
+    if (plain.length > head.length) return src;
+  }
+  return src;
+}
+
+/**
+ * Уложить текст в предел ПО ЦЕЛЫМ предложениям (W28b, дефект 9).
+ *
+ * Никакого «…» на обрыве: берём столько целых предложений, сколько влезает в
+ * `max`. Если даже первое предложение длиннее предела — возвращаем его целиком
+ * (законченная длинная мысль лучше оборванной), но никогда не режем посреди.
+ *
+ * @param {string} text
+ * @param {number} [max]
+ * @returns {string}
+ */
+export function fitSentences(text, max = SVOD_HEADLINE_MAX) {
   const one = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!one) return '';
   if (one.length <= max) return one;
-  return one.slice(0, Math.max(1, max - 1)).trimEnd() + '…';
+  const sentences = splitSentences(one);
+  if (sentences.length < 2) return one;
+  const out = [];
+  let len = 0;
+  for (const s of sentences) {
+    const next = out.length ? len + 1 + s.length : s.length;
+    if (out.length && next > max) break;
+    out.push(s);
+    len = next;
+  }
+  return out.length ? out.join(' ') : one;
+}
+
+/**
+ * «Коротко» → видимая часть и остаток для «Читать далее» (W28b, дефект 9).
+ *
+ * Раскрытие вместо троеточия: граница — конец предложения, поэтому видимый
+ * кусок тоже законченный. Если предложение одно или текст короткий — остатка
+ * нет и кнопка не нужна.
+ *
+ * @param {string} text
+ * @param {number} [limit]
+ * @returns {{lead: string, rest: string}}
+ */
+export function headlineSplit(text, limit = SVOD_HEADLINE_VISIBLE) {
+  const one = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!one) return { lead: '', rest: '' };
+  if (one.length <= limit) return { lead: one, rest: '' };
+  const sentences = splitSentences(one);
+  if (sentences.length < 2) return { lead: one, rest: '' };   // одно длинное — целиком
+  const lead = [];
+  let len = 0;
+  for (const s of sentences) {
+    const next = lead.length ? len + 1 + s.length : s.length;
+    if (lead.length && next > limit) break;
+    lead.push(s);
+    len = next;
+  }
+  if (!lead.length || lead.length === sentences.length) return { lead: one, rest: '' };
+  return { lead: lead.join(' '), rest: sentences.slice(lead.length).join(' ') };
 }
 
 /** Первый содержательный абзац свода. Плашка `> [!МЕТКА]` тоже считается:
@@ -649,13 +736,22 @@ function firstParagraph(md) {
 }
 
 /**
- * «Коротко» для карточки над сводом.
+ * «Коротко» для карточки над сводом. Всегда законченная мысль, без «…».
+ *
+ * Порядок источников (W28b, дефект 9):
+ *   1. `metadata.short` — то, что модель написала сама (2–4 предложения: ответ
+ *      на вопрос, главный вывод, что делать). `metadata.headline` — старое имя;
+ *   2. первый содержательный абзац/плашка свода;
+ *   3. первая выделенная **жирным** мысль абзаца;
+ *   4. целые предложения первого абзаца до предела (никогда не обрезаем).
+ *
  * @param {string} md текст свода
- * @param {{headline?:string}} [meta] `synthesis.metadata.svod`
- * @returns {{text:string, source:'metadata'|'paragraph'|'sentence'|'bold'|'cut'}|null}
+ * @param {{short?:string, headline?:string}} [meta] `synthesis.metadata.svod`
+ * @returns {{text:string, source:'metadata'|'paragraph'|'bold'|'sentences'}|null}
  */
 export function svodHeadline(md, meta) {
-  const own = meta && typeof meta === 'object' ? clip(meta.headline, SVOD_HEADLINE_MAX) : '';
+  const m = meta && typeof meta === 'object' ? meta : {};
+  const own = fitSentences(m.short || m.headline || '', SVOD_HEADLINE_MAX);
   if (own) return { text: own, source: 'metadata' };
   const first = firstParagraph(md);
   if (!first) return null;
@@ -667,10 +763,10 @@ export function svodHeadline(md, meta) {
   if (bold && bold[1].trim().length <= SVOD_HEADLINE_MAX) {
     return { text: bold[1].trim(), source: 'bold' };
   }
-  if (sentences.length && sentences[0].length <= SVOD_HEADLINE_MAX) {
-    return { text: sentences[0], source: 'sentence' };
+  if (sentences.length) {
+    return { text: fitSentences(plain, SVOD_HEADLINE_MAX), source: 'sentences' };
   }
-  return { text: clip(plain, SVOD_HEADLINE_MAX), source: 'cut' };
+  return null;
 }
 
 /** Разбить текст на блоки по пустым строкам (код не разрывается: внутри ``` нет пустых строк). */
@@ -721,26 +817,34 @@ export function svodParts(md, meta) {
   let rest = blocks.slice();
   if (callout) {
     const inner0 = callout.paras[0] || '';
-    if (inner0 && svodPlainText(inner0) === head.text) {
-      const left = callout.paras.slice(1);
+    const left0 = dropHeadPrefix(inner0, head.text);
+    if (inner0 && left0 !== inner0) {
+      const left = (left0 ? [left0] : []).concat(callout.paras.slice(1));
       if (left.length) {
         rest[0] = [callout.mark, ...left.map((p, idx) => (idx ? ['>', '> ' + p] : ['> ' + p]).join('\n'))].join('\n');
       } else {
         rest = rest.slice(1);
       }
     }
-  } else if (svodPlainText(first) === head.text) {
-    // Над абзацем мог стоять заголовок «## Коротко» — он остался бы пустым.
-    rest = rest.slice(1);
-    if (rest.length && /^#{1,6}[ \t]+\S/.test(rest[0]) && (rest[0] || '').trim().length < 40) {
+  } else {
+    const leftFirst = dropHeadPrefix(first, head.text);
+    if (!leftFirst) {
+      // Над абзацем мог стоять заголовок «## Коротко» — он остался бы пустым.
       rest = rest.slice(1);
+      if (rest.length && /^#{1,6}[ \t]+\S/.test(rest[0]) && (rest[0] || '').trim().length < 40) {
+        rest = rest.slice(1);
+      }
+    } else if (leftFirst !== first) {
+      // «Коротко» взяло первые предложения абзаца — остаток остаётся в своде.
+      rest[0] = leftFirst;
+    } else if (/^#{1,6}[ \t]+(коротко|итог|вывод)/i.test(first)
+      && blocks[1] && svodPlainText(blocks[1]) === head.text) {
+      // «## Коротко» + ровно тот же абзац под ним: заголовок и абзац уходят в карточку.
+      rest = rest.slice(2);
     }
-  } else if (/^#{1,6}[ \t]+(коротко|итог|вывод)/i.test(first)
-    && blocks[1] && svodPlainText(blocks[1]) === head.text) {
-    // «## Коротко» + ровно тот же абзац под ним: заголовок и абзац уходят в карточку.
-    rest = rest.slice(2);
   }
   return { headline: head.text, body: rest.join('\n\n').trim() };
 }
 
-export default { formatSvod, svodPlainText, svodHeadline, svodParts, wrapPaths, splitSentences, inlineEnumeration };
+export default { formatSvod, svodPlainText, svodHeadline, svodParts, wrapPaths, splitSentences,
+  inlineEnumeration, fitSentences, headlineSplit };
