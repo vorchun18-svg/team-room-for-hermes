@@ -39,9 +39,9 @@ import time
 from pathlib import Path
 
 MAX_BLOCK_CHARS = 4000
-MAX_NOTES_CHARS = 3000          # раздел «Особые указания участникам» (WAVE9 §9)
-MAX_SUMMARY_CHARS = 1500
-MAX_DESC_CHARS = 320
+MAX_NOTES_CHARS = 1600          # раздел «Особые указания участникам» (WAVE9 §9); W28-E: 3000 → 1600
+MAX_SUMMARY_CHARS = 900     # W28-E: 1500 → 900 (выжимка в теле карточки)
+MAX_DESC_CHARS = 200
 MAX_TITLE_CHARS = 120
 MAX_SUMMARY_LINE = 170
 MAX_PATH_CHARS = 150

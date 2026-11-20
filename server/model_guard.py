@@ -317,7 +317,8 @@ def state_path(cfg, room_id) -> Path:
 
 def _blank_state() -> dict:
     return {"updated_at": 0, "restarts": {}, "user_model": {}, "stopped": {},
-            "unknown": {}, "warned": {}, "events": []}
+            "unknown": {}, "warned": {}, "events": [], "pins": {}, "holds": {},
+            "reclaimed": {}, "attempts": {}, "pin_cursor": 0}
 
 
 def read_state(cfg, room_id) -> dict:
@@ -329,16 +330,18 @@ def read_state(cfg, room_id) -> dict:
     data = _blank_state()
     if not isinstance(raw, dict):
         return data
-    for key in ("restarts", "user_model", "stopped", "unknown", "warned"):
+    for key in ("restarts", "user_model", "stopped", "unknown", "warned",
+                "pins", "holds", "reclaimed", "attempts"):
         value = raw.get(key)
         if isinstance(value, dict):
             data[key] = {str(k): v for k, v in value.items() if isinstance(v, dict)}
     events = raw.get("events")
     data["events"] = [e for e in (events or []) if isinstance(e, dict)][-MAX_EVENTS:]
-    try:
-        data["updated_at"] = int(raw.get("updated_at") or 0)
-    except (TypeError, ValueError):
-        data["updated_at"] = 0
+    for key in ("updated_at", "pin_cursor"):
+        try:
+            data[key] = int(raw.get(key) or 0)
+        except (TypeError, ValueError):
+            data[key] = 0
     return data
 
 
@@ -910,7 +913,10 @@ def tick(cfg, room, *, now=None, log=None, limit: int = 80) -> dict:
             if started and stamp - started < GUARD_MIN_AGE:
                 out["skipped"] += 1          # только что взяли — дадим воркеру шанс
                 continue
-            if tries >= GUARD_MAX_RESTARTS:
+            if tries >= GUARD_MAX_RESTARTS or (state.get("reclaimed") or {}).get(cid):
+                # W28-C1 п.4: быстрый сторож уже останавливал эту карточку ОДИН раз — второй
+                # раз не убиваем (иначе «ошибки» в интерфейсе растут из наших же остановок):
+                # парковка и вопрос человеку.
                 _park(cfg, room, card, room_id=room_id, root_id=root_id,
                       profile=profile, expected=expected, actual=got, gmode=gmode)
                 out["stopped"].append(cid)
@@ -980,6 +986,592 @@ def _park(cfg, room, card, *, room_id, root_id, profile, expected, actual, gmode
           "настройки агента."
           % (LEAD_QUESTION_MARK, short(expected.get("provider"), expected.get("model")),
              short(actual.get("provider"), actual.get("model")), GUARD_MAX_RESTARTS))
+
+
+# ---------------------------------------------------------------- модель до старта (W28-C1)
+#
+# Дефект 5 (19.11): карточки `auto-decomposer` появлялись БЕЗ `model_override`, диспетчер
+# Hermes брал их сразу после завершения родителя, и только через ~15 с `tick` видел, что
+# работа идёт на модели профиля, ставил переопределение и убивал воркера. 26 487 входных
+# токенов ушли на `glm-5.3-flash`, ~$0,17 — на `claude-sonnet-5-5`. Требование Михаила:
+# «выбранная в комнате модель — единственная, на которой карточка может стартовать».
+#
+# Поэтому у сторожа есть ВТОРОЙ, быстрый цикл (1–2 с, `server/watcher.py`):
+#
+# * `preflight` — один дешёвый проход: дельта `task_events` (`kind='created'`) плюс проход
+#   по ВСЕМ карточкам комнаты в `triage/todo/ready/blocked` — модель ставится ДО старта
+#   (у зависимых карточек окно в минуты, пока не завершён родитель);
+# * если поставить не удалось, карточка в `ready` **не отдаётся диспетчеру**: штатная
+#   пауза (`block`) на время, пока модель не встанет; затем `unblock` — и диспетчер видит
+#   её уже с переопределением;
+# * если карточку всё-таки взяли на чужой модели — остановить **один раз**, попытку
+#   закрыть записью в журнале комнаты (`ended_at`/`end_reason=guard_reclaimed`, исход
+#   `guard_reclaimed`). Реальный `state.db` профиля не пишется никогда: приложение его
+#   только читает (`mode=ro`);
+# * `wrong_model_spend` — счётчик «ушло на не ту модель» по запросу (вызовы, токены,
+#   деньги) из `state.db` (копия/профиль, `mode=ro`) — для пакета C2 и для интерфейса;
+# * `room_model_table` — готовая короткая строка для контракта руководителя (пакет E).
+
+#: свой цикл «модель до старта» (секунды): быстрее общего сторожа (3 с), чем и закрываем гонку
+PREFLIGHT_TICK = 1.0
+#: карточки этого статуса ещё не у воркера — здесь ставим модель с запасом
+PREFLIGHT_SCAN_STATUSES = ("triage", "todo", "ready", "blocked", "queued", "scheduled")
+#: сколько карточек комнаты смотрим за один проход (одно чтение доски)
+PREFLIGHT_LIMIT = 300
+#: сколько карточек обновляем одним вызовом моста
+PREFLIGHT_BATCH = 40
+#: сколько событий `created` разбираем за проход (дельта)
+PREFLIGHT_EVENTS = 500
+#: исход и причина закрытия попытки, убитой контролем моделей (журнал комнаты)
+ATTEMPT_OUTCOME = "guard_reclaimed"
+ATTEMPT_REASON = "guard_reclaimed"
+PARK_REASON = "модель не подтверждена — карточка ждёт простановки модели"
+
+
+def _want_with(user, room, profile, card_id=None) -> dict:
+    """Желаемое переопределение без чтения состояния на каждую карточку.
+
+    `user` — уже прочитанный выбор человека по карточкам (`user_models`), поэтому проход
+    по комнате не читает `model_guard.json` по разу на карточку.
+    """
+    chosen = (user or {}).get(str(card_id or "")) or {}
+    if chosen.get("model"):
+        return {"provider": str(chosen.get("provider") or ""), "model": str(chosen.get("model") or ""),
+                "reasoning": ""}
+    return override_for_card(room, profile)
+
+
+def _outdated(card: dict, want: dict) -> bool:
+    """Расходится ли карточка с желаемым (модель/провайдер и уровень мышления)."""
+    if needs_update(card, want):
+        return True
+    return str((card or {}).get("reasoning") or "") != str((want or {}).get("reasoning") or "")
+
+
+def _chunks(items, size: int):
+    size = max(1, int(size))
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
+
+
+def _created_since(con, cursor, *, limit: int = PREFLIGHT_EVENTS):
+    """Дельта доски: карточки, созданные после `cursor` (`task_events` kind='created').
+
+    Возвращает `(id карточек, новый курсор)`. Курсор двигается всегда — иначе одно и то же
+    событие разбиралось бы каждый проход.
+    """
+    ids: list = []
+    last = int(cursor or 0)
+    try:
+        rows = con.execute("SELECT id, task_id FROM task_events WHERE kind = 'created' "
+                           "AND id > ? ORDER BY id LIMIT ?",
+                           (int(cursor or 0), max(1, int(limit)))).fetchall()
+    except sqlite3.Error:
+        return ids, last
+    for row in rows:
+        last = max(last, int(row["id"] or 0))
+        task_id = str(row["task_id"] or "")
+        if task_id and task_id not in ids:
+            ids.append(task_id)
+    return ids, last
+
+
+def _card_row_of_tenant(con, card_id, tenant: str) -> dict:
+    """Карточка ТОЛЬКО своего tenant (чужие карточки сторож не трогает никогда)."""
+    try:
+        row = con.execute("SELECT id, assignee, status, tenant, model_override, provider_override, "
+                          "reasoning_effort FROM tasks WHERE id = ?", (str(card_id),)).fetchone()
+    except sqlite3.Error:
+        return {}
+    if row is None or str(row["tenant"] or "") != str(tenant or ""):
+        return {}
+    return {"id": str(row["id"]), "assignee": str(row["assignee"] or ""),
+            "status": str(row["status"] or ""), "model": str(row["model_override"] or ""),
+            "provider": str(row["provider_override"] or ""),
+            "reasoning": str(row["reasoning_effort"] or "")}
+
+
+def _cards_by_ids(con, ids) -> dict:
+    """Карточки по id (одно чтение): что реально записано в доске после правки."""
+    out: dict = {}
+    ids = [str(i) for i in ids if str(i or "").strip()]
+    for part in _chunks(ids, 200):
+        marks = ",".join("?" * len(part))
+        try:
+            rows = con.execute("SELECT id, assignee, status, model_override, provider_override, "
+                               "reasoning_effort FROM tasks WHERE id IN (%s)" % marks,
+                               part).fetchall()
+        except sqlite3.Error:
+            continue
+        for row in rows:
+            out[str(row["id"])] = {
+                "id": str(row["id"]), "assignee": str(row["assignee"] or ""),
+                "status": str(row["status"] or ""),
+                "model": str(row["model_override"] or ""),
+                "provider": str(row["provider_override"] or ""),
+                "reasoning": str(row["reasoning_effort"] or "")}
+    return out
+
+
+def _hold_card(cfg, board: str, card: dict, *, reason: str = PARK_REASON) -> bool:
+    """Удержать карточку от диспетчера штатной паузой (`block`), пока модель не встанет.
+
+    Это и есть «не отдавать диспетчеру» (W28-C1 п.5): без переопределения карточка не
+    должна быть видна диспетчеру в `ready`. Пауза ставится только на время — после
+    успешной простановки модели `preflight` её снимает.
+    """
+    cid = str((card or {}).get("id") or "")
+    if not cid:
+        return False
+    try:
+        _ew().card_block(cfg, board, cid, reason=_one_line(reason)[:200], kind="needs_input")
+    except Exception:                        # noqa: BLE001 - пауза вторична: человека не будим
+        return False
+    return True
+
+
+def _release_card(cfg, board: str, card: dict) -> bool:
+    """Снять удержание: модель уже стоит — карточка снова в очереди. Другие паузы не трогаем."""
+    cid = str((card or {}).get("id") or "")
+    if not cid:
+        return False
+    try:
+        res = _ew().card_unblock(cfg, board, cid, reason="модель проставлена — продолжаем")
+    except Exception:                        # noqa: BLE001 - пауза не снялась: следующий проход
+        return False
+    return bool(res)
+
+
+def close_attempt(cfg, room_id, card_id, session_id, *, profile="", model="", provider="",
+                  outcome: str = ATTEMPT_OUTCOME, reason: str = ATTEMPT_REASON,
+                  cost_usd=None, calls=None, input_tokens=None, output_tokens=None) -> dict:
+    """Закрыть попытку, убитую контролем моделей (W28-C1 п.4).
+
+    Реальный `state.db` профиля приложение НЕ пишет (только `mode=ro`) — поэтому
+    `ended_at`/`end_reason`/`outcome` живут в состоянии комнаты (`attempts`) и в журнале
+    комнаты: интерфейс (C2/E) берёт оттуда строку «Попытка остановлена контролем
+    моделей: была не та модель» и счётчик «потрачено на ошибочных запусках».
+    """
+    stamp = int(time.time())
+    item = {"card_id": str(card_id or ""), "session_id": str(session_id or ""),
+            "profile": str(profile or ""), "model": str(model or ""), "provider": str(provider or ""),
+            "at": stamp, "ended_at": stamp, "end_reason": str(reason or ATTEMPT_REASON),
+            "outcome": str(outcome or ATTEMPT_OUTCOME), "cost_usd": None,
+            "calls": None, "input_tokens": None, "output_tokens": None}
+    for key, value in (("cost_usd", cost_usd), ("calls", calls),
+                       ("input_tokens", input_tokens), ("output_tokens", output_tokens)):
+        if value in (None, ""):
+            continue
+        try:
+            item[key] = round(float(value), 4) if key == "cost_usd" else int(value)
+        except (TypeError, ValueError):
+            item[key] = None
+
+    def change(data):
+        data["attempts"][str(session_id or card_id or "%s-%d" % (card_id, stamp))] = item
+
+    _mutate(cfg, room_id, change)
+    _journal(cfg, room_id,
+             "Попытка карточки %s (%s) остановлена контролем моделей: была модель %s, "
+             "сессия %s закрыта (ended_at %d, end_reason=%s, outcome=%s)"
+             % (str(card_id or "—"), str(profile or "—"), str(model or "неизвестно"),
+                str(session_id or "—"), stamp, item["end_reason"], item["outcome"]),
+             kind="guard_reclaimed")
+    return item
+
+
+def _claimed_wrong(cfg, con, room, room_id, board: str, card: dict, want: dict,
+                   out: dict) -> None:
+    """Карточка уже взята на чужой модели: остановить ОДИН раз и закрыть попытку."""
+    cid = str((card or {}).get("id") or "")
+    profile = str((card or {}).get("assignee") or "")
+    if not cid or not want.get("model"):
+        return
+    got = _actual_of(cfg, con, card)
+    if not got.get("model"):
+        return                               # воркер ещё не записал сессию: мерить нечего
+    if same_model(want, got) or same_name(want, got):
+        return
+    try:
+        res = _ew().card_restart_on_model(cfg, board, cid, model=want.get("model"),
+                                          provider=str(want.get("provider") or ""),
+                                          reason="контроль моделей: карточка взята на чужой модели")
+    except Exception as exc:                 # noqa: BLE001 - одна карточка не рушит проход
+        out["errors"].append("остановка %s: %s" % (cid, str(exc)[:120]))
+        return
+    if not res.get("ok"):
+        out["errors"].append("не удалось остановить %s" % cid)
+        return
+    out["reclaimed"].append(cid)
+    actual_label = short(got.get("provider"), got.get("model"))
+    expected_label = short(want.get("provider"), want.get("model"))
+    close_attempt(cfg, room_id, cid, got.get("session_id"), profile=profile,
+                  model=str(got.get("model") or ""), provider=str(got.get("provider") or ""),
+                  cost_usd=got.get("cost_usd"))
+    record(cfg, room_id, "stopped", card_id=cid, root_id=str((card or {}).get("root_id") or ""),
+           profile=profile, expected=want, actual=got, cost_usd=got.get("cost_usd"),
+           text="Карточку взяли на %s вместо %s — остановлено один раз, попытка закрыта "
+                "(guard_reclaimed)" % (actual_label or "модель профиля", expected_label))
+    _note(cfg, room, cid, "Попытка остановлена контролем моделей: работа пошла на %s вместо %s. "
+                          "Дальше карточка пойдёт на выбранной в комнате модели."
+          % (actual_label or "модели профиля", expected_label))
+
+
+def preflight(cfg, room, *, now=None, limit: int = PREFLIGHT_LIMIT) -> dict:
+    """Один быстрый проход «модель до старта» (W28-C1 п.1, 4, 5).
+
+    Никаких запусков моделей и агентов: одно чтение доски (`mode=ro`), дельта
+    `task_events`, при необходимости — запись модели штатным мостом и пауза/снятие паузы
+    штатными глаголами `block`/`unblock`. Возвращает счётчики для `/api/health`.
+
+    Порядок (важен): сначала модель, потом «отдать диспетчеру»; если модель поставить не
+    удалось — карточку в `ready` удерживаем паузой, чтобы не тратить токены на модель
+    профиля; взятую на чужой модели останавливаем ОДИН раз.
+    """
+    room = room if isinstance(room, dict) else {}
+    room_id = str(room.get("id") or "")
+    out = {"room": room_id, "at": int(now or time.time()), "checked": 0, "delta": 0,
+           "pinned": [], "reclaimed": [], "held": [], "released": [], "errors": [],
+           "skipped_reason": ""}
+    if not room_id or room.get("archived"):
+        out["skipped_reason"] = "no_room"
+        return out
+    if getattr(cfg, "mock", False) or getattr(cfg, "demo", False):
+        out["skipped_reason"] = "demo"
+        return out
+    tenant = str(room.get("tenant") or (TENANT_PREFIX + room_id))
+    if not tenant.startswith(TENANT_PREFIX):
+        out["skipped_reason"] = "not_room_tenant"
+        return out
+    if mode_of(room) != "enforce":
+        out["skipped_reason"] = "warn_mode"
+        return out
+    board = str(room.get("board") or getattr(cfg, "board", "") or "team")
+    con = _connect(cfg, board)
+    if con is None:
+        out["skipped_reason"] = "no_board"
+        return out
+    stamp = out["at"]
+    state = read_state(cfg, room_id)
+    changes = {"pins": {}, "holds": {}, "drop": [], "reclaimed": {}, "cursor": None}
+    try:
+        new_ids, cursor = _created_since(con, int(state.get("pin_cursor") or 0))
+        out["delta"] = len(new_ids)
+        cards: dict = {}
+        try:
+            cards = models.tenant_cards(cfg, board, tenant, limit=max(1, int(limit)))
+        except Exception as exc:             # noqa: BLE001 - чтение доски вторично
+            out["errors"].append("карточки: %s" % str(exc)[:120])
+        for cid in new_ids:                  # новые карточки — даже вне окна tenant_cards
+            if cid in cards:
+                continue
+            row = _card_row_of_tenant(con, cid, tenant)
+            if not row:
+                continue
+            cards[cid] = {"id": cid, "assignee": str(row.get("assignee") or ""),
+                          "status": str(row.get("status") or ""),
+                          "model": str(row.get("model_override") or ""),
+                          "provider": str(row.get("provider_override") or ""),
+                          "reasoning": str(row.get("reasoning_effort") or "")}
+        user = user_models(cfg, room_id)
+        wants: dict = {}
+        groups: dict = {}
+        for cid, card in cards.items():
+            status = str(card.get("status") or "")
+            profile = str(card.get("assignee") or "")
+            if not profile or status in LOCKED_STATUSES:
+                continue
+            want = _want_with(user, room, profile, cid)
+            wants[cid] = want
+            pinned = bool(card.get("model") or card.get("provider"))
+            if not want.get("model") and not pinned:
+                continue                     # комната не выбирала и пина нет — нечего делать
+            if status not in PREFLIGHT_SCAN_STATUSES:
+                continue
+            out["checked"] += 1
+            if not _outdated(card, want):
+                continue
+            key = (str(want.get("provider") or ""), str(want.get("model") or ""),
+                   str(want.get("reasoning") or ""))
+            groups.setdefault(key, []).append(card)
+        for key, group in groups.items():
+            want = {"provider": key[0], "model": key[1], "reasoning": key[2]}
+            for chunk in _chunks(group, PREFLIGHT_BATCH):
+                try:
+                    done, failed = models.push_model(cfg, board, chunk, want)
+                except Exception as exc:     # noqa: BLE001 - мост может отказать
+                    out["errors"].append("мост: %s" % str(exc)[:120])
+                    done, failed = [], [{"id": c["id"], "reason": "мост недоступен"} for c in chunk]
+                for cid in done:
+                    out["pinned"].append(cid)
+                    changes["pins"][cid] = {"model": want["model"], "provider": want["provider"],
+                                            "reasoning": want["reasoning"], "at": stamp,
+                                            "source": "preflight"}
+                for item in failed or []:
+                    out["errors"].append("не удалось: %s" % str(item.get("reason") or "")[:100])
+        # Проверка по доске (мост мог ответить «ок», а запись не встать) и удержание:
+        # карточка в `ready` без верной модели диспетчеру не отдаётся (п.5).
+        written = {str(cid) for cid in out["pinned"]}
+        watch = list(out["pinned"]) + [c["id"] for group in groups.values() for c in group
+                                       if str(c.get("id")) not in written]
+        if watch:
+            fresh = _cards_by_ids(con, watch)
+            for cid in watch:
+                card = fresh.get(cid) or {}
+                if not card or str(card.get("status")) != "ready":
+                    continue
+                if not _outdated(card, wants.get(cid) or {}):
+                    continue
+                if _hold_card(cfg, board, card):
+                    out["held"].append(cid)
+                    changes["holds"][cid] = {"at": stamp, "reason": PARK_REASON}
+                    changes["pins"].pop(cid, None)
+        # Удержанные раньше: модель встала — вернуть диспетчеру
+        for cid in list((state.get("holds") or {})):
+            card = cards.get(cid)
+            if not card:
+                continue
+            card = _cards_by_ids(con, [cid]).get(cid) or card
+            want = wants.get(cid) or _want_with(user, room, str(card.get("assignee") or ""), cid)
+            if _outdated(card, want) or str(card.get("status")) != "blocked":
+                continue
+            if _release_card(cfg, board, card):
+                out["released"].append(cid)
+                changes["drop"].append(cid)
+        # Взятые на чужой модели — остановить один раз (п.4)
+        for cid, card in cards.items():
+            if str(card.get("status") or "") != "running":
+                continue
+            if (state.get("reclaimed") or {}).get(cid):
+                continue
+            want = wants.get(cid) or _want_with(user, room, str(card.get("assignee") or ""), cid)
+            _claimed_wrong(cfg, con, room, room_id, board, card, want, out)
+            if cid in out["reclaimed"]:
+                changes["reclaimed"][cid] = {"at": stamp, "count": 1}
+        changes["cursor"] = cursor
+        if out["pinned"]:
+            record(cfg, room_id, "pinned", card_id=", ".join(out["pinned"][:5]),
+                   text="Модель проставлена до старта: %d %s"
+                        % (len(out["pinned"]), models_ru(len(out["pinned"]), "карточка",
+                                                         "карточки", "карточек")),
+                   keep_journal=True)
+    finally:
+        con.close()
+        _apply_changes(cfg, room_id, changes)
+    return out
+
+
+def _apply_changes(cfg, room_id, changes) -> None:
+    """Записать итог прохода одним обновлением состояния (курсор, пины, удержания)."""
+    if not isinstance(changes, dict):
+        return
+
+    def change(data):
+        for cid, item in (changes.get("pins") or {}).items():
+            data["pins"][str(cid)] = item
+        for cid, item in (changes.get("holds") or {}).items():
+            data["holds"][str(cid)] = item
+        for cid in changes.get("drop") or []:
+            data["holds"].pop(str(cid), None)
+            data["pins"].pop(str(cid), None)
+        for cid, item in (changes.get("reclaimed") or {}).items():
+            data["reclaimed"][str(cid)] = item
+        if changes.get("cursor") is not None:
+            try:
+                data["pin_cursor"] = int(changes["cursor"])
+            except (TypeError, ValueError):
+                pass
+
+    _mutate(cfg, room_id, change)
+
+
+# ---------------------------------------------------------------- счётчик «ушло не туда»
+
+_SPEND_CACHE: dict = {}
+
+
+def _session_spend(cfg, profile, session_id) -> dict:
+    """Вызовы, токены и деньги сессии воркера из `state.db` профиля (`mode=ro`).
+
+    Читаются только существующие колонки: набор полей у версий Hermes разный.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return {}
+    path = models.state_path(cfg, profile)
+    key = (str(path), sid)
+    now = time.time()
+    hit = _SPEND_CACHE.get(key)
+    if hit and now - float(hit[0] or 0) < 120:
+        return dict(hit[1])
+    out: dict = {}
+    try:
+        if Path(path).exists():
+            con = sqlite3.connect("file:%s?mode=ro" % Path(path).as_posix(), uri=True, timeout=5)
+            try:
+                con.row_factory = sqlite3.Row
+                cols = _columns(con, "sessions")
+                wanted = [c for c in ("model", "billing_provider", "estimated_cost_usd", "api_call_count",
+                                      "input_tokens", "output_tokens", "cache_read_tokens",
+                                      "cache_write_tokens") if c in cols]
+                if wanted:
+                    row = con.execute("SELECT %s FROM sessions WHERE id = ?"
+                                      % ", ".join(wanted), (sid,)).fetchone()
+                    if row is not None:
+                        data = dict(row)
+                        out = {"model": str(data.get("model") or "").strip(),
+                               "provider": str(data.get("billing_provider") or "").strip(),
+                               "cost_usd": None, "calls": 0, "input_tokens": 0,
+                               "output_tokens": 0, "cache_read_tokens": 0,
+                               "cache_write_tokens": 0}
+                        for name in ("calls", "input_tokens", "output_tokens",
+                                     "cache_read_tokens", "cache_write_tokens"):
+                            column = {"calls": "api_call_count"}.get(name, name)
+                            try:
+                                out[name] = int(data.get(column) or 0)
+                            except (TypeError, ValueError):
+                                out[name] = 0
+                        if data.get("estimated_cost_usd") not in (None, ""):
+                            try:
+                                out["cost_usd"] = round(float(data["estimated_cost_usd"]), 4)
+                            except (TypeError, ValueError):
+                                out["cost_usd"] = None
+            finally:
+                con.close()
+    except Exception:                        # noqa: BLE001 - нет файла/схемы: пусто
+        out = {}
+    if len(_SPEND_CACHE) > 800:
+        _SPEND_CACHE.clear()
+    _SPEND_CACHE[key] = (now, dict(out))
+    return out
+
+
+def wrong_model_spend(cfg, room, root_id=None) -> dict:
+    """«Ушло на не ту модель» по запросу/комнате: вызовы, токены, деньги (`mode=ro`).
+
+    Считается по факту сессий воркеров (`state.db` профилей) и ожидаемой модели
+    исполнителя. Карточка без сессии в расчёт не идёт (неизвестно — не выдумываем).
+    Это функция-ответ для пакета C2/E и для строки «потрачено на ошибочных запусках».
+    """
+    room = room if isinstance(room, dict) else {}
+    room_id = str(room.get("id") or "")
+    out = {"room": room_id, "root_id": str(root_id or ""), "cards": [], "checked": 0,
+           "calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+           "cache_write_tokens": 0, "cost_usd": 0.0, "text": ""}
+    if not room_id or getattr(cfg, "mock", False) or getattr(cfg, "demo", False):
+        return out
+    board = str(room.get("board") or getattr(cfg, "board", "") or "team")
+    try:
+        cards = models.card_map(cfg, room, board=board)
+    except Exception:                        # noqa: BLE001 - доска вторична
+        return out
+    ids = dict(cards)
+    if str(root_id or "").strip():
+        try:
+            from .engine_write_guard import tree_ids
+            allowed = {str(i) for i in tree_ids(cfg, board, str(root_id))}
+        except Exception:                    # noqa: BLE001 - дерева нет: только корень
+            allowed = {str(root_id)}
+        ids = {cid: card for cid, card in cards.items() if cid in allowed}
+    con = _connect(cfg, board)
+    if con is None:
+        return out
+    try:
+        for cid, card in ids.items():
+            profile = str(card.get("assignee") or "")
+            if not profile:
+                continue
+            expected = expected_model(cfg, room, profile, card_id=cid)
+            try:
+                runs = con.execute("SELECT id, profile, metadata FROM task_runs WHERE task_id = ? "
+                                   "ORDER BY id", (cid,)).fetchall()
+            except sqlite3.Error:
+                continue
+            spend = None
+            session = ""
+            use_profile = profile
+            for run in runs:
+                sid = models._session_id(run["metadata"])      # noqa: SLF001 - общий разбор
+                if not sid:
+                    continue
+                got = _session_spend(cfg, str(run["profile"] or profile), sid)
+                if not got.get("model"):
+                    continue
+                use_profile = str(run["profile"] or profile)
+                spend, session = got, sid
+            if not spend:
+                continue
+            out["checked"] += 1
+            if expected.get("model") and same_model(expected, spend):
+                continue
+            if expected.get("model") and same_name(expected, spend):
+                continue                     # та же модель, иной ярлык провайдера
+            calls = int(spend.get("calls") or 0)
+            tokens_in = int(spend.get("input_tokens") or 0)
+            tokens_out = int(spend.get("output_tokens") or 0)
+            cost = spend.get("cost_usd")
+            out["cards"].append({"card_id": cid, "profile": use_profile, "session_id": session,
+                                 "model": spend.get("model") or "", "provider": spend.get("provider") or "",
+                                 "expected": {"provider": expected.get("provider") or "",
+                                              "model": expected.get("model") or ""},
+                                 "calls": calls, "input_tokens": tokens_in,
+                                 "output_tokens": tokens_out, "cost_usd": cost})
+            out["calls"] += calls
+            out["input_tokens"] += tokens_in
+            out["output_tokens"] += tokens_out
+            out["cache_read_tokens"] += int(spend.get("cache_read_tokens") or 0)
+            out["cache_write_tokens"] += int(spend.get("cache_write_tokens") or 0)
+            if cost:
+                out["cost_usd"] += float(cost)
+    finally:
+        con.close()
+    out["cost_usd"] = round(out["cost_usd"], 2)
+    out["text"] = wrong_spend_text(out)
+    return out
+
+
+def wrong_spend_text(data) -> str:
+    """Готовая строка «потрачено на ошибочных запусках» (для интерфейса и отчёта)."""
+    data = data if isinstance(data, dict) else {}
+    cards = int(len(data.get("cards") or []))
+    if not cards:
+        return "Ошибочных запусков не было"
+    tokens = int(data.get("input_tokens") or 0) + int(data.get("output_tokens") or 0)
+    parts = ["%d %s" % (cards, models_ru(cards, "карточка", "карточки", "карточек")),
+             "%d %s" % (int(data.get("calls") or 0),
+                        models_ru(int(data.get("calls") or 0), "вызов", "вызова", "вызовов")),
+             "%s %s" % ("{:,.0f}".format(tokens).replace(",", " "),
+                        models_ru(tokens, "токен", "токена", "токенов"))]
+    text = "Потрачено на ошибочных запусках: " + ", ".join(parts)
+    if float(data.get("cost_usd") or 0) > 0:
+        text += ", ≈ $%.2f" % float(data.get("cost_usd") or 0)
+    return text
+
+
+def room_model_table(room) -> str:
+    """Готовая короткая строка для контракта руководителя (W28-C1 п.3, пакет E).
+
+    Значения — выбор комнаты (`agent_models`), а не модель профиля: именно их надо
+    передавать в `hermes kanban create --model/--provider`. Пусто — в комнате ничего не
+    выбрано, флаги не нужны.
+    """
+    room = room if isinstance(room, dict) else {}
+    try:
+        settings = models.settings_of(room)
+        people = models.participants(room)
+    except Exception:                        # noqa: BLE001 - реестр не прочитан: строки нет
+        return ""
+    parts: list = []
+    for profile, _role in people:
+        item = settings.get(str(profile)) or {}
+        if not (item.get("provider") and item.get("model")):
+            continue
+        parts.append("%s — %s" % (profile, short(item["provider"], item["model"],
+                                                  item.get("reasoning") or "")))
+    if not parts:
+        return ""
+    return ("МОДЕЛИ КОМНАТЫ (в каждую подзадачу): %s. Флаги при создании карточки: "
+            "--model=<модель> --provider=<провайдер>." % "; ".join(parts))
 
 
 # ---------------------------------------------------------------- model-check
@@ -1471,6 +2063,9 @@ def is_resume_text(text: str) -> bool:
 
 
 __all__ = ["MODES", "DEFAULT_MODE", "MODE_LABELS", "MODE_HINTS", "GUARD_TICK", "GUARD_MIN_AGE",
+           "PREFLIGHT_TICK", "PREFLIGHT_SCAN_STATUSES", "ATTEMPT_OUTCOME", "ATTEMPT_REASON",
+           "preflight", "close_attempt", "wrong_model_spend", "wrong_spend_text",
+           "room_model_table",
            "GUARD_MAX_RESTARTS", "PENDING_STATUSES", "RUNNING_STATUSES", "ALIASES",
            "GuardError", "canon_model", "canon_provider", "same_model", "same_name", "short",
            "normalize_mode", "mode_of", "mode_block", "expected_model", "override_for_card",

@@ -27,6 +27,12 @@ TICK_IDLE = 15           # секунд простоя
 #: Он должен успевать ДО того, как диспетчер возьмёт карточку на чужую модель, поэтому
 #: 3 секунды, а не 5–15. Один проход — по одному дешёвому чтению tenant на комнату.
 GUARD_TICK = 3.0
+#: W28-C1: свой цикл «модель до старта». Главный дефект 5 — карточки без `model_override`
+#: диспетчер брал раньше, чем сторож ставил модель (окно ~15 с, платили токенами). Этот
+#: цикл 1 с: сначала модель, потом «отдать диспетчеру».
+PREFLIGHT_TICK = 1.0
+PREFLIGHT_ROOM_BUDGET = 4.0    # секунд на комнату
+PREFLIGHT_PASS_BUDGET = 12.0   # секунд на весь проход
 #: W25-M2: свой цикл сторожа зависаний — пороги в минутах, спешить незачем
 WATCHDOG_TICK = 30.0
 GUARD_ROOM_BUDGET = 8.0  # секунд на комнату: медленная доска не задерживает остальные
@@ -106,6 +112,13 @@ class Watcher:
         self.guard_last_error: str | None = None
         self.guard_stats: dict | None = None
         self.guard_running = False
+        #: W28-C1: цикл «модель до старта» — свой поток, свой интервал 1 с
+        self._preflight_thread: threading.Thread | None = None
+        self._preflight_stop = threading.Event()
+        self.preflight_last_run_at: int | None = None
+        self.preflight_last_error: str | None = None
+        self.preflight_stats: dict | None = None
+        self.preflight_running = False
         #: W25-M2: сторож зависаний — тоже своим потоком (пороги в минутах)
         self._wd_thread: threading.Thread | None = None
         self._wd_stop = threading.Event()
@@ -129,6 +142,12 @@ class Watcher:
             self._guard_thread = threading.Thread(target=self._guard_loop,
                                                   name="team-room-model-guard", daemon=True)
             self._guard_thread.start()
+        # W28-C1: модель до старта — свой поток с интервалом 1 с (закрывает гонку дефекта 5)
+        if not (self._preflight_thread and self._preflight_thread.is_alive()):
+            self._preflight_stop.clear()
+            self._preflight_thread = threading.Thread(target=self._preflight_loop,
+                                                      name="team-room-model-preflight", daemon=True)
+            self._preflight_thread.start()
         # W25-M2: сторож зависаний (10 мин — предупреждение, 20 — остановка)
         if not (self._wd_thread and self._wd_thread.is_alive()):
             self._wd_stop.clear()
@@ -139,17 +158,22 @@ class Watcher:
     def stop(self) -> None:
         self._stop.set()
         self._guard_stop.set()
+        self._preflight_stop.set()
         thread, self._thread = self._thread, None
         if thread and thread.is_alive():
             thread.join(timeout=3.0)
         guard, self._guard_thread = self._guard_thread, None
         if guard and guard.is_alive():
             guard.join(timeout=3.0)
+        pre, self._preflight_thread = self._preflight_thread, None
+        if pre and pre.is_alive():
+            pre.join(timeout=3.0)
         wd, self._wd_thread = self._wd_thread, None
         if wd and wd.is_alive():
             wd.join(timeout=3.0)
         self.running = False
         self.guard_running = False
+        self.preflight_running = False
         self.wd_running = False
 
     def status(self) -> dict:
@@ -157,6 +181,8 @@ class Watcher:
                 "last_error": self.last_error,
                 # W23-MG1 §2.3: сводка быстрого сторожа моделей (для /api/health.guard)
                 "guard": self.guard_status(),
+                # W28-C1: сводка цикла «модель до старта» (для /api/health.preflight)
+                "preflight": self.preflight_status(),
                 # W25-M2: сводка сторожа зависаний (для /api/health.watchdog)
                 "watchdog": self.watchdog_status()}
 
@@ -167,6 +193,15 @@ class Watcher:
         return {"running": bool(self.guard_running or alive), "tick_s": GUARD_TICK,
                 "last_run_at": self.guard_last_run_at, "last_error": self.guard_last_error,
                 "stats": dict(self.guard_stats or {})}
+
+    def preflight_status(self) -> dict:
+        """Состояние цикла «модель до старта»: идёт ли, когда был проход, что сделал."""
+        thread = self._preflight_thread
+        alive = bool(thread is not None and thread.is_alive())
+        return {"running": bool(self.preflight_running or alive), "tick_s": PREFLIGHT_TICK,
+                "last_run_at": self.preflight_last_run_at,
+                "last_error": self.preflight_last_error,
+                "stats": dict(self.preflight_stats or {})}
 
     def watchdog_status(self) -> dict:
         """Состояние сторожа зависаний: идёт ли, когда был проход, что сделал."""
@@ -234,6 +269,87 @@ class Watcher:
                 self._wd_stop.wait(max(0.5, pause))
         finally:
             self.wd_running = False
+
+    def _preflight_loop(self) -> None:
+        """Свой цикл «модель до старта» (W28-C1): пауза от НАЧАЛА прохода, шаг 1 с.
+
+        Медленная доска не должна растягивать интервал: иначе окно «карточка без модели, а
+        диспетчер уже смотрит» снова станет секундами — из него и уходили токены на модель
+        профиля.
+        """
+        self.preflight_running = True
+        try:
+            while not self._preflight_stop.is_set():
+                started = time.monotonic()
+                try:
+                    self.preflight_tick_once()
+                except Exception as exc:  # noqa: BLE001 - поток не должен умирать
+                    self.app.log.error("model_preflight: тик не удался", exc)
+                    self.preflight_last_error = ("тик: %s" % (exc or exc.__class__.__name__))[:400]
+                pause = PREFLIGHT_TICK - (time.monotonic() - started)
+                self._preflight_stop.wait(max(0.1, pause))
+        finally:
+            self.preflight_running = False
+
+    def preflight_tick_once(self) -> dict:
+        """Один проход «модель до старта» по комнатам (W28-C1).
+
+        Логика — в `model_guard.preflight`: дельта `task_events` + проход по карточкам
+        комнаты в `triage/todo/ready`, удержание непроставленных, одна остановка чужого
+        запуска. Ошибка комнаты проход не валит: она в `preflight_last_error` и в логе.
+        """
+        stamp = int(time.time())
+        stats = {"rooms": 0, "checked": 0, "pinned": 0, "reclaimed": 0, "held": 0,
+                 "released": 0, "errors": 0, "at": stamp}
+        self.preflight_last_error = None
+        try:
+            rooms = self._rooms()
+        except Exception as exc:                 # noqa: BLE001 - реестр может быть занят
+            stats["errors"] += 1
+            self.preflight_last_error = ("список комнат: %s" % str(exc))[:400]
+            self.preflight_stats = stats
+            self.preflight_last_run_at = stamp
+            return stats
+        try:
+            func = self.app.fn("model_guard", "preflight")
+        except Exception as exc:                 # noqa: BLE001 - старая сборка: модуля нет
+            if not _module_missing(exc):
+                stats["errors"] += 1
+                self.preflight_last_error = ("модуль контроля: %s" % str(exc))[:400]
+            self.preflight_stats = stats
+            self.preflight_last_run_at = stamp
+            return stats
+        budget_end = time.monotonic() + PREFLIGHT_PASS_BUDGET
+        for room in rooms:
+            if not isinstance(room, dict) or room.get("archived"):
+                continue
+            if time.monotonic() > budget_end:
+                stats["skipped_rooms"] = int(stats.get("skipped_rooms") or 0) + 1
+                continue
+            stats["rooms"] += 1
+            started = time.monotonic()
+            try:
+                res = func(self.cfg, room, now=stamp) or {}
+            except Exception as exc:             # noqa: BLE001 - комната проход не валит
+                stats["errors"] += 1
+                self.preflight_last_error = ("комната %s: %s" % (room.get("id"), str(exc)))[:400]
+                self.app.log.error("model_preflight: комната %s" % room.get("id"), exc)
+                continue
+            stats["checked"] += int(res.get("checked") or 0)
+            stats["pinned"] += len(res.get("pinned") or [])
+            stats["reclaimed"] += len(res.get("reclaimed") or [])
+            stats["held"] += len(res.get("held") or [])
+            stats["released"] += len(res.get("released") or [])
+            if res.get("errors"):
+                stats["errors"] += 1
+                self.preflight_last_error = str((res.get("errors") or [""])[0])[:400]
+            took = time.monotonic() - started
+            if took > PREFLIGHT_ROOM_BUDGET:
+                stats["slow_rooms"] = int(stats.get("slow_rooms") or 0) + 1
+                stats["slowest_s"] = round(max(float(stats.get("slowest_s") or 0), took), 2)
+        self.preflight_stats = stats
+        self.preflight_last_run_at = stamp
+        return stats
 
     def watchdog_tick_once(self) -> dict:
         """Один проход сторожа зависаний по комнатам (W25-M2).

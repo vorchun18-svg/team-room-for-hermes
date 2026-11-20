@@ -25,16 +25,16 @@ from pathlib import Path
 
 try:  # пакетный и «плоский» импорт (python server/app.py)
     from . import answers
+    from . import attachments
     from .app_common import MAX_TEXT
-    from .config import path_allowed
     from .engine_cli import EngineWriteError, _run, _run_json, opt
     from .engine_db import like_prefix
     from .engine_write import CREATED_BY, _write_body
     from .engine_write_guard import assert_task_id, no_nul, tree_ids
 except ImportError:  # pragma: no cover
     import answers  # type: ignore
+    import attachments  # type: ignore
     from app_common import MAX_TEXT  # type: ignore
-    from config import path_allowed  # type: ignore
     from engine_cli import EngineWriteError, _run, _run_json, opt  # type: ignore
     from engine_db import like_prefix  # type: ignore
     from engine_write import CREATED_BY, _write_body  # type: ignore
@@ -415,22 +415,21 @@ def _validate_text(text) -> str:
 
 
 def _attach_paths(cfg, attach) -> list:
-    """Пути вложений: список строк из разрешённых мест (иначе 403), без NUL."""
+    """Пути вложений: «файл существует, это файл, читается» (W28-A).
+
+    Белого списка папок и расширений здесь больше нет (дефект 4): если человек
+    приложил файл, доступ одобрен им, а агент всё равно читает файл своими
+    инструментами. Секреты (`.env`, ключи, токены) требуют явного подтверждения —
+    ``AttachmentError`` с кодом ``needs_confirm``. ``cfg`` остался в подписи ради
+    совместимости вызовов.
+    """
     if attach in (None, ""):
         return []
-    if not isinstance(attach, (list, tuple)):
-        raise EngineWriteError("bad_request", "attach: список путей к файлам.",
-                              detail={"field": "attach"})
-    out = []
-    for path in list(attach)[:10]:
-        text = no_nul(path, "attach").strip()
-        if not text:
-            continue
-        if not path_allowed(cfg, text):
-            raise EngineWriteError("forbidden", "Вложение вне разрешённых путей: %s" % text,
-                                  detail={"path": text}, http_status=403)
-        out.append(text)
-    return out
+    try:
+        return attachments.check_all(attach, limit=attachments.MAX_ATTACH)
+    except attachments.AttachmentError as exc:
+        raise EngineWriteError(exc.code, exc.message, detail=dict(exc.detail),
+                               http_status=exc.status) from exc
 
 
 def _lead(room: dict, row: dict) -> str:

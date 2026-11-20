@@ -691,8 +691,21 @@ export async function mountAutonomyPanel(host, ctx, roomId) {
       });
       state.never = normalizeNever(state.data.never);
       state.picked = '';
-      toast('Уровень «' + levelById(level).title + '» включён', 'ok');
+      // W28-F: «не записалось» говорим ТОЛЬКО когда это подтвердил перечитанный файл
+      // (сервер присылает `warnings` из сверки с тем же config.yaml). Есть замечания —
+      // это предупреждение с причиной, а не зелёный тост «включён».
+      const warnings = Array.isArray(res && res.warnings) ? res.warnings.filter(Boolean) : [];
+      const failed = (Array.isArray(res && res.applied) ? res.applied : [])
+        .filter((row) => row && row.ok === false && !row.skipped);
+      if (warnings.length || failed.length) {
+        const text = warnings[0] || (res && res.message) || 'Уровень применён не у всех участников';
+        toast(text + (warnings.length > 1 ? ' · ещё ' + (warnings.length - 1) : ''), 'warn');
+      } else {
+        toast('Уровень «' + levelById(level).title + '» включён', 'ok');
+      }
       await loadJournal();
+      // Перечитываем профили: в карточках — что реально лежит в config.yaml.
+      load();
     } catch (err) {
       // 409 без confirm — это не ошибка: сервер прислал предпросмотр, человек решает.
       const details = (err && err.details) || {};

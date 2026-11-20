@@ -24,6 +24,7 @@ import time
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -473,6 +474,145 @@ class CliTests(AutonomyCase):
         self.assertEqual(doc["commands"][0]["verdict"], "allow")   # по коду возврата
 
 
+class VerifyAfterWriteTests(AutonomyCase):
+    """W28-F: перепроверка читает ТОТ ЖЕ файл, что записан, и не врёт «не записалось»."""
+
+    def test_file_without_pyyaml_is_read_by_raw_parser(self) -> None:
+        """Без PyYAML (сервер — stdlib) ключи всё равно читаются из файла."""
+        _write_config(self.home, allowlist=["script execution via heredoc"],
+                      deny=["*rm -rf*"], mode="approve")
+        with mock.patch.dict(sys.modules, {"yaml": None}):
+            state = au.profile_state(self.cfg, PROFILE)
+        self.assertEqual(state["read_by"], "raw")
+        self.assertEqual(state["allowlist"], ["script execution via heredoc"])
+        self.assertEqual(state["deny"], ["*rm -rf*"])
+        self.assertEqual(state["single_query_mode"], "approve")
+
+    def test_raw_parser_sees_hermes_style_config(self) -> None:
+        """Текст конфига Hermes (список и секция approvals) читается без PyYAML."""
+        text = ("# профиль\n"
+                "command_allowlist:\n"
+                "  - script execution via -e/-c flag\n"
+                "  - \"script execution via heredoc\"\n"
+                "approvals:\n"
+                "  mode: smart\n"
+                "  deny:\n"
+                "    - '*rm -rf*'\n"
+                "  single_query_mode: approve\n")
+        data = au._parse_keys_text(text)
+        self.assertEqual(data["command_allowlist"],
+                         ["script execution via -e/-c flag", "script execution via heredoc"])
+        self.assertEqual(data["approvals"]["deny"], ["*rm -rf*"])
+        self.assertEqual(data["approvals"]["single_query_mode"], "approve")
+
+    def test_no_false_alarm_when_file_has_keys(self) -> None:
+        """Запись записала файл, а в ответе нет списка — судим по ФАЙЛУ, а не по ответу."""
+        def write_then_short_answer(cfg, request):
+            """Пишет как Hermes, но НЕ пересказывает список (как боевой ответ 19.11)."""
+            self._fake_write(cfg, request)
+            return {"ok": True, "op": "apply", "home": request["home"]}   # без allowlist
+        au.set_writer(write_then_short_answer)
+        res = au.apply_level(self.cfg, self.room, "working", confirm=True)
+        self.assertEqual(res["warnings"], [], res)
+        rows = {row["profile"]: row for row in res["applied"]}
+        self.assertTrue(rows[PROFILE]["ok"], rows[PROFILE])
+        self.assertGreaterEqual(rows[PROFILE]["allowlist_size"], len(au.WORKING_RULES))
+        for home in (self.home, self.lead_home):
+            data = _read_config(home)
+            for key in au.WORKING_RULES:
+                self.assertIn(key, data["command_allowlist"])
+
+    def test_verify_reports_missing_only_when_file_confirms(self) -> None:
+        """Если писатель ничего не записал — «не записалось» честное, с числами."""
+        au.set_writer(lambda cfg, request: {"ok": True, "op": "apply",
+                                           "home": request["home"], "allowlist": []})
+        res = au.apply_level(self.cfg, self.room, "working", confirm=True)
+        self.assertTrue(res["warnings"], "пустая запись должна дать замечание")
+        rows = {row["profile"]: row for row in res["applied"]}
+        self.assertFalse(rows[PROFILE]["ok"])
+        self.assertEqual(rows[PROFILE]["allowlist_size"], 0)
+
+    def test_default_profile_lives_in_hermes_root(self) -> None:
+        """Профиль `default` — корень дома Hermes, а не `profiles/default`."""
+        root_config = self.root / "config.yaml"           # корень поддельного дома
+        root_config.write_text(CONFIG_BEFORE, encoding="utf-8")
+        self.assertFalse((self.root / "profiles" / "default").exists())
+        room = dict(self.room, orchestrator="default")
+        res = au.apply_level(self.cfg, room, "working", confirm=True)
+        self.assertTrue(res["ok"])
+        rows = {row["profile"]: row for row in res["applied"]}
+        self.assertTrue(rows["default"]["ok"], rows["default"])
+        self.assertEqual(Path(rows["default"]["home"]), self.root)
+        data = _read_config(self.root)
+        for key in au.WORKING_RULES:
+            self.assertIn(key, data["command_allowlist"])
+        # у самого `default` путь считается так же, как у записи
+        state = au.profile_state(self.cfg, "default")
+        self.assertEqual(Path(state["home"]), self.root)
+        self.assertIn(au.WORKING_RULES[0], state["allowlist"])
+
+    def test_default_mode_deny_is_not_a_false_alarm(self) -> None:
+        """`deny` — умолчание Hermes: его может не быть в файле, и это не «не записалось»."""
+        _write_config(self.home, allowlist=list(au.WORKING_RULES), deny=[], mode="")
+        res = au.apply_level(self.cfg, self.room, "working", confirm=True)
+        self.assertEqual(res["warnings"], [], res)
+
+    def test_applied_rows_say_how_file_was_read(self) -> None:
+        res = au.apply_level(self.cfg, self.room, "working", confirm=True)
+        row = next(r for r in res["applied"] if r["profile"] == PROFILE)
+        self.assertIn(row["read_by"], ("yaml", "raw"))
+        self.assertTrue(str(row["config"]).endswith("config.yaml"))
+
+
+class SuggestFakeTests(AutonomyCase):
+    """W28-F: подсказки в песочнице без вызова настоящего `hermes`."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._saved = os.environ.get(au.SUGGEST_FAKE_ENV)
+
+    def tearDown(self) -> None:
+        if self._saved is None:
+            os.environ.pop(au.SUGGEST_FAKE_ENV, None)
+        else:
+            os.environ[au.SUGGEST_FAKE_ENV] = self._saved
+        super().tearDown()
+
+    def _forbid_real(self):
+        """Настоящий CLI (и любой подставной runner) не должен вызываться вовсе."""
+        def boom(cfg):
+            raise AssertionError("настоящий CLI вызван при TEAMROOM_SUGGEST_FAKE")
+        self._saved_default = getattr(au, "_default_runner")
+        au._default_runner = boom
+        self.addCleanup(lambda: setattr(au, "_default_runner", self._saved_default))
+
+    def test_fake_runner_is_used(self) -> None:
+        os.environ[au.SUGGEST_FAKE_ENV] = "1"
+        self._forbid_real()
+        res = au.suggest(self.cfg, self.room)
+        self.assertTrue(res["available"], res)
+        self.assertEqual(res["source"], "fake")
+        self.assertGreaterEqual(res["count"], 3)
+        self.assertTrue(all(item["pattern"] for item in res["items"]))
+
+    def test_fake_payload_from_file(self) -> None:
+        payload = {"proposals": [{"pattern": "make deploy", "kind": "literal", "count": 5}]}
+        path = Path(self.cfg.data_dir) / "suggest.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        os.environ[au.SUGGEST_FAKE_ENV] = str(path)
+        self._forbid_real()
+        res = au.suggest(self.cfg, self.room)
+        self.assertEqual([item["pattern"] for item in res["items"]], ["make deploy"])
+
+    def test_without_env_real_runner_is_used(self) -> None:
+        os.environ.pop(au.SUGGEST_FAKE_ENV, None)
+        au.set_cli_runner(lambda args: {"code": 0, "out": '{"proposals": []}', "err": ""})
+        res = au.suggest(self.cfg, self.room)
+        self.assertTrue(res["available"])
+        self.assertEqual(res["source"], "hermes")
+
+
 class GrantProtocolTests(unittest.TestCase):
     """`server/approval_grant.py::op_apply` — один протокол записи трёх ключей.
 
@@ -559,6 +699,26 @@ class GrantProtocolTests(unittest.TestCase):
         data = _read_config(self.home)
         self.assertNotIn("single_query_mode", data["approvals"])
 
+    def test_apply_reads_file_back_and_refuses_when_empty(self) -> None:
+        """W28-F: `save_config`, который ничего не записал, — отказ с кодом (не «ok»)."""
+        yaml = _yaml()
+
+        def save_nothing(data):
+            return None                                   # «записал», а файла не тронул
+
+        fake = sys.modules["hermes_cli.config"]
+        original = fake.save_config
+        fake.save_config = save_nothing
+        try:
+            res = ag.run({"op": "apply", "home": str(self.home),
+                          "allowlist_add": ["script execution via heredoc"],
+                          "deny": None, "single_query_mode": None})
+        finally:
+            fake.save_config = original
+        self.assertFalse(res.get("ok"), res)
+        self.assertEqual(res.get("code"), "failed")
+        self.assertIn("не записал", res.get("message") or "")
+
     def test_apply_rejects_bad_masks(self) -> None:
         res = ag.run({"op": "apply", "home": str(self.home), "deny": "rm -rf"})
         self.assertFalse(res.get("ok"))
@@ -571,10 +731,17 @@ class ContractTests(unittest.TestCase):
     """Правило контракта знает уровень комнаты (иначе модель снова обходит блокировку)."""
 
     def test_working_rule_mentions_scripts(self) -> None:
+        # W28-QA1: W28-E сжал правило до сути — упоминание `python -c` ушло, вместо
+        # него назван разрешённый путь «файл + терминал» (`write_file` + `python файл.py`)
+        # и прямо сказано, что `execute_code` в карточке недоступен. Проверяем смысл
+        # правила (скрипты — файлом, не однострочником и не execute_code), а не старую
+        # формулировку: правило осталось, текст стал короче.
         text = contract.approval_rule({"autonomy": {"level": "working"}})
         self.assertIn("«Рабочий»", text)
-        self.assertIn("python -c", text)
+        self.assertIn("write_file", text)
+        self.assertIn("python файл.py", text)
         self.assertIn("execute_code", text)
+        self.assertNotIn("python -c", text)
 
     def test_free_rule_mentions_questions(self) -> None:
         text = contract.approval_rule({"autonomy": {"level": "free"}})

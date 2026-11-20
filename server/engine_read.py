@@ -258,12 +258,48 @@ def _steps_with_source(canon: dict) -> list:
     return steps
 
 
+def _models_mod():
+    """``server/agent_models.py`` — единственное место, где читается сессия воркера."""
+    try:
+        from . import agent_models as mod
+    except ImportError:  # pragma: no cover — «плоский» импорт
+        import agent_models as mod  # type: ignore
+    return mod
+
+
+def _attempt_facts(cfg, board, con, node, run) -> dict:
+    """Факт ОДНОЙ попытки: ``{model, provider, calls}`` из её сессии воркера (W28-C2).
+
+    Модель попытки нельзя брать из карточки: у убитой первой попытки в карточке
+    уже стоит исправленный `model_override` — именно из-за этого подпись «ушёл на»
+    показывала не ту модель. Сессия ищется по id ИМЕННО этого прогона
+    (`task_runs.metadata`, иначе событие `owner_admitted` с тем же `run_id`);
+    чужую (последнюю) сессию не подставляем.
+    """
+    run = run if isinstance(run, dict) else {}
+    task_id = str((node or {}).get("id") or "") if isinstance(node, dict) else ""
+    if not task_id:
+        return {}
+    profile = str(run.get("profile") or (node or {}).get("assignee") or "")
+    try:
+        got = _models_mod().actual_model(cfg, board, task_id, profile=profile, run=run, con=con)
+    except Exception:  # noqa: BLE001 — подпись попытки не должна ронять дерево
+        return {}
+    return {"model": str(got.get("model") or ""), "provider": str(got.get("provider") or ""),
+            "calls": got.get("calls")}
+
+
 def _load(cfg, board, root_id, room=None, extra_cards=None, enabled=None, answers=None):
     extra = [c for c in _as_list(extra_cards) if isinstance(c, dict) and c.get("id")]
     room_dict = _room_dict(cfg, room)
     with _conn(cfg, board) as con:
         ctx = _collect(con, root_id)
         nodes = _tree(ctx, room_dict, extra, cfg, board)
+        # W28-C2: попытки карточки — с итогом каждой, фактической моделью и числом
+        # вызовов. Ошибка ставится только по ИТОГУ карточки: убитая контролем
+        # моделей попытка (`reclaimed`) — не сбой, карточка просто пошла заново.
+        _view.apply_attempts(
+            nodes, lambda node, run: _attempt_facts(cfg, board, con, node, run))
         synth, canon, warns = _synthesis(ctx, nodes, extra)
         canons = _canons(nodes)
         if canons:

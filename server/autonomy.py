@@ -294,32 +294,169 @@ def _ledger_profiles(cfg, room_id) -> dict:
 
 # ---------------------------------------------------------------- конфиг профиля
 
-def profile_state(cfg, profile: str) -> dict:
+def _read_keys(path: Path) -> tuple[dict, str]:
+    """Прочитать три ключа конфига и сказать, ЧЕМ читали: ``(данные, "yaml"|"raw"|"none")``.
+
+    Почему не «просто yaml»: сервер «Комнаты команды» — stdlib Python, PyYAML в нём
+    необязателен. Без запасного разбора `profile_state` молча возвращал пустой список
+    разрешений, и перепроверка после записи объявляла «не записалось» там, где Hermes
+    записал всё (боевой случай 19.11: `ok:false`, `allowlist_size 0` при заполненном
+    `command_allowlist`). Запасной разбор читает ТОТ ЖЕ файл текстом, поэтому его ответ —
+    подтверждение файла, а не догадка.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return {}, "none"
+    try:
+        import yaml                                            # noqa: PLC0415 - необязателен
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            data = yaml.safe_load(fh) or {}
+        if isinstance(data, str):                # конфиг из одной строки-скаляра
+            data = {}
+        if isinstance(data, dict):
+            return data, "yaml"
+    except Exception:                                          # noqa: BLE001 - ниже текстовый разбор
+        pass
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:                                            # pragma: no cover - файл исчез
+        return {}, "none"
+    return _parse_keys_text(text), "raw"
+
+
+def _parse_keys_text(text: str) -> dict:
+    """Разбор БЕЗ PyYAML: ``command_allowlist`` и ``approvals.{deny, single_query_mode}``.
+
+    Понимает только те формы, которые пишет сам Hermes: список строками и скаляры в
+    секции ``approvals``. Всё остальное просто не попадает в ответ (не выдумываем).
+    """
+    allow: list[str] = []
+    deny: list[str] = []
+    section = ""                     # текущая секция верхнего уровня ("", "approvals", …)
+    list_target = ""                 # какой список сейчас наполняется: "allow"/"deny"/""
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.rstrip()
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" \t"))
+        stripped = line.strip()
+        # Элемент списка: PyYAML пишет его и с отступом, и БЕЗ него (``- ключ`` под
+        # `command_allowlist:` идёт с indent 0) — поэтому проверяем раньше секций.
+        if stripped.startswith("-") and list_target:
+            value = stripped[1:].strip().strip('"').strip("'")
+            if value:
+                (allow if list_target == "allow" else deny).append(value)
+            continue
+        if indent == 0:
+            name, _, rest = stripped.partition(":")
+            section = name.strip()
+            list_target = ""
+            value = rest.strip()
+            if section == "command_allowlist":
+                if value.startswith("["):            # `command_allowlist: []` / `["a", "b"]`
+                    allow.extend(_split_inline_list(value))
+                elif value:
+                    allow.extend(_split_inline_list(value))
+                else:
+                    list_target = "allow"
+            continue
+        if section == "approvals" and indent > 0:
+            name, _, rest = stripped.partition(":")
+            key = name.strip()
+            value = rest.strip().strip('"').strip("'")
+            if key in ("deny", "never"):
+                if value.startswith("["):
+                    deny = _split_inline_list(value)
+                    list_target = ""
+                elif value:
+                    deny = _split_inline_list(value)
+                    list_target = "deny"
+                else:
+                    deny = []
+                    list_target = "deny"
+                continue
+            if key == "single_query_mode":
+                continue                 # значение забирает `_parse_single_query_mode`
+            list_target = ""
+            continue
+    out: dict = {"command_allowlist": allow}
+    approvals: dict = {"deny": deny}
+    mode = _parse_single_query_mode(text)
+    if mode is not None:
+        approvals["single_query_mode"] = mode
+    out["approvals"] = approvals
+    return out
+
+
+def _parse_single_query_mode(text: str) -> str | None:
+    """``approvals.single_query_mode`` текстом: значение или ``None``, если ключа нет."""
+    inside = False
+    for raw_line in str(text or "").splitlines():
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip(" \t"))
+        stripped = raw_line.strip()
+        if indent == 0:
+            inside = stripped.startswith("approvals:")
+            continue
+        if inside and stripped.startswith("single_query_mode:"):
+            value = stripped.split(":", 1)[1].strip().strip('"').strip("'")
+            return value.lower()
+    return None
+
+
+def _split_inline_list(value: str) -> list[str]:
+    """Разобрать ``[]`` / ``["a", 'b']`` / ``[a, b]`` в список строк (без PyYAML)."""
+    text = str(value or "").strip()
+    if not (text.startswith("[") and text.endswith("]")):
+        return [text] if text else []
+    body = text[1:-1].strip()
+    if not body:
+        return []
+    out: list[str] = []
+    for chunk in body.split(","):
+        item = chunk.strip().strip('"').strip("'").strip()
+        if item:
+            out.append(item)
+    return out
+
+
+def profile_state(cfg, profile: str, home=None) -> dict:
     """Текущее состояние трёх ключей профиля (только чтение, без Hermes).
 
     ``exists`` — есть ли ``config.yaml``; ``allowlist``/``deny`` — списки строк;
-    ``single_query_mode`` — как записано (``""`` — ключа нет).
+    ``single_query_mode`` — как записано (``""`` — ключа нет); ``read_by`` — чем прочитан
+    файл (``yaml``/``raw``/``none``).
+
+    ``home`` — ЯВНЫЙ домашний каталог профиля: после записи перепроверка обязана читать
+    тот же файл, в который писала (его вернул исполнитель записи), а не пересчитывать
+    путь. Профиль ``default`` живёт в КОРНЕ дома Hermes, остальные — в ``profiles/<имя>``;
+    это считает ``approvals.profile_home``.
     """
-    path = ap.config_path(cfg, profile)
-    out = {"profile": str(profile), "home": str(ap.profile_home(cfg, profile)),
+    if home is not None and str(home).strip():
+        base = Path(str(home))
+        path = base / "config.yaml"
+    else:
+        base = ap.profile_home(cfg, profile)
+        path = ap.config_path(cfg, profile)
+    out = {"profile": str(profile), "home": str(base),
            "exists": path.is_file(), "config": str(path),
-           "allowlist": [], "deny": [], "single_query_mode": ""}
+           "allowlist": [], "deny": [], "single_query_mode": "", "read_by": "none"}
     if not out["exists"]:
         return out
-    data = {}
-    try:
-        import yaml                                            # noqa: PLC0415
-        with open(path, "r", encoding="utf-8-sig") as fh:
-            data = yaml.safe_load(fh) or {}
-    except Exception:                                           # noqa: BLE001
-        data = {}
+    data, read_by = _read_keys(path)
+    out["read_by"] = read_by
     if isinstance(data, dict):
         raw = data.get("command_allowlist")
+        if isinstance(raw, str):
+            raw = _split_inline_list(raw)
         if isinstance(raw, list):
             out["allowlist"] = [str(item) for item in raw if isinstance(item, str)]
         approvals = data.get("approvals")
         if isinstance(approvals, dict):
             deny = approvals.get("deny")
+            if isinstance(deny, str):
+                deny = _split_inline_list(deny)
             if isinstance(deny, list):
                 out["deny"] = [str(item) for item in deny if isinstance(item, str)]
             out["single_query_mode"] = str(approvals.get("single_query_mode") or "").strip().lower()
@@ -489,20 +626,67 @@ def backup_config(cfg, room_id, profile: str) -> dict:
     return {"path": str(target), "rel": rel, "at": _now()}
 
 
-def _verify(profile: str, after: dict, plan: dict) -> list[str]:
-    """Сверить, что Hermes записал именно то, что просили (список замечаний)."""
+def _same(left, right) -> bool:
+    """Одинаковые записи списка? Сравнение без регистра и лишних пробелов.
+
+    Hermes хранит классы правил как человеческие строки; регистр/пробелы в них может
+    отличаться от того, что мы просили, — это та же запись, а не «не записалось».
+    """
+    return " ".join(str(left or "").split()).casefold() == " ".join(str(right or "").split()).casefold()
+
+
+def _has_key(keys, key) -> bool:
+    """Есть ли ``key`` в списке записей (сравнение ``_same``)."""
+    return any(_same(item, key) for item in (keys or []))
+
+
+def _mode_ok(want, have) -> bool:
+    """Совпадает ли записанный режим с желаемым (``deny`` — умолчание Hermes).
+
+    Hermes не пишет в файл значения, равные умолчанию: ``single_query_mode: deny`` может
+    отсутствовать — поведение при этом то же («без человека — спрашивать»), поэтому это
+    не «не записалось».
+    """
+    target = str(want or "").strip().lower()
+    got = str(have or "").strip().lower()
+    return target == got or (target == "deny" and got == "")
+
+
+def _verify(profile: str, after: dict, plan: dict, reported: dict | None = None) -> list[str]:
+    """Сверить, что Hermes записал именно то, что просили (список замечаний).
+
+    Читается ФАЙЛ, в который писала запись (``after`` собран из него же). Если файл
+    перечитать не удалось (``read_by: none``), но сама запись прочитала его сразу после
+    записи и видит ключи (``reported``), говорим «записано, перечитать не удалось» —
+    «не записалось» без подтверждения файла не пишем.
+    """
     notes: list[str] = []
+    allow = after.get("allowlist") or []
+    was_read = str(after.get("read_by") or "") != "none"
+    reported_allow = (reported or {}).get("allowlist") or []
     for key in plan.get("add") or []:
-        if key not in (after.get("allowlist") or []):
-            notes.append("«%s»: разрешение «%s» не записалось" % (profile, key))
+        if _has_key(allow, key):
+            continue
+        if not was_read and _has_key(reported_allow, key):
+            notes.append("«%s»: разрешение «%s» записано, но перечитать файл не удалось"
+                         % (profile, key))
+            continue
+        notes.append("«%s»: разрешение «%s» не записалось" % (profile, key))
     for key in plan.get("remove") or []:
-        if key in (after.get("allowlist") or []):
+        if _has_key(allow, key):
             notes.append("«%s»: запись «%s» осталась в списке" % (profile, key))
-    if plan.get("sqm") and after.get("single_query_mode") != plan["sqm"]:
-        notes.append("«%s»: «запуски без человека» = «%s» вместо «%s»"
-                     % (profile, after.get("single_query_mode") or "нет", plan["sqm"]))
-    if plan.get("deny") is not None and sorted(after.get("deny") or []) != sorted(plan["deny"]):
-        notes.append("«%s»: список «только с моего да» записался не целиком" % profile)
+    if plan.get("sqm") and not _mode_ok(plan["sqm"], after.get("single_query_mode")):
+        if not was_read and _mode_ok(plan["sqm"], (reported or {}).get("single_query_mode")):
+            notes.append("«%s»: «запуски без человека» записаны, перечитать файл не удалось"
+                         % profile)
+        else:
+            notes.append("«%s»: «запуски без человека» = «%s» вместо «%s»"
+                         % (profile, after.get("single_query_mode") or "нет", plan["sqm"]))
+    if plan.get("deny") is not None:
+        want = [str(m) for m in plan["deny"]]
+        have = [str(m) for m in (after.get("deny") or [])]
+        if len(want) != len(have) or not all(_has_key(have, mask) for mask in want):
+            notes.append("«%s»: список «только с моего да» записался не целиком" % profile)
     return notes
 
 
@@ -567,13 +751,18 @@ def apply_level(cfg, room: dict, level: str, never=None, confirm: bool = False,
                             "backup": backup["rel"]})
             warnings.append("«%s»: %s" % (name, message))
             continue
-        after = profile_state(cfg, name)     # читаем ЗАПИСАННОЕ, а не ответ инструмента
-        notes = _verify(name, after, plan)
+        written_home = str((result or {}).get("home") or "") or current["home"]
+        # Перечитываем ТОТ ЖЕ файл, в который писала запись (её же домашний каталог), и
+        # тем же путём, что считает `profile_home` (default — корень дома Hermes).
+        after = profile_state(cfg, name, home=written_home)
+        notes = _verify(name, after, plan, result if isinstance(result, dict) else None)
         warnings.extend(notes)
         applied_profiles[name] = _record_plan(name, block["level"], plan, current,
                                              previous, now, backup=backup["rel"])
         applied.append({"profile": name, "ok": not notes, "changes": plan["changes"],
                         "warnings": notes, "backup": backup["rel"],
+                        "home": written_home, "config": after.get("config") or "",
+                        "read_by": after.get("read_by") or "",
                         "single_query_mode": after.get("single_query_mode"),
                         "allowlist_size": len(after.get("allowlist") or []),
                         "deny_size": len(after.get("deny") or [])})
@@ -658,6 +847,7 @@ def view(cfg, room: dict) -> dict:
                          "allowlist": state["allowlist"],
                          "deny": state["deny"],
                          "single_query_mode": state["single_query_mode"] or "deny",
+                         "read_by": state["read_by"],
                          "auto_allowed": [k for k in WORKING_RULES
                                           if k in state["allowlist"]]})
     shots = preview(cfg, room, never=settings.get("never"))
@@ -773,8 +963,61 @@ def cli_bin(cfg=None) -> str:
 
 
 def cli_runner(cfg):
-    """Исполнитель CLI: подставной, если задан, иначе настоящий Hermes."""
-    return _cli_runner or _default_runner(cfg)
+    """Исполнитель CLI: подставной, если задан, иначе подставной из песочницы, иначе Hermes."""
+    return _cli_runner or _fake_runner(cfg) or _default_runner(cfg)
+
+
+#: Переменная песочницы/тестов: подставные подсказки без вызова настоящего `hermes`.
+#: ``TEAMROOM_SUGGEST_FAKE=1`` — встроенный пример, ``=путь/к.json`` — свой ответ.
+SUGGEST_FAKE_ENV = "TEAMROOM_SUGGEST_FAKE"
+
+#: Встроенный ответ `hermes approvals suggest --json` для песочницы и тестов.
+FAKE_SUGGEST = {
+    "proposals": [
+        {"pattern": "script execution via -e/-c flag", "kind": "glob", "count": 12,
+         "classes": ["script execution"], "example": "python -c \"print(1)\""},
+        {"pattern": "python", "kind": "glob", "count": 7, "classes": ["read"],
+         "example": "python tools/build.py"},
+        {"pattern": "git status", "kind": "literal", "count": 3, "classes": ["read"],
+         "example": "git status"},
+    ],
+}
+
+
+def fake_suggest_enabled() -> bool:
+    """Включён ли подставной режим подсказок (``TEAMROOM_SUGGEST_FAKE``)."""
+    return bool(str(os.environ.get(SUGGEST_FAKE_ENV) or "").strip())
+
+
+def _fake_suggest_payload() -> dict:
+    """Ответ подставного CLI: файл из переменной или встроенный пример."""
+    raw = str(os.environ.get(SUGGEST_FAKE_ENV) or "").strip()
+    if raw and raw not in ("1", "true", "yes", "on"):
+        try:
+            data = json.loads(Path(raw).read_text(encoding="utf-8-sig"))
+            if isinstance(data, dict):
+                return data
+        except Exception:                   # noqa: BLE001 - файла нет/битый: берём пример
+            pass
+    return dict(FAKE_SUGGEST)
+
+
+def _fake_runner(cfg):
+    """Подставной CLI для песочницы: настоящий `hermes` не вызывается вовсе."""
+    if not fake_suggest_enabled():
+        return None
+    payload = json.dumps(_fake_suggest_payload(), ensure_ascii=False)
+
+    def run(args):
+        verbs = [str(item) for item in (args or [])]
+        if verbs[:2] == ["approvals", "suggest"]:
+            return {"code": 0, "out": payload, "err": "", "fake": True}
+        # `approvals test` в песочнице: вердикт по маске, без запуска Hermes.
+        verdict = "allow" if "--" not in verbs else "ask"
+        return {"code": 0, "out": json.dumps({"verdict": verdict}, ensure_ascii=False),
+                "err": "", "fake": True}
+
+    return run
 
 
 def _default_runner(cfg):
@@ -866,6 +1109,7 @@ def suggest(cfg, room: dict, days: int = 90, limit: int = 10) -> dict:
     return {"room": room.get("id") or "", "profile": profile, "available": True,
             "items": items, "count": len(items),
             "days": int(days),
+            "source": "hermes" if _cli_runner is not None else ("fake" if fake_suggest_enabled() else "hermes"),
             "message": ("Нашлось предложений: %d" % len(items)) if items else
                        "По истории пока нечего предложить — опасные классы Hermes не предлагает.",
             "at": _now()}

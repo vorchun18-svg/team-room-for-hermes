@@ -609,6 +609,16 @@
       ],
       "runs": [
         {
+          "id": 70,
+          "profile": "team-lawyer",
+          "status": "reclaimed",
+          "outcome": "reclaimed",
+          "started_at": 1793164205,
+          "ended_at": 1793164222,
+          "duration_s": 17,
+          "error": "manual_reclaim: контроль моделей: неверная модель"
+        },
+        {
           "id": 72,
           "profile": "team-lawyer",
           "status": "done",
@@ -620,7 +630,60 @@
       ],
       "needs_human": false,
       "error": null,
-      "outside_room": false
+      "outside_room": false,
+      "attempts": [
+        {
+          "n": 1,
+          "outcome": "reclaimed",
+          "reason": "остановлена контролем моделей: была не та модель",
+          "model": "glm-5.3-flash",
+          "provider": "ollama-cloud",
+          "calls": 1,
+          "started_at": 1793164205,
+          "ended_at": 1793164222,
+          "duration_s": 17,
+          "guard": true,
+          "ok": false,
+          "final": false
+        },
+        {
+          "n": 2,
+          "outcome": "completed",
+          "reason": "",
+          "model": "deepseek-v4.1-flash:1017",
+          "provider": "ollama-cloud",
+          "calls": 35,
+          "started_at": 1793164250,
+          "ended_at": 1793164430,
+          "duration_s": 180,
+          "guard": false,
+          "ok": true,
+          "final": true
+        }
+      ],
+      "model_sent": {
+        "provider": "ollama-cloud",
+        "model": "deepseek-v4.1-flash:1017",
+        "reasoning": "",
+        "label": "ollama-cloud · deepseek-v4.1-flash:1017",
+        "text": "ушло на: ollama-cloud · deepseek-v4.1-flash:1017",
+        "confirmed": true,
+        "run_id": 72,
+        "cost_usd": 0.0,
+        "at": 1793164250,
+        "expected": {
+          "provider": "ollama-cloud",
+          "model": "deepseek-v4.1-flash:1017",
+          "reasoning": ""
+        },
+        "pinned": {
+          "provider": "ollama-cloud",
+          "model": "deepseek-v4.1-flash:1017",
+          "reasoning": ""
+        },
+        "mismatch": false,
+        "note": ""
+      }
     },
     {
       "id": "t_1000a002",

@@ -151,7 +151,7 @@ class TestInstallScriptShape(unittest.TestCase):
                    "/городе ONLOGON", "TeamRoomServer", "WScript.Shell", "Startup", "pythonw")
 
     def test_health_and_stop(self):
-        self.check("/api/health", "Wait-Health", "Stop-TeamRoom", "Stop-Process", "app\.py")
+        self.check("/api/health", "Wait-Health", "Stop-TeamRoom", "Stop-Process", r"app\.py")
 
     def test_idempotence_guards(self):
         # задача перезаписывается по имени, а удаляется только своя

@@ -22,6 +22,7 @@ ALLOWED_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
 MAX_BODY = 8 * 1024 * 1024          # как server/http_util.MAX_BODY (API §0)
 MAX_TEXT = 1_000_000                # текст запроса/сообщения (server/app_common.MAX_TEXT)
 MAX_NOTE = 200_000                  # комментарий/заметка/ответ (server/app_common.MAX_NOTE)
+MAX_ATTACH = 30                     # вложений в запрос/сообщение (server/app_common.MAX_ATTACH, W28-A)
 MAX_AGENT_NOTE = 8000               # «Особые указания участнику» (WAVE9 §9)
 MOCK = True                         # health.engine.mock: фронт показывает плашку «ДЕМО»
 # Белый список /api/file — те же пять корней, что в API §2 / server/config.py.

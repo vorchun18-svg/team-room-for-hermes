@@ -961,6 +961,16 @@ class MockRead:
              "text": "Запуск шёл на Дилижанс ультра (Облако-А) вместо локальной Дилижанс компакт — "
                      "остановлено и перезапущено на Дилижанс компакт"},
         ),
+        # W28-C2: демо «ошибки, которых нет» — убитая контролем попытка карточки
+        # `request_done.json` (t_1000a001). В запросе — спокойная строка и ссылка сюда.
+        "cafe": (
+            {"kind": "stopped", "card_id": "t_1000a001", "profile": "team-lawyer",
+             "expected": {"provider": "ollama-cloud", "model": "deepseek-v4.1-flash:1017"},
+             "actual": {"provider": "ollama-cloud", "model": "glm-5.3-flash"},
+             "cost_usd": None, "ago": 3600,
+             "text": "Запуск шёл на glm-5.3-flash вместо deepseek-v4.1-flash:1017 — "
+                     "остановлено и перезапущено на выбранной модели"},
+        ),
     }
 
     def guard_events(self, room_id: str) -> list:

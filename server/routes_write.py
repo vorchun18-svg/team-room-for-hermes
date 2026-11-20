@@ -11,6 +11,7 @@ import time
 
 try:  # пакетный и «плоский» импорт
     from . import config
+    from . import attachments
     from . import answers as answers_mod
     from . import decision_registry as dec_reg
     from . import idempotency as idem_mod
@@ -25,6 +26,7 @@ try:  # пакетный и «плоский» импорт
                         DEFAULT_CRITIC_ROUND_CAP)
 except ImportError:  # pragma: no cover
     import config  # type: ignore
+    import attachments  # type: ignore
     import answers as answers_mod  # type: ignore
     import decision_registry as dec_reg  # type: ignore
     import idempotency as idem_mod  # type: ignore
@@ -502,8 +504,19 @@ class WriteRoutes:
             raise err(400, "attach: не больше %d путей" % MAX_ATTACH, field="attach",
                       count=len(attach))
         for path in attach:
-            if not isinstance(path, str) or not config.path_allowed(self.cfg, path):
-                raise err(403, "Вложение вне разрешённых путей", path=str(path))
+            if not isinstance(path, str) or has_nul(path):
+                raise err(400, "attach: путь должен быть непустой строкой", field="attach",
+                          path=str(path))
+        # W28-A (дефект 4): вложение человека не проверяем белым списком папок и
+        # расширений — только «файл есть, это файл, читается». Секреты (`.env`,
+        # ключи, токены) требуют явного «Всё равно прикрепить»:
+        # `confirm_secret=true` в теле повторного запроса.
+        # подтверждение «Всё равно прикрепить» — только явное true
+        allow_secret = body.get("confirm_secret") is True
+        try:
+            attach = attachments.check_all(attach, allow_secret, limit=MAX_ATTACH)
+        except attachments.AttachmentError as exc:
+            raise err(exc.status, exc.message, exc.code, **exc.detail) from None
         title = body.get("title")
         user_title = False
         if title is not None:
@@ -544,6 +557,17 @@ class WriteRoutes:
         if action not in ACTION_ALLOWED:
             raise err(400, "Неизвестное действие", action=action, allowed=list(ACTION_ALLOWED))
         room, rec = self._find_record(rid)
+        if action in ("hint_agent", "trust_profile"):
+            # W28-B (дефект 6): карточка «нельзя штатно» шлёт действие СВОИМ именем —
+            # `{action:"hint_agent"|"trust_profile", approval_id, ttl?, note?}`. Раньше
+            # имя не было в ACTION_ALLOWED, и кнопки отвечали 400 «Неизвестное действие»
+            # ещё до логики, хотя серверное действие (`approvals.decide` →
+            # `act_block`) было написано и протестировано. Контракт ОДИН: те же имена
+            # принимаются и полем `decision` при `action:"approval"`.
+            body = dict(body) if isinstance(body, dict) else {}
+            body["action"] = "approval"
+            body["decision"] = action
+            return self._approval_action(room, rec, rid, body)
         if action == "approval":
             # W22-AP1 §2.2: «разрешить один раз / разрешать всегда / запретить» —
             # блокировка «опасной» команды в карточке. Свой обработчик: тело другое
@@ -799,8 +823,13 @@ class WriteRoutes:
                 raise err(400, "attach: путь должен быть непустой строкой", field="attach")
             if has_nul(path):
                 raise err(400, "В пути вложения есть NUL-байт", field="attach")
-            if not config.path_allowed(self.cfg, path):
-                raise err(403, "Вложение вне разрешённых путей", path=str(path))
+        # W28-A (дефект 4): тут тоже нет белого списка папок — иначе уточнение по
+        # запросу не приняло бы файл из «Загрузок» (тот же дефект, что у запроса).
+        allow_secret = body.get("confirm_secret") is True
+        try:
+            attach = attachments.check_all(attach, allow_secret, limit=MAX_ATTACH)
+        except attachments.AttachmentError as exc:
+            raise err(exc.status, exc.message, exc.code, **exc.detail) from None
         urgent = body.get("urgent")
         if urgent is not None and not isinstance(urgent, bool):
             raise err(400, "urgent: true или false", field="urgent")

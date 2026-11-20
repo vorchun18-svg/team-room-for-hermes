@@ -70,6 +70,113 @@ export function createStore(initial = {}) {
 }
 
 /* --------------------------------------------------------------------------
+   Замки действий (W28-D7, дефект 7: «кнопки умирают»).
+
+   Почему это отдельный общий модуль, а не `btn.disabled = true` в каждом
+   обработчике: кнопка, которую заблокировали «на время запроса», остаётся
+   мёртвой навсегда, если ответ не пришёл (сервер завис, связь оборвалась,
+   ноутбук уснул) или если перерисовки не случилось и снять замок в успешной
+   ветке забыли. Для человека это выглядит как «кнопки перестали реагировать,
+   помогает только выйти и зайти».
+
+   Два правила, которые здесь зашиты:
+   * `locked()` — замок снимается в `finally`, при любом исходе, и кнопка
+     помечается `aria-busy`, пока ждём (видно, что идёт работа);
+   * `withTimeout()` — ожидание всегда заканчивается: через `ACTION_TIMEOUT_MS`
+     приходит понятная ошибка «сервер не ответил», а не тишина навсегда.
+   -------------------------------------------------------------------------- */
+
+/** Сколько ждём ответа на действие, прежде чем считать, что связи нет. */
+export const ACTION_TIMEOUT_MS = 20000;
+
+/**
+ * Текущий предел ожидания. Пробе и проверкам нужен короткий предел
+ * (`window.__teamroomLockTimeoutMs = 2500`), человеку — длинный: за него
+ * укладывается и медленный сервер, и большая запись.
+ * @returns {number}
+ */
+export function lockTimeout() {
+  const v = Number(globalThis && globalThis.__teamroomLockTimeoutMs);
+  return v > 0 ? v : ACTION_TIMEOUT_MS;
+}
+
+/**
+ * Ограничить ожидание промиса. Возвращает ошибку `code:'timeout'`, если ответа
+ * нет дольше `ms`. Исходный промис не отменяется (браузер сам закроет запрос),
+ * но вызывающий код перестаёт ждать — замки снимаются, человек видит причину.
+ *
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} [ms]
+ * @param {string} [label] что именно ждали — попадёт в текст ошибки
+ * @returns {Promise<T>}
+ */
+export function withTimeout(promise, ms = 0, label = 'Действие') {
+  const wait = Number(ms) > 0 ? Number(ms) : lockTimeout();
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      const err = new Error(label + ' не ответило за ' + Math.round(wait / 1000)
+        + ' с — связи с приложением нет. Кнопка снова доступна: повторите действие.');
+      err.code = 'timeout';
+      err.status = 0;
+      err.timeout = true;
+      reject(err);
+    }, wait);
+    Promise.resolve(promise).then(
+      (value) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+/**
+ * Выполнить действие под замком кнопки.
+ *
+ * Замок снимается в `finally` — и после ошибки, и после успеха, и после
+ * таймаута. Перерисовка страницы во время запроса не мешает: если узел уже
+ * заменён, мы просто отпускаем старый (новый пришёл без замка).
+ *
+ * @template T
+ * @param {HTMLButtonElement|null|undefined} btn
+ * @param {() => Promise<T>} task
+ * @returns {Promise<T|undefined>} `undefined`, если кнопка уже была занята
+ */
+export async function locked(btn, task, opts = {}) {
+  if (btn && btn.disabled) return undefined;
+  if (btn) {
+    try {
+      btn.disabled = true;
+      if (btn.setAttribute) btn.setAttribute('aria-busy', 'true');
+    } catch { /* кнопка не из этого мира — идём дальше */ }
+  }
+  try {
+    // Ожидание внутри замка тоже ограничено: иначе `finally` не наступит.
+    return await withTimeout(task(), opts.ms || 0,
+      opts.label || 'Действие');
+  } finally {
+    if (btn) {
+      try {
+        btn.disabled = false;
+        if (btn.removeAttribute) btn.removeAttribute('aria-busy');
+      } catch { /* узел уже выброшен перерисовкой */ }
+    }
+  }
+}
+
+/* --------------------------------------------------------------------------
    Глобальные сторы приложения. Формы намеренно «плоские», чтобы вьюхам было
    достаточно store.rooms.get('list').
    -------------------------------------------------------------------------- */

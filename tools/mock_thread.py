@@ -25,10 +25,9 @@ import random
 import re
 import time
 
-from mock_core import ApiError, now
+from mock_core import ApiError, MAX_ATTACH, now
 
 MAX_TEXT = 1000000            # docs/API.md §6.3: общий лимит текста
-MAX_ATTACH = 10
 DELAY_MIN, DELAY_MAX = 3.0, 6.0      # секунды «раздумья» руководителя, как в ТЗ
 MARK = "[Михаил · уточнение]"
 MARK_URGENT = "[Михаил · ПЕРЕСМОТРЕТЬ ПЛАН]"
@@ -182,15 +181,45 @@ def event_text(status: str) -> str:
 
 
 def _attach_allowed(path: str, extra_roots=None) -> bool:
-    """Путь вложения из разрешённых мест (API §2/§6.3); диск не читаем, только префиксы."""
-    from mock_core import FILE_ROOTS, inside
-    import os as _os
-    try:
-        target = _os.path.realpath(str(path))
-    except (OSError, ValueError):
-        return False
-    roots = [root for root in list(FILE_ROOTS) + list(extra_roots or []) if root]
-    return any(inside(root, target) for root in roots)
+    """Оставлено для совместимости: белого списка папок больше нет (W28-A).
+
+    Вложение человека проверяется по файлу («есть, это файл, читается»), а не по
+    списку разрешённых корней — см. ``server/attachments.py``. В моке диска не
+    читаем вовсе, поэтому «разрешено всё, что не пусто».
+    """
+    return bool(str(path or "").strip())
+
+
+def _check_attach(attach) -> list:
+    """W28-A: правило вложения как у боевого сервера, но без чтения диска.
+
+    Белый список корней снят (было 403 «файл вне разрешённых мест»), лимит — 30.
+    Что не проверяем: существование файла, «это файл», секреты и «Всё равно
+    прикрепить» — это делает ``server/attachments.py`` на живом сервере; демо-данные
+    ссылаются на файлы, которых на диске нет намеренно.
+    """
+    if attach is None:
+        return []
+    if not isinstance(attach, list) or any(not isinstance(a, str) for a in attach):
+        raise ApiError(400, "bad_request", "Поле «attach» должно быть списком путей",
+                       {"field": "attach"})
+    if len(attach) > MAX_ATTACH:
+        raise ApiError(400, "bad_request",
+                       "К одному сообщению не больше %d файлов" % MAX_ATTACH,
+                       {"field": "attach", "length": len(attach), "limit": MAX_ATTACH})
+    clean, seen = [], set()
+    for path in attach:
+        text = str(path or "").strip()
+        if not text or "\x00" in text:
+            raise ApiError(400, "bad_request",
+                           "Путь вложения пуст или содержит непечатаемый символ — выберите файл заново",
+                           {"field": "attach", "path": str(path)})
+        key = text.replace("/", "\\").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(text)
+    return clean
 
 
 class MockThread:
@@ -328,11 +357,7 @@ class MockThread:
         if len(attach) > MAX_ATTACH:
             raise ApiError(400, "bad_request", "К одному сообщению не больше %d файлов" % MAX_ATTACH,
                            {"field": "attach", "length": len(attach)})
-        for path in attach:
-            if not _attach_allowed(path, getattr(self, "extra_roots", None)):
-                raise ApiError(403, "forbidden", "Файл вне разрешённых мест — приложите из Vault, "
-                                                "папки проекта или рабочей папки",
-                               {"field": "attach", "path": path})
+        attach = _check_attach(attach)
         urgent = body.get("urgent")
         if urgent is not None and not isinstance(urgent, bool):
             raise ApiError(400, "bad_request", "Поле «urgent» должно быть true или false",

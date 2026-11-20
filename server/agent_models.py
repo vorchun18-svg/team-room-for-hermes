@@ -939,6 +939,43 @@ def push_model(cfg, board: str, cards: list, want: dict) -> tuple[list, list]:
     return _push(cfg, board, cards, want)
 
 
+def pin_cards(cfg, room, card_ids, *, board: str | None = None) -> dict:
+    """Сразу записать выбор комнаты конкретным карточкам (W28-C1 п.2).
+
+    Нужно там, где карточку создаёт или переназначает САМО приложение (`_new_request`,
+    «Повторить», переназначение корня на руководителя): окна «карточка ещё без модели, а
+    диспетчер уже смотрит» быть не должно. Модель берётся только из выбора комнаты —
+    модель профиля на карточку не переносится (это и был баг $2,45).
+    """
+    out = {"updated": [], "failed": []}
+    room = room if isinstance(room, dict) else {}
+    ids = [str(i) for i in (card_ids or []) if str(i or "").strip()]
+    if not ids or not room.get("id"):
+        return out
+    use = board or _board(cfg, room)
+    con = _connect(cfg, use)
+    if con is None:
+        return out
+    try:
+        cards = _cards(con, ids)
+    finally:
+        con.close()
+    groups: dict[tuple, list] = {}
+    for card in cards.values():
+        want = _wanted(cfg, room, card["assignee"])
+        if not want["model"] and not want["reasoning"]:
+            continue                      # в комнате ничего не выбрано — флаги не нужны
+        if not _needs_update(card, want):
+            continue
+        groups.setdefault((want["provider"], want["model"], want["reasoning"]), []).append(card)
+    for key, group in groups.items():
+        done, failed = _push(cfg, use, group, {"provider": key[0], "model": key[1],
+                                               "reasoning": key[2]})
+        out["updated"] += done
+        out["failed"] += failed
+    return out
+
+
 def card_label(cfg, room, profile) -> str:
     """Подпись «провайдер · модель · мышление» для выбранной замены (для журнала)."""
     value = effective(cfg, room, profile)
@@ -1142,7 +1179,7 @@ def _session_model(cfg, profile, session_id) -> dict:
                 # `estimated_cost_usd` есть не во всех версиях Hermes — читаем только
                 # существующие колонки (W23: стоимость последнего запуска нужна «ушло на»)
                 cols = {str(r[1]) for r in con.execute("PRAGMA table_info(sessions)")}
-                wanted = [c for c in ("model", "billing_provider", "estimated_cost_usd")
+                wanted = [c for c in ("model", "billing_provider", "estimated_cost_usd", "api_call_count")
                           if c in cols]
                 row = con.execute("SELECT %s FROM sessions WHERE id = ?"
                                   % ", ".join(wanted), (sid,)).fetchone() if wanted else None
@@ -1150,6 +1187,14 @@ def _session_model(cfg, profile, session_id) -> dict:
                     data = dict(row)
                     out = {"model": str(data.get("model") or "").strip(),
                            "provider": str(data.get("billing_provider") or "").strip()}
+                    # W28-C2: число вызовов модели в этой попытке — «вызовов 3».
+                    # 0 — законный ответ (попытку убили до первого запроса), отсутствие
+                    # колонки — «неизвестно» (None).
+                    if data.get("api_call_count") not in (None, ""):
+                        try:
+                            out["calls"] = int(data["api_call_count"])
+                        except (TypeError, ValueError):
+                            out["calls"] = None
                     # Сессия есть, а стоимость не записана (локальная модель/старая
                     # версия Hermes) — это 0, а не «неизвестно»: иначе интерфейс не
                     # отличит «не запускалась» от «запускалась бесплатно».
@@ -1191,6 +1236,24 @@ def _run_session(con, card_id) -> tuple[dict, str]:
     return run, sid
 
 
+def _run_session_from_events(con, card_id, run_id) -> str:
+    """Id сессии КОНКРЕТНОГО прогона из события ``owner_admitted`` (W28-C2).
+
+    У убитой контролем моделей попытки `task_runs.metadata` содержит только pid —
+    id сессии остаётся в событии допуска, а у события есть `run_id`. Без этой
+    привязки подпись попытки 1 показывала бы модель попытки 2.
+    """
+    if run_id in (None, ""):
+        return ""
+    try:
+        row = con.execute("SELECT payload FROM task_events WHERE task_id = ? AND run_id = ? "
+                          "AND kind = 'owner_admitted' ORDER BY id DESC LIMIT 1",
+                          (str(card_id), int(run_id))).fetchone()
+    except Exception:  # noqa: BLE001 - старая схема без run_id у событий
+        return ""
+    return _session_id((row["payload"] if row is not None else "") or "")
+
+
 def actual_model(cfg, board: str, card_id: str, *, profile: str = "", run: dict | None = None,
                  con=None) -> dict:
     """Что реально ушло у карточки: `{provider, model, session_id, run_id, started_at}`.
@@ -1199,7 +1262,7 @@ def actual_model(cfg, board: str, card_id: str, *, profile: str = "", run: dict 
     `run` можно передать готовым (дерево уже прочитало прогоны) — тогда БД не трогаем.
     """
     out = {"provider": "", "model": "", "session_id": "", "run_id": None, "started_at": None,
-           "source": "", "cost_usd": None}
+           "source": "", "cost_usd": None, "calls": None}
     close = False
     if con is None and card_id:
         con = _connect(cfg, board)
@@ -1212,7 +1275,10 @@ def actual_model(cfg, board: str, card_id: str, *, profile: str = "", run: dict 
         else:
             sid = _session_id((run or {}).get("metadata"))
             if not sid and con is not None:
-                _r, sid = _run_session(con, card_id)
+                # W28-C2: сессия ИМЕННО этого прогона (у убитой попытки в metadata
+                # только pid). Раньше подставлялась сессия последнего прогона, и
+                # подпись «ушло на» у попытки 1 показывала модель попытки 2.
+                sid = _run_session_from_events(con, card_id, (run or {}).get("id"))
         run = run or {}
         out["run_id"] = _int(run.get("id")) or None
         out["started_at"] = _int(run.get("started_at")) or None
@@ -1222,6 +1288,7 @@ def actual_model(cfg, board: str, card_id: str, *, profile: str = "", run: dict 
             out["model"] = row["model"]
             out["provider"] = row.get("provider") or ""
             out["cost_usd"] = row.get("cost_usd")
+            out["calls"] = row.get("calls")
             out["source"] = "session"
     finally:
         if close:
@@ -1267,6 +1334,12 @@ def sent_of(cfg, room, card, *, board: str | None = None, run: dict | None = Non
     provider = actual["provider"] or pin["provider"]
     model = actual["model"] or pin["model"]
     reasoning = pin["reasoning"]
+    if actual["model"] and not actual["provider"]:
+        # W28-C2: провайдер подписывается ФАКТИЧЕСКИЙ (`sessions.billing_provider`).
+        # Когда он неизвестен, а модель известна, провайдер из карточки не
+        # подставляем: «ollama-cloud · claude-sonnet-5-5» — ложная пара, у которой
+        # провайдер от выбора комнаты, а модель от чужого запуска.
+        provider = ""
     if not (provider or model or reasoning or want.get("model")):
         return {}
     expected = {"provider": want.get("provider") or "", "model": want.get("model") or "",
@@ -1863,5 +1936,5 @@ __all__ = ["EFFORTS", "EFFORT_LABELS", "EFFORT_SHORT", "APPLY_STATUSES", "FIXUP_
            "get", "set", "clear", "label", "human", "apply_to_tree", "apply_profile",
            "restart_running", "pending_marked", "mark_pending", "clear_pending",
            "decorate_room", "card_settings", "participants",
-           "apply_to_room", "verify_started", "tenant_cards", "card_map", "actual_model",
+           "apply_to_room", "verify_started", "tenant_cards", "card_map", "actual_model", "pin_cards",
            "sent_of", "member_sent", "models_block", "push_model"]

@@ -32,6 +32,8 @@
 import { h, timeAgo } from '../util.js';
 import { icon } from '../icons.js';
 import { ensureCss } from '../ui.js';
+// W28-D7: общий замок кнопки и предел ожидания (дефект «кнопки умирают»).
+import { locked } from '../store.js';
 import { firstLine, personName, blockHead } from './request-util.js';
 import { countNoun, ANSWERS_RU, LAYOUT_RU, pendingAnswersLabel } from '../text-ru.js';
 import { createSteps } from './request-steps.js';
@@ -146,23 +148,21 @@ export function createAside(R) {
       ctx.toast(ANSWERS_RU.answerEmpty, 'warn');
       return;
     }
-    btn.disabled = true;
-    try {
-      const body = { action: 'answer', question_id: q.id };
-      if (text) body.text = text;
-      if (needExplanation) body.need_explanation = true;
-      await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, body);
-      keepValues.delete('q:' + q.id);
-      ctx.toast(needExplanation ? ANSWERS_RU.explainSent
-        : 'Ответ отправлен — руководитель увидит его у вопроса', 'ok');
-      await refresh({ force: true });
-    } catch (err) {
-      ctx.toast((err && err.message) || 'Не удалось отправить ответ', 'danger');
-    } finally {
-      // Кнопка снова живая: строку не всегда пересобирают (состояние вопроса
-      // могло не измениться), и «залипшая» кнопка не дала бы нажать второй раз.
-      btn.disabled = false;
-    }
+    // W28-D7: замок снимается в `finally` (и по таймауту) — кнопка не «умирает».
+    await locked(btn, async () => {
+      try {
+        const body = { action: 'answer', question_id: q.id };
+        if (text) body.text = text;
+        if (needExplanation) body.need_explanation = true;
+        await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, body);
+        keepValues.delete('q:' + q.id);
+        ctx.toast(needExplanation ? ANSWERS_RU.explainSent
+          : 'Ответ отправлен — руководитель увидит его у вопроса', 'ok');
+        await refresh({ force: true });
+      } catch (err) {
+        ctx.toast((err && err.message) || 'Не удалось отправить ответ', 'danger');
+      }
+    }, { label: 'Отправка ответа' });
   }
 
   /** Реакция из тела ошибки 409 (сервер отдаёт её в `error.detail.reaction`). */
@@ -196,56 +196,58 @@ export function createAside(R) {
    * вопроса оставалось пустым, а рядом висело «руководитель ещё не ответил».
    */
   async function remindLeader(q, btn) {
-    if (btn) btn.disabled = true;
-    try {
-      await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, {
-        action: 'answer_remind', question_id: q.id,
-      });
-      ctx.toast('Напоминание отправлено руководителю', 'ok');
-      await refresh({ force: true });
-    } catch (err) {
-      const reaction = reactionFromError(err);
-      if (reaction) {
-        applyReaction(q, reaction);
-        ctx.toast('Руководитель уже ответил — его ответ показан у вопроса', 'ok');
-        if (typeof R.render === 'function') R.render();
-        return;
+    // W28-D7: замок снимается при любом исходе — раньше ветка «руководитель уже
+    // ответил» уходила с `return` до разблокировки, и кнопка оставалась мёртвой.
+    await locked(btn, async () => {
+      try {
+        await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, {
+          action: 'answer_remind', question_id: q.id,
+        });
+        ctx.toast('Напоминание отправлено руководителю', 'ok');
+        await refresh({ force: true });
+      } catch (err) {
+        const reaction = reactionFromError(err);
+        if (reaction) {
+          applyReaction(q, reaction);
+          ctx.toast('Руководитель уже ответил — его ответ показан у вопроса', 'ok');
+          if (typeof R.render === 'function') R.render();
+          return;
+        }
+        ctx.toast((err && err.message) || 'Не удалось отправить напоминание', 'danger');
       }
-      if (btn) btn.disabled = false;
-      ctx.toast((err && err.message) || 'Не удалось отправить напоминание', 'danger');
-    }
+    }, { label: 'Напоминание руководителю' });
   }
 
   async function askFuture(text, btn) {
-    if (btn) btn.disabled = true;
-    try {
-      const res = await ctx.api.post(`/api/rooms/${encodeURIComponent(R.roomId)}/requests`, { text });
-      const nextId = res?.root_id || res?.request?.id;
-      ctx.toast('Запрос создан', 'ok');
-      if (nextId) ctx.navigate(`#/room/${encodeURIComponent(R.roomId)}/request/${encodeURIComponent(nextId)}`);
-      else await refresh({ force: true });
-    } catch (err) {
-      if (btn) btn.disabled = false;
-      ctx.toast((err && err.message) || 'Не удалось создать запрос', 'danger');
-    }
+    await locked(btn, async () => {
+      try {
+        const res = await ctx.api.post(`/api/rooms/${encodeURIComponent(R.roomId)}/requests`, { text });
+        const nextId = res?.root_id || res?.request?.id;
+        ctx.toast('Запрос создан', 'ok');
+        if (nextId) ctx.navigate(`#/room/${encodeURIComponent(R.roomId)}/request/${encodeURIComponent(nextId)}`);
+        else await refresh({ force: true });
+      } catch (err) {
+        ctx.toast((err && err.message) || 'Не удалось создать запрос', 'danger');
+      }
+    }, { label: 'Создание запроса' });
   }
 
   /** «Отправить руководителю накопленные ответы» — действие `answers_resend` (W17-B §3). */
   async function resendAnswers(btn) {
-    if (btn) btn.disabled = true;
-    try {
-      const res = await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
-        { action: 'answers_resend' });
-      const sent = Number(res && res.sent) || 0;
-      ctx.toast(sent
-        ? 'Руководителю отправлено одной карточкой: '
-          + countNoun(sent, ['ответ', 'ответа', 'ответов'])
-        : 'Накопленные ответы отправлены руководителю', 'ok');
-      await refresh({ force: true });
-    } catch (err) {
-      if (btn) btn.disabled = false;
-      ctx.toast((err && err.message) || 'Не удалось отправить ответы', 'danger');
-    }
+    await locked(btn, async () => {
+      try {
+        const res = await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
+          { action: 'answers_resend' });
+        const sent = Number(res && res.sent) || 0;
+        ctx.toast(sent
+          ? 'Руководителю отправлено одной карточкой: '
+            + countNoun(sent, ['ответ', 'ответа', 'ответов'])
+          : 'Накопленные ответы отправлены руководителю', 'ok');
+        await refresh({ force: true });
+      } catch (err) {
+        ctx.toast((err && err.message) || 'Не удалось отправить ответы', 'danger');
+      }
+    }, { label: 'Отправка ответов' });
   }
 
   /* ── вопросы: «Вопрос — ваш ответ», статус и реакция руководителя ────── */
@@ -312,16 +314,17 @@ export function createAside(R) {
    */
   async function dismissQuestion(q, btn) {
     if (!q || !q.id) return;
-    if (btn) btn.disabled = true;
-    try {
-      await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
-        { action: 'question_dismiss', question_id: String(q.id) });
-      ctx.toast('Убрали из «Нужен ваш ответ» — это не вопрос', 'ok');
-      await refresh({ force: true });
-    } catch (err) {
-      if (btn) btn.disabled = false;
-      ctx.toast((err && err.message) || 'Не удалось убрать вопрос', 'danger');
-    }
+    // W28-D7: замок снимается в `finally` (и по таймауту), а не только в ошибке.
+    await locked(btn, async () => {
+      try {
+        await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
+          { action: 'question_dismiss', question_id: String(q.id) });
+        ctx.toast('Убрали из «Нужен ваш ответ» — это не вопрос', 'ok');
+        await refresh({ force: true });
+      } catch (err) {
+        ctx.toast((err && err.message) || 'Не удалось убрать вопрос', 'danger');
+      }
+    }, { label: 'Убрать вопрос' });
   }
 
   /**
@@ -337,24 +340,26 @@ export function createAside(R) {
    */
   async function staleQuestion(q, action, btn) {
     if (!q || !q.id) return;
-    if (btn) btn.disabled = true;
-    try {
-      if (storeRef && typeof storeRef.targetAction === 'function') {
-        await storeRef.targetAction('questions', String(q.id), action);
-      } else {
-        await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
-          action === 'restore' ? restoreBody('question', q.id) : dismissBody('question', q.id));
+    // W28-D7: «Не актуально»/«Вернуть» — под общим замком: он снимается и при
+    // успехе без перерисовки (раньше кнопка оставалась disabled до перезагрузки).
+    await locked(btn, async () => {
+      try {
+        if (storeRef && typeof storeRef.targetAction === 'function') {
+          await storeRef.targetAction('questions', String(q.id), action);
+        } else {
+          await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
+            action === 'restore' ? restoreBody('question', q.id) : dismissBody('question', q.id));
+        }
+        ctx.toast(action === 'restore'
+          ? 'Вопрос вернулся в «Нужен ваш ответ»'
+          : 'Вопрос убран из «Нужен ваш ответ» — вернуть можно в «Закрытые»', 'ok');
+        await refresh({ force: true, quiet: true });
+      } catch (err) {
+        // 409 already_decided — тихо: экран просто устарел, стор уже перечитал данные.
+        if (isAlreadyDecided(err)) return;
+        toastOnce(ctx.toast, 'question-stale', (err && err.message) || 'Не удалось изменить вопрос', 'danger');
       }
-      ctx.toast(action === 'restore'
-        ? 'Вопрос вернулся в «Нужен ваш ответ»'
-        : 'Вопрос убран из «Нужен ваш ответ» — вернуть можно в «Закрытые»', 'ok');
-      await refresh({ force: true, quiet: true });
-    } catch (err) {
-      if (btn) btn.disabled = false;
-      // 409 already_decided — тихо: экран просто устарел, стор уже перечитал данные.
-      if (isAlreadyDecided(err)) return;
-      toastOnce(ctx.toast, 'question-stale', (err && err.message) || 'Не удалось изменить вопрос', 'danger');
-    }
+    }, { label: action === 'restore' ? 'Возврат вопроса' : 'Снятие вопроса' });
   }
 
   /**
@@ -850,27 +855,28 @@ export function createAside(R) {
     btn.addEventListener('click', async (ev) => {
       if (ev && ev.preventDefault) ev.preventDefault();
       if (btn.disabled) return;
-      btn.disabled = true;
-      try {
-        let res = null;
-        if (storeRef && typeof storeRef.dismissStale === 'function') res = await storeRef.dismissStale();
-        else if (ctx.api) {
-          res = await ctx.api.post(`/api/rooms/${encodeURIComponent(R.roomId)}/dismiss_stale`,
-            { scope: 'finished_requests' });
+      // W28-D7: тот же общий замок (снимается в `finally` и по таймауту).
+      await locked(btn, async () => {
+        try {
+          let res = null;
+          if (storeRef && typeof storeRef.dismissStale === 'function') res = await storeRef.dismissStale();
+          else if (ctx.api) {
+            res = await ctx.api.post(`/api/rooms/${encodeURIComponent(R.roomId)}/dismiss_stale`,
+              { scope: 'finished_requests' });
+          }
+          const n = res && res.closed
+            ? ['questions', 'decisions', 'approvals', 'steps']
+              .reduce((sum, key) => sum + (Number(res.closed[key]) || 0), 0)
+            : 0;
+          toastOnce(ctx.toast, 'dismiss-stale',
+            n ? 'Закрыто неактуальных: ' + String(n) + ' — вернуть можно кнопкой «Вернуть»'
+              : 'Неактуальных пунктов не осталось', n ? 'ok' : 'info');
+          await refresh({ force: true, quiet: true });
+        } catch (err) {
+          if (isAlreadyDecided(err)) return;
+          toastOnce(ctx.toast, 'dismiss-stale', (err && err.message) || 'Не удалось закрыть неактуальные', 'danger');
         }
-        const n = res && res.closed
-          ? ['questions', 'decisions', 'approvals', 'steps']
-            .reduce((sum, key) => sum + (Number(res.closed[key]) || 0), 0)
-          : 0;
-        toastOnce(ctx.toast, 'dismiss-stale',
-          n ? 'Закрыто неактуальных: ' + String(n) + ' — вернуть можно кнопкой «Вернуть»'
-            : 'Неактуальных пунктов не осталось', n ? 'ok' : 'info');
-        await refresh({ force: true, quiet: true });
-      } catch (err) {
-        btn.disabled = false;
-        if (isAlreadyDecided(err)) return;
-        toastOnce(ctx.toast, 'dismiss-stale', (err && err.message) || 'Не удалось закрыть неактуальные', 'danger');
-      }
+      }, { label: 'Закрытие неактуальных' });
     });
     return h('div', { class: 'req-side__stale', role: 'group', 'aria-label': 'Неактуальные пункты' },
       h('div', { class: 'req-side__stale-text small muted' },
@@ -1017,15 +1023,16 @@ export function createAside(R) {
 
   /** Отправить «Принять» сразу: одно нажатие, без окна (остальное — с текстом и диктовкой). */
   async function acceptDecision(d, btn) {
-    if (btn) btn.disabled = true;
-    try {
-      await postDecision({ api: ctx.api, requestId: rid, decision: d, outcome: 'accept' });
-      ctx.toast('Решение принято — руководитель увидит ответ', 'ok');
-      await refresh({ force: true });
-    } catch (err) {
-      if (btn) btn.disabled = false;
-      ctx.toast((err && err.message) || 'Не удалось принять решение', 'danger');
-    }
+    // W28-D7: общий замок — снимается в `finally` (и по таймауту), а не только в ошибке.
+    await locked(btn, async () => {
+      try {
+        await postDecision({ api: ctx.api, requestId: rid, decision: d, outcome: 'accept' });
+        ctx.toast('Решение принято — руководитель увидит ответ', 'ok');
+        await refresh({ force: true });
+      } catch (err) {
+        ctx.toast((err && err.message) || 'Не удалось принять решение', 'danger');
+      }
+    }, { label: 'Принятие решения' });
   }
 
   /** «Отклонить» и «Обсудить» — окно с полем и диктовкой (decision-dialog.js). */
@@ -1044,15 +1051,15 @@ export function createAside(R) {
 
   /** «Вернуть» снятое решение: одно нажатие, без окна (W20 §1.2, B-37). */
   async function restoreDecision(d, btn) {
-    if (btn) btn.disabled = true;
-    try {
-      await postDecision({ api: ctx.api, requestId: rid, decision: d, outcome: 'restore' });
-      ctx.toast('Решение возвращено в работу — снова ждёт вашего слова', 'ok');
-      await refresh({ force: true });
-    } catch (err) {
-      if (btn) btn.disabled = false;
-      ctx.toast((err && err.message) || 'Не удалось вернуть решение', 'danger');
-    }
+    await locked(btn, async () => {
+      try {
+        await postDecision({ api: ctx.api, requestId: rid, decision: d, outcome: 'restore' });
+        ctx.toast('Решение возвращено в работу — снова ждёт вашего слова', 'ok');
+        await refresh({ force: true });
+      } catch (err) {
+        ctx.toast((err && err.message) || 'Не удалось вернуть решение', 'danger');
+      }
+    }, { label: 'Возврат решения' });
   }
 
   /**
@@ -1443,26 +1450,26 @@ export function createAside(R) {
       const go = (ctx && ctx.navigate) || null;
       const say = (ctx && ctx.toast) || (() => {});
       if (!apiRef || !R.roomId) return;
-      if (btn && btn.disabled) return;
-      if (btn) btn.disabled = true;
-      try {
-        const res = await apiRef.post('/api/rooms/' + encodeURIComponent(R.roomId) + '/delos',
-          { request_id: rid });
-        const id = String((res && (res.id || (res.item && res.item.id))) || '');
-        say(id ? 'Дело открыто — этапы, результат и письмо наружу' : 'Дело открыто', 'ok');
-        if (id && go) go('#/delo/' + encodeURIComponent(id));
-      } catch (err) {
-        const details = (err && (err.details || err.detail)) || null;
-        const id = String((details && ((details.detail && details.detail.id) || details.id)) || '');
-        if (id) {
-          say('Дело по этому запросу уже есть — открываю его', 'info');
-          if (go) go('#/delo/' + encodeURIComponent(id));
-        } else {
-          say((err && err.message) || 'Не удалось открыть дело', 'error');
+      // W28-D7: под общим замком — он снимается и в `finally`, и по таймауту
+      // (раньше зависший запрос оставлял кнопку выключенной навсегда).
+      await locked(btn, async () => {
+        try {
+          const res = await apiRef.post('/api/rooms/' + encodeURIComponent(R.roomId) + '/delos',
+            { request_id: rid });
+          const id = String((res && (res.id || (res.item && res.item.id))) || '');
+          say(id ? 'Дело открыто — этапы, результат и письмо наружу' : 'Дело открыто', 'ok');
+          if (id && go) go('#/delo/' + encodeURIComponent(id));
+        } catch (err) {
+          const details = (err && (err.details || err.detail)) || null;
+          const id = String((details && ((details.detail && details.detail.id) || details.id)) || '');
+          if (id) {
+            say('Дело по этому запросу уже есть — открываю его', 'info');
+            if (go) go('#/delo/' + encodeURIComponent(id));
+          } else {
+            say((err && err.message) || 'Не удалось открыть дело', 'error');
+          }
         }
-      } finally {
-        if (btn) btn.disabled = false;
-      }
+      }, { label: 'Открытие дела' });
     }
 
     wrap.append(h('div', { class: 'req-aside__scope row row--between row--wrap row--tight' },
@@ -1475,6 +1482,11 @@ export function createAside(R) {
         }, 'Дело из запроса'),
         h('a', { class: 'req-aside__scope-link', href: backlogHref, title: 'Все дела комнаты: шаги, вопросы, решения' },
           'Все дела комнаты →'))));
+
+    // W28-E: строка расхода запроса — «Расход: N вызовов, M тыс. токенов (база/тело/инструменты)».
+    // Модуль грузится лениво: колонка не ждёт расхода и не падает, если его нет.
+    import('./usage-line.js').then((m) => m.mountUsage(wrap, rid, (ctx && ctx.api) || null))
+      .catch(() => {});
 
     // Закреплённый блок: то, что ждёт Михаила, — первым и всегда раскрытым.
    

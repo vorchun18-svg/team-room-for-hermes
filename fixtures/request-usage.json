@@ -1,0 +1,22 @@
+{
+  "_комментарий": "Примерный расход запроса (W28-E). Данные вымышленные: пример показывает те же строки, что живой state.db. Ключи — как у GET /api/requests/{id}/usage.",
+  "rid": "t_demo0001",
+  "cards": 4,
+  "calls": 23,
+  "tokens": {
+    "input": 640,
+    "cache_read": 412000,
+    "cache_write": 96000,
+    "output": 18400,
+    "reasoning": 0
+  },
+  "cost_usd": 0.4127,
+  "cost_status": "estimated",
+  "split": { "base": 124000, "body": 356000, "tools": 46640 },
+  "models": [
+    { "model": "модель комнаты", "calls": 19, "cost_usd": 0.3712, "sessions": 3 },
+    { "model": "дешёвая модель", "calls": 4, "cost_usd": 0.0415, "sessions": 1 }
+  ],
+  "mismatched": { "attempts": 1, "cards": ["t_demo0003"] },
+  "warnings": []
+}

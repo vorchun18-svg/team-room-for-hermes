@@ -50,6 +50,28 @@ CONTRACT_CORE_MAX = 1400  # ядро контракта (доработка, с�
 MIN_PREV = 400
 MIN_DIGEST = 600
 
+# --- W28-E: урезанное тело карточки (замер до/после — docs/status/w28-tokens.md) ---
+#: Потолок КОРОТКОГО устава в корневой карточке (замер: было 4 722 знака, стало
+#: 3 882 на тех же данных). Подробный устав живёт файлом в папке проекта
+#: (`contract.ensure_contract_file`), в карточке — короткие правила и путь к файлу.
+#: Запас до 4 400 — на длинные пути: путь папки проекта и отчётов входит в тело
+#: как есть, а обрезать путь нельзя (по нему сохраняют файлы).
+CONTRACT_SHORT_MAX = 4400
+#: Потолок абзаца «роль руководителя / правила комнаты» в коротком уставе.
+LEADER_ROLE_MAX = 900
+#: Сколько знаков оставляем от результата одного родителя и от «что появилось».
+#: Полный текст — в карточке (`kanban_show`) или файле, путь/номер идут рядом.
+PARENT_RESULT_MAX = 1200
+#: Сколько родителей вообще берём (дальше — только счётчик и пути).
+PARENTS_MAX = 4
+#: «Последние N» для лент: работа участника и переписка карточки.
+RECENT_MAX = 3
+COMMENTS_MAX = 5
+#: Первые K знаков предыдущего свода, которые ещё кладём в тело доработки
+#: (дальше — выжимка по разделам и ссылка на карточку версии).
+PREV_PREFIX_MAX = 1200
+
+
 #: slug карточки → тип. Один источник соответствия для сборки и замеров.
 SLUG_KIND = {"request": "leader", "brief": "leader", "map": "leader",
              "revision": "svod", "critic": "critic", "stream": "worker",
@@ -141,6 +163,67 @@ def summarize(md, max_chars: int = PREV_SUMMARY_MAX, note: str = "") -> str:
     return (picked.rstrip() + tail)[:limit_chars]
 
 
+def _norm_key(text: str) -> str:
+    """Ключ сравнения записей ленты: без пробелов, регистра и пунктуации по краям."""
+    return " ".join(str(text or "").split()).strip().lower()[:400]
+
+
+def recent_unique(items, n: int = RECENT_MAX, key=None) -> list:
+    """Последние ``n`` записей без повторов (W28-E: «Recent work» и «Comment thread»).
+
+    Ленты карточки растут с каждым сообщением, и Hermes кладёт их в контекст целыми
+    блоками (30 комментариев по 2 000 знаков). Правило: в теле — только последние
+    ``n``, и одна и та же мысль не повторяется дважды (свод + комментарий, ответ +
+    уведомление). Порядок сохраняется исходный (старые → новые), чтобы «последнее»
+    читалось как последнее.
+    """
+    cap = max(0, int(n or 0))
+    if cap <= 0:
+        return []
+    seen: set = set()
+    kept: list = []
+    for item in reversed(list(items or [])):
+        value = item
+        if callable(key):
+            try:
+                value = key(item)
+            except Exception:                       # noqa: BLE001 - чужой ключ не должен ронять карточку
+                value = item
+        if isinstance(value, (dict, list)):
+            value = str(value)
+        mark = _norm_key(value)
+        if mark and mark in seen:
+            continue
+        if mark:
+            seen.add(mark)
+        kept.append(item)
+        if len(kept) >= cap:
+            break
+    kept.reverse()
+    return kept
+
+
+def parent_digest(results, cap: int = PARENT_RESULT_MAX, limit: int = PARENTS_MAX) -> list:
+    """Резюме результатов родителей: по ``cap`` знаков на родителя + путь/карточка.
+
+    ``results`` — ``[{id, summary|result, path?, status?}]``. Полный текст в тело не
+    идёт: он лежит в карточке родителя (`kanban_show`) или файлом по ``path``.
+    Возвращает ``[{id, path, chars, text, truncated}]``; пустые результаты пропускаются.
+    """
+    out: list = []
+    for item in list(results or [])[: max(0, int(limit or 0))]:
+        if not isinstance(item, dict):
+            item = {"summary": str(item or "")}
+        text = str(item.get("summary") or item.get("result") or "").strip()
+        if not text:
+            continue
+        whole = len(text)
+        cut = summarize(text, max(0, int(cap or 0))) if whole > int(cap or 0) else text
+        out.append({"id": str(item.get("id") or ""), "path": str(item.get("path") or ""),
+                    "chars": whole, "text": cut, "truncated": len(cut) < whole})
+    return out
+
+
 def allowance(kind: str, fixed_chars: int, *, digest_max: int = DIGEST_MAX,
               prev_max: int = PREV_SUMMARY_MAX) -> dict:
     """Сколько знаков остаётся дайджесту и выжимке прошлой версии.
@@ -187,4 +270,6 @@ def audit(rows) -> dict:
 
 __all__ = ["BUDGETS", "KIND_RU", "DIGEST_MAX", "PREV_SUMMARY_MAX", "CONTRACT_FULL_MAX",
            "CONTRACT_CORE_MAX", "MIN_PREV", "MIN_DIGEST", "SLUG_KIND", "kind_of", "limit",
-           "size", "over", "summarize", "allowance", "audit"]
+           "size", "over", "summarize", "allowance", "audit",
+           "CONTRACT_SHORT_MAX", "LEADER_ROLE_MAX", "PARENT_RESULT_MAX", "PARENTS_MAX",
+           "RECENT_MAX", "COMMENTS_MAX", "PREV_PREFIX_MAX", "recent_unique", "parent_digest"]

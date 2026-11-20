@@ -8,7 +8,7 @@ import os
 import re
 from urllib.parse import unquote
 
-from mock_core import (MAX_NOTE, MAX_TEXT, ROOT, ApiError, backlog_counts, compute_needs_you,
+from mock_core import (MAX_ATTACH, MAX_NOTE, MAX_TEXT, ROOT, ApiError, backlog_counts, compute_needs_you,
                        detail_to_summary, now, short_title, slugify)
 from mock_versions import normalize_v2
 import mock_backlog
@@ -1399,7 +1399,7 @@ class MockWrite:
                                        or not 1 <= req_rounds <= 5):
             raise ApiError(400, "bad_request", "max_rounds: целое от 1 до 5",
                            {"field": "max_rounds"})
-        attach = check_list(body, "attach", default=[], maxlen=10, of_str=True)
+        attach = check_list(body, "attach", default=[], maxlen=MAX_ATTACH, of_str=True)
         brief = check_bool(body, "brief", default=False)
         detail = self.new_live_request(room_id, text, title, critic,
                                        critic_mode=critic_mode, max_rounds=req_rounds)
@@ -1435,7 +1435,8 @@ class MockWrite:
                 "assignee": detail.get("assignee") or "mikhail", "role": "revision", "status": "running",
                 "started_at": ts, "finished_at": None, "summary_md": "", "metadata": {"note": text},
                 "comments": [{"author": "mikhail", "text": text, "at": ts}], "runs": [],
-                "needs_human": False, "outside_room": False, "error": None}
+                # W28-C2: attempts[] есть у каждой карточки (даже пустой) — контракт API
+                "attempts": [], "needs_human": False, "outside_room": False, "error": None}
         detail.setdefault("tree", []).append(node)
         syn = detail["synthesis"]
         version = int(syn.get("version") or 1) + 1
@@ -1456,8 +1457,8 @@ class MockWrite:
         critic = room.get("critic") or "critic"
         node = {"id": self._task_id(), "parent_ids": [rid], "title": "Критик: повторная проверка свода",
                 "assignee": critic, "role": "critic", "status": "running", "started_at": ts, "finished_at": None,
-                "summary_md": "", "metadata": {}, "comments": [], "runs": [], "needs_human": False,
-                "outside_room": False, "error": None}
+                "summary_md": "", "metadata": {}, "comments": [], "runs": [], "attempts": [],
+                "needs_human": False, "outside_room": False, "error": None}
         detail.setdefault("tree", []).append(node)
         block = detail.setdefault("critic", {})
         block.update({"enabled": True, "round": int(block.get("round") or 0) + 1, "state": "reviewing",
@@ -1960,7 +1961,7 @@ class MockWrite:
                 {"id": card_id, "parent_ids": [rid], "title": "Обновление свода",
                  "assignee": detail.get("assignee") or "", "role": "revision",
                  "status": "running", "started_at": ts, "finished_at": None,
-                 "summary_md": "", "metadata": {}, "comments": [], "runs": [],
+                 "summary_md": "", "metadata": {}, "comments": [], "runs": [], "attempts": [],
                  "needs_human": False, "outside_room": False, "error": None})
             synthesis["live"] = dict(live, state="updating", behind=dict(live.get("behind") or {}),
                                      text="Обновляется… версия %d" % version)
@@ -2192,6 +2193,13 @@ class MockWrite:
             for node in failed:
                 node["status"] = "ready"
                 node["error"] = None
+                # W28-C2: перезапуск — новая попытка; прежние остаются в «Попытки · N»,
+                # красное снимается (как на сервере: ошибка — только по итогу карточки).
+                attempts = node.get("attempts")
+                if isinstance(attempts, list):
+                    for item in attempts:
+                        if isinstance(item, dict):
+                            item["final"] = False
                 seen[str(node["id"])] = {"status": "ready", "error": None}
             detail["status"] = "working"
             detail["status_reason"] = None

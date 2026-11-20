@@ -79,6 +79,15 @@ def waiting_items(app, room: dict, rec: dict) -> list[dict]:
             out.append({"kind": kind, "id": str(item.get("id") or ""),
                         "text": _item_text(kind, item),
                         "since": _item_since(item, rec)})
+    # W28-F: заблокированная карточка — тоже «ждёт человека»: у неё есть действие
+    # («Ответить, что делать дальше» → `action: unblock`), и вкладка «От вас нужно»
+    # считала её всегда, а «Сегодня» — нет. Одно число — один источник: теперь в обоих.
+    for node in detail.get("tree") or []:
+        if not isinstance(node, dict) or str(node.get("status") or "") != "blocked":
+            continue
+        out.append({"kind": "blocked", "id": str(node.get("id") or ""),
+                    "text": str(node.get("title") or "Заблокированная задача"),
+                    "since": _item_since(node, rec)})
     return out
 
 

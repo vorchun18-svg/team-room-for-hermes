@@ -13,8 +13,9 @@ import { icon } from '../icons.js';
 import {
   statusChip, roleChip, mdBlock, emptyState, promptDialog,
 } from '../ui.js';
-import { buildTree, nodeActions, errorReason, isFailedRun,
-         failureStamp, failureAttemptsList } from './request-parts-model.js';
+import { buildTree, nodeActions, errorReason,
+         failureStamp, attemptRows, cardFailed, failureMessage,
+         guardAttempts, attemptTotal } from './request-parts-model.js';
 import { createTreeState, problemSignature } from './request-tree-state.js';
 import { createNotices, createMarks } from './notice-state.js';
 import { createRetryButton } from './retry-button.js';
@@ -216,15 +217,57 @@ function retryControl(node, ctx, detail, ui, onChanged) {
 
 /** Строки попыток под плашкой ошибки: «Попытка 2 · 12:04 · превышено время ожидания». */
 function attemptsBlock(node) {
-  const rows = failureAttemptsList({ tree: [node] }, { limit: 5 });
+  const rows = attemptRows(node).filter((r) => r.failed);
   if (!rows.length) return null;
   const box = h('ul', { class: 'rp-node__attempts small' });
   for (const row of rows) {
-    box.appendChild(h('li', { class: 'rp-node__attempt', title: row.reason },
+    box.appendChild(h('li', { class: 'rp-node__attempt', title: row.why || null },
       h('span', { class: 'rp-node__attempt-n' }, `Попытка ${row.n}`),
       row.at ? h('span', { class: 'rp-node__attempt-at muted tnum' }, timeAgo(row.at)) : null,
-      h('span', { class: 'rp-node__attempt-why' }, row.reason)));
+      h('span', { class: 'rp-node__attempt-why' }, row.why || row.status)));
   }
+  return box;
+}
+
+/**
+ * «Попытка 1 остановлена контролем моделей: была не та модель (вызовов 1)» —
+ * СПОКОЙНАЯ строка вместо красной плашки (W28-C2): убитый сторожем запуск не сбой
+ * работы, карточка просто пошла заново.
+ *
+ * Ссылка «Контроль моделей» ведёт к ленте контроля на этой же странице — если она
+ * есть; иначе строке достаточно текста (мёртвой ссылки не рисуем).
+ *
+ * @param {object} node TaskNode
+ * @param {object} detail RequestDetail
+ * @returns {HTMLElement|null}
+ */
+function guardNote(node, detail) {
+  const attempts = guardAttempts(node);
+  if (!attempts.length) return null;
+  const feed = Array.isArray(detail && detail.model_guard) && detail.model_guard.length
+    ? h('button', {
+      type: 'button', class: 'btn btn--link btn--sm rp-attempt__link',
+      title: 'Что сделал контроль моделей по этому запросу',
+      onclick: () => {
+        const target = typeof document !== 'undefined'
+          ? document.querySelector('[data-model-guard="feed"], #model-guard') : null;
+        if (target && typeof target.scrollIntoView === 'function') {
+          target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }
+      },
+    }, 'Контроль моделей')
+    : null;
+  const box = h('div', { class: 'rp-node__attempt-note', role: 'status', 'data-rp': 'guard-attempts' });
+  for (const a of attempts) {
+    const model = [a.provider, a.model].filter(Boolean).join(' · ');
+    box.appendChild(h('div', { class: 'rp-attempt__line' },
+      icon('shield', { size: 12, className: 'rp-attempt__icon' }),
+      h('span', { class: 'rp-attempt__text' },
+        `Попытка ${a.n} остановлена контролем моделей: была не та модель`
+        + (a.calls === null ? '' : ` (вызовов ${a.calls})`)),
+      model ? h('span', { class: 'rp-attempt__model small muted' }, model) : null));
+  }
+  if (feed) box.appendChild(h('div', { class: 'rp-attempt__more small' }, feed));
   return box;
 }
 
@@ -232,10 +275,13 @@ function attemptsBlock(node) {
  * Плашка ошибки карточки (B-24): причина, попытки и кнопка «Понятно».
  * Закрытая плашка помнится по «id карточки + номер попытки»; новая попытка показывает её снова.
  *
+ * W28-C2: плашка — ТОЛЬКО по итогу карточки. Попытки, убитые контролем моделей,
+ * ошибкой не считаются: у них спокойная строка `guardNote`.
+ *
  * @returns {HTMLElement|null}
  */
 function errorPlaque(node, ui) {
-  if (!node.error) return null;
+  if (!cardFailed(node)) return null;
   const notices = ui && ui.notices;
   const stamp = failureStamp(node) || `${String(node.id)}:0`;
   const box = h('div', { class: 'rp-node__error-slot' });
@@ -259,7 +305,7 @@ function errorPlaque(node, ui) {
   const paintBanner = () => {
     box.textContent = '';
     if (hidden()) { paintHidden(); return; }
-    const reason = errorReason(node.error.message || node.error.code);
+    const reason = errorReason(failureMessage(node));
     const attempts = attemptsBlock(node);
     const banner = h('div', { class: 'rp-node__error banner banner--error', role: 'alert' },
       icon('error', { size: 13 }),
@@ -307,26 +353,33 @@ const RUN_STATUS_RU = {
   queued: 'в очереди', scheduled: 'отложена',
 };
 
-function runStatusRu(run) {
+/** Подпись итога попытки для блока «Попытки · N» (техническое значение → слово). */
+export function runStatusRu(run) {
   const key = String((run && (run.status || run.outcome)) || '');
   return RUN_STATUS_RU[key] || '';
 }
 
 function runsBlock(node, ctx) {
-  const runs = Array.isArray(node.runs) ? node.runs : [];
-  if (!runs.length) return null;
+  const rows = attemptRows(node);
+  if (!rows.length) return null;
   const box = h('div', { class: 'rp-runs' });
-  box.appendChild(h('div', { class: 'rp-block__label small muted' }, `Попытки · ${runs.length}`));
-  for (const run of runs) {
-    const failed = isFailedRun(run);
-    const dur = run.started_at && run.ended_at ? fmtDuration(run.ended_at - run.started_at) : '';
-    const rawProfile = String(run.profile || '');
-    const why = run.error ? errorReason(run.error) : '';
-    box.appendChild(h('div', { class: ['rp-run', failed ? 'rp-run--failed' : ''] },
-      h('span', { class: 'rp-run__profile small', title: rawProfile || null }, profileName(rawProfile, ctx && ctx.room) || '—'),
-      h('span', { class: 'rp-run__status small' }, runStatusRu(run) || '—'),
-      h('span', { class: 'rp-run__time small muted tnum' }, [timeAgo(run.started_at), dur].filter(Boolean).join(' · ')),
-      why ? h('span', { class: 'rp-run__error small', title: String(run.error) }, why) : null));
+  box.appendChild(h('div', { class: 'rp-block__label small muted' }, `Попытки · ${rows.length}`));
+  for (const row of rows) {
+    // W28-C2: у каждой попытки — её СВОЯ модель и число вызовов. Старые попытки
+    // живут здесь, а подпись «ушло на» у карточки — только про последнюю.
+    const dur = row.duration_s ? fmtDuration(row.duration_s) : '';
+    box.appendChild(h('div', {
+      class: ['rp-run', row.failed ? 'rp-run--failed' : '', row.guard ? 'rp-run--guard' : ''],
+      title: row.why || row.detail || null,
+    },
+    h('span', { class: 'rp-run__n small muted tnum' }, `Попытка ${row.n}`),
+    h('span', { class: 'rp-run__profile small', title: row.profile || null },
+      profileName(row.profile, ctx && ctx.room) || '—'),
+    h('span', { class: 'rp-run__status small' }, row.guard ? 'остановлена' : (row.status || '—')),
+    h('span', { class: 'rp-run__time small muted tnum' }, [timeAgo(row.at), dur].filter(Boolean).join(' · ')),
+    row.model ? h('span', { class: 'rp-run__model small muted' }, row.model) : null,
+    row.calls ? h('span', { class: 'rp-run__calls small muted tnum' }, row.calls) : null,
+    row.why ? h('span', { class: 'rp-run__error small' }, row.why) : null));
   }
   return box;
 }
@@ -374,7 +427,7 @@ function nodeRow(row, ctx, detail, onChanged, ui) {
     'aria-controls': panelId,
     'aria-label': `Раскрыть задачу «${String(node.title || node.id)}»`,
     title: 'Подробности задачи',
-    disabled: !(node.summary_md || (node.comments || []).length || (node.runs || []).length || node.error),
+    disabled: !(node.summary_md || (node.comments || []).length || attemptTotal(node) || cardFailed(node)),
   }, icon('chevron-right', { size: 13 }));
   head.appendChild(toggle);
 
@@ -415,6 +468,11 @@ function nodeRow(row, ctx, detail, onChanged, ui) {
     // «Контроль моделей» на странице и строка «Остановлено…» у карточки).
   }
   main.appendChild(sub);
+
+  // W28-C2: убитые контролем моделей попытки — спокойной строкой (не красное и не
+  // в счётчик «ошибок»): «Попытка 1 остановлена контролем моделей: была не та модель».
+  const guard = guardNote(node, detail);
+  if (guard) main.appendChild(guard);
 
   // W23-MG2: управление работой — как в самом Hermes. «Остановить» у идущей
   // карточки, «Продолжить» и объяснение — у остановленной.
@@ -478,13 +536,16 @@ function nodeRow(row, ctx, detail, onChanged, ui) {
     copy: true,
     toast: (msg, ok) => toast(ctx, msg, ok ? 'ok' : 'danger'),
   };
-  if (node.error) {
+  // W28-C2: красное — только по ИТОГУ карточки (убитые сторожем попытки уже
+  // показаны спокойной строкой выше, в них нет ни плашки, ни «ошибок»).
+  const failed = cardFailed(node);
+  if (failed) {
     const plaque = errorPlaque(node, ui);
     if (plaque) panel.appendChild(plaque);
     const dev = devDetails([idRow, {
       label: 'Сообщение движка',
-      text: String(node.error.message || node.error.code || ''),
-      code: node.error.code ? String(node.error.code) : '',
+      text: String((node.error && (node.error.message || node.error.code)) || ''),
+      code: node.error && node.error.code ? String(node.error.code) : '',
     }]);
     if (dev) panel.appendChild(dev);
   }
@@ -493,13 +554,13 @@ function nodeRow(row, ctx, detail, onChanged, ui) {
   const runs = runsBlock(node, ctx);
   if (runs) panel.appendChild(runs);
   // Номер задачи — только в раскрывающихся деталях и по кнопке «Копировать» (D6).
-  if (!node.error) {
+  if (!failed) {
     const dev = devDetails([idRow], 'Номер задачи для разработчика');
     if (dev) panel.appendChild(dev);
   }
   li.appendChild(panel);
 
-  const expandable = !!(node.summary_md || comments || runs || node.error);
+  const expandable = !!(node.summary_md || comments || runs || failed);
   const setOpen = (open) => {
     panel.hidden = !open;
     li.classList.toggle('rp-node--open', open);

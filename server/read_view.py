@@ -585,6 +585,168 @@ def preview(text) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[#*_`>~\[\]()]+", " ", str(text))).strip()[:PREVIEW_MAX]
 
 
+# --------------------------------------------------------------- попытки (W28-C2) ---
+
+#: Итоги попытки, при которых карточка закончилась СБОЕМ (красное и счётчик «ошибок»).
+BAD_OUTCOMES = ("crashed", "failed", "timed_out", "gave_up")
+#: Итог, который делает карточку успешной и закрывает прошлые сбои.
+OK_OUTCOMES = ("completed", "done")
+#: Слова причины, по которым `reclaimed` — это остановка СТОРОЖЕМ моделей, а не сбой.
+GUARD_MARKERS = ("контроль моделей", "контроль модели", "model_guard")
+#: Готовая фраза для убитой сторожем попытки (интерфейс показывает её спокойной строкой).
+GUARD_REASON_RU = "остановлена контролем моделей: была не та модель"
+#: `reclaimed` не сторожем (вернули вручную/истёк срок) — тоже не ошибка.
+RECLAIM_REASON_RU = "остановлена и возвращена в очередь"
+#: Итоги, которые ещё ничего не решили (попытка идёт или ждёт запуска).
+OPEN_OUTCOMES = ("", "running", "claimed", "queued", "ready", "scheduled", "blocked", "review")
+
+
+def attempt_outcome(run) -> str:
+    """Итог одной попытки одним словом: ``completed|crashed|failed|timed_out|gave_up|reclaimed``.
+
+    Попытка может не иметь `outcome` (старые записи) — тогда берём `status`.
+    Неизвестное значение отдаём как есть: интерфейс покажет его нейтрально.
+    """
+    run = run if isinstance(run, dict) else {}
+    raw = str(run.get("outcome") or run.get("status") or "").strip().lower()
+    if raw in ("done", "completed", "ok", "success"):
+        return "completed"
+    if raw in ("failed", "error", "failure"):
+        return "failed"
+    if raw in ("crashed", "crash"):
+        return "crashed"
+    if raw in ("timed_out", "timeout", "timeout_exceeded"):
+        return "timed_out"
+    if raw in ("gave_up", "gaveup", "give_up", "gave-up"):
+        return "gave_up"
+    if raw in ("reclaimed", "reclaim"):
+        return "reclaimed"
+    return raw
+
+
+def is_guard_reclaim(run) -> bool:
+    """Попытку убил сторож моделей (`reclaimed` + причина «контроль моделей…»)."""
+    if attempt_outcome(run) != "reclaimed":
+        return False
+    text = str((run or {}).get("error") or "").lower()
+    return any(marker in text for marker in GUARD_MARKERS)
+
+
+def attempt_reason(run) -> str:
+    """Причина попытки по-русски, когда она известна без толкования техники.
+
+    Убитая сторожем попытка — готовая фраза (`GUARD_REASON_RU`); остальные отдают
+    исходный текст ошибки, его переводит интерфейс (`errorReason`): сервер не
+    выдумывает объяснений вместо движка.
+    """
+    run = run if isinstance(run, dict) else {}
+    if is_guard_reclaim(run):
+        return GUARD_REASON_RU
+    outcome = attempt_outcome(run)
+    if outcome == "reclaimed":
+        return RECLAIM_REASON_RU
+    if outcome == "timed_out":
+        return "превышено время ожидания"
+    if outcome == "gave_up":
+        return "исполнитель отказался от работы"
+    return str(run.get("error") or "").strip()
+
+
+def _attempt_duration(run) -> int | None:
+    start, end = (run or {}).get("started_at"), (run or {}).get("ended_at")
+    if isinstance(start, int) and isinstance(end, int) and end >= start:
+        return end - start
+    return None
+
+
+def attempts(runs, facts=None) -> list:
+    """Попытки карточки: что было на самом деле, без «ошибок», которых не было.
+
+    Каждая запись — ``{n, outcome, reason, model, provider, calls, started_at,
+    ended_at, duration_s, guard, ok, final}``. ``fact``/``facts`` — необязательная
+    функция ``(run) -> {model, provider, calls}``: фактические модель и число
+    вызовов КОНКРЕТНОЙ попытки знает только сессия воркера, её читает вызывающий
+    (``engine_read``), поэтому сама функция остаётся чистой.
+
+    Порядок — как в БД (по времени), нумерация с 1: «Попытка 1», «Попытка 2».
+    """
+    out: list = []
+    resolve = facts if callable(facts) else None
+    for index, run in enumerate(runs or [], start=1):
+        if not isinstance(run, dict):
+            continue
+        outcome = attempt_outcome(run)
+        item = {"n": index, "outcome": outcome, "reason": attempt_reason(run),
+                "model": "", "provider": "", "calls": None,
+                "started_at": run.get("started_at"), "ended_at": run.get("ended_at"),
+                "duration_s": _attempt_duration(run),
+                "guard": is_guard_reclaim(run), "ok": outcome in OK_OUTCOMES,
+                "final": False}
+        if resolve is not None:
+            try:
+                extra = resolve(run) or {}
+            except Exception:  # noqa: BLE001 — подпись модели не должна ронять чтение
+                extra = {}
+            if isinstance(extra, dict):
+                for key in ("model", "provider"):
+                    value = str(extra.get(key) or "").strip()
+                    if value:
+                        item[key] = value
+                calls = extra.get("calls")
+                if isinstance(calls, int) and not isinstance(calls, bool):
+                    item["calls"] = calls
+        out.append(item)
+    if out:
+        out[-1]["final"] = True
+    return out
+
+
+def final_result(runs) -> tuple:
+    """Итог карточки по ПОСЛЕДНЕЙ решающей попытке: ``('ok'|'error'|'open', run)``.
+
+    Красное — только если карточка закончилась сбоем (`crashed/failed/timed_out/
+    gave_up`) и после него не было успешной попытки. Попытка, убитая контролем
+    моделей (`reclaimed`), итогом-сбоем не считается: карточка пошла заново —
+    поэтому три убитых запуска в запросе больше не дают «ошибок: 3».
+    """
+    for run in reversed([r for r in (runs or []) if isinstance(r, dict)]):
+        outcome = attempt_outcome(run)
+        if outcome in OPEN_OUTCOMES:
+            continue                     # попытка ещё идёт — итог не наступил
+        if outcome in OK_OUTCOMES:
+            return "ok", run
+        if outcome in BAD_OUTCOMES:
+            return "error", run
+        return "open", run               # reclaimed/неизвестное: ни успех, ни сбой
+    return "open", None
+
+
+def apply_attempts(nodes, facts=None) -> None:
+    """Проставить узлам дерева ``attempts[]`` и честный ``error`` (W28-C2).
+
+    Ошибка карточки — это ИТОГ, а не любая неудачная попытка: убитые сторожем
+    попытки остаются в ``attempts`` (спокойной строкой в интерфейсе), а красная
+    плашка и счётчик «ошибок» появляются только там, где карточка действительно
+    закончилась сбоем без последующего успеха.
+    """
+    for node in nodes or []:
+        if not isinstance(node, dict):
+            continue
+        runs = [r for r in (node.get("runs") or []) if isinstance(r, dict)]
+        node["attempts"] = attempts(
+            runs, (lambda run, _node=node: facts(_node, run)) if callable(facts) else None)
+        kind, run = final_result(runs)
+        if kind == "error":
+            message = str((run or {}).get("error") or "исполнитель не смог завершить работу")
+            node["error"] = {"code": attempt_outcome(run) or "error",
+                             "message": message.strip()[:500]}
+        else:
+            node["error"] = None
+        stopped = [item["n"] for item in node["attempts"] if item["guard"]]
+        if stopped:
+            node["guard_stopped"] = stopped
+
+
 def critic_brief(critic) -> dict:
     """Сжатый блок критика для RequestSummary: {enabled, state, verdict, round}."""
     critic = critic if isinstance(critic, dict) else {}
@@ -599,4 +761,7 @@ __all__ = ["as_list", "stage", "steps", "questions", "decisions", "future", "all
            "stage_filled", "merge_canon", "kind_of", "artifacts", "report", "progress",
            "preview", "critic_brief", "PHASES", "PHASE_IDS", "CRITIC_STATES", "PREVIEW_MAX",
            "log_outside_artifacts", "group_of", "material_roots", "ARTIFACT_LIMIT",
-           "ARTIFACT_DEPTH", "ARTIFACT_GROUPS"]
+           "ARTIFACT_DEPTH", "ARTIFACT_GROUPS",
+           # W28-C2: попытки карточки и её итог (красное — только по итогу)
+           "attempts", "attempt_outcome", "attempt_reason", "is_guard_reclaim",
+           "final_result", "apply_attempts", "BAD_OUTCOMES", "GUARD_REASON_RU"]

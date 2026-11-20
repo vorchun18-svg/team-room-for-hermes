@@ -14,7 +14,7 @@
  */
 
 import { plainTerms, countNoun } from '../text-ru.js';
-import { isFailedRun, failureInfo, failureAttemptsList } from './request-parts-failure.js';
+import { isFailedRun, failureInfo, failureAttemptsList, errorReason } from './request-parts-failure.js';
 
 /* ─────────────────────────────────────────────────────────────── дерево работ */
 
@@ -339,6 +339,194 @@ export function failureSignature(detail) {
   }
   if (!stamps.length) return '';
   return stamps.sort().join('|');
+}
+
+/* ─────────────────────────────────────── попытки карточки (W28-C2 «ошибки, которых нет») */
+
+/**
+ * Итоги попытки, при которых карточка действительно закончилась СБОЕМ.
+ * Только по ним рисуется красное и растёт счётчик «ошибок» (W28-C2).
+ */
+export const BAD_OUTCOMES = ['crashed', 'failed', 'timed_out', 'gave_up'];
+
+/** Итог попытки → слово для человека (спокойное, без техники). */
+export const ATTEMPT_OUTCOME_RU = {
+  completed: 'готово',
+  reclaimed: 'остановлена',
+  crashed: 'не справился',
+  failed: 'не справился',
+  timed_out: 'превышено время',
+  gave_up: 'отказался от работы',
+  running: 'идёт',
+  blocked: 'ждёт',
+};
+
+/** Итог попытки одним словом: `completed|crashed|failed|timed_out|gave_up|reclaimed`. */
+export function attemptOutcome(run) {
+  const raw = String((run && (run.outcome || run.status)) || '').trim().toLowerCase();
+  if (raw === 'done' || raw === 'completed' || raw === 'ok' || raw === 'success') return 'completed';
+  if (raw === 'error' || raw === 'failure' || raw === 'failed') return 'failed';
+  if (raw === 'crash') return 'crashed';
+  if (raw === 'timeout' || raw === 'timeout_exceeded') return 'timed_out';
+  if (raw === 'gaveup' || raw === 'give_up' || raw === 'gave-up') return 'gave_up';
+  if (raw === 'reclaim') return 'reclaimed';
+  return raw;
+}
+
+/** Попытку остановил контроль моделей (а не сбой работы). */
+export function isGuardAttempt(attempt) {
+  const a = attempt && typeof attempt === 'object' ? attempt : {};
+  if (a.guard === true) return true;
+  if (attemptOutcome(a) !== 'reclaimed') return false;
+  return /контроль модел|model_guard/i.test(String(a.reason || a.error || ''));
+}
+
+/**
+ * Попытки карточки: серверное `attempts[]` (W28-C2), а если его нет (старые
+ * ответы, фикстуры 1.0.x) — то же самое из `runs`.
+ *
+ * @param {object} node TaskNode
+ * @returns {Array<{n:number, outcome:string, reason:string, model:string, provider:string,
+ *                  calls:number|null, at:number, duration_s:number|null, guard:boolean,
+ *                  ok:boolean, failed:boolean, final:boolean}>}
+ */
+export function attemptList(node) {
+  const n = node && typeof node === 'object' ? node : {};
+  const raw = Array.isArray(n.attempts) && n.attempts.length
+    ? n.attempts
+    : (Array.isArray(n.runs) ? n.runs : []);
+  const out = [];
+  raw.forEach((item, i) => {
+    if (!item || typeof item !== 'object') return;
+    const outcome = attemptOutcome(item);
+    const guard = isGuardAttempt(item);
+    const reason = String(item.reason || item.error || '');
+    out.push({
+      n: Number(item.n) || i + 1,
+      outcome,
+      reason,
+      model: String(item.model || ''),
+      provider: String(item.provider || ''),
+      calls: Number.isFinite(Number(item.calls)) && item.calls !== null && item.calls !== ''
+        ? Number(item.calls) : null,
+      profile: String(item.profile || n.assignee || ''),
+      at: Number(item.started_at || item.ended_at || 0) || 0,
+      duration_s: Number(item.duration_s) || null,
+      guard,
+      ok: outcome === 'completed',
+      failed: BAD_OUTCOMES.includes(outcome),
+      final: item.final === true || i === raw.length - 1,
+    });
+  });
+  return out;
+}
+
+/** Попытки, убитые контролем моделей: показываются спокойной строкой. */
+export function guardAttempts(node) {
+  return attemptList(node).filter((a) => a.guard);
+}
+
+/** Сколько попыток было у карточки (для «Попытки · N»). */
+export function attemptTotal(node) {
+  return attemptList(node).length;
+}
+
+/**
+ * Карточка закончилась сбоем — это ИТОГ, а не любая неудачная попытка.
+ *
+ * Ошибкой считаем: серверный `error`, либо последняя решающая попытка с итогом
+ * `crashed/failed/timed_out/gave_up`. Попытка, убитая контролем моделей, сбоем
+ * не считается — карточка просто пошла заново (W28-C2).
+ *
+ * @param {object} node TaskNode
+ * @returns {boolean}
+ */
+export function cardFailed(node) {
+  const n = node && typeof node === 'object' ? node : {};
+  if (n.error) return true;
+  if (String(n.status || '') === 'failed' && !attemptList(n).length) return true;
+  for (const a of attemptList(n).slice().reverse()) {
+    if (a.guard || a.outcome === 'reclaimed') return false;   // итог ещё не сбой
+    if (a.ok) return false;
+    if (a.failed) return true;
+  }
+  return false;
+}
+
+/**
+ * Технический текст последней НЕУДАЧНОЙ попытки карточки — для плашки ошибки,
+ * когда сервер не прислал `error` (W28-C2: ошибка теперь ставится по итогу, а
+ * сама попытка известна из `attempts[]`).
+ *
+ * @param {object} node TaskNode
+ * @returns {string}
+ */
+export function failureMessage(node) {
+  const n = node && typeof node === 'object' ? node : {};
+  if (n.error && (n.error.message || n.error.code)) return String(n.error.message || n.error.code);
+  const bad = attemptList(n).filter((a) => a.failed);
+  return bad.length ? String(bad[bad.length - 1].reason || '') : '';
+}
+
+/** « · deepseek-v4.1-flash:1017» — модель попытки, если известна. */
+function attemptModelText(a) {
+  const parts = [a.provider, a.model].filter(Boolean);
+  return parts.length ? parts.join(' · ') : '';
+}
+
+/**
+ * Спокойная строка убитой попытки (W28-C2): «Попытка 1 остановлена контролем
+ * моделей: была не та модель (вызовов 1)». Ни красного, ни счётчика «ошибок».
+ *
+ * @param {{n:number, calls:number|null}} attempt
+ * @returns {string}
+ */
+export function guardAttemptLine(attempt) {
+  const a = attempt && typeof attempt === 'object' ? attempt : {};
+  const n = Number(a.n) || 1;
+  const calls = a.calls === null || a.calls === undefined ? null : Number(a.calls);
+  const tail = calls === null ? '' : ` (вызовов ${calls})`;
+  return `Попытка ${n} остановлена контролем моделей: была не та модель${tail}`;
+}
+
+/** Причина неудачной попытки по-русски (технический текст → человеческая фраза). */
+export function attemptReasonText(attempt) {
+  const a = attempt && typeof attempt === 'object' ? attempt : {};
+  if (a.guard) return guardAttemptLine(a);
+  const known = errorReason(a.reason);
+  if (known) return known;
+  if (a.failed) return 'исполнитель не справился';
+  return String(a.reason || '');
+}
+
+/**
+ * Все попытки карточки для блока «Попытки · N» одной строкой каждая:
+ * «Попытка 2 · готово · 12:04 · deepseek…, вызовов 35».
+ *
+ * @param {object} node TaskNode
+ * @returns {Array<{n:number, text:string, detail:string, guard:boolean, failed:boolean, at:number}>}
+ */
+export function attemptRows(node) {
+  return attemptList(node).map((a) => {
+    const status = ATTEMPT_OUTCOME_RU[a.outcome] || (a.outcome ? String(a.outcome) : '—');
+    const model = attemptModelText(a);
+    const calls = a.calls === null ? '' : `вызовов ${a.calls}`;
+    return {
+      n: a.n,
+      at: a.at,
+      guard: a.guard,
+      failed: a.failed,
+      ok: a.ok,
+      text: guardAttemptLine(a),
+      status,
+      model,
+      calls,
+      profile: a.profile,
+      duration_s: a.duration_s,
+      why: a.guard ? '' : attemptReasonText(a),
+      detail: [status, model, calls].filter(Boolean).join(' · '),
+    };
+  });
 }
 
 /* ─────────────────────────────────────────── кнопка повтора: состояния (B-25) */

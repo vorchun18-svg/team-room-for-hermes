@@ -117,7 +117,12 @@ class BudgetTest(unittest.TestCase):
     def test_contract_is_not_duplicated_in_revision(self):
         core = contract.build_contract_block(self.room, "revision", self.cfg)
         full = contract.build_contract_block(self.room, "request", self.cfg)
-        self.assertLess(len(core), len(full) / 3, "ядро короче полного устава втрое")
+        # W28-E: полный устав теперь живёт файлом (в карточке — короткая версия), поэтому
+        # «втрое короче» сравниваем с полным текстом файла: смысл правила (в доработке нет
+        # устава целиком) сохранён, а обещание «ядро втрое короче устава» — стало строже.
+        detailed = contract.full_contract_text(self.room, "request", self.cfg)
+        self.assertLess(len(core), len(detailed) / 3, "ядро короче полного устава втрое")
+        self.assertLess(len(full), len(detailed), "в карточке — короткая версия, файл длиннее")
         self.assertIn("корневой карточке", core)
         body = contract.build_revision_body(self.room, "запрос", "ответ", None, None, self.cfg)
         # перечень полей metadata живёт в корневой карточке, в доработку не копируется
@@ -155,6 +160,93 @@ class BudgetTest(unittest.TestCase):
         self.assertEqual(report["over"], 1)
         self.assertEqual(report["kinds"]["svod"]["max"], 26000)
         self.assertEqual(report["kinds"]["svod"]["limit"], 8000)
+
+
+class W28BodyTest(unittest.TestCase):
+    """W28-E: урезанное тело карточки, «последние N без дублей», резюме родителей.
+
+    Замеры 19.11.2026: устав комнаты (4 722 знака) повторялся в каждой корневой
+    карточке, прошлый свод и ленты — тоже. Здесь проверяется, что потолки стали
+    правилом: короткий устав + файл полного устава, резюме родителей и ленты по N.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="tr-budget-w28-")
+        self.cfg = FakeCfg(Path(self.tmp.name))
+        self.room = make_room()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_w28_constants_are_declared(self):
+        # Потолок короткого устава: замер 19.11 дал 4 722 знака в карточке; после
+        # правки — 3 882, потолок 4 400 (запас на длинные пути). Больше 4 400 —
+        # значит устав снова расползся.
+        self.assertLessEqual(card_budget.CONTRACT_SHORT_MAX, 4400,
+                             "короткий устав в карточке не больше 4 400 знаков")
+        self.assertEqual(card_budget.RECENT_MAX, 3, "«Recent work» — последние 3")
+        self.assertEqual(card_budget.COMMENTS_MAX, 5, "«Comment thread» — последние 5")
+        self.assertEqual(card_budget.PARENT_RESULT_MAX, 1200)
+        self.assertGreaterEqual(card_budget.PREV_PREFIX_MAX, 400)
+
+    def test_leader_card_has_short_contract_and_points_to_file(self):
+        project = Path(self.tmp.name) / "Проект"
+        project.mkdir(parents=True, exist_ok=True)
+        room = make_room(project_dir=str(project))
+        body = contract.build_request_body(room, "Проверь сайт студии. " * 10, "request", self.cfg)
+        block = contract.build_contract_block(room, "request", self.cfg)
+        self.assertLessEqual(len(block), card_budget.CONTRACT_SHORT_MAX,
+                             "короткий устав в бюджете: %d" % len(block))
+        path = contract.contract_file_path(room, self.cfg)
+        self.assertTrue(Path(path).is_file(), "полный устав лёг файлом в папку проекта")
+        self.assertIn(path, body, "карточка ссылается на файл устава")
+        self.assertGreater(len(contract.full_contract_text(room, "request", self.cfg)), len(block),
+                           "файл подробнее карточки")
+
+    def test_contract_file_is_not_written_without_project_folder(self):
+        room = make_room()                      # project_dir не задан
+        self.assertEqual(contract.ensure_contract_file(room, self.cfg), "",
+                         "без папки проекта ничего не пишем")
+        body = contract.build_request_body(room, "Проверь сайт.", "request", self.cfg)
+        self.assertIn(contract.CONTRACT_OPEN, body)
+
+    def test_recent_unique_keeps_last_n_without_duplicates(self):
+        items = ["сделали раздел 1", "сделали раздел 2", "сделали раздел 2",
+                 "согласовали сроки", "проверили макеты"]
+        got = card_budget.recent_unique(items, 3)
+        self.assertEqual(got, ["сделали раздел 2", "согласовали сроки", "проверили макеты"],
+                         "последние три по порядку, дубль выброшен")
+        self.assertEqual(got[-1], "проверили макеты", "последняя запись — самая новая")
+        self.assertEqual(len(set(got)), len(got), "без повторов")
+        self.assertEqual(card_budget.recent_unique([], 3), [])
+        self.assertEqual(card_budget.recent_unique(items, 0), [])
+
+    def test_recent_unique_drops_repeated_tail(self):
+        items = [{"text": "одно и то же"}, {"text": "одно и то же"}]
+        got = card_budget.recent_unique(items, 5, key=lambda i: i["text"])
+        self.assertEqual(len(got), 1, "дубль не занимает место в теле")
+
+    def test_parent_digest_caps_each_parent_and_keeps_path(self):
+        results = [{"id": "t_p1", "summary": "абзац. " * 900, "path": "C:/Projects/a/отчёт.md"},
+                   {"id": "t_p2", "summary": "короткий итог"},
+                   {"id": "t_p3", "summary": ""}]
+        got = card_budget.parent_digest(results, cap=300)
+        self.assertEqual(len(got), 2, "пустой результат пропущен")
+        self.assertLessEqual(len(got[0]["text"]), 300, "резюме в потолке")
+        self.assertTrue(got[0]["truncated"], "видно, что текст сокращён")
+        self.assertEqual(got[0]["path"], "C:/Projects/a/отчёт.md", "путь к полному тексту рядом")
+        self.assertFalse(got[1]["truncated"])
+
+    def test_digest_does_not_repeat_the_same_message(self):
+        detail = {"id": "t_1", "synthesis": {"state": "ready", "version": 2, "at": 1_700_000_000,
+                                             "history": [{"version": 2, "at": 1_700_000_000}]},
+                  "thread": [{"id": "c%d" % i, "at": 1_700_000_100 + i, "author": "mikhail",
+                              "author_kind": "mikhail", "kind": "message",
+                              "text": "Добавь сроки" if i % 2 else "Добавь сроки"}
+                             for i in range(6)]}
+        digest = contract.revision_digest(detail, make_room(), {}, None)
+        self.assertEqual(digest["text"].count("Добавь сроки"), 1,
+                         "шесть одинаковых сообщений — одна строка в дайджесте")
 
 
 if __name__ == "__main__":

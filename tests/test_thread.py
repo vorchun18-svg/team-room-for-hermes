@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 import subprocess as real_subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -388,13 +390,32 @@ class InjectionTests(_Base):
         self.assertFalse(payload["merged"])
         self.assertNotIn(foreign_note, self.shim.comment_targets())
 
-    def test_attach_outside_roots_is_403(self):
+    def test_attach_outside_roots_is_allowed(self):
+        """W28-A (дефект 4): путь человека не ограничен корнями — 403 больше нет.
+
+        Файл вне песочницы (свой временный каталог) прикрепляется: если человек
+        приложил файл, доступ одобрен им. Раньше здесь стоял 403 «вложение вне
+        разрешённых путей» — из-за него файл из «Загрузок» не принимался.
+        """
         rid = self.rid("working")
-        outside = "C:/Windows/System32/drivers/etc/hosts"
-        if path_allowed(self.cfg, outside):      # если корень разрешён — берём другой
-            outside = "Z:/nope/file.pdf"
-        status, payload, _ = self.post(rid, "С файлом", attach=[outside])
-        self.assertEqual(status, 403, payload)
+        folder = tempfile.mkdtemp(prefix="tr-outside-")
+        outside = Path(folder) / "загрузки-договор.doc"
+        outside.write_bytes(b"PK")
+        self.addCleanup(lambda: shutil.rmtree(folder, ignore_errors=True))
+        if path_allowed(self.cfg, str(outside)):
+            self.skipTest("каталог оказался внутри разрешённых корней")
+        status, payload, _ = self.post(rid, "С файлом", attach=[str(outside)])
+        self.assertEqual(status, 201, payload)
+        self.assertIn("загрузки-договор.doc", payload["message"]["text"])
+
+    def test_attach_missing_file_reports_reason(self):
+        """Отказ остаётся только там, где файла правда нет — с причиной и действием."""
+        rid = self.rid("working")
+        status, payload, _ = self.post(rid, "С файлом", attach=["Z:/nope/file.pdf"])
+        self.assertEqual(status, 400, payload)
+        error = payload.get("error") or {}
+        self.assertIn("файла нет", error.get("message") or "")
+        self.assertEqual((error.get("detail") or {}).get("reason"), "not_found")
         self.assertEqual(self.shim.calls, [])
 
     def test_attach_inside_sandbox_is_allowed(self):

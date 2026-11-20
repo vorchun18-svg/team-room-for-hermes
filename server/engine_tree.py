@@ -347,6 +347,17 @@ def _model_label(task: dict):
     return " · ".join(parts)
 
 
+def _run_has_session(run) -> bool:
+    """У попытки известна сессия воркера (`metadata.worker_session_id` и родственные)."""
+    meta = (run or {}).get("metadata")
+    if isinstance(meta, str):
+        meta = _json(meta) if meta.strip() else {}
+    if not isinstance(meta, dict):
+        return False
+    return any(str(meta.get(key) or "").strip()
+               for key in ("worker_session_id", "session_id", "session"))
+
+
 def _model_sent(cfg, room, task: dict, runs: list, board: str | None = None):
     """«Ушло на: …» карточки по факту запуска (W13-A). None — сказать нечего/модуля нет.
 
@@ -354,6 +365,10 @@ def _model_sent(cfg, room, task: dict, runs: list, board: str | None = None):
     из подписи карточки: подпись показывает выбор, факт — только запуск. Если в metadata
     прогона id сессии нет (старые записи), `sent_of` берёт его из события `owner_admitted`
     — поэтому доска передаётся дальше.
+
+    W28-C2: подпись — из ПОСЛЕДНЕЙ попытки, у которой сессия ЕСТЬ. Попытка, не дошедшая
+    до модели (только что созданная), подписи не даёт: иначе «ушло на» показывало модель
+    другой попытки или провайдера из выбора комнаты.
     """
     if cfg is None or not isinstance(task, dict):
         return None
@@ -362,7 +377,9 @@ def _model_sent(cfg, room, task: dict, runs: list, board: str | None = None):
             from . import agent_models as models_mod
         except ImportError:  # pragma: no cover - «плоский» импорт
             import agent_models as models_mod  # type: ignore
-        last = next((r for r in reversed(runs or []) if r.get("id") is not None), None)
+        known = [r for r in (runs or []) if isinstance(r, dict) and r.get("id") is not None]
+        with_session = [r for r in known if _run_has_session(r)]
+        last = (with_session or known or [None])[-1]
         value = models_mod.sent_of(cfg, room, task, run=last, board=board)
         return value or None
     except Exception:  # noqa: BLE001 - подпись модели не должна ронять дерево

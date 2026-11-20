@@ -759,6 +759,23 @@ def _journal(cfg, room_id, text: str, *, kind: str = "critic_verdict", actor: st
         pass
 
 
+def _pin_assigned(cfg, room: dict, card_id: str) -> dict:
+    """Сразу записать модель комнаты карточке, которой только что назначили исполнителя.
+
+    Модель берётся только из выбора комнаты (`agent_models.pin_cards`); если выбора нет
+    или мост недоступен, тихо возвращаем пусто — быстрый сторож («модель до старта»,
+    шаг 1 с) всё равно поставит её до запуска.
+    """
+    try:
+        try:
+            from . import agent_models as models_mod
+        except ImportError:                    # pragma: no cover - плоский импорт
+            import agent_models as models_mod   # type: ignore
+        return models_mod.pin_cards(cfg, dict(room or {}), [str(card_id or "")]) or {}
+    except Exception:                          # noqa: BLE001 - подстраховка сторожа важнее
+        return {}
+
+
 def run_step(cfg, room: dict, record: dict, detail: dict) -> list[dict]:
     """Выполнить plan() через engine_write. Возвращает отчёт по каждому действию."""
     room = room or {}
@@ -786,7 +803,12 @@ def run_step(cfg, room: dict, record: dict, detail: dict) -> list[dict]:
         try:
             if kind == "retarget_root":
                 res = _engine.retarget_root(cfg, board, root_id, action["profile"])
+                # W28-C1 п.2: у корня появился исполнитель — модель ставим СРАЗУ, в том же
+                # действии: иначе между `assign` и тиком сторожа диспетчер успевает взять
+                # карточку на модель профиля (это и есть гонка дефекта 5).
+                pinned = _pin_assigned(cfg, room, root_id)
                 entry.update(ok=True, detail=res.get("detail"), cmd_ms=res.get("cmd_ms", 0),
+                             pinned=pinned or {},
                              registry=_registry_update(cfg, room_id, root_id, {"retargeted": True}))
             elif kind == "create_critic":
                 made = _create_card(cfg, room, record, detail, "critic",

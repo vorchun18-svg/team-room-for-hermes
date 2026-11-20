@@ -30,6 +30,7 @@
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -93,10 +94,74 @@ def real_hermes_home() -> Path:
     return _real_hermes_home()
 
 
+#: Ростер песочного дома: те же имена, что в фикстурах и `tools/check_conformance.py`
+#: (`_write_profiles`). Без него тесты ищут `team-director` в ЖИВОМ Hermes, где живут
+#: `исполнители`, и падают «Профиля нет в ростере» — это состояние стенда, а не регресс.
+FAKE_ROSTER = {
+    "team-director": ("Директор Лето", "director", "Разбирает запрос и сводит ответ.", ["декомпозиция"]),
+    "team-critic": ("Критик", "critic", "Проверяет свод перед ответом.", ["проверка"]),
+    "coder": ("Программист", "worker", "Пишет и проверяет код.", ["python"]),
+    "team-lawyer": ("Юрист проекта", "worker", "Проверяет договоры и риски (юрист комнаты).", ["право"]),
+    "team-cfo": ("Финансист Лето", "worker", "Считает юнит-экономику.", ["финансы"]),
+    "team-ops": ("Операции", "worker", "Ведёт поставщиков и упаковку.", ["операции"]),
+    "team-marketing": ("Маркетолог", "worker", "Готовит витрину и тексты.", ["маркетинг"]),
+    "team-strategy": ("Стратег", "worker", "Сравнивает рынок и цены.", ["стратегия"]),
+    "team-runner": ("Гонец Лето", "worker", "Забирает и проверяет файлы.", ["сбор"]),
+}
+
+#: Конфиг профиля песочницы: ровно то, что читают модули (провайдер, модель).
+#: Провайдер тот же, что у боевых профилей стенда, — тесты сверяют ростер по нему.
+FAKE_PROFILE_CONFIG = "model:\n  provider: ollama-cloud\n  default: test-model\n"
+
+
+def seed_fake_hermes_home(home: Path) -> Path:
+    """Создать ПОДДЕЛЬНЫЙ дом Hermes с ростером профилей внутри песочницы.
+
+    `cfg.hermes_home` указывает на реальный `%LOCALAPPDATA%\\hermes` (его конфиги только
+    читаются), поэтому тестам нужен свой дом: иначе они ищут `team-director` в живом
+    ростере и падают. Путь обязан быть вне реального Hermes — проверяется сторожем.
+
+        home = seed_fake_hermes_home(sb.root / "hermes")
+        cfg = dataclasses.replace(cfg, hermes_home=home)
+    """
+    home = Path(home)
+    real = safety.real_hermes_home().resolve()
+    target = home.resolve()
+    if target == real or real in target.parents or target in real.parents:
+        raise RuntimeError("отказ: ростер профилей в реальном каталоге Hermes: %s" % target)
+    safety.assert_not_real(home, "ростер профилей песочницы")
+    safety.guarded_mkdir(home, parents=True, exist_ok=True)
+    safety.guarded_write_text(home / "config.yaml", FAKE_PROFILE_CONFIG)
+    # Состояние движка (pid диспетчера) читается из gateway_state.json — копия живого, только чтение.
+    gateway = real / "gateway_state.json"
+    if gateway.is_file():
+        try:
+            safety.guarded_copy2(gateway, home / "gateway_state.json")
+        except Exception:                      # noqa: BLE001 - состояние движка вторично
+            pass
+    for name, (title, kind, description, tags) in FAKE_ROSTER.items():
+        folder = home / "profiles" / name
+        safety.guarded_mkdir(folder, parents=True, exist_ok=True)
+        safety.guarded_write_text(folder / "config.yaml", FAKE_PROFILE_CONFIG)
+        safety.guarded_write_text(
+            folder / "profile.yaml",
+            "title: %s\nkind: %s\ndescription: %s\ntags: [%s]\n"
+            % (title, kind, description, ", ".join(tags)))
+    return home
+
+
 def real_db_path(cfg: Any = None) -> Path:
-    """Путь к реальной БД доски `team` (только чтение, никогда не песочная)."""
-    home = Path(cfg.hermes_home) if cfg is not None else _real_hermes_home()
-    return home / "kanban" / "boards" / REAL_BOARD / "kanban.db"
+    """Путь к РЕАЛЬНОЙ БД доски `team` (только чтение, никогда не песочная).
+
+    В песочнице `cfg.hermes_home` — поддельный дом (`<data>/hermes-home`, W28-F), поэтому
+    «реальную» доску всегда считаем от настоящего `HERMES_HOME`: иначе проверка «песочная
+    БД не совпала с живой» сравнивала бы песочницу с песочницей.
+    """
+    if cfg is not None and not getattr(cfg, "sandbox", False):
+        home = Path(cfg.hermes_home)
+    else:
+        home = _real_hermes_home()
+    return Path(home) / "kanban" / "boards" / REAL_BOARD / "kanban.db"
 
 
 def config_hashes(home: Any = None) -> dict:
@@ -393,6 +458,10 @@ class Sandbox:
         self._guards: list = []
         self.ids: dict = {}
         self.cfg: Any = None
+        #: Конфиг с РЕАЛЬНЫМ домом Hermes — только для слепков «не трогали живое».
+        self.cfg_real: Any = None
+        #: Поддельный дом Hermes песочницы с ростером `team-*` (cfg.hermes_home).
+        self.hermes_home: Path | None = None
 
     # --- жизненный цикл -----------------------------------------------------
     def _enter_guards(self) -> None:
@@ -423,10 +492,18 @@ class Sandbox:
                 self._saved_env[key] = os.environ.get(key)
                 os.environ[key] = str(value)
             self.cfg = config_mod.load()
+            self.cfg_real = self.cfg
+            # Ростер профилей — в ПОДДЕЛЬНОМ доме внутри песочницы (W28-F): иначе тесты
+            # ищут `team-*` в живом Hermes, где живут `исполнители`, и падают «Профиля нет
+            # в ростере». Тот же приём, что у `tools/check_conformance.py::_write_profiles`.
+            self.hermes_home = seed_fake_hermes_home(Path(self.cfg.data_dir) / "hermes-home")
+            self.cfg = dataclasses.replace(self.cfg, hermes_home=self.hermes_home)
             self._entered = True
             db = Path(self.cfg.kanban_db(BOARD))
             if not _is_under(db, self.root):
                 raise RuntimeError(f"cfg.kanban_db вне песочницы: {db}")
+            if not _is_under(Path(self.cfg.hermes_home), self.root):
+                raise RuntimeError(f"cfg.hermes_home вне песочницы: {self.cfg.hermes_home}")
             if not self.cfg.sandbox:
                 raise RuntimeError("cfg.sandbox=False: TEAMROOM_HERMES_HOME не применился")
             return self
@@ -516,7 +593,7 @@ class Sandbox:
         """Проверка защиты: запись в реальную БД и за пределы песочницы запрещена."""
         _assert_writable_db(self.db, self.root)
         outside = self.root.parent / ".outside-sandbox" / "kanban.db"
-        for bad in (real_db_path(self.cfg), outside):
+        for bad in (real_db_path(self.cfg_real or self.cfg), outside):
             try:
                 _assert_writable_db(bad, self.root)
             except AssertionError:
@@ -525,9 +602,13 @@ class Sandbox:
 
     # --- защита реальной доски ---------------------------------------------
     def snapshot_real(self, cfg: Any = None) -> dict:
-        """Слепок реальной kanban.db: размер, mtime, число задач, max(*_at)."""
-        return snapshot_real_db(cfg or self.cfg)
+        """Слепок РЕАЛЬНОЙ доски и конфигов Hermes.
+
+        Берём `cfg_real` (дом Hermes настоящий): `self.cfg.hermes_home` — поддельный дом
+        песочницы, и слепок по нему ничего не сказал бы о живых конфигах.
+        """
+        return snapshot_real_db(cfg or self.cfg_real or self.cfg)
 
     def assert_real_untouched(self, before: dict) -> dict:
         """Упасть, если реальная доска изменилась после `before`."""
-        return assert_real_untouched(before, self.cfg)
+        return assert_real_untouched(before, self.cfg_real or self.cfg)

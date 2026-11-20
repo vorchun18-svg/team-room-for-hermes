@@ -53,6 +53,14 @@ DEFAULT_QUIET_S = 180
 DEFAULT_MIN_GAP_S = 600
 QUIET_RANGE = (30, 3600)
 GAP_RANGE = (60, 86400)
+#: W28-E: накопление перед автообновлением свода. Пока событий меньше ``min_events``
+#: и с первого необработанного прошло меньше ``max_wait_s`` — руководителя не будим
+#: (замеры 19.11: автосвод стоил 8–38 вызовов модели на каждое сообщение).
+DEFAULT_MIN_EVENTS = 3
+DEFAULT_MAX_WAIT_S = 900
+EVENTS_RANGE = (1, 10)
+MAX_WAIT_RANGE = (60, 86400)
+ACCUMULATE_TEXT = "накопится событий или %s (кнопка «Обновить сейчас»)"
 
 #: Заголовок карточки-сообщения (server/thread.py NOTE_TITLE). Карточки сообщений —
 #: не «работа» для свода: их содержимое уже учтено как сообщение в диалоге.
@@ -146,16 +154,54 @@ def _clamp(value, bounds: tuple, default: int) -> int:
 
 
 def settings(room) -> dict:
-    """Настройки автообновления комнаты с границами: ``{auto_svod, quiet_s, min_gap_s}``.
+    """Настройки автообновления комнаты с границами.
 
-    Нет поля (старая запись комнаты) — значения по умолчанию контракта. Мусор в поле
-    не ломает свод: берём значение по умолчанию.
+    ``{auto_svod, quiet_s, min_gap_s, min_events, max_wait_s}``. Нет поля (старая
+    запись комнаты) — значения по умолчанию контракта. Мусор в поле не ломает свод:
+    берём значение по умолчанию.
+
+    W28-E: ``min_events`` / ``max_wait_s`` — накопление. Замеры 19.11: автоматическое
+    «Обновление свода» могло идти 8–38 вызовов модели на КАЖДОЕ сообщение (2,9–5,4 млн
+    токенов кэш-чтения за сутки). Теперь автообновление ждёт накопления: не меньше
+    ``min_events`` событий ИЛИ ``max_wait_s`` секунд с первого необработанного —
+    что наступит раньше. Кнопка «Обновить сейчас» работает мгновенно и настроек не
+    спрашивает. Дефолт безопасный для публичного продукта (3 события / 15 минут);
+    комната может поставить ``auto_svod_min_events: 1`` — тогда поведение прежнее.
     """
     room = room if isinstance(room, dict) else {}
     auto = room.get("auto_svod")
     return {"auto_svod": DEFAULT_AUTO if auto is None else bool(auto),
             "quiet_s": _clamp(room.get("auto_svod_quiet_s"), QUIET_RANGE, DEFAULT_QUIET_S),
-            "min_gap_s": _clamp(room.get("auto_svod_min_gap_s"), GAP_RANGE, DEFAULT_MIN_GAP_S)}
+            "min_gap_s": _clamp(room.get("auto_svod_min_gap_s"), GAP_RANGE, DEFAULT_MIN_GAP_S),
+            "min_events": _clamp(room.get("auto_svod_min_events"), EVENTS_RANGE, DEFAULT_MIN_EVENTS),
+            "max_wait_s": _clamp(room.get("auto_svod_max_wait_s"), MAX_WAIT_RANGE, DEFAULT_MAX_WAIT_S)}
+
+
+def accumulate(ev: dict, conf: dict, now=None) -> dict:
+    """Хватит ли событий, чтобы будить руководителя (W28-E).
+
+    ``{ok, total, need, first_at, wait_left}``. ``ok`` — накопление закрыто: событий
+    не меньше ``min_events`` ИЛИ с первого необработанного прошло ``max_wait_s``.
+    Ответ на вопрос руководителя (B-45) накопления не ждёт: человек уже ответил, и
+    ждать «ещё два события» означало бы держать его вопрос без ответа.
+    """
+    now = _now(now)
+    ev = ev if isinstance(ev, dict) else {}
+    conf = conf if isinstance(conf, dict) else {}
+    total = _int(ev.get("total"), 0)
+    need = max(1, _int(conf.get("min_events"), DEFAULT_MIN_EVENTS))
+    max_wait = max(0, _int(conf.get("max_wait_s"), DEFAULT_MAX_WAIT_S))
+    first_at = 0
+    for item in ev.get("items") or []:
+        at = _int((item or {}).get("at"), 0) if isinstance(item, dict) else 0
+        if at and (not first_at or at < first_at):
+            first_at = at
+    if not first_at:
+        first_at = _int(ev.get("first_at"), 0) or _int(ev.get("last_at"), 0)
+    wait_left = max(0, (first_at + max_wait) - now) if first_at and max_wait else 0
+    ok = total >= need or not wait_left or answer_priority(ev)
+    return {"ok": bool(ok), "total": total, "need": need, "first_at": first_at or None,
+            "wait_left": int(wait_left)}
 
 
 def _now(now=None) -> int:
@@ -1042,6 +1088,15 @@ def compute(detail, room=None, rec=None, thread=None, now=None, since=0, cfg=Non
                     text=_behind_text(ev["behind"]) + " — %s, %s"
                     % (BUSY_MAX_TEXT, _due_text(next_at, now, "обновлю")[1]))
         return live
+    # W28-E: накопление — не будим руководителя на каждое событие. Порог частоты уже
+    # прошёл, но событий мало и окно ожидания не истекло — ждём (кнопка работает всегда).
+    acc = accumulate(ev, conf, now)
+    if not acc["ok"]:
+        acc_at, acc_due = _due_text(acc["first_at"] + _int(conf.get("max_wait_s"), DEFAULT_MAX_WAIT_S),
+                                    now)
+        live.update(state="pending", next_update_at=acc_at,
+                    text=_behind_text(ev["behind"]) + " — " + ACCUMULATE_TEXT % acc_due)
+        return live
     live.update(state="pending", next_update_at=due_at,
                 text=_behind_text(ev["behind"]) + " — %s" % due)
     return live
@@ -1101,6 +1156,15 @@ def plan(detail, room=None, rec=None, thread=None, now=None, since=0) -> dict:
     out["next_update_at"] = next_at
     if now < next_at:
         out.update(action="wait", reason="quiet")
+        return out
+    # W28-E: накопление (min_events / max_wait_s) — ждём пачки событий, а не будим
+    # руководителя на каждое. Ответ на вопрос (B-45) накопления не ждёт: `accumulate`
+    # уже учитывает приоритет, а кнопка «Обновить сейчас» идёт другим путём.
+    acc = accumulate(ev, conf, now)
+    if not acc["ok"]:
+        out.update(action="wait", reason="accumulate",
+                   next_update_at=acc["first_at"] + _int(conf.get("max_wait_s"), DEFAULT_MAX_WAIT_S),
+                   accumulate=acc)
         return out
     # ответ на вопрос (B-45) не ждёт потолка частоты: человек уже ответил
     if not answer_priority(ev):

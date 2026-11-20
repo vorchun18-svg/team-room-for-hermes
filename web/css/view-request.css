@@ -846,10 +846,15 @@
   background: var(--ui-bg-quinary);
   min-width: 0;
 }
-.req-dev__row { min-width: 0; }
-.req-dev__line { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.req-dev__line .req-dev__text { flex: 1 1 auto; }
-.req-dev__copy { flex: none; }
+.req-dev__row { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.req-dev__label { min-width: 0; }
+.req-dev__line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
+.req-dev__line .req-dev__text { flex: 1 1 14ch; min-width: 0; }
+/* W28-QA1 (остаток W28-D7): кнопка «Копировать» в панели узла не сжимается и не
+   уезжает под строку с номером. Раньше строка «Номер задачи» была одной flex-строкой
+   без переноса и без min-width у текста: в узкой панели кнопка наезжала на подпись.
+   Теперь подпись — отдельная строка, значение переносится, кнопка всегда справа. */
+.req-dev__copy { flex: none; margin-left: auto; align-self: center; }
 .req-dev__text, .req-dev__code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .req-dev__text { color: var(--ui-text-secondary); }
 

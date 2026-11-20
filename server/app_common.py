@@ -20,7 +20,7 @@ APP_NAME = "team-room"
 #: `--body-file`, а не через командную строку Windows, поэтому 1 млн знаков
 #: (≈2 МБ кириллицы) — это «диктовка целиком», а не реальный предел движка.
 MAX_TEXT = 1_000_000
-MAX_ATTACH = 10
+MAX_ATTACH = 30
 #: Предел текста заметки: комментарий, ответ на вопрос, доработка.
 MAX_NOTE = 200_000
 ROOM_STATUSES = ("queued", "working", "reviewing", "synthesizing", "done", "needs_you", "failed")
@@ -56,13 +56,17 @@ ACTION_ALLOWED = ("dispatch", "comment", "answer", "unblock", "reassign", "rewor
                   # сменить модель (как кнопки остановки в самом Hermes).
                   # W27-E1 §1: «Не актуально» / «Вернуть» для вопроса, решения,
                   # разрешения и шага — цель в target{kind,id}.
-                  "card_stop", "card_resume", "card_model", "dismiss", "restore")
+                  # W28-B (дефект 6): недоговорные действия по разрешению приходят СВОИМИ
+                  # именами (их шлёт карточка «нельзя штатно»), а не полем decision.
+                  "card_stop", "card_resume", "card_model", "dismiss", "restore",
+                  "hint_agent", "trust_profile")
 ACTION_REQUIRED = {"answer": ("question_id",), "reassign": ("task_id", "profile"),
                    "answer_remind": ("question_id",), "step_drop": ("step_id",),
                    "step_agree": ("step_id",), "step_comment": ("step_id",),
                    "step_move": ("step_id",), "decision": ("decision_id",),
                    "question_dismiss": ("question_id",),
                    "card_stop": ("task_id",), "card_resume": ("task_id",),
+                   "hint_agent": ("approval_id",), "trust_profile": ("approval_id",),
                    "card_model": ("task_id", "model")}
 ACTION_TEXT = {"comment", "answer", "rework", "revise", "step_comment"}
 # D1: строгие формы значений, которые уходят в argv CLI (см. docs/critic/wave4-backend.md §2.1)

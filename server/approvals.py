@@ -243,7 +243,12 @@ def _now() -> int:
 # ---------------------------------------------------------------- домашний каталог
 
 def hermes_root(cfg) -> Path:
-    """Корень Hermes для разрешений: реальный домашний каталог или поддельный в песочнице."""
+    """Корень Hermes для разрешений: реальный домашний каталог или поддельный в песочнице.
+
+    В песочнице это ВСЕГДА `<data>/hermes-home`. Песочница тестов кладёт туда же ростер
+    профилей `team-*` и отдаёт этот путь в `cfg.hermes_home` (`tests/helpers.py`), поэтому
+    чтение и запись говорят об одном доме (W28-F).
+    """
     if getattr(cfg, "sandbox", False):
         # Демо-сервер не тренируется на живых конфигах: пишем в свой поддельный дом.
         return Path(cfg.data_dir) / "hermes-home"
@@ -1522,6 +1527,12 @@ def parse_ttl(ttl=None, ttl_min=None) -> dict:
     value = str(ttl or "").strip().lower()
     if minutes is None and value.isdigit():
         minutes = int(value)
+    # W28-B: интерфейс шлёт срок коротким ключом карточки доверия — `min30`. Пока
+    # сервер его не знал, кнопка «на 30 минут» отвечала «нужен срок» (400) при явно
+    # выбранном сроке. Принимаем `min<N>`/`m<N>` наравне с числом минут.
+    short = re.fullmatch(r"(?:min|m)_?(\d{1,4})", value) if minutes is None else None
+    if short:
+        minutes = int(short.group(1))
     if minutes is not None:
         if not 1 <= minutes <= TRUST_MAX_MIN:
             raise ApprovalError("Срок доверия — от 1 до %d минут" % TRUST_MAX_MIN, 400,
@@ -1531,8 +1542,11 @@ def parse_ttl(ttl=None, ttl_min=None) -> dict:
         return {"scope": "forever", "ttl_min": None}
     if value in ("card", "until_card", "card_end", "до конца карточки"):
         return {"scope": "card", "ttl_min": None}
+    # W28-B (дефект 6): доверие без срока — не «кривое тело», а невыполнимое действие:
+    # 422 с причиной, как и прочие «нельзя», чтобы интерфейс показал её в карточке.
     raise ApprovalError("Нужен срок доверия: ttl_min (минуты) либо ttl: card или forever",
-                        400, "ttl_required", {"field": "ttl"})
+                        422, "ttl_required", {"field": "ttl"})
+
 
 
 def _hint_text(item: dict) -> str:

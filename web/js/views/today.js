@@ -437,8 +437,10 @@ export async function mount(el, ctx) {
     const out = [];
     for (const room of rooms) {
       try {
-        const res = await apiRef.post('/api/rooms/' + encodeURIComponent(room) + '/dismiss_stale',
-          { scope: 'finished_requests', preview: true });
+        // W28-QA2: предпросмотр — ЧТЕНИЕ (GET). POST на экране «Сегодня» ловил ui_audit
+        // как «не-GET запрос»: читающий экран не должен выглядеть действием.
+        const res = await apiRef.get('/api/rooms/' + encodeURIComponent(room)
+          + '/dismiss_stale?scope=finished_requests');
         const total = Number((res && res.total) || 0);
         if (total > 0) out.push({ room, total });
       } catch { /* комната не ответила — кнопки для неё просто не будет */ }

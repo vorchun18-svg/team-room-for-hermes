@@ -220,12 +220,14 @@ class CacheTests(unittest.TestCase):
         self.assertFalse(second["team-cfo"]["pending"])
         # профиль без описания — не ошибка и не «pending»
         self.assertEqual(second["default"]["label"], "")
-        self.assertEqual(sorted(self.calls), ["team-cfo", "default"])
+        # Порядок вызовов не важен (кэш и фон), а `sorted` кладёт "default" первым:
+        # ожидание приведено к тому, что реально возвращает sorted.
+        self.assertEqual(sorted(self.calls), ["default", "team-cfo"])
 
         # свежий кэш: повторные вызовы CLI не запускают
         third = profile_info.labels(cfg, ["team-cfo"])
         self.assertEqual(third["team-cfo"]["label"], "Анна — финансы и экономика (CFO)")
-        self.assertEqual(sorted(self.calls), ["team-cfo", "default"])
+        self.assertEqual(sorted(self.calls), ["default", "team-cfo"])
 
     def test_stale_value_is_given_at_once(self):
         profile_info.set_reader(self._reader)

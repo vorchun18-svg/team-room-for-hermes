@@ -118,7 +118,8 @@
       "runs": [],
       "needs_human": false,
       "error": null,
-      "outside_room": false
+      "outside_room": false,
+      "attempts": []
     },
     {
       "id": "t_3b7e9d12",
@@ -147,7 +148,8 @@
       ],
       "needs_human": false,
       "error": null,
-      "outside_room": false
+      "outside_room": false,
+      "attempts": []
     },
     {
       "id": "t_3b7e9d13",
@@ -194,7 +196,37 @@
         "code": "worker_crashed",
         "message": "Процесс воркера завершился с кодом 1: KeyError('cost_packaging') — при разборе таблицы поставщика «C:\\Work\\Rooms\\demo\\2026-11-06 Письмо поставщику — ответ\\Котировки упаковка городе — финал.xlsx» не нашлось колонки с ценой короба, поэтому расчёт маржи по каналам (Telegram, «Едок», B2B-кофейни) остановлен на шаге свода; проверьте, что в листе «Котировки» есть столбец cost_packaging и что строка итогов не сдвинута вниз пустыми строками."
       },
-      "outside_room": false
+      "outside_room": false,
+      "attempts": [
+        {
+          "n": 1,
+          "outcome": "failed",
+          "reason": "Процесс воркера завершился с кодом 1: KeyError('cost_packaging')",
+          "model": "deepseek-v4.1-flash:1017",
+          "provider": "ollama-cloud",
+          "calls": 2,
+          "started_at": 1793160510,
+          "ended_at": 1793160660,
+          "duration_s": 150,
+          "guard": false,
+          "ok": false,
+          "final": false
+        },
+        {
+          "n": 2,
+          "outcome": "failed",
+          "reason": "exit 1: KeyError('cost_packaging') (повтор после правки файла C:\\Work\\Rooms\\demo\\2026-11-06 Письмо поставщику — ответ\\Котировки упаковка городе — финал.xlsx)",
+          "model": "deepseek-v4.1-flash:1017",
+          "provider": "ollama-cloud",
+          "calls": 4,
+          "started_at": 1793160700,
+          "ended_at": 1793160800,
+          "duration_s": 100,
+          "guard": false,
+          "ok": false,
+          "final": true
+        }
+      ]
     }
   ],
   "timeline": [

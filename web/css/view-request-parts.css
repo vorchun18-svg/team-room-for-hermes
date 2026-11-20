@@ -179,6 +179,22 @@
 .rp-node__attempt-n { font-weight: 600; flex: none; }
 .rp-node__attempt-at { flex: none; }
 .rp-node__attempt-why { min-width: 0; overflow-wrap: anywhere; }
+/* W28-C2: убитая контролем моделей попытка — СПОКОЙНАЯ строка (не красная плашка). */
+.rp-node__attempt-note {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: var(--space-1); padding: var(--space-1) var(--space-2);
+  border-left: 2px solid var(--border-soft); border-radius: var(--radius-sm);
+  background: var(--ui-bg-quinary);
+}
+.rp-attempt__line {
+  display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap;
+  font-size: var(--text-sm); color: var(--ui-text-secondary); min-width: 0;
+}
+.rp-attempt__icon { flex: none; color: var(--ui-text-tertiary); }
+.rp-attempt__text { min-width: 0; overflow-wrap: anywhere; }
+.rp-attempt__model { flex: none; }
+.rp-attempt__more { padding-left: calc(12px + var(--space-2)); }
+.rp-attempt__link { padding-left: 0; padding-right: 0; }
 /* B-25: кнопка повтора и её статус «принято, в очереди». */
 .rp-retry { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-width: 0; }
 .rp-retry__status { color: var(--ok-ink); max-width: 260px; }
@@ -204,14 +220,20 @@
 .rp-comment__text { font-size: var(--text-sm); color: var(--ui-text-secondary); overflow-wrap: anywhere; }
 
 .rp-run {
-  display: grid; grid-template-columns: minmax(90px, auto) 64px minmax(0, 1fr); gap: var(--space-2);
-  align-items: baseline; font-size: var(--text-sm); padding: 2px 0;
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm); padding: 2px 0;
   border-top: 1px solid var(--ui-stroke-quaternary);
 }
 .rp-run:first-of-type { border-top: 0; }
 .rp-run__status { color: var(--ui-text-secondary); }
 .rp-run--failed .rp-run__status { color: var(--danger-ink); }
-.rp-run__error { grid-column: 1 / -1; color: var(--danger-ink); overflow-wrap: anywhere; }
+/* W28-C2: остановленная контролем моделей попытка — нейтральная, не красная. */
+.rp-run--guard .rp-run__status { color: var(--ui-text-secondary); }
+.rp-run__model { min-width: 0; overflow-wrap: anywhere; }
+.rp-run__calls { white-space: nowrap; }
+.rp-run__calls::before { content: 'вызовов '; }
+.rp-run__error { flex: 1 1 100%; color: var(--danger-ink); overflow-wrap: anywhere; }
 
 /* ── Файлы: «Просмотр» во встроенной панели (W26-D3) ─────────────────────── */
 .rp-preview { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }

@@ -697,6 +697,13 @@ ROUTES = [(method, re.compile(pattern), handler) for method, pattern, handler in
     # B-22 WAVE19: прежний адрес «В проводнике» для файлов комнаты — оставлен
     # для совместимости (W26-D3), новое имя — /api/files/launch {mode:"reveal"}.
     ("POST", r"/api/artifacts/open", "h_artifact_open"),
+    # W28-A (дефект 4): окно выбора файлов Windows для скрепки — несколько файлов
+    # за раз, пути возвращает сервер (браузер полный путь не отдаёт).
+    ("POST", r"/api/files/pick", "h_files_pick"),
+    # W28-A: проверка вложений до отправки (имя, размер, «похоже на секрет»)
+    # и действия чипа — «Открыть» / «Открыть в папке».
+    ("POST", r"/api/files/attach-check", "h_files_attach_check"),
+    ("POST", r"/api/files/attach-open", "h_files_attach_open"),
     ("GET", r"/api/ics", "h_ics"),
     ("GET", r"/api/export/request/" + _RID + r"\.md", "h_export_md"),
     ("GET", r"/api/export/request/" + _RID + r"\.html", "h_export_html"),
@@ -759,6 +766,12 @@ from server.routes_approvals import install_approvals_routes                   #
 
 install_approvals_routes(App, ROUTES)
 
+# --- расход токенов запроса (W28-E): «Расход: N вызовов, M тыс. токенов» ------------
+# ``GET /api/requests/{id}/usage`` — server/usage.py (state.db только на чтение).
+from server.usage import install_usage_routes                                 # noqa: E402
+
+install_usage_routes(App, ROUTES)
+
 # --- экран «Сегодня» (W24 §3.1, пакет N2): что ждёт человека ------------------
 # ``GET /api/today`` — сводка по всем комнатам, ``POST /api/today/seen`` — отметка
 # захода (``data/state/today.json``). Правила — server/today.py.
@@ -802,6 +815,14 @@ install_delo_routes(App, ROUTES)
 from server.routes_autonomy import install_autonomy_routes                        # noqa: E402
 
 install_autonomy_routes(App, ROUTES)
+
+# --- вложения человека: окно выбора файлов (W28-A, дефект 4) -------------------
+# ``POST /api/files/pick``, ``…/attach-check``, ``…/attach-open`` —
+# server/routes_files_pick.py (проверка путей — server/attachments.py).
+# Строки маршрутов добавлены выше, в общем списке ROUTES.
+from server.routes_files_pick import install_pick_routes                           # noqa: E402
+
+install_pick_routes(App)
 
 
 # --- сервер ----------------------------------------------------------------

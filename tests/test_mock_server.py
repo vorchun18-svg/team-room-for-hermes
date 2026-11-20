@@ -1076,8 +1076,16 @@ class MockServerTest(unittest.TestCase):
         self.assertEqual(self.json(path, "POST", {"text": "a\x00b"})[0], 400)
         self.assertEqual(self.json(path, "POST", {"text": "x", "urgent": "да"})[0], 400)
         self.assertEqual(self.json(path, "POST", {"text": "x", "attach": "файл"})[0], 400)
+        # W28-A: белого списка папок у вложения больше нет — файл вне «разрешённых мест»
+        # прикрепляется (сервер проверяет только «есть, это файл, читается»). Мок диска
+        # не читает вовсе, поэтому проверяем то, что он обязан соблюдать: пустой путь —
+        # 400, больше 30 файлов — 400, а непустой путь проходит и виден в сообщении.
         status, _, err = self.json(path, "POST", {"text": "x", "attach": [r"C:\Windows\win.ini"]})
-        self.assertEqual(status, 403)
+        self.assertEqual(status, 201, err)
+        self.assertEqual(self.json(path, "POST", {"text": "x", "attach": ["  "]})[0], 400)
+        self.assertEqual(
+            self.json(path, "POST", {"text": "x", "attach": ["C:/a/%d.txt" % i for i in range(31)]})[0],
+            400, "больше 30 вложений — отказ")
         self.assertEqual(self.json("/api/requests/t_ffffffff/messages", "POST", {"text": "x"})[0], 404)
         self.assertEqual(self.call(path, "GET")[0], 405)
 

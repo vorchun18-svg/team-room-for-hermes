@@ -327,6 +327,37 @@ def op_untrust(req: dict) -> dict:
             "changed": after != "approve"}
 
 
+def _mode_matches(want: str, have: str) -> bool:
+    """Совпадает ли записанный режим с желаемым (``deny`` — умолчание Hermes).
+
+    Hermes пишет конфиг без значений, равных умолчанию: ``single_query_mode: deny``
+    может не оказаться в файле, и это ТО ЖЕ поведение, а не «не записалось».
+    """
+    target = str(want or "").strip().lower()
+    got = str(have or "").strip().lower()
+    if target == got:
+        return True
+    return target == "deny" and got == ""
+
+
+def _read_deny(home: Path) -> list[str]:
+    """``approvals.deny`` профиля как список строк (только чтение, без Hermes)."""
+    path = home / "config.yaml"
+    if not path.is_file():
+        return []
+    try:
+        import yaml                                            # noqa: PLC0415 - есть не всегда
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            data = yaml.safe_load(fh) or {}
+    except Exception:                                           # noqa: BLE001
+        return []
+    approvals = data.get("approvals") if isinstance(data, dict) else None
+    raw = approvals.get("deny") if isinstance(approvals, dict) else None
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if isinstance(item, str)]
+
+
 def op_apply(req: dict) -> dict:
     """Применить уровень автономии комнаты к ОДНОМУ профилю (W27-E5, §2).
 
@@ -398,11 +429,26 @@ def op_apply(req: dict) -> dict:
         raise GrantError("Не удалось сохранить настройки профиля: %s" % str(exc)[:200],
                          "failed") from exc
     after = _read_allowlist(home)
-    return {"ok": True, "op": "apply", "home": str(home),
+    after_deny = _read_deny(home)
+    after_mode = _read_single_query_mode(home)
+    # Подтверждение ФАЙЛА, а не ответа инструмента: прибавленный ключ обязан быть в списке
+    # сразу после записи. Иначе отказываем здесь — сервер не должен показывать «записано»
+    # там, где файл пуст, и наоборот.
+    missing = [key for key in add if key not in after]
+    if missing:
+        raise GrantError("Hermes не записал в список разрешений: %s"
+                         % ", ".join(missing)[:200], "failed")
+    if mode and not _mode_matches(mode, after_mode):
+        raise GrantError("Hermes не записал «запуски без человека»: ожидалось «%s», в файле «%s»"
+                         % (mode, after_mode or "нет"), "failed")
+    if deny is not None and sorted(after_deny) != sorted(deny):
+        raise GrantError("Hermes не записал список «только с моего да» целиком "
+                         "(в файле %d из %d)" % (len(after_deny), len(deny)), "failed")
+    return {"ok": True, "op": "apply", "home": str(home), "config": str(home / "config.yaml"),
             "allowlist": after[:MAX_ALLOWLIST], "changed": after != before,
-            "single_query_mode": _read_single_query_mode(home),
+            "single_query_mode": after_mode,
             "previous_single_query_mode": before_mode,
-            "deny": list(approvals.get("deny") or [])[:MAX_ALLOWLIST]}
+            "deny": after_deny[:MAX_ALLOWLIST]}
 
 
 OPS = {"list": op_list, "add": op_add, "remove": op_remove, "check": op_check,

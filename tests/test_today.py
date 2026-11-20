@@ -379,6 +379,27 @@ class TodayExactItemsTests(unittest.TestCase):
             ]},
         )
 
+    def test_blocked_card_waits_for_human_in_both_places(self):
+        """W28-F: заблокированная карточка — «ждёт вас» и в «Сегодня», и во вкладке.
+
+        У неё есть действие (ответ → `action: unblock`), поэтому число экрана и число
+        вкладки «От вас нужно» считают её одинаково. Одно число — один источник.
+        """
+        sources = self._sources({"t_a1": [
+            {"kind": "question", "id": "q_open", "text": "Нужна ли английская версия?",
+             "since": NOW - 2 * DAY},
+            {"kind": "blocked", "id": "t_block", "text": "Смета на упаковку",
+             "since": NOW - 3600},
+        ]})
+        view = today.build(sources, last_visit_at=NOW - DAY, now=NOW)
+        kinds = [item["kind"] for item in view["needs_you"]]
+        self.assertEqual(kinds, ["question", "blocked"], view["needs_you"])
+        row = next(item for item in view["needs_you"] if item["kind"] == "blocked")
+        self.assertEqual(row["text"], "Смета на упаковку")
+        self.assertEqual(row["recommended"], today.RECOMMENDED["blocked"])
+        self.assertEqual(view["counters"]["needs_you"], 2)
+        self.assertEqual(view["rooms"][0]["needs_you"], 2)
+
     def test_answered_question_is_not_waiting_and_steps_are_not_cards(self):
         sources = self._sources({"t_a1": [
             {"kind": "question", "id": "q_open", "text": "Нужна ли английская версия?",

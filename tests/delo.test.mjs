@@ -129,11 +129,19 @@ test('фикстура: три разных сценария — письмо н
 /* ─────────────────────────────────────────────────────────────── модель */
 
 test('порядок списка: ждущие решения — первыми, затем по сроку', () => {
+  // W28-QA1: сроки считаем от «сегодня», а не от зашитой даты — иначе тест
+  // «истекает» по календарю (19.11 прошло, и дело 'a' стало просроченным).
+  const inDays = (n) => {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'),
+      String(d.getDate()).padStart(2, '0')].join('-');
+  };
   const items = [
-    { id: 'a', needs_you: [], due: '2026-11-19', updated_at: 1 },
-    { id: 'b', needs_you: [{ id: 'n' }], due: '2026-12-01', updated_at: 2 },
+    { id: 'a', needs_you: [], due: inDays(1), updated_at: 1 },
+    { id: 'b', needs_you: [{ id: 'n' }], due: inDays(12), updated_at: 2 },
     { id: 'c', needs_you: [], due: null, updated_at: 3 },
-    { id: 'd', needs_you: [{ id: 'm' }], due: '2026-11-21', updated_at: 1 },
+    { id: 'd', needs_you: [{ id: 'm' }], due: inDays(3), updated_at: 1 },
   ];
   assert.deepEqual(sortDelos(items).map((d) => d.id), ['d', 'b', 'a', 'c']);
   assert.equal(needsTotal(items), 2);

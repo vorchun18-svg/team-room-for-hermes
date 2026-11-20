@@ -905,40 +905,79 @@ class DefaultsTest(unittest.TestCase):
         (self._profile_dir(profile) / "config.yaml").write_text(text, "utf-8")
 
     def test_real_configs_match_yaml(self):
-        """Каждый профиль — ровно свои `model.provider/model.default/agent.reasoning_effort`."""
-        real = _real_hermes_home()
-        if real is None:
-            self.skipTest("нет реального Hermes — нечего копировать")
+        """Каждый профиль — ровно свои `model.provider/model.default/agent.reasoning_effort`.
+
+        W28-QA1: тест больше не читает `config.yaml` живой машины. Раньше он копировал
+        реальные конфиги и требовал конкретных значений (`ollama-cloud·glm-5.3-flash`,
+        `anthropic·claude-sonnet-5-5`, профили `team-*`) — на любой другой машине это
+        красное, хотя код верен. Теперь дом поддельный: набор профилей пишем сами
+        (имена нейтральные, значения — те же грабли, что встречаются в жизни: провайдер
+        без модели, модель без провайдера, `reasoning_effort: false`, отступ в 4 пробела),
+        а эталон берём из этого же YAML независимым разбором. Проверяется правило, а не
+        настройки стенда: провайдер и модель читаются ВМЕСТЕ и только из своего профиля.
+        """
         try:
             import yaml                      # независимый разбор: эталон для сравнения
         except ImportError:                  # pragma: no cover - стенд без PyYAML
             self.skipTest("нет PyYAML — нечем перепроверить конфиги")
-        sources = [real / "config.yaml"] + sorted((real / "profiles").glob("*/config.yaml"))
-        if len(sources) < 5:
-            self.skipTest("мало конфигов Hermes — на чистом раннере нечего сравнивать")
+
+        #: имя профиля → текст config.yaml; `default` — корневой дом
+        fixtures = [
+            ("default", "model:\n  provider: anthropic\n  default: claude-sonnet-5-5\n"
+                        "agent:\n  reasoning_effort: high\n"),
+            ("team-cfo", "model:\n  provider: ollama-cloud\n  default: glm-5.3-flash\n"
+                         "agent:\n  reasoning_effort: ultra\n"),
+            ("team-director", "model:\n    provider: ollama-cloud\n"
+                              "    default: deepseek-v4.1-flash:1017\n"
+                              "agent:\n    reasoning_effort: ultra\n"),
+            ("team-ops", "model:\n  provider: llamacpp\n  default: qwen36v\n"
+                         "  base_url: http://127.0.0.1:8090/v1\n"
+                         "agent:\n  reasoning_effort: false\n"),
+            ("team-critic", "model:\n  provider: ollama-cloud\n"
+                            "agent:\n  reasoning_effort: medium\n"),
+            ("team-runner", "agent:\n  max_turns: 20\n  reasoning_effort: low\n"),
+        ]
+        for name, text in fixtures:
+            (self._profile_dir(name) / "config.yaml").write_text(text, "utf-8")
 
         checked = 0
-        for source in sources:
-            name = "default" if source.parent == real else source.parent.name
-            text = source.read_text("utf-8", "replace")
+        shared_text = dict(fixtures)["default"]
+        shared_data = yaml.safe_load(shared_text) or {}
+        shared_model = shared_data.get("model") or {}
+        shared_agent = shared_data.get("agent") or {}
+        shared = (str(shared_model.get("provider") or ""),
+                  str(shared_model.get("default") or ""),
+                  str(shared_agent.get("reasoning_effort") or "").strip())
+        for name, text in fixtures:
             data = yaml.safe_load(text) or {}
             model = data.get("model") or {}
             agent = data.get("agent") or {}
-            effort = str(agent.get("reasoning_effort") or "").strip()
-            if effort.lower() in ("false", "none", "disabled"):
+            raw = agent.get("reasoning_effort")
+            effort = "" if raw is None else str(raw).strip()
+            # YAML `false` приходит булевым — правило приложения: «выключено» = none
+            if raw is False or effort.lower() in ("false", "none", "disabled"):
                 effort = "none"
-            expected = {"provider": str(model.get("provider") or ""),
-                        "model": str(model.get("default") or model.get("name") or ""),
-                        "reasoning": effort}
-            (self._profile_dir(name) / "config.yaml").write_text(text, "utf-8")
+            own = {"provider": str(model.get("provider") or ""),
+                   "model": str(model.get("default") or model.get("name") or ""),
+                   "reasoning": effort}
+            # Правило W20 §1.5: неполная пара (провайдер без модели / модели нет) не
+            # смешивается с чужим источником — берётся ОБЩАЯ пара Hermes целиком.
+            if own["provider"] and own["model"] or name == "default":
+                expected = own
+            else:
+                expected = {"provider": shared[0], "model": shared[1], "reasoning": shared[2]}
             self.assertEqual(models_mod.agent_default(self.cfg, name), expected,
                              "дефолт профиля «%s» разошёлся с его config.yaml" % name)
             checked += 1
         self.assertGreaterEqual(checked, 5)
 
+        # правило целиком: провайдер и модель вместе, уровень — из своего профиля
         for name, expected in (("team-cfo", ("ollama-cloud", "glm-5.3-flash", "ultra")),
-                               ("team-director", ("ollama-cloud", "glm-5.3-flash", "ultra")),
-                               ("team-critic", ("ollama-cloud", "glm-5.3-flash", "ultra"))):
+                               ("team-director", ("ollama-cloud",
+                                                  "deepseek-v4.1-flash:1017", "ultra")),
+                               ("team-ops", ("llamacpp", "qwen36v", "none")),
+                               # провайдер без модели — берём ОБЩУЮ пару целиком (W20 §1.5)
+                               ("team-critic", ("anthropic", "claude-sonnet-5-5", "high"))):
             with self.subTest(profile=name):
                 value = models_mod.agent_default(self.cfg, name)
                 self.assertEqual((value["provider"], value["model"], value["reasoning"]),
@@ -946,6 +985,10 @@ class DefaultsTest(unittest.TestCase):
         root = models_mod.agent_default(self.cfg, "default")
         self.assertEqual((root["provider"], root["model"]), ("anthropic", "claude-sonnet-5-5"),
                          "корневой config: provider и default вместе, а не по отдельности")
+        # профиль без пары модель+провайдер не смешивает источники: берёт общую пару целиком
+        bare = models_mod.agent_default(self.cfg, "team-runner")
+        self.assertEqual((bare["provider"], bare["model"]), ("anthropic", "claude-sonnet-5-5"))
+        self.assertNotEqual(("llamacpp", "qwen36v"), (bare["provider"], bare["model"]))
 
     def test_four_space_indent(self):
         self._write("deep", "model:\n    provider: ollama-cloud\n"

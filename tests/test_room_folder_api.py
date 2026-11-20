@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 from urllib.parse import quote
@@ -29,7 +30,7 @@ if str(ROOT) not in sys.path:
 
 import server.app as app_mod                      # noqa: E402
 from server import config, project_dir            # noqa: E402
-from tests.helpers import Sandbox, snapshot_real_db  # noqa: E402
+from tests.helpers import Sandbox, seed_fake_hermes_home, snapshot_real_db  # noqa: E402
 from tests import ci_marks                       # noqa: E402
 
 B = chr(92)
@@ -52,6 +53,10 @@ class RoomFolderApi(unittest.TestCase):
         })
         cls.cfg = config.load()
         cls.cfg.ensure_dirs()
+        # W28-QA1: ростер профилей — в поддельном доме песочницы (как `Sandbox`, W28-F).
+        # Без этого сервер берёт ростер из живого Hermes (`исполнители`) и комната не создаётся.
+        cls.cfg = replace(cls.cfg, hermes_home=seed_fake_hermes_home(
+            Path(cls.cfg.data_dir) / "hermes-home"))
         cls.before_board = snapshot_real_db(cls.cfg)
         cls.server = app_mod.create_app(cls.cfg, start_watcher=False, port=0)
         cls.port = cls.server.server_address[1]

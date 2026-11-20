@@ -30,6 +30,13 @@ ITEM_STATES = ("open", "answered", "accepted", "rejected", "dismissed", "done")
 #: Состояния разрешения (контракт §1).
 APPROVAL_STATES = ("pending", "granted_once", "granted_always", "denied", "expired",
                    "closed", "dismissed")
+#: Ещё состояния разрешения — из словаря ``approvals.STATES`` (W26-D1, W28-B):
+#: «нельзя штатно» (`workaround`), жёсткий запрет (`info`), подсказка участнику
+#: (`hinted`) и доверие профилю (`trusted`). Человеку они НЕ «ждут решения», поэтому
+#: в счётчик не входят. Раньше эта дверь их не знала и молча превращала `state`
+#: в `pending`: недоговорная блокировка попадала в «нужно от вас» и рисовалась как
+#: вопрос с кнопками разрешения — то есть кнопки дефекта 6 не работали и по счётчику.
+APPROVAL_EXTRA_STATES = ("workaround", "info", "hinted", "trusted")
 #: Почему пункт закрыт. Один словарь на сервер, интерфейс и тексты.
 CLOSED_REASONS = ("card_finished", "request_done", "dismissed", "superseded")
 REASON_RU = {
@@ -157,7 +164,12 @@ def item_state(kind: str, item: dict) -> str:
         return step_state(item)
     if kind == "approval":
         state = str((item or {}).get("state") or "").strip().lower()
-        return state if state in APPROVAL_STATES else "pending"
+        if state in APPROVAL_STATES or state in APPROVAL_EXTRA_STATES:
+            # W28-B: недоговорные/информационные состояния — как есть. Иначе
+            # `workaround`/`info`/`hinted`/`trusted` становились `pending` и попадали
+            # в «нужно от вас», хотя разрешить их нельзя (правило «без тупиков»).
+            return state
+        return "pending"
     return "open"
 
 
@@ -333,7 +345,7 @@ def open_targets(detail: dict) -> list[dict]:
     return out
 
 
-__all__ = ["ITEM_STATES", "APPROVAL_STATES", "CLOSED_REASONS", "REASON_RU",
+__all__ = ["ITEM_STATES", "APPROVAL_STATES", "APPROVAL_EXTRA_STATES", "CLOSED_REASONS", "REASON_RU",
            "WAITING_ITEM_STATES", "FINISHED_REQUESTS", "KINDS", "ACTION_LABELS",
            "ACTION_HINTS", "SECTIONS", "STALE_SCOPES",
            "AUTO_CLOSE_REQUESTS", "request_finished", "auto_closeable", "question_state", "decision_state", "step_state",

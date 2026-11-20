@@ -40,6 +40,8 @@ ROUTES = [
     ("POST", r"/api/approvals/tidy", "h_approvals_tidy"),
     # W27-E1 §1: массовое «Закрыть все неактуальные» — только у завершённых запросов.
     ("POST", r"/api/rooms/(?P<room>[^/]+)/dismiss_stale", "h_dismiss_stale"),
+    # W28-QA2: предпросмотр — чтение (GET), чтобы экран «Сегодня» не слал POST.
+    ("GET", r"/api/rooms/(?P<room>[^/]+)/dismiss_stale", "h_stale_preview"),
 ]
 
 #: Сколько знаков заметки пользователя принимаем (подпись к решению).
@@ -205,6 +207,16 @@ class ApprovalRoutes:
             payload.pop("requests", None)
             payload.pop("already_closed", None)
         return 200, payload, {"Cache-Control": "no-store"}
+
+    def h_stale_preview(self, query, body, room):
+        """``GET /api/rooms/{room}/dismiss_stale?scope=finished_requests`` — предпросмотр.
+
+        Ничего не пишет: то же вычисление, что у POST с ``preview:true``, но ЧТЕНИЕ.
+        Экраны «Сегодня» и «От вас нужно» спрашивают «сколько закроется» — это не
+        действие, и ui_audit не должен ловить POST на экранах чтения (W28-QA2).
+        """
+        scope = _first(query, "scope") or "finished_requests"
+        return self.h_dismiss_stale(query, {"scope": scope, "preview": True}, room)
 
     def _reload_record(self, room_id: str, rid: str) -> dict | None:
         """Свежая запись реестра по id запроса (после записи в реестр ответов)."""

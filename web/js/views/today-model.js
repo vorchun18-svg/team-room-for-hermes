@@ -31,6 +31,7 @@ export const KIND_LABELS = {
   step: 'шаг',
   draft: 'черновик',
   failure: 'сбой',
+  blocked: 'заблокированная задача',
 };
 
 /** Виды проблем дежурства (§3.2: problem.kind). */

@@ -392,7 +392,10 @@ class T3ActionsTests(Case):
         item = self.item([("execute_code", CALL_CODE, BLOCK_CODE)])
         with self.assertRaises(ap.ApprovalError) as ctx:
             ap.decide(self.cfg, self.room, CARD, item["id"], "trust_profile")
-        self.assertEqual(ctx.exception.http, 400)
+        # W28-B (дефект 6): срок — не «кривое тело», а невыполнимое действие, поэтому
+        # ответ 422 с причиной (было 400): интерфейс рисует причину в карточке наравне
+        # с «жёсткий запрет»/«нельзя штатно». Код `ttl_required` не изменился.
+        self.assertEqual(ctx.exception.http, 422)
         self.assertEqual(ctx.exception.code, "ttl_required")
         self.assertEqual(ap.collect(self.cfg, self.room, CARD)[0]["state"], "workaround")
 

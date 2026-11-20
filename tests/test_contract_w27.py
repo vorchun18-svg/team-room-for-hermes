@@ -66,10 +66,11 @@ def object_keys(text: str, name: str) -> set:
     return set(re.findall(r"^\s{2}([A-Za-z_][A-Za-z0-9_]*)\s*:", match.group(1), re.M))
 
 
-#: Состояния, которые интерфейс знает СВЕРХ серверных (W26: подсказка участнику,
-#: скрытая информационная строка, «слово, которого экран не знает»). Это не
-#: расхождение контракта: сервер таких состояний не отдаёт.
-JS_ONLY_APPROVAL_STATES = {"hinted", "acked", "unknown"}
+#: Состояния, которые интерфейс знает СВЕРХ счётного словаря §1 (W26/W28-B: подсказка
+#: участнику, «нельзя штатно», жёсткий запрет, доверие профилю, скрытая строка). Это не
+#: расхождение контракта: сервер отдаёт их в `approvals[].state` (W28-B), но в
+#: `stale.APPROVAL_STATES` они не входят — в счётчик «нужно от вас» они не попадают.
+JS_ONLY_APPROVAL_STATES = {"hinted", "acked", "unknown", "workaround", "info", "trusted"}
 
 
 class StateMirrorTest(unittest.TestCase):

@@ -72,7 +72,14 @@ export const APPROVAL_STATES = {
   // `pending` — «ждёт вашего решения» без единого способа решить.
   closed: { label: 'работа завершена', tone: 'muted' },
   // W26-D2: исходы «нельзя штатно» — у человека есть рычаги, и они видны словами.
+  // W28-B (дефект 6): сервер отдаёт их ЧЕСТНО, своим состоянием (`workaround`/`info`),
+  // а не словом `pending`. Пока экран их не знал, карточка «нельзя штатно» получала
+  // состояние «неизвестно», кнопки «Подсказать…»/«Доверять…» не рисовались, и нажатие
+  // молча ничего не делало.
   hinted: { label: 'подсказано участнику', tone: 'info' },
+  workaround: { label: 'нельзя разрешить — есть другой способ', tone: 'info' },
+  info: { label: 'жёсткий запрет — информация', tone: 'muted' },
+  trusted: { label: 'доверено профилю', tone: 'ok' },
   dismissed: { label: 'закрыто как неактуальное', tone: 'muted' },
   acked: { label: 'скрыто', tone: 'muted' },
   // W27-E2 §1: слово, которого интерфейс не знает, — НЕ «ждёт вас». Так безопаснее:
@@ -95,6 +102,12 @@ export const APPROVAL_STATE_HINTS = {
     + 'если пункт снова стал нужен.',
   hinted: 'Участнику отправлена подсказка в ветку карточки: сделать то же через файл и терминал. '
     + 'Блокировка снята с вас, работа продолжается.',
+  workaround: 'Эту блокировку нельзя снять разрешением, но у вас есть рычаги: подсказать участнику '
+    + 'другой путь, доверить запуск кода профилю (со сроком) или закрыть пункт как неактуальный.',
+  info: 'Hermes запрещает это настрого — разрешить нельзя. Это информация, а не вопрос: '
+    + 'участнику можно передать «ищи другой способ», и пункт не висит в «Нужен ваш ответ».',
+  trusted: 'Профилю доверен запуск кода на выбранный срок: такие команды больше не спрашиваются, '
+    + 'жёсткие запреты Hermes остаются. Отозвать — в Настройках → Разрешения агентов.',
   dismissed: 'Пункт закрыт как неактуальный: ждать его некому, в счётчиках его нет.',
   acked: 'Строка убрана с экрана: это был не вопрос к вам, а информация о жёстком запрете.',
   unknown: 'Экран не знает такого состояния — поэтому пункт не считается «ждёт вас». '
@@ -157,6 +170,21 @@ export function isWaiting(a) {
   return approvalState(a) === 'pending' && approvalDeadEnd(a) !== DEAD_ENDS.floor;
 }
 
+/**
+ * Состояния, в которых у пункта ЕСТЬ кнопка: решение ещё не принято (W28-B).
+ *
+ * Сервер честно различает «ждёт разрешения» (`pending`), «нельзя разрешить, но есть
+ * способ» (`workaround`) и «жёсткий запрет — информация» (`info`). Раньше экран знал
+ * только `pending`, поэтому у карточек «нельзя штатно» состояние становилось
+ * «неизвестно» и кнопки не рисовались вовсе.
+ */
+export const ACTIONABLE_STATES = new Set(['pending', 'workaround']);
+
+/** У пункта есть кнопка, которая меняет состояние (и это не жёсткий запрет). */
+export function isActionable(a) {
+  return ACTIONABLE_STATES.has(approvalState(a)) && approvalDeadEnd(a) !== DEAD_ENDS.floor;
+}
+
 /** Ждущие решения с действием (счётчики и «Нужен ваш ответ»). */
 export function waitingApprovals(list) {
   return (Array.isArray(list) ? list : []).filter(isWaiting);
@@ -165,7 +193,8 @@ export function waitingApprovals(list) {
 /** Жёсткие запреты — информационные строки под счётчиком. */
 export function floorApprovals(list) {
   return (Array.isArray(list) ? list : [])
-    .filter((a) => a && approvalState(a) === 'pending' && approvalDeadEnd(a) === DEAD_ENDS.floor);
+    .filter((a) => a && approvalDeadEnd(a) === DEAD_ENDS.floor
+      && ['pending', 'info', 'workaround'].includes(approvalState(a)));
 }
 
 /** Сроки доверия профилю (обязателен: «навсегда» — отдельный выбор человека). */
@@ -639,6 +668,17 @@ function otherCommands(group, compact) {
 }
 
 /**
+ * Причина неудачного нажатия — ПОСТОЯННО в карточке, до успешного повтора (W28-B).
+ *
+ * Дефект 6: тост исчезал, карточка откатывалась к исходному виду, и повторные нажатия
+ * выглядели как «зависло». Причина хранится по id пункта — значит переживает перерисовку
+ * (стор перестраивает дерево после каждого действия), и у неё всегда есть «Повторить»,
+ * которое отправляет то же самое действие заново.
+ * @type {Map<string, {text:string, decision?:string, action?:string, extra?:object}>}
+ */
+const ACTION_ERRORS = new Map();
+
+/**
  * Карточка запроса разрешения.
  *
  * @param {object} approval Approval из API
@@ -711,6 +751,45 @@ export function approvalCard(approval, opts = {}) {
   body.appendChild(result);
   body.appendChild(errorBox);
 
+  /**
+   * Строка причины с кнопкой «Повторить» (W28-B). Причина остаётся в карточке, пока
+   * действие не пройдёт: тост исчезает через пару секунд, а объяснение — нет.
+   */
+  function errorLine(saved) {
+    const retry = h('button', {
+      type: 'button', class: 'btn btn--sm btn--secondary ap__retry',
+      'data-action': 'approval-retry',
+      title: 'Отправить то же действие ещё раз — причина останется, пока не получится',
+    }, icon('retry', { size: 12 }), 'Повторить');
+    retry.addEventListener('click', (ev) => {
+      if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+      errorBox.replaceChildren();
+      if (saved.decision) run(saved.decision);
+      else runOther(saved.action, saved.extra || {});
+    });
+    return h('div', { class: 'ap__error-line ap__error-line--sticky', 'data-ap-error': '1' },
+      icon('warning', { size: 12 }), h('span', null, String(saved.text || 'Не получилось')), retry);
+  }
+
+  /** Показать сохранённую причину (после перерисовки карточки в том числе). */
+  function paintError() {
+    const saved = ACTION_ERRORS.get(String(a.id || ''));
+    if (!saved) return;
+    errorBox.replaceChildren(errorLine(saved));
+  }
+
+  function rememberError(saved) {
+    ACTION_ERRORS.set(String(a.id || ''), saved);
+    errorBox.replaceChildren(errorLine(saved));
+  }
+
+  function forgetError() {
+    ACTION_ERRORS.delete(String(a.id || ''));
+    errorBox.replaceChildren();
+  }
+
+  paintError();
+
   /** Заблокировать/разблокировать кнопки: двойное нажатие не даёт дублей. */
   function setBusy(value) {
     busy = value;
@@ -747,7 +826,7 @@ export function approvalCard(approval, opts = {}) {
    * перечитывает сервер — строка уходит в «Закрытые» сама.
    */
   function settleDecided(err) {
-    errorBox.replaceChildren();
+    forgetError();
     state = 'unknown';
     showResult('Уже решено — обновляю состояние', 'muted');
     node.setAttribute('data-ap-conflict', 'already_decided');
@@ -768,6 +847,7 @@ export function approvalCard(approval, opts = {}) {
     errorBox.replaceChildren();
     try {
       const res = await onDecide(decision);
+      forgetError();
       state = decision === 'deny' ? 'denied'
         : decision === 'always' || (res && res.grant && res.grant.scope === 'always')
           ? 'granted_always' : 'granted_once';
@@ -783,8 +863,8 @@ export function approvalCard(approval, opts = {}) {
         return;
       }
       const text = approvalErrorText(err);
-      errorBox.replaceChildren(h('div', { class: 'ap__error-line' }, icon('warning', { size: 12 }),
-        h('span', null, text)));
+      // W28-B: причина остаётся в карточке (с «Повторить»), а не только в тосте.
+      rememberError({ text, decision });
       if (isGone(err)) state = 'unknown';
       if (typeof opts.toast === 'function') opts.toast(text, 'danger');
     }
@@ -794,7 +874,7 @@ export function approvalCard(approval, opts = {}) {
   const canAct = typeof opts.onAction === 'function' || onDecide !== null;
 
   // Плашка причины: у «нельзя штатно» и жёсткого запрета — своя, над кнопками.
-  if (state === 'pending' && deadEnd !== DEAD_ENDS.grantable) {
+  if (ACTIONABLE_STATES.has(state) && deadEnd !== DEAD_ENDS.grantable) {
     body.insertBefore(floorPlate(deadEnd === DEAD_ENDS.floor ? '' : APPROVALS_RU.ungrantable), actions);
   }
 
@@ -820,13 +900,15 @@ export function approvalCard(approval, opts = {}) {
   async function runOther(action, extra) {
     if (busy) return;
     // «Вернуть» доступно и у закрытого пункта — состояние не `pending`.
-    if (action !== 'restore' && state !== 'pending') return;
+    // W28-B: у «нельзя штатно» состояние своё (`workaround`), и кнопки там ТОЖЕ есть.
+    if (action !== 'restore' && !ACTIONABLE_STATES.has(state)) return;
     setBusy(true);
     errorBox.replaceChildren();
     try {
       const res = typeof opts.onAction === 'function' ? await opts.onAction(a, action, extra) : { ok: true };
+      forgetError();
       state = { hint_agent: 'hinted', dismiss: 'dismissed', ack: 'acked',
-        trust_profile: 'granted_always', restore: 'pending' }[action] || 'pending';
+        trust_profile: 'trusted', restore: 'pending' }[action] || 'pending';
       if (res && res.approval && res.approval.state && APPROVAL_STATES[res.approval.state]) {
         state = String(res.approval.state);
       }
@@ -841,8 +923,8 @@ export function approvalCard(approval, opts = {}) {
         return;
       }
       const text = approvalErrorText(err);
-      errorBox.replaceChildren(h('div', { class: 'ap__error-line' }, icon('warning', { size: 12 }),
-        h('span', null, text)));
+      // W28-B: причина остаётся в карточке, повтор — кнопкой «Повторить».
+      rememberError({ text, action, extra });
       if (typeof opts.toast === 'function') opts.toast(text, 'danger');
     }
   }
@@ -886,7 +968,8 @@ export function approvalCard(approval, opts = {}) {
   function paintActions() {
     actions.replaceChildren();
     // W27-E2 §1: у закрытого/снятого пункта тоже есть действие — «Вернуть».
-    if (state !== 'pending') {
+    // W28-B: `workaround` — ждущий пункт со своими кнопками, а не «решённый».
+    if (!ACTIONABLE_STATES.has(state)) {
       const stale = approvalStaleActions(Object.assign({}, a, { state }));
       if (!stale.length) return;
       for (const item of stale) {
@@ -936,7 +1019,7 @@ export function approvalCard(approval, opts = {}) {
 
   paintActions();
 
-  if (state !== 'pending') {
+  if (!ACTIONABLE_STATES.has(state)) {
     result.appendChild(h('div', { class: 'ap__result-line ap__result-line--' + (state === 'denied' ? 'danger' : 'ok') },
       icon(state === 'denied' ? 'circle-slash' : 'check', { size: 12 }),
       h('span', null, stateLine(a, state))));
@@ -963,6 +1046,10 @@ export function stateLine(a, state) {
   }
   if (st === 'granted_always') return 'Разрешено всегда';
   if (st === 'hinted') return 'Подсказано участнику — он сделает то же через файл и терминал';
+  // W28-B: честные состояния «нельзя штатно» и доверия профилю.
+  if (st === 'workaround') return 'Разрешить нельзя — есть другой способ: подсказать участнику или доверить профилю';
+  if (st === 'info') return 'Жёсткий запрет Hermes — решать здесь нечего';
+  if (st === 'trusted') return 'Доверено профилю на срок — отозвать можно в Настройках';
   if (st === 'dismissed') return 'Закрыто как неактуальное';
   if (st === 'acked') return 'Скрыто';
   if (st === 'denied') return 'Запрещено — участник будет искать другой способ';
@@ -1292,9 +1379,13 @@ export function createApprovals(R = {}) {
     const visible = list.filter((a) => approvalState(a) !== 'acked');
     const waiting = waitingApprovals(visible);
     const floor = floorApprovals(visible);
+    // W28-B: «нельзя штатно» (`workaround`) — кнопки есть, но в счётчик «ждёт ответа»
+    // он не входит (W26-D1). Показываем карточку в том же живом списке, а не в «Решённых».
+    const extra = visible.filter((a) => isActionable(a) && !waiting.includes(a));
     // W27-E2 §1: закрытые сервером — отдельно от решённых человеком: у них причина.
     const closed = closedApprovals(visible);
-    const done = visible.filter((a) => !isPending(a) && !isClosed(a));
+    const done = visible.filter((a) => !isActionable(a) && !isClosed(a)
+      && approvalState(a) !== 'info' && !floor.includes(a));
     // W27-E2 §1: число в шапке блока — с сервера (`needs_you_count.approvals`),
     // а не пересчитанное по списку. Список и число не должны спорить: именно
     // расхождение дало «27» из 20 закрытых разрешений.
@@ -1312,14 +1403,22 @@ export function createApprovals(R = {}) {
             'data-needs-you': 'approvals',
             title: approvalsWaitingLabel(count) + (server ? ' (по счёту сервера)' : ''),
           }, String(count))
-          : h('span', { class: 'chip chip--muted ap-block__count', 'data-needs-you': 'approvals' },
-            'все решены')),
+          : extra.length
+            ? h('span', {
+              class: 'chip chip--info ap-block__count', 'data-needs-you': 'approvals',
+              title: 'Разрешения эти пункты не требуют: у них есть другой способ — он ниже',
+            }, 'есть способ')
+            : h('span', { class: 'chip chip--muted ap-block__count', 'data-needs-you': 'approvals' },
+              'все решены')),
       h('p', { class: 'ap-block__lead small muted' },
         count
           ? 'Участник упёрся в запрет Hermes: команда помечена как опасная, а запуск без человека '
             + 'не может спросить сам. У каждого пункта есть действие — после него работа продолжится.'
-          : 'Запросы разрешений по этой карточке уже решены. Отозвать постоянные разрешения можно '
-            + 'в Настройках → Разрешения агентов.')));
+          : extra.length
+            ? 'Разрешить такие блокировки нельзя, но у вас есть рычаги: подсказать участнику другой '
+              + 'способ, доверить запуск кода профилю на срок или закрыть пункт как неактуальный.'
+            : 'Запросы разрешений по этой карточке уже решены. Отозвать постоянные разрешения можно '
+              + 'в Настройках → Разрешения агентов.')));
 
     // W27-E2 §1: массовое «Закрыть все неактуальные (N)» — только у завершённого
     // запроса: сервер закрывает неактуальное и не трогает решённое человеком.
@@ -1327,9 +1426,16 @@ export function createApprovals(R = {}) {
       block.appendChild(staleRow(stale.total));
     }
 
-    if (waiting.length) {
+    if (waiting.length || extra.length) {
       const box = h('div', { class: 'ap-block__list ap-block__list--live', 'data-approvals-live': '' });
       for (const a of waiting) box.appendChild(cardFor(a, false));
+      if (extra.length) {
+        // W28-B: у этих пунктов разрешения нет, но способ есть — и он тут.
+        box.appendChild(h('div', { class: 'ap-block__subhead small muted' },
+          'Нельзя разрешить штатно — есть другой способ',
+          h('span', { class: 'tnum' }, ' · ' + String(extra.length))));
+        for (const a of extra) box.appendChild(cardFor(a, false));
+      }
       block.appendChild(box);
     }
 

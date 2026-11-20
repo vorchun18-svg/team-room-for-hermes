@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import quote
 
@@ -24,7 +25,7 @@ if str(ROOT) not in sys.path:
 
 from server import config, rooms  # noqa: E402
 import server.app as app_mod      # noqa: E402
-from tests.helpers import snapshot_real_db  # noqa: E402
+from tests.helpers import seed_fake_hermes_home, snapshot_real_db  # noqa: E402
 
 
 class RoomsUnit(unittest.TestCase):
@@ -187,6 +188,11 @@ class RoomsApi(unittest.TestCase):
         })
         cls.cfg = config.load()
         cls.cfg.ensure_dirs()
+        # W28-QA1: ростер профилей — в ПОДДЕЛЬНОМ доме внутри песочницы (как `Sandbox`,
+        # W28-F): иначе сервер ищет `team-director` в живом Hermes, где живут `исполнители`,
+        # и отвечает «Профиль не найден в ростере». Тест не должен зависеть от машины.
+        cls.cfg = replace(cls.cfg, hermes_home=seed_fake_hermes_home(
+            Path(cls.cfg.data_dir) / "hermes-home"))
         cls.before_board = snapshot_real_db(cls.cfg)
         cls.server = app_mod.create_app(cls.cfg, start_watcher=False, port=0)
         cls.port = cls.server.server_address[1]

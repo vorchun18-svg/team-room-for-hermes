@@ -25,6 +25,9 @@
 
 // W27-E2 §1: «Не актуально»/«Вернуть» — тела по общему контракту, 409 — не ошибка.
 import { dismissBody, restoreBody, isAlreadyDecided, needsYouCount } from './stale-model.js';
+// W28-D7 (дефект 7): ожидание действия всегда заканчивается — иначе ключ
+// «в полёте» остаётся навсегда, и все кнопки этого пункта молча не отвечают.
+import { withTimeout, lockTimeout } from '../store.js';
 
 /** Событие «состояние запроса изменилось» (браузер). */
 export const REQUEST_CHANGED = 'teamroom:request-changed';
@@ -263,12 +266,16 @@ export function createRequestStore(opts = {}) {
     const kind = String((job && job.kind) || '');
     const id = String((job && job.id) || '');
     const key = String((job && job.key) || '') || kind + ':' + id;
+    // Сколько ждём ответа: по умолчанию общий предел действия (store.js).
+    const timeoutMs = Number(job && job.timeoutMs) > 0 ? Number(job.timeoutMs) : lockTimeout();
     const before = find(kind, id);
     const saved = before ? Object.assign({}, before) : null;
     if (state.waiting.has(key)) {
-      const err = new Error('Действие уже выполняется');
+      const err = new Error('Действие уже выполняется — подождите ответа');
       err.code = 'busy';
       err.status = 409;
+      err.hint = 'Предыдущее нажатие ещё в работе. Если ответа нет дольше '
+        + Math.round(timeoutMs / 1000) + ' с, кнопка разблокируется сама.';
       throw err;
     }
     if (job.fields && before) patch(kind, id, job.fields, { quiet: true });
@@ -276,7 +283,9 @@ export function createRequestStore(opts = {}) {
     state.action += 1;
     touch('optimistic');
     try {
-      const res = await job.request();
+      // W28-D7: ожидание ограничено. Зависший (не отвечающий) запрос раньше
+      // держал ключ и `btn.disabled` вечно: кнопка пункта замолкала навсегда.
+      const res = await withTimeout(job.request(), timeoutMs, 'Действие по запросу');
       state.error = null;
       if (res && res.detail && typeof res.detail === 'object') {
         // Сервер вернул деталь целиком — она и есть истина.

@@ -1,0 +1,88 @@
+/* composer-attach.css — чипы вложений в запросе (W28-A, дефект 4).
+ *
+ * Чип показывает имя файла, размер и три действия: «Открыть», «Открыть в папке»,
+ * «Убрать». Файл мог прийти из любой папки («Загрузки», рабочая папка проекта) —
+ * поэтому имя обрезается, а полный путь живёт в подсказке.
+ *
+ * Файл-секрет (`.env`, ключ, токен) до подтверждения — «плохой» чип с причиной и
+ * кнопкой «Всё равно прикрепить»: отказ не тупик, у человека есть действие.
+ */
+
+.cmp-attach__path {
+  resize: vertical;
+  min-height: calc(var(--space-4) * 2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.cmp-attach__chips { display: flex; flex-direction: column; gap: var(--space-1); }
+.cmp-attach__chips:empty { display: none; }
+
+.cmp-attach__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  max-width: 100%;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--ui-border, var(--border));
+  border-radius: var(--radius-sm, 6px);
+  background: var(--ui-surface, var(--surface));
+}
+
+/* Имя — первым и самым заметным: человек узнаёт файл по имени, а не по пути. */
+.cmp-attach__name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  max-width: min(360px, 45ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmp-attach__size,
+.cmp-attach__state {
+  font-size: var(--text-xs, 11px);
+  color: var(--muted, var(--descriptionForeground));
+  white-space: nowrap;
+}
+
+.cmp-attach__why {
+  font-size: var(--text-xs, 11px);
+  color: var(--danger, var(--errorForeground));
+  max-width: min(520px, 60ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmp-attach__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* «Открыть» / «Открыть в папке» / «Убрать» — тихие, но всегда на месте. */
+.cmp-attach__act {
+  font-size: var(--text-xs, 11px);
+  padding: 2px 6px;
+  min-height: 22px;
+}
+
+/* Файл не принят: рамка и фон красноватые, причина — рядом с именем. */
+.cmp-attach__item--bad {
+  border-color: var(--danger, var(--errorForeground));
+  background: color-mix(in srgb, var(--danger, var(--errorForeground)) 8%, transparent);
+}
+
+/* Скрепка с подписью: «Прикрепить файлы» — понятнее, чем голая иконка. */
+.cmp-attach-btn { display: inline-flex; align-items: center; gap: 6px; }
+.cmp-attach-btn:disabled { opacity: 0.6; cursor: progress; }
+
+@media (max-width: 720px) {
+  .cmp-attach__item { align-items: flex-start; }
+  .cmp-attach__actions { margin-left: 0; width: 100%; }
+  .cmp-attach__name { max-width: 100%; }
+}

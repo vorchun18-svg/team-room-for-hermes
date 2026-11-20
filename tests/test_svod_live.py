@@ -63,7 +63,11 @@ def make_room(**over) -> dict:
             "tenant": "room:cafe-leto", "orchestrator": "lead-anna", "critic": "critic-lev",
             "members": [{"profile": "worker-marina", "role": "worker", "note": "закупки"},
                         {"profile": "worker-petr", "role": "worker", "note": "склад"}],
-            "auto_svod": True, "auto_svod_quiet_s": QUIET, "auto_svod_min_gap_s": GAP}
+            "auto_svod": True, "auto_svod_quiet_s": QUIET, "auto_svod_min_gap_s": GAP,
+            # W28-E: накопление проверяется отдельным тестом (AccumulateTest). Здесь
+            # фикстура держит 1 событие, иначе тесты про «тишину», потолок частоты,
+            # остывание и лимит в час проверяли бы не то, для чего написаны.
+            "auto_svod_min_events": 1}
     room.update(over)
     return room
 
@@ -671,6 +675,98 @@ class ContractTest(unittest.TestCase):
                                             digest={"version": 2, "text": "Уточнения — 1"})
         self.assertIn("Свод команды обновляет ПРИЛОЖЕНИЕ", body)
         self.assertIn("Уточнения — 1", body)
+
+
+class AccumulateTest(unittest.TestCase):
+    """W28-E: автообновление свода ждёт накопления, а не каждого события.
+
+    Замеры 19.11.2026: «Обновление свода (авто)» запускалось на КАЖДОЕ событие и
+    стоило 8–38 вызовов модели (2,9–5,4 млн токенов кэш-чтения за сутки). Теперь:
+    ≥ ``min_events`` (3) событий ИЛИ ≥ ``max_wait_s`` (15 мин) с первого
+    необработанного; ответ на вопрос и кнопка «Обновить сейчас» — без ожидания.
+    """
+
+    def bare_room(self, **over):
+        """Комната БЕЗ настройки накопления — как у существующей комнаты в реестре."""
+        room = make_room(**over)
+        room.pop("auto_svod_min_events", None)
+        return room
+
+    def test_defaults_are_three_events_and_fifteen_minutes(self):
+        conf = svod_live.settings({"id": "cafe-leto"})
+        self.assertEqual(conf["min_events"], 3)
+        self.assertEqual(conf["max_wait_s"], 900)
+        clamped = svod_live.settings({"auto_svod_min_events": 99, "auto_svod_max_wait_s": 1})
+        self.assertEqual(clamped["min_events"], 10, "верхняя граница")
+        self.assertEqual(clamped["max_wait_s"], 60, "нижняя граница")
+        one = svod_live.settings({"auto_svod_min_events": 1})
+        self.assertEqual(one["min_events"], 1, "1 = прежнее поведение, комната может выбрать")
+
+    def test_one_event_waits_for_accumulation(self):
+        ev = {"total": 1, "behind": {"notes": 1}, "last_at": NOW - 200,
+              "items": [{"kind": "note", "at": NOW - 200}]}
+        acc = svod_live.accumulate(ev, svod_live.settings(self.bare_room()), now=NOW)
+        self.assertFalse(acc["ok"], "одного сообщения мало")
+        self.assertEqual(acc["need"], 3)
+        self.assertGreater(acc["wait_left"], 0)
+
+    def test_three_events_release_the_leader(self):
+        ev = {"total": 3, "behind": {"notes": 3}, "last_at": NOW - 200,
+              "items": [{"kind": "note", "at": NOW - 600}, {"kind": "note", "at": NOW - 400},
+                        {"kind": "note", "at": NOW - 200}]}
+        acc = svod_live.accumulate(ev, svod_live.settings(self.bare_room()), now=NOW)
+        self.assertTrue(acc["ok"], "три события — пора обновлять")
+
+    def test_long_wait_releases_even_one_event(self):
+        ev = {"total": 1, "behind": {"notes": 1}, "last_at": NOW - 1000,
+              "items": [{"kind": "note", "at": NOW - 1000}]}
+        acc = svod_live.accumulate(ev, svod_live.settings(self.bare_room()), now=NOW)
+        self.assertTrue(acc["ok"], "15 минут прошло — обновляем, даже если событие одно")
+        self.assertEqual(acc["wait_left"], 0)
+
+    def test_answer_does_not_wait_for_accumulation(self):
+        ev = {"total": 1, "behind": {"answers": 1}, "last_at": NOW - 100,
+              "items": [{"kind": "answer", "at": NOW - 100}]}
+        acc = svod_live.accumulate(ev, svod_live.settings(self.bare_room()), now=NOW)
+        self.assertTrue(acc["ok"], "человек ответил — ждать «ещё два события» нельзя")
+
+    def test_plan_waits_with_reason_accumulate(self):
+        room = self.bare_room()
+        detail = make_detail()
+        detail["thread"] = [{"id": "c1", "at": NOW - 200, "author": "mikhail",
+                             "author_kind": "mikhail", "kind": "message",
+                             "text": "Одна правка: добавьте суп"}]
+        decision = svod_live.plan(detail, room, make_rec(), now=NOW)
+        self.assertEqual(decision["action"], "wait")
+        self.assertEqual(decision["reason"], "accumulate")
+        self.assertGreater(decision["next_update_at"], NOW, "ждём окно накопления")
+
+    def test_plan_creates_after_window(self):
+        room = self.bare_room()
+        detail = make_detail()
+        detail["thread"] = [{"id": "c1", "at": NOW - 1000, "author": "mikhail",
+                             "author_kind": "mikhail", "kind": "message",
+                             "text": "Одна правка: добавьте суп"}]
+        decision = svod_live.plan(detail, room, make_rec(), now=NOW)
+        self.assertEqual(decision["action"], "create", "окно прошло — ставим карточку")
+
+    def test_compute_says_it_waits_for_accumulation(self):
+        detail = make_detail()
+        detail["thread"] = [{"id": "c1", "at": NOW - 200, "author": "mikhail",
+                             "author_kind": "mikhail", "kind": "message",
+                             "text": "Одна правка: добавьте суп"}]
+        live = svod_live.compute(detail, self.bare_room(), make_rec(), now=NOW)
+        self.assertEqual(live["state"], "pending")
+        self.assertIn("накопится", live["text"].lower())
+        self.assertIn("Обновить сейчас", live["text"])
+
+    def test_min_events_one_keeps_the_previous_behaviour(self):
+        detail = make_detail()
+        detail["thread"] = [{"id": "c1", "at": NOW - 200, "author": "mikhail",
+                             "author_kind": "mikhail", "kind": "message",
+                             "text": "Одна правка: добавьте суп"}]
+        decision = svod_live.plan(detail, make_room(), make_rec(), now=NOW)
+        self.assertEqual(decision["action"], "create", "комната попросила прежнее поведение")
 
 
 class ActionTest(unittest.TestCase):

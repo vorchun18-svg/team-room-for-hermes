@@ -247,7 +247,10 @@ test('бейджи: CSS не прячет числа в полосе значк�
   assert.ok(hideBlock, 'не найден блок скрытия подписей в полосе');
   assert.doesNotMatch(hideBlock[1], /\.nav-item__badges/, 'бейджи снова спрятаны');
   assert.match(css, /\.app\.is-rail \.nav-item__badges\s*\{[^}]*position:\s*absolute/s);
-  assert.match(css, /\.app\.is-rail \.nav-item__badges \.count-pill\s*\{[^}]*min-width:\s*15px/s);
+  // W28-QA1: смысл — плашка не уже числа (иначе цифра «прячется»), а не ровно 15 px.
+  // Пакет §F поднял плашку до 16 px вместе с минимальным кеглем 11 px — тест на
+  // точное значение краснел на любом увеличении. Проверяем «не меньше 15 px».
+  assert.match(css, /\.app\.is-rail \.nav-item__badges \.count-pill\s*\{[^}]*min-width:\s*(1[5-9]|[2-9]\d)px/s);
   assert.match(css, /\.app\.is-rail \.sidebar:hover \.nav-item__badges,[\s\S]{0,80}position:\s*static/);
 });
 

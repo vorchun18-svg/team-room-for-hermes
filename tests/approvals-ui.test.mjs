@@ -548,3 +548,66 @@ test('блок на странице запроса: ждущие сверху, 
   assert.equal(byAttr(block, 'data-approval', 'ap_done01').length, 1);
   assert.match(body, /Решённые: 1 запрос/);
 });
+
+/* ─────────── W28-B (дефект 6): «нельзя штатно» с честным состоянием сервера ─────── */
+
+test('состояние workaround: кнопки на месте, а не «состояние неизвестно»', async () => {
+  // Сервер отдаёт `workaround` своим словом (раньше экран превращал его в `unknown`,
+  // и кнопки «Подсказать…»/«Доверять…» не рисовались вовсе — дефект 6).
+  const seen = [];
+  const card = approvalCard(Object.assign({}, APPROVAL, {
+    id: 'ap_wk28b01', kind: 'execute_code', grantable: false, state: 'workaround',
+    description: 'execute_code — произвольный код на Python',
+  }), {
+    onDecide: async () => ({ ok: true }),
+    onAction: async (_a, action, extra) => { seen.push([action, extra]); return { ok: true }; },
+  });
+  assert.equal(approvalState({ state: 'workaround' }), 'workaround');
+  const body = text(card);
+  assert.doesNotMatch(body, /состояние неизвестно/);
+  assert.equal(byAttr(card, 'data-action', 'approval-hint_agent').length, 1);
+  assert.equal(byAttr(card, 'data-action', 'approval-trust_profile').length, 1);
+  const hint = byAttr(card, 'data-action', 'approval-hint_agent')[0];
+  hint.dispatch('click', { type: 'click', target: hint });
+  await tick();
+  assert.deepEqual(seen[0], ['hint_agent', {}]);
+});
+
+test('ошибка действия остаётся в карточке строкой с причиной и «Повторить»', async () => {
+  let fail = true;
+  const sent = [];
+  const card = approvalCard(Object.assign({}, APPROVAL, {
+    id: 'ap_err28b01', kind: 'execute_code', grantable: false, state: 'workaround',
+    description: 'execute_code — произвольный код на Python',
+  }), {
+    onDecide: async () => ({ ok: true }),
+    onAction: async (_a, action, extra) => {
+      sent.push([action, extra]);
+      if (fail) {
+        const err = new Error('Неизвестное действие');
+        err.status = 400;
+        err.payload = { error: { code: 'bad_request', message: 'Неизвестное действие' } };
+        throw err;
+      }
+      return { ok: true, approval: { id: 'ap_err28b01', state: 'hinted' } };
+    },
+  });
+  const hint = byAttr(card, 'data-action', 'approval-hint_agent')[0];
+  hint.dispatch('click', { type: 'click', target: hint });
+  await tick(5);
+  // Причина видна В САМОЙ карточке (не только тостом) и у неё есть «Повторить».
+  const line = byAttr(card, 'data-ap-error', '1');
+  assert.equal(line.length, 1, 'причина ошибки не осталась в карточке');
+  assert.match(text(line[0]), /Неизвестное действие/);
+  const retry = byAttr(card, 'data-action', 'approval-retry');
+  assert.equal(retry.length, 1, 'у причины нет кнопки «Повторить»');
+  assert.match(text(retry[0]), /Повторить/);
+  // Повтор не глотается: то же действие уходит снова, и после успеха строка уходит.
+  fail = false;
+  retry[0].dispatch('click', { type: 'click', target: retry[0] });
+  await tick(5);
+  assert.deepEqual(sent.map((x) => x[0]), ['hint_agent', 'hint_agent']);
+  assert.equal(byAttr(card, 'data-ap-error', '1').length, 0,
+    'после успешного повтора причина осталась висеть');
+  assert.match(text(card), /Подсказка отправлена участнику/);
+});

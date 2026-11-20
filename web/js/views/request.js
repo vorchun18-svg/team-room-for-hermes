@@ -30,6 +30,8 @@ import { createAside } from './request-aside.js';
 import { createApprovals } from './approvals.js';
 // W26-D2: один стор запроса — «одно действие — везде» (основной блок, колонка, лист).
 import { requestStoreFor } from './request-store.js';
+// W28-D7: замки действий и предел ожидания — один общий модуль (store.js).
+import { withTimeout, locked, lockTimeout } from '../store.js';
 import { mountThread } from './request-thread.js';
 import { mountWorklog } from './request-worklog.js';
 import { createSection, sectionDefaults } from './section-collapse.js';
@@ -312,10 +314,18 @@ export async function mount(el, ctx) {
   /* ── действия ─────────────────────────────────────────────── */
 
   async function runAction(action, body, opts = {}) {
-    if (busy) return null;
+    // W28-D7: busy не «глотает» нажатие молча и не остаётся поднятым навсегда.
+    // Раньше нажатие при busy просто возвращало null (кнопка выглядела живой,
+    // но не отвечала), а зависший запрос держал busy до перезагрузки страницы.
+    if (busy) {
+      ctx.toast('Предыдущее действие ещё выполняется — подождите пару секунд', 'warn');
+      return null;
+    }
     busy = true;
     try {
-      const res = await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, { action, ...(body || {}) });
+      const res = await withTimeout(
+        ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, { action, ...(body || {}) }),
+        lockTimeout(), 'Действие по запросу');
       if (opts.toast) ctx.toast(opts.toast, opts.kind || 'ok');
       await refresh({ force: true });
       return res;
@@ -328,10 +338,12 @@ export async function mount(el, ctx) {
   }
 
   async function cloneRequest() {
-    if (busy) return;
+    if (busy) { ctx.toast('Предыдущее действие ещё выполняется — подождите пару секунд', 'warn'); return; }
     busy = true;
     try {
-      const res = await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, { action: 'clone' });
+      const res = await withTimeout(
+        ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, { action: 'clone' }),
+        lockTimeout(), 'Копирование запроса');
       ctx.toast('Копия запроса создана', 'ok');
       if (res?.root_id) ctx.navigate(`#/room/${encodeURIComponent(roomId)}/request/${encodeURIComponent(res.root_id)}`);
       else await refresh({ force: true });
@@ -350,8 +362,11 @@ export async function mount(el, ctx) {
       cancelLabel: 'Отмена',
     });
     if (!ok) return;
-    if (btn) btn.disabled = true;
-    await runAction('decompose', {}, { toast: 'Разбор запущен — это может занять пару минут' });
+    // W28-D7: разблокировка под общим замком — иначе кнопка «Разложить» оставалась
+    // выключенной, если запрос не ответил.
+    await locked(btn, () => runAction('decompose', {},
+      { toast: 'Разбор запущен — это может занять пару минут' }),
+    { label: 'Разбор запроса' });
   }
 
   /* ── блоки страницы: шапка и меню, ответ, колонка «От вас нужно» ───────────── */

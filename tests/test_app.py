@@ -726,9 +726,14 @@ class RoutingTests(HttpBase):
         self.assertEqual(long_text["json"]["error"]["detail"]["limit"], 1_000_000)
         swarm = self.post("/api/rooms/cafe/requests", {"text": "привет", "mode": "swarm"})
         self.assertEqual(swarm["status"], 400)
-        outside = self.post("/api/rooms/cafe/requests", {"text": "привет", "attach": ["C:/Windows/win.ini"]})
-        self.assertEqual(outside["status"], 403)
-        self.assertIn("path", outside["json"]["error"]["detail"])
+        # W28-A (дефект 4): белого списка папок у вложений больше нет — файл,
+        # который человек выбрал сам, прикрепляется. Отказ остаётся там, где файла
+        # правда нет: 400 с причиной `not_found`, а не 403 «вне разрешённых путей».
+        missing = self.post("/api/rooms/cafe/requests",
+                            {"text": "привет", "attach": ["C:/no-such-folder/нет.pdf"]})
+        self.assertEqual(missing["status"], 400)
+        self.assertEqual(missing["json"]["error"]["detail"]["reason"], "not_found")
+        self.assertIn("path", missing["json"]["error"]["detail"])
         ok = self.post("/api/rooms/cafe/requests", {"text": "Проверь цены на десерты"})
         self.assertEqual(ok["status"], 201)
         self.assertEqual(ok["json"]["root_id"], "t_cccc3333")
