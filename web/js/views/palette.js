@@ -216,15 +216,33 @@ export async function open(ctx = {}) {
     if (controller) { try { controller.abort(); } catch { /* ignore */ } }
     controller = typeof AbortController === 'function' ? new AbortController() : null;
     const params = new URLSearchParams({ q, limit: '12' });
-    try {
-      const payload = await api.get('/api/search?' + params.toString(), controller ? { signal: controller.signal } : undefined);
-      if (stopped || my !== seq) return;
-      hits = Array.isArray(payload && payload.items) ? payload.items : [];
-    } catch (err) {
-      if (stopped || my !== seq) return;
-      if (err && err.name === 'AbortError') return;
-      hits = [];
-    }
+    // W29B-Q8: память комнаты ищем параллельно с обычным поиском и показываем
+    // отдельным разделом «Память» — «почему мы так решили» живёт не в том же
+    // месте, что «где это слово». Ошибка памяти не отменяет обычные находки.
+    const memParams = new URLSearchParams({ q, limit: '8' });
+    if (currentRoomId) memParams.set('room', currentRoomId);
+    const [regular, memory] = await Promise.all([
+      api.get('/api/search?' + params.toString(), controller ? { signal: controller.signal } : undefined)
+        .catch((err) => (err && err.name === 'AbortError' ? null : null)),
+      api.get('/api/memory/search?' + memParams.toString(), controller ? { signal: controller.signal } : undefined)
+        .catch((err) => (err && err.name === 'AbortError' ? null : null)),
+    ]);
+    if (stopped || my !== seq) return;
+    const regularHits = Array.isArray(regular && regular.items) ? regular.items : [];
+    const memoryHits = Array.isArray(memory && memory.items)
+      ? memory.items.map((hit) => ({
+        kind: 'memory',
+        memoryKind: hit.kind,
+        room: hit.room,
+        id: hit.id,
+        request_id: hit.request_id,
+        title: hit.title,
+        snippet: hit.snippet,
+        route: hit.route,
+        at: hit.at,
+      }))
+      : [];
+    hits = regularHits.concat(memoryHits);
     regroup();
   }
 

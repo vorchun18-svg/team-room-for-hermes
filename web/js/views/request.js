@@ -27,6 +27,10 @@ import { ensureProfileDirectory } from '../participant-label.js';
 import { createHeader } from './request-header.js';
 import { createAnswer } from './request-answer.js';
 import { createAside } from './request-aside.js';
+// W29-P2 п.4: постоянное поле «Написать руководителю / дать указание» внизу запроса.
+import { mountReplyBar } from './request-reply.js';
+// W29-P2: сколько карточек стоит — тот же расчёт, что у колонки и вкладки.
+import { blockedCards } from './backlog-model.js';
 import { createApprovals } from './approvals.js';
 // W26-D2: один стор запроса — «одно действие — везде» (основной блок, колонка, лист).
 import { requestStoreFor } from './request-store.js';
@@ -92,6 +96,7 @@ export async function mount(el, ctx) {
   let backlog = null; // Map<item_id, BacklogItem> | null
   let threadCtl = null; // { update, focus, destroy } — блок «Диалог по запросу» (монтируется один раз)
   let worklogCtl = null; // { update, destroy } — блок «Ход работы» (тоже монтируется один раз)
+  let replyCtl = null; // { element, setBlocked, destroy } — поле «дать указание» внизу
   let room = null; // деталь комнаты: project_dir, title (для кнопки папки и крошки)
   let plan = null; // карта проекта комнаты (GET /api/rooms/{r}/plan)
   let planError = null;
@@ -535,6 +540,29 @@ export async function mount(el, ctx) {
     });
   }
 
+  /**
+   * W29-P4: плашка архивного запроса. Экран в режиме чтения: работа остановлена,
+   * действия, которые будят агентов, скрыты; единственное действие — «Вернуть».
+   */
+  function archiveBanner() {
+    const btn = h('button', { class: 'btn btn--primary btn--sm', type: 'button' },
+      icon('debug-restart', { size: 13 }), 'Вернуть из архива');
+    btn.addEventListener('click', () => runAction('unarchive', {},
+      { toast: 'Запрос возвращён — он снова в списке запросов' }));
+    const listBtn = h('a', {
+      class: 'btn btn--secondary btn--sm',
+      href: `#/room/${encodeURIComponent(roomId)}/archive`,
+    }, icon('archive', { size: 13 }), 'Все в архиве');
+    return h('div', { class: 'banner req-archived-banner', role: 'status' },
+      icon('archive', { size: 16 }),
+      h('div', { class: 'banner__text' },
+        h('div', { class: 'req-archived-banner__title' }, 'Запрос в архиве — работа остановлена'),
+        h('div', { class: 'small muted' },
+          'Новые вопросы и обновления ответа не появляются, задачи не запускаются. ',
+          'Ответ, решения и файлы сохранены. Вернуть можно в любой момент — модели при этом не запустятся.')),
+      h('div', { class: 'req-archived-banner__actions' }, btn, listBtn));
+  }
+
   function buildPage() {
     if (!rid) {
       return h('div', { class: 'req' }, requestErrorBanner(new Error('В адресе нет идентификатора запроса'), null));
@@ -553,11 +581,14 @@ export async function mount(el, ctx) {
     }
 
    
-    const page = h('div', { class: 'req' });
+    const page = h('div', { class: 'req' + (detail.archived ? ' req--archived' : '') });
     // Под-запрос направления: сначала путь «Комната › Бриф › Направление».
     const crumbs = briefCrumbsBlock();
     if (crumbs) page.append(crumbs);
     page.append(header.buildHeader());
+    // W29-P4: архивный запрос — режим чтения. Плашка объясняет, что работа
+    // остановлена, и даёт единственное действие — «Вернуть из архива».
+    if (detail.archived) page.append(archiveBanner());
     // W25-L1 (R5 §7.6): одна строка действий свода, липнет к верху прокрутки.
     // W25.5: здесь же единственное место управления — переключатель версий и
     // пометка «актуально» (в карточке их больше нет). Кнопки панели нажимают
@@ -595,25 +626,30 @@ export async function mount(el, ctx) {
     const planCard = planBlock();
     if (planCard) main.append(planCard);
     main.append(buildAnswer());
-    // W22-AP2: «Разрешения агентам» — сразу под ответом: участник упёрся в
-    // запрет Hermes, и без решения человека работа стоит.
-    const approvals = approvalsUI.buildRequestBlock();
-    if (approvals) main.append(approvals);
-    // W23-MG2: «Контроль моделей» — что сторож остановил или исправил по этой
-    // карточке. Ставим сразу после разрешений: оба блока про вмешательство
-    // приложения в работу команды, и оба видны до диалога.
-    const guardFeed = safePart('renderModelGuard', parts?.renderModelGuard, detail, ctx);
-    if (guardFeed) main.append(guardFeed);
+    // W29-P4: у архивного запроса «Разрешения», «Контроль моделей», «Диалог»,
+    // «Ход работы» и поле внизу не показываем: это действия, которые буждали бы
+    // агентов. Чтение (ответ, дерево, файлы, хронология) остаётся.
+    if (!detail.archived) {
+      // W22-AP2: «Разрешения агентам» — сразу под ответом: участник упёрся в
+      // запрет Hermes, и без решения человека работа стоит.
+      const approvals = approvalsUI.buildRequestBlock();
+      if (approvals) main.append(approvals);
+      // W23-MG2: «Контроль моделей» — что сторож остановил или исправил по этой
+      // карточке. Ставим сразу после разрешений: оба блока про вмешательство
+      // приложения в работу команды, и оба видны до диалога.
+      const guardFeed = safePart('renderModelGuard', parts?.renderModelGuard, detail, ctx);
+      if (guardFeed) main.append(guardFeed);
 
-    // Диалог по запросу — прямо под ответом: уточнить, пока команда работает,
-    // или спросить после ответа. W20-C1 (B-40): блок монтируется ОДИН раз (см.
-    // ensureThread) и дальше только обновляет данные; здесь остаётся его место
-    // на странице — с меткой «не пересобирать», чтобы правка страницы не
-    // разлучала живое поле с живой кнопкой.
-    main.append(h('div', { class: 'req-thread', 'data-keep-tree': '' }));
-    // W20-FB: «Ход работы» — кто что делает прямо сейчас. Своё место-узел,
-    // чтобы лента жила отдельно от перерисовок страницы (как диалог выше).
-    main.append(h('div', { class: 'req-worklog', 'data-keep-tree': '' }));
+      // Диалог по запросу — прямо под ответом: уточнить, пока команда работает,
+      // или спросить после ответа. W20-C1 (B-40): блок монтируется ОДИН раз (см.
+      // ensureThread) и дальше только обновляет данные; здесь остаётся его место
+      // на странице — с меткой «не пересобирать», чтобы правка страницы не
+      // разлучала живое поле с живой кнопкой.
+      main.append(h('div', { class: 'req-thread', 'data-keep-tree': '' }));
+      // W20-FB: «Ход работы» — кто что делает прямо сейчас. Своё место-узел,
+      // чтобы лента жила отдельно от перерисовок страницы (как диалог выше).
+      main.append(h('div', { class: 'req-worklog', 'data-keep-tree': '' }));
+    }
 
    
     const critic = safePart('renderCritic', parts?.renderCritic, detail, ctx);
@@ -629,6 +665,10 @@ export async function mount(el, ctx) {
 
    
     page.append(h('div', { class: 'req__grid' }, main, buildAside()));
+    // W29-P2 п.4: место постоянного поля внизу страницы. Узел живёт между
+    // перерисовками (`data-keep-tree`), поэтому набранное не теряется.
+    // W29-P4: у архивного запроса поля нет — писать руководителю нельзя.
+    if (!detail.archived) page.append(h('div', { class: 'req-reply-slot', 'data-keep-tree': '' }));
     return page;
   }
 
@@ -681,6 +721,30 @@ export async function mount(el, ctx) {
   }
 
   /**
+   * Постоянное поле «Написать руководителю / дать указание» внизу страницы
+   * (W29-P2 п.4). Монтируется один раз, дальше только обновляется: набранный
+   * текст и микрофон принадлежат одной сборке, а данные меняются вокруг.
+   */
+  function ensureReply() {
+    const slot = root.querySelector ? root.querySelector('.req-reply-slot') : null;
+    if (!slot) return;
+    if (!replyCtl) {
+      replyCtl = mountReplyBar(slot, {
+        api: ctx.api,
+        requestId: rid,
+        toast: typeof ctx.toast === 'function' ? ctx.toast : null,
+        onDone: () => refresh({ force: true, quiet: true }),
+      });
+    } else if (replyCtl.element && replyCtl.element.parentNode !== slot) {
+      slot.appendChild(replyCtl.element);
+    }
+    // Сколько карточек стоит: их ответ снимает паузу вместе с комментарием.
+    let ids = [];
+    try { ids = blockedCards([detail]).map((c) => c.task_id).filter(Boolean); } catch { ids = []; }
+    if (replyCtl && typeof replyCtl.setBlocked === 'function') replyCtl.setBlocked(ids);
+  }
+
+  /**
    * Перерисовать страницу, сохранив состояние.
    *
    * WAVE17-P4: вместо `root.replaceChildren(...)` (снос всего дерева и сброс
@@ -705,6 +769,7 @@ export async function mount(el, ctx) {
     const next = buildPage();
     applyLivePatch(root, next, { doc: document, draftKeys: keepValues, snapshot: snap });
     // Диалог: один раз смонтировать, дальше только данные (W20-C1, B-40).
+    ensureReply();
     ensureThread();
     ensureWorklog();
     pendingRender = false;
@@ -856,6 +921,10 @@ export async function mount(el, ctx) {
         try { worklogCtl.destroy(); } catch { /* узел уже убран */ }
       }
       worklogCtl = null;
+      if (replyCtl && typeof replyCtl.destroy === 'function') {
+        try { replyCtl.destroy(); } catch { /* узел уже убран */ }
+      }
+      replyCtl = null;
       // «Фокус» не переносится на другие экраны (R5 §7.4: состояние на маршрут).
       try { focus.destroy(); } catch { /* страница уже без #app */ }
       try { density.destroy(); } catch { /* плотность живёт в атрибуте */ }

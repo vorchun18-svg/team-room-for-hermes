@@ -16,6 +16,9 @@ import {
   WIZARD_STEPS, KINDS, SCHEDULE_PRESETS, CHANGE_RULES, ON_CHANGE, LEVELS, NOTIFY,
   normalizeDraft, stepProblems, draftProblems, scheduleHuman, changeText, onChangeLabel,
   previewModel, countText,
+  // W29-P5: модель из каталога, готовые скрипты, выбор папки окном Windows.
+  SCRIPT_TEMPLATES, MODEL_DEFAULT, applyScriptTemplate, modelChoice, modelLine,
+  modelOptions, setPickedPath,
 } from './duty-model.js';
 
 /** Заголовки мастера по поводу открытия. */
@@ -305,25 +308,104 @@ export function createWizard(opts = {}) {
       h('span', { class: 'dw__label' }, 'Чем проверяем'),
       choiceCards(KINDS, doc.kind, (id) => set({ kind: id }), 'kind')));
 
-    const taskLabel = doc.kind === 'script' ? 'Что запускать'
+    const taskLabel = doc.kind === 'script' ? 'Скрипт из каталога Hermes'
       : doc.kind === 'watch' ? 'За чем следить' : 'Задание';
     const taskHint = doc.kind === 'script'
-      ? 'Путь к скрипту или команда. Модель не тратится.'
+      ? 'Готовый скрипт ниже: сохраните его в каталог скриптов Hermes и укажите имя файла. '
+        + 'Свой скрипт — только вставкой имени, без путей. Модель не тратится.'
       : doc.kind === 'watch'
-        ? 'Адрес страницы, папка или ящик. Hermes помнит прошлое состояние сам.'
+        ? 'Адрес страницы https://… Hermes помнит прошлое состояние и говорит, что изменилось.'
         : 'Что проверить и по каким признакам понять, что «что-то изменилось».';
-    const placeholder = doc.kind === 'script' ? 'C:/Work/Rooms/demo/tools/check.py'
-      : doc.kind === 'watch' ? 'C:/Work/Rooms/demo/inbox или https://example.com/page'
+    const placeholder = doc.kind === 'script' ? 'room-folder-new.ps1'
+      : doc.kind === 'watch' ? 'https://example.com/page'
         : 'Прочитать новые письма в ящике и коротко пересказать, что важного.';
+    if (doc.kind === 'script') {
+      box.appendChild(h('div', { class: 'dw__field dw__field--wide' },
+        h('span', { class: 'dw__label' }, 'Что проверять'),
+        h('div', { class: 'dw__chips', role: 'group', 'aria-label': 'готовые скрипты' },
+          ...SCRIPT_TEMPLATES.map((one) => h('button', {
+            class: 'dw__chip' + (doc.script_template === one.id ? ' dw__chip--on' : ''),
+            type: 'button', 'data-chip': 'script-' + one.id,
+            title: one.hint,
+            onclick: () => { state.draft = applyScriptTemplate(state.draft, one.id); render(); },
+          }, one.label))),
+        h('p', { class: 'dw__hint small muted' }, taskHint)));
+    }
     box.appendChild(field(taskLabel, textInput({
-      value: doc.task, placeholder, multiline: true, rows: 4,
+      value: doc.task, placeholder, multiline: doc.kind !== 'script', rows: 4,
       onInput: (value) => set({ task: value }),
-    }), taskHint, { id: 'task', wide: true }));
+    }), doc.kind === 'script' ? '' : taskHint, { id: 'task', wide: true }));
 
-    box.appendChild(field('Рабочая папка', textInput({
-      value: doc.workdir, placeholder: 'C:/Work/Rooms/demo',
-      onInput: (value) => set({ workdir: value }),
-    }), 'Где задание будет работать. Для папки комнаты — так и оставьте.', { id: 'workdir' }));
+    if (doc.kind === 'script') {
+      const tpl = SCRIPT_TEMPLATES.find((one) => one.id === doc.script_template);
+      if (tpl) {
+        box.appendChild(h('details', { class: 'dw__script dw__field--wide', open: true },
+          h('summary', {}, 'Скрипт «' + tpl.label + '» — ' + tpl.file),
+          h('pre', { class: 'dw__script-text', 'data-role': 'duty-script' }, tpl.script),
+          h('p', { class: 'dw__hint small muted' },
+            'Сохраните файл в каталог скриптов Hermes (имя — ' + tpl.file
+              + '), затем укажите это имя в поле выше. Пробный запуск покажет команду, '
+              + 'но не выполнит её.')));
+      }
+    }
+
+    const workdirRow = h('div', { class: 'dw__row' },
+      textInput({
+        value: doc.workdir, placeholder: 'C:/Work/Rooms/demo',
+        onInput: (value) => set({ workdir: value }),
+      }),
+      h('button', {
+        class: 'btn btn--secondary btn--sm', type: 'button', 'data-action': 'duty-pick-workdir',
+        title: 'Открыть окно Windows и выбрать папку',
+        onclick: () => pickInto('workdir'),
+      }, 'Выбрать…'));
+    box.appendChild(field('Рабочая папка', workdirRow,
+      'Где задание будет работать. «Выбрать…» откроет окно Windows.', { id: 'workdir' }));
+
+    // W29-P5: «кто выполняет и на какой модели» — явно, с выбором из каталога.
+    const catalogOptions = modelOptions(opts.catalog);
+    const known = catalogOptions.some((one) => one.id === modelChoice(doc));
+    const currentChoice = known ? modelChoice(doc) : 'custom-model';
+    const modelLineBox = h('p', { class: 'dw__model-line', 'data-role': 'duty-model-line' },
+      modelLine(doc, opts.catalog));
+    const select = h('select', {
+      class: 'dw__input', 'data-role': 'duty-model-select',
+      onchange: (event) => {
+        const value = String(event.target.value || '');
+        if (value === 'custom-model') {
+          set({ model: '', provider: '' });
+          render();
+          return;
+        }
+        const found = catalogOptions.find((one) => one.id === value) || MODEL_DEFAULT;
+        set({ model: found.model, provider: found.provider });
+        render();
+      },
+    }, ...catalogOptions.map((one) => h('option', {
+      value: one.id, title: one.hint || '',
+      ...(one.id === currentChoice ? { selected: true } : {}),
+    }, one.label)), h('option', {
+      value: 'custom-model', ...(currentChoice === 'custom-model' ? { selected: true } : {}),
+    }, 'Своя модель…'));
+    const modelBox = h('div', { class: 'dw__field dw__field--wide' },
+      h('span', { class: 'dw__label' }, 'Кто выполняет и на какой модели'),
+      modelLineBox, select,
+      ...(currentChoice === 'custom-model'
+        ? [h('div', { class: 'dw__row' },
+          textInput({
+            value: doc.model, placeholder: 'имя модели, например small-model',
+            onInput: (value) => set({ model: value }),
+          }),
+          textInput({
+            value: doc.provider, placeholder: 'провайдер (если нужен)',
+            onInput: (value) => set({ provider: value }),
+          }))] : []),
+      h('p', { class: 'dw__hint small muted' },
+        doc.kind === 'script' || doc.kind === 'watch'
+          ? 'Итог такой проверки модель не тратит — выбор модели не влияет.'
+          : 'Вариант «как в комнате» берёт модель по умолчанию, ту же, что у остальных '
+            + 'заданий по расписанию. Список — из каталога Hermes (только чтение).'));
+    box.appendChild(modelBox);
 
     if (doc.from) {
       box.appendChild(h('p', { class: 'dw__from small muted dw__field--wide' },
@@ -331,6 +413,30 @@ export function createWizard(opts = {}) {
         + (doc.from.title || doc.from.id || '')));
     }
     return box;
+  }
+
+  /** Открыть окно Windows и подставить выбранный путь (папка или файл). */
+  async function pickInto(what) {
+    if (typeof opts.onPickFolder !== 'function') {
+      say('Окно выбора недоступно: впишите путь вручную', 'warn');
+      return;
+    }
+    state.busy = 'pick';
+    refreshGate();
+    try {
+      const path = await opts.onPickFolder(what, state.draft);
+      if (path) {
+        state.draft = setPickedPath(state.draft, what, path);
+        state.preview = null;
+        render();
+      }
+    } catch (err) {
+      say((err && err.message) || 'Не удалось открыть окно выбора — впишите путь вручную',
+        'warn');
+    } finally {
+      state.busy = '';
+      refreshGate();
+    }
   }
 
   function stepWhen() {
@@ -386,6 +492,12 @@ export function createWizard(opts = {}) {
     box.appendChild(h('div', { class: 'dw__field dw__field--wide' },
       h('span', { class: 'dw__label' }, 'Куда сообщить'),
       toggles(NOTIFY, doc.notify, (list) => set({ notify: list }), 'notify')));
+    // W29-P5: «куда придёт результат» — одной строкой, без догадок.
+    box.appendChild(h('p', { class: 'dw__deliver small dw__field--wide', 'data-role': 'duty-deliver' },
+      icon('inbox', { size: 13 }),
+      ' Куда придёт результат: «Входящие» комнаты ' + (doc.room ? '«' + doc.room + '»' : '')
+        + ' — при изменении. Без изменений останется тихая строка в истории. '
+        + 'Открыть: раздел «Входящие» комнаты.'));
     box.appendChild(h('p', { class: 'dw__summary small dw__field--wide', 'data-role': 'duty-summary' },
       'Получится: ' + (doc.title || 'без названия') + ' — ' + summaryText(doc)));
     return box;

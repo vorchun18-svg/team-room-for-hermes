@@ -18,7 +18,7 @@ from server.http_util import ApiError  # noqa: E402
 
 GOOD_SPEC = {
     "version": 1,
-    "title": "Юнит-экономика моти",
+    "title": "Юнит-экономика суфле",
     "subtitle": "комната Лето · 28.10.2026",
     "summary": "Маржа 48,8 % при цене 220 ₽.",
     "blocks": [
@@ -88,7 +88,7 @@ class ReportsTest(unittest.TestCase):
         item = items[0]
         self.assertEqual(item["key"], self.slug)
         self.assertEqual(item["kind"], "spec")
-        self.assertEqual(item["title"], "Юнит-экономика моти")
+        self.assertEqual(item["title"], "Юнит-экономика суфле")
         self.assertEqual(item["blocks"], 3)
         self.assertEqual(item["request_id"], "t_a1b2c3d4")
         self.assertTrue(item["exists"])
@@ -161,9 +161,9 @@ class ReportsTest(unittest.TestCase):
         self.assertEqual(got["kind"], "spec")
         self.assertEqual(got["errors"], [])
         self.assertEqual(got["spec"]["version"], 1)
-        self.assertEqual(got["spec"]["title"], "Юнит-экономика моти")
+        self.assertEqual(got["spec"]["title"], "Юнит-экономика суфле")
         self.assertEqual(len(got["spec"]["blocks"]), 3)
-        self.assertEqual(got["title"], "Юнит-экономика моти")
+        self.assertEqual(got["title"], "Юнит-экономика суфле")
 
     def test_load_broken_json(self):
         p = self.dir / "report.json"
@@ -191,7 +191,7 @@ class ReportsTest(unittest.TestCase):
         rel = "reports/%s/%s/report.json" % (self.room, self.slug)
         got = reports.load_report(self.cfg, rel)
         self.assertEqual(got["errors"], [])
-        self.assertEqual(got["spec"]["title"], "Юнит-экономика моти")
+        self.assertEqual(got["spec"]["title"], "Юнит-экономика суфле")
 
     def test_load_html(self):
         p = self.write_html()

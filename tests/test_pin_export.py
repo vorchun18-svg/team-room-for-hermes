@@ -45,7 +45,7 @@ RID = "t_pin00001"
 RID_OLD = "t_pin00002"
 
 #: вымышленный запрос: кафе «Лето», поставщик «Ромашка» (структура как у настоящих)
-DETAIL_TEXT = ("Посчитай, сколько нужно муки на 120 порций моти с клубникой для кафе «Лето», "
+DETAIL_TEXT = ("Посчитай, сколько нужно муки на 120 порций суфле с клубникой для кафе «Лето», "
                "если поставщик «Ромашка» даёт муку мешками по 25 кг и сроки поставки две недели.")
 
 
@@ -116,7 +116,7 @@ class PinExportTests(unittest.TestCase):
         finally:
             con.close()
         for rid, at in ((RID, self.now), (RID_OLD, self.now - 3600)):
-            self.sim.card("Мука для моти" if rid == RID else "Клубника для моти",
+            self.sim.card("Мука для суфле" if rid == RID else "Клубника для суфле",
                           "team-director", status="done", tenant="room:" + ROOM, card_id=rid)
             con = self.sim.connect()
             try:
@@ -128,9 +128,9 @@ class PinExportTests(unittest.TestCase):
     def _reset_registry(self) -> None:
         path = registry.registry_path(self.cfg, ROOM)
         data = {"room": ROOM, "updated_at": 0, "requests": [
-            {"root_id": RID, "slug": RID, "title": "Мука для моти", "text": DETAIL_TEXT,
+            {"root_id": RID, "slug": RID, "title": "Мука для суфле", "text": DETAIL_TEXT,
              "created_at": self.now, "pinned": False, "pinned_at": 0},
-            {"root_id": RID_OLD, "slug": RID_OLD, "title": "Клубника для моти",
+            {"root_id": RID_OLD, "slug": RID_OLD, "title": "Клубника для суфле",
              "text": DETAIL_TEXT + " Подскажи, где брать клубнику в декабре.",
              "created_at": self.now - 3600, "pinned": False, "pinned_at": 0},
         ]}
@@ -185,10 +185,10 @@ class PinExportTests(unittest.TestCase):
 
     def test_rename_contract_still_works(self):
         """Старый контракт PATCH {title} не сломан закреплением."""
-        status, body, _ = self.patch({"title": "Мука для моти — итог"})
+        status, body, _ = self.patch({"title": "Мука для суфле — итог"})
         self.assertEqual(status, 200, body)
         self.assertEqual(body["action"], "rename")
-        self.assertEqual(body["request"]["title_short"], "Мука для моти — итог")
+        self.assertEqual(body["request"]["title_short"], "Мука для суфле — итог")
 
     def test_pin_visible_in_detail(self):
         self.patch({"pinned": True})
@@ -240,7 +240,7 @@ class PinExportTests(unittest.TestCase):
         self.assertEqual(body.get("hint"), "print_css")
 
     def test_export_html_is_a_download(self):
-        detail = _detail(RID, "Мука для моти", self.now)
+        detail = _detail(RID, "Мука для суфле", self.now)
         self.app._export_detail = lambda rid: (detail, self.rec() or {"slug": rid})  # noqa: SLF001
         status, payload, headers = self.dispatch("POST", "/api/requests/%s/export" % RID,
                                                  {"format": "html"})
@@ -249,12 +249,12 @@ class PinExportTests(unittest.TestCase):
         self.assertIn("text/html", payload.ctype)
         self.assertIn("attachment", payload.headers.get("Content-Disposition", ""))
         html_text = payload.body.decode("utf-8")
-        self.assertIn("Мука для моти", html_text)
+        self.assertIn("Мука для суфле", html_text)
         self.assertIn("18 кг муки", html_text, "в файле есть текст свода")
         self.assertNotRegex(html_text, r'src="https?://', "никаких внешних ссылок в файле")
 
     def test_export_obsidian_writes_mirror_note(self):
-        detail = _detail(RID, "Мука для моти", self.now)
+        detail = _detail(RID, "Мука для суфле", self.now)
         res = export_mod.export_request_obsidian(self.cfg, detail)
         self.assertTrue(res["ok"], res)
         path = Path(res["path"])
@@ -263,7 +263,7 @@ class PinExportTests(unittest.TestCase):
         self.assertTrue(str(path.resolve()).startswith(str(vault)), "только внутри хранилища")
         self.assertIn("Запросы", str(path.parent))
         text = path.read_text(encoding="utf-8")
-        self.assertIn("Мука для моти", text)
+        self.assertIn("Мука для суфле", text)
         self.assertIn(RID, text)
         # повторный экспорт обновляет ту же заметку, а не плодит новую
         again = export_mod.export_request_obsidian(self.cfg, detail)
@@ -272,7 +272,7 @@ class PinExportTests(unittest.TestCase):
         self.assertEqual(same.count(path.name), 1)
 
     def test_export_obsidian_route_returns_path(self):
-        detail = _detail(RID, "Мука для моти", self.now)
+        detail = _detail(RID, "Мука для суфле", self.now)
         self.app._export_detail = lambda rid: (detail, self.rec() or {"slug": rid})  # noqa: SLF001
         status, body, _ = self.dispatch("POST", "/api/requests/%s/export" % RID,
                                         {"format": "obsidian"})

@@ -1,0 +1,89 @@
+/* ============================================================================
+   view-storage.css — экран «Хранилище» (#/settings/storage) и его раздел
+   в «Настройках» (W29-P8).
+
+   Строки категорий: название, что убирается и когда, размер, действия.
+   Цвета — только токены tokens.css: и в светлой, и в тёмной теме подписи
+   «только показ» / «будет убрано» читаются (контраст ≥ 4.5:1).
+   ========================================================================== */
+
+.app:has(#view .stor) { grid-template-rows: minmax(0, 1fr); }
+
+.stor { gap: var(--space-4); max-width: 980px; }
+
+.stor__lead {
+  margin: 0; max-width: 78ch; font-size: var(--text-sm);
+  line-height: var(--leading-relaxed, 1.55);
+}
+
+/* ── Сводка ───────────────────────────────────────────────────────────────── */
+
+.stor__summary { padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.stor__summary-row { display: flex; align-items: flex-end; gap: var(--space-5); flex-wrap: wrap; }
+.stor__summary-item { display: flex; flex-direction: column; gap: 2px; min-width: 120px; }
+.stor__summary-label { color: var(--muted-foreground); }
+.stor__summary-value { font-size: var(--text-lg); font-weight: 600; line-height: 1.2; }
+.stor__summary-actions { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; flex-wrap: wrap; }
+.stor__summary-hint { margin: 0; }
+.stor__warning {
+  margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  background: var(--warn-soft, var(--surface-2)); color: var(--foreground);
+  border: 1px solid var(--warn-border, var(--border));
+}
+
+/* ── Строка категории ─────────────────────────────────────────────────────── */
+
+.stor-row {
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--card); padding: var(--space-3) var(--space-4);
+}
+.stor-row + .stor-row { margin-top: var(--space-2); }
+.stor-row--foreign { background: var(--surface-2, var(--card)); }
+.stor-row__head { display: flex; align-items: flex-start; gap: var(--space-3); }
+.stor-row__icon { color: var(--muted-foreground); padding-top: 2px; }
+.stor-row__body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.stor-row__title-line { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.stor-row__title { font-weight: 600; font-size: var(--text-md); }
+.stor-row__why { margin: 0; max-width: 70ch; line-height: 1.45; }
+.stor-row__policy { margin: 0; color: var(--muted-foreground); }
+.stor-row__size { display: flex; flex-direction: column; align-items: flex-end; min-width: 112px; text-align: right; }
+.stor-row__bytes { font-weight: 600; white-space: nowrap; }
+.stor-row__files { white-space: nowrap; }
+.stor-row__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.stor-row__preview { margin-top: 2px; }
+.stor-row__preview summary { cursor: pointer; }
+.stor-row__list { margin: var(--space-1) 0 0; padding-left: 1.1em; max-height: 160px; overflow: auto; }
+.stor-row__list li { overflow-wrap: anywhere; }
+.stor-row__note { margin: 4px 0 0; color: var(--muted-foreground); }
+
+/* ── Предпросмотр чистки ──────────────────────────────────────────────────── */
+
+.stor-preview { padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.stor-preview__list { margin: 0; padding-left: 1.1em; max-height: 240px; overflow: auto; }
+.stor-preview__list li { overflow-wrap: anywhere; }
+.stor-preview__refused { color: var(--warn, var(--foreground)); margin: 0; }
+.stor-preview__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+
+/* ── Настройки хранения ───────────────────────────────────────────────────── */
+
+.stor-policy { padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.stor-policy__grid {
+  display: grid; gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+.stor-policy__note { margin: 0; }
+.stor-policy__note--error { color: var(--danger, var(--foreground)); }
+.stor-policy__actions { display: flex; justify-content: flex-end; }
+
+/* ── Раздел в «Настройках» ────────────────────────────────────────────────── */
+
+.stor-brief { display: flex; flex-direction: column; gap: var(--space-2); }
+.stor-brief__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+/* Узкий экран: размер уходит под название, действия — на всю ширину. */
+@media (max-width: 720px) {
+  .stor-row__head { flex-wrap: wrap; }
+  .stor-row__size { align-items: flex-start; min-width: 0; }
+  .stor-row__actions { width: 100%; justify-content: flex-start; }
+  .stor__summary-actions { margin-left: 0; width: 100%; }
+}

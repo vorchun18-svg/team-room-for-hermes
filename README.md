@@ -1,4 +1,4 @@
-# Комната команды (Team Room) 1.5.1
+# Комната команды (Team Room) 1.6.0
 
 [![CI](https://github.com/vorchun18-svg/team-room-for-hermes/actions/workflows/ci.yml/badge.svg)](https://github.com/vorchun18-svg/team-room-for-hermes/actions/workflows/ci.yml)
 
@@ -111,7 +111,7 @@ python tools/install_desktop_plugin.py --help
 | | |
 |---|---|
 | ![Дальше и вопросы](docs/shots/backlog-1280.png) | ![Запрос: свод и правая колонка](docs/shots/request-1280.png) |
-| ![Карта проекта](docs/shots/roadmap-1280-dark.png) | ![Команда](docs/shots/team-780.png) |
+| **Карта проекта** — части работы и зависимости между ними | ![Команда](docs/shots/team-780.png) |
 | ![Запрос команде](docs/shots/composer-1280.png) | ![Особенности комнаты](docs/shots/notes-editor-1280.png) |
 | ![Модель участника](docs/shots/room-model-dialog.png) | Диалог комнаты: провайдер, модель и уровень мышления участника — только для этой комнаты. |
 

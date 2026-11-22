@@ -163,7 +163,11 @@ export async function mount(el, ctx) {
 
   const head = h('header', { class: 'diag__head' },
     h('div', { class: 'diag__headline' }, title, lead),
-    h('div', { class: 'diag__actions' }, refreshBtn, copyBtn));
+    h('div', { class: 'diag__actions' }, refreshBtn, copyBtn,
+      // W29B-Q2: «Совместимость с Hermes» — что у участников комнаты от профиля,
+      // что от общих настроек, а что задала комната (только чтение).
+      h('a', { class: 'btn btn--secondary', href: '#/settings/parity', 'data-action': 'diag-parity' },
+        icon('shield', { size: 13 }), 'Совместимость с Hermes')));
 
   const summaryEl = h('div', { class: 'diag__summary', role: 'status', 'aria-live': 'polite' });
   const listEl = h('div', { class: 'diag__list', 'data-role': 'diag-list' });

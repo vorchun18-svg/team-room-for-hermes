@@ -209,7 +209,7 @@ export async function mountDictationSettings(container, ctx = {}) {
       return emptyState({
         icon: 'sparkle',
         title: 'Словарь пока пуст',
-        text: 'Добавьте имена и термины, в которых Whisper путается: «Гранит», «Атлас», «TaskFlow», «моти», «ЕГРЮЛ», названия фирм. Дальше система предложит запоминать исправления сама.',
+        text: 'Добавьте имена и термины, в которых Whisper путается: «Гранит», «Атлас», «TaskFlow», «суфле», «ЕГРЮЛ», названия фирм. Дальше система предложит запоминать исправления сама.',
         action: state.focusTerm ? { label: 'Добавить первое слово', variant: 'primary', onclick: state.focusTerm } : null,
       });
     }
@@ -574,7 +574,7 @@ export async function mountDictationSettings(container, ctx = {}) {
         state.query.trim() ? counter : null),
       termsBox);
     return block('Слова и имена', '', inner,
-      'Имена, названия фирм, термины. Пишите так, как должно быть в тексте: «Гранит», «Атлас», «TaskFlow», «моти», «ЕГРЮЛ».');
+      'Имена, названия фирм, термины. Пишите так, как должно быть в тексте: «Гранит», «Атлас», «TaskFlow», «суфле», «ЕГРЮЛ».');
   }
 
   function filesBlock() {

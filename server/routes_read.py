@@ -271,6 +271,9 @@ class ReadRoutes:
                                 "kanban_write": bool(cli.get("ok")),
                                 "vault_mirror": vault_enabled,
                                 "dictation": _stt_mode(self.cfg)},
+                   # W29-P1 §4: «Каталог моделей: Hermes (N провайдеров, M моделей)» или
+                   # «из профилей: причина» — видно, откуда список и почему он неполный.
+                   "models": self._models_state(),
                    # W23-MG1 §2.3: сводка быстрого сторожа моделей (последний тик, ошибка)
                    "guard": self._guard_state(watcher_state),
                    "watcher": watcher_state, "warnings": warnings}
@@ -278,7 +281,27 @@ class ReadRoutes:
             warnings.append({"code": "model_guard_error",
                              "message": "Контроль моделей сообщил об ошибке",
                              "detail": {"error": payload["guard"]["last_error"]}})
+        if not payload["models"].get("ok"):
+            warnings.append({"code": "model_catalog_incomplete",
+                             "message": "Список моделей неполный: " + str(
+                                 payload["models"].get("reason") or "Hermes не ответил"),
+                             "detail": {"source": payload["models"].get("source"),
+                                        "text": payload["models"].get("text")}})
         return 200, payload, {}
+
+    def _models_state(self) -> dict:
+        """Строка «Каталог моделей: …» для `/api/health` (W29-P1 §4, дефект 11).
+
+        Каталог кеширован (60 с; неответ Hermes — 300 с), поэтому health не ждёт мост на
+        каждый опрос. Любая ошибка — честная строка, а не 500.
+        """
+        try:
+            data = self.mod("agent_models").catalog_line(self.cfg)
+        except Exception as exc:             # noqa: BLE001 - health не должен падать
+            return {"ok": False, "text": "Каталог моделей: из профилей — %s" % str(exc)[:120],
+                    "source": "", "providers": 0, "models": 0, "reason": str(exc)[:120],
+                    "warnings": []}
+        return data if isinstance(data, dict) else {}
 
     def _guard_state(self, watcher_state: dict | None = None) -> dict:
         """Состояние быстрого сторожа моделей для `/api/health.guard` (W23-MG1 §2.3)."""
@@ -295,7 +318,23 @@ class ReadRoutes:
             if isinstance(nested, dict):
                 data.update({k: nested.get(k) for k in ("running", "last_run_at",
                                                         "last_error", "tick_s") if k in nested})
+        # W29-P1 §6: счётчик «Вмешательств контроля моделей за 7 дней» — по всем комнатам.
+        data["incidents_7d"] = self._incidents_7d()
+        data["incidents_text"] = self._incidents_text(data["incidents_7d"])
         return data
+
+    def _incidents_7d(self) -> int:
+        """Сколько раз сторож вмешивался за 7 дней (все комнаты) — для `/api/health`."""
+        try:
+            guard_mod = self.mod("model_guard")
+            rooms = self._rooms()
+            return int(guard_mod.incidents_count_all(self.cfg, rooms) or 0)
+        except Exception:  # noqa: BLE001 - счётчик не валит health
+            return 0
+
+    @staticmethod
+    def _incidents_text(count: int) -> str:
+        return "Вмешательств контроля моделей за 7 дней: %d" % int(count or 0)
 
     @staticmethod
     def _state_warnings() -> list:
@@ -372,7 +411,10 @@ class ReadRoutes:
         include = (query.get("include_archived") or ["0"])[0].strip().lower() in ("1", "true", "yes")
         rooms = self._rooms()
         items = [self._room_summary(room) for room in rooms if include or not room.get("archived")]
-        return 200, {"rooms": items, "engine": self._engine_brief(),
+        # W29-P7: группы левого меню — одним ответом со списком комнат: меню строится
+        # по одному чтению, второй запрос за раскладкой не нужен.
+        return 200, {"rooms": items, "groups": self._room_groups(),
+                     "engine": self._engine_brief(),
                      "updated_at": int(time.time())}, {}
 
     def h_rooms_summary(self, query, body):

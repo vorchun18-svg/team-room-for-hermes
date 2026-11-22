@@ -29,7 +29,7 @@ from server import context_pack as cp  # noqa: E402
 from server import contract, engine_read, engine_write, registry, rooms  # noqa: E402
 from tests.helpers import Sandbox, SimAgents  # noqa: E402
 
-TEXT = "Посчитай цену набора из 6 моти и сравни с прошлым расчётом"
+TEXT = "Посчитай цену набора из 6 суфле и сравни с прошлым расчётом"
 PROJECT_DIR = r"C:\TeamRoom\Projects\Лето"
 
 STATE_MD = """# Лето — состояние проекта
@@ -39,7 +39,7 @@ _Файл генерируется приложением._
 ## Где мы сейчас
 
 - **Фаза:** Валидация спроса — идёт
-- **Что происходит:** собираем предзаказы на набор из 6 моти
+- **Что происходит:** собираем предзаказы на набор из 6 суфле
 
 ## Решения
 
@@ -83,7 +83,7 @@ def _room(**extra) -> dict:
         "board": "team",
         "tenant": "room:cafe",
         "orchestrator": "team-director",
-        "description": "Производство десертов: моти, наборы, доставка по Заозёрью",
+        "description": "Производство десертов: суфле, наборы, доставка по Заозёрью",
         "members": [{"profile": "team-cfo", "role": "worker"}],
         "context_files": [r"C:\TeamRoom\Vault\Projects\Team\Decisions.md",
                           r"C:\TeamRoom\Vault\Projects\Лето\BRIEF.md"],
@@ -151,8 +151,8 @@ class BlockTest(unittest.TestCase):
 
     def test_subdir_is_dated_and_safe(self):
         room = _room(project_dir=PROJECT_DIR)
-        block = cp.build_context_block(self.cfg, room, "Отчёт: смета на 6 моти <>?*")
-        subdir = cp._request_subdir("Отчёт: смета на 6 моти <>?*")
+        block = cp.build_context_block(self.cfg, room, "Отчёт: смета на 6 суфле <>?*")
+        subdir = cp._request_subdir("Отчёт: смета на 6 суфле <>?*")
         self.assertIn(subdir, block)
         self.assertRegex(subdir, r"^\d{4}-\d{2}-\d{2} ")
         for bad in '<>:"/\\|?*':
@@ -175,9 +175,9 @@ class BlockTest(unittest.TestCase):
                      context_files=[r"C:\Vault\file-%02d.md" % i for i in range(20)])
         for i in range(12):
             registry.add_request(self.cfg, "cafe", {
-                "root_id": "t_%08d" % i, "title": "Цена набора из 6 моти %d" % i,
+                "root_id": "t_%08d" % i, "title": "Цена набора из 6 суфле %d" % i,
                 "text": TEXT + " версия %d" % i, "created_at": 1_700_000_000 + i,
-                "summary": "Итог по набору моти " * 30,
+                "summary": "Итог по набору суфле " * 30,
             })
         block = cp.build_context_block(self.cfg, room, TEXT)
         self.assertLessEqual(len(block), cp.MAX_BLOCK_CHARS)
@@ -206,19 +206,19 @@ class BlockTest(unittest.TestCase):
     # --- похожие запросы -----------------------------------------------------
     def test_similar_requests_cyrillic_cases_and_order(self):
         registry.add_request(self.cfg, "cafe", {
-            "root_id": "t_aaaa1111", "title": "Цена набора из 6 моти",
-            "text": "Считали цену набора моти для Заозёрья", "created_at": 1_700_000_100,
+            "root_id": "t_aaaa1111", "title": "Цена набора из 6 суфле",
+            "text": "Считали цену набора суфле для Заозёрья", "created_at": 1_700_000_100,
         })
         registry.add_request(self.cfg, "cafe", {
-            "root_id": "t_bbbb2222", "title": "Калькуляция моти и маржа",
-            "text": "Посчитай калькуляцию моти: мука рисовая, маржа 46 %", "created_at": 1_700_000_200,
+            "root_id": "t_bbbb2222", "title": "Калькуляция суфле и маржа",
+            "text": "Посчитай калькуляцию суфле: мука рисовая, маржа 46 %", "created_at": 1_700_000_200,
         })
         registry.add_request(self.cfg, "cafe", {
             "root_id": "t_cccc3333", "title": "Нанять кондитера", "text": "Найм кондитера в Сан-Паулу",
             "created_at": 1_700_000_300,
         })
-        # падежи: «ценами», «наборов», «мотями» — те же основы, что «цена набора моти»
-        found = cp.similar_requests(self.cfg, "cafe", "с ценами наборов моти и маржой", limit=5)
+        # падежи: «ценами», «наборов», «мотями» — те же основы, что «цена набора суфле»
+        found = cp.similar_requests(self.cfg, "cafe", "с ценами наборов суфле и маржой", limit=5)
         ids = [item["root_id"] for item in found]
         self.assertIn("t_aaaa1111", ids)
         self.assertIn("t_bbbb2222", ids)
@@ -229,14 +229,14 @@ class BlockTest(unittest.TestCase):
 
     def test_note_path_and_answer_line(self):
         registry.add_request(self.cfg, "cafe", {
-            "root_id": "t_ab12cd34", "title": "Цена набора из 6 моти",
-            "text": "Посчитай цену набора моти", "created_at": 1_700_000_000,
+            "root_id": "t_ab12cd34", "title": "Цена набора из 6 суфле",
+            "text": "Посчитай цену набора суфле", "created_at": 1_700_000_000,
         })
         notes = self.cfg.vault_dir / "cafe" / "Запросы"
         notes.mkdir(parents=True, exist_ok=True)
-        note = notes / "2026-10-27 Цена набора из 6 моти (ab12cd34).md"
+        note = notes / "2026-10-27 Цена набора из 6 суфле (ab12cd34).md"
         note.write_text("# Цена набора\n\n## Ответ\nНабор стоит 46 R$ за 6 штук.\n", encoding="utf-8")
-        found = cp.similar_requests(self.cfg, "cafe", "цена набора моти", limit=1)
+        found = cp.similar_requests(self.cfg, "cafe", "цена набора суфле", limit=1)
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0]["note_path"], str(note))
         self.assertTrue(found[0]["summary_line"].startswith("Итог: "))
@@ -244,7 +244,7 @@ class BlockTest(unittest.TestCase):
 
     def test_deterministic(self):
         registry.add_request(self.cfg, "cafe", {
-            "root_id": "t_dddd4444", "title": "Цена набора из 6 моти", "text": TEXT,
+            "root_id": "t_dddd4444", "title": "Цена набора из 6 суфле", "text": TEXT,
             "created_at": 1_700_000_000, "summary": "Набор — 46 R$",
         })
         room = _room(project_dir=PROJECT_DIR)
@@ -316,7 +316,7 @@ class EngineIntegrationTest(unittest.TestCase):
             try:
                 body = contract.build_request_body(room, TEXT, "cp-20261028-0001", sb.cfg)
                 result = engine_write.create_request(sb.cfg, room, "cp-20261028-0001",
-                                                     "Цена набора из 6 моти", body)
+                                                     "Цена набора из 6 суфле", body)
             finally:
                 engine_write._run_json = original
 

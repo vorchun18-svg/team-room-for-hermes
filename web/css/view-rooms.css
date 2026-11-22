@@ -101,7 +101,13 @@
 
 /* ── Диалог комнаты ──────────────────────────────────────────────────────── */
 .roomdlg { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
-.dialog.roomdlg-shell { max-height: min(88vh, 880px); }
+/* W29-P3 (дефект 12): окно постоянного размера и на постоянном месте.
+   Высота задаётся один раз (по самому высокому разделу + запас), ширина — от
+   .dialog--wide; центрирование по неизменной высоте держит строку вкладок и
+   подвал «В архив / Отмена / Сохранить» на месте. Прокручивается только тело. */
+.dialog.roomdlg-shell { height: min(88vh, 820px); max-height: calc(100dvh - 2 * var(--space-6)); }
+.roomdlg__panels { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; }
+
 .roomdlg__row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-3); }
 .roomdlg__section { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
 .roomdlg__label { font-size: var(--text-sm); font-weight: 500; color: var(--ui-text-secondary); }
@@ -146,6 +152,9 @@
 .roomdlg__svod-when .roomdlg__field-mini { flex: 0 1 12rem; min-width: 8rem; }
 .roomdlg__svod-when .select { width: 100%; }
 .roomdlg__svod-when .select:disabled { opacity: 0.6; }
+/* W29-Q9: модель для рутинного сведения — своя строка под настройками частоты. */
+.roomdlg__svod > .roomdlg__field-mini { margin-top: var(--space-3); max-width: 28rem; }
+.roomdlg__svod > .roomdlg__field-mini .select { width: 100%; }
 
 .roomdlg__hint { font-size: var(--text-sm); color: var(--muted-foreground); }
 .roomdlg__hint code { font-size: 0.95em; }
@@ -201,8 +210,10 @@
 .roomdlg__tab--active { color: var(--foreground); border-bottom-color: var(--primary); }
 .roomdlg__tab--active .codicon { color: var(--primary); }
 
-.roomdlg__panel { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
-.roomdlg__panel[hidden] { display: none; }
+.roomdlg__panel { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; grid-area: 1 / 1; }
+/* Неактивный раздел занимает своё место (visibility), а не исчезает из потока:
+   высота окна = самый высокий раздел, окно не перерисовывается по размеру. */
+.roomdlg__panel--off { visibility: hidden; pointer-events: none; }
 
 /* «Есть несохранённое» — вместо молчаливого закрытия (B-31) */
 .roomdlg__unsaved {
@@ -306,6 +317,8 @@
   .rooms__grid { grid-template-columns: minmax(0, 1fr); }
   .roomdlg__row { grid-template-columns: minmax(0, 1fr); }
   .roomdlg__member-note { max-width: 40%; }
+  /* Узкий экран: окно — по 100dvh минус отступы подложки, подвал всегда виден. */
+  .dialog.roomdlg-shell { height: min(calc(100dvh - 2 * var(--space-3)), 820px); max-height: calc(100dvh - 2 * var(--space-3)); }
 }
 
 @media (max-width: 640px) {

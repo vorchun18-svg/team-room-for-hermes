@@ -405,6 +405,24 @@ class ActionTests(unittest.TestCase):
         with self.assertRaises(delo_mod.DeloError):
             self._act(action="done")
 
+    def test_reopen_returns_done_delo_to_work(self):
+        """W29B-Q5: карточку с доски из «Закрыто» можно вернуть в «В работе»."""
+        self._act(action="done")
+        reopened = self._act(action="reopen")["delo"]
+        self.assertIn(reopened["status"], ("open", "waiting"))
+        self.assertEqual(reopened["timeline"][-1]["kind"], "status")
+        self.assertIn("работу", reopened["timeline"][-1]["text"])
+        with self.assertRaises(delo_mod.DeloError) as ctx:
+            self._act(action="reopen")
+        self.assertEqual(ctx.exception.http, 409)
+
+    def test_reopen_refuses_running_delo(self):
+        with self.assertRaises(delo_mod.DeloError) as ctx:
+            self._act(action="reopen")
+        self.assertEqual(ctx.exception.http, 409)
+        # дело не закрыто: возвращать в работу нечего (у фикстуры ожидание «вас» → waiting)
+        self.assertIn(ctx.exception.detail["status"], ("open", "waiting"))
+
     def test_set_stage_by_id_and_rename(self):
         result = self._act(action="set_stage", stage_id="st_2", state="done")["delo"]
         self.assertEqual([stage["state"] for stage in result["stages"]],

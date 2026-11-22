@@ -366,7 +366,7 @@ class AnswersResendTests(_Base):
 class BacklogQuestionTruthTests(_Base):
     """B-7: «От вас нужно» знает об ответе, близнецы схлопнуты, служебные вопросы скрыты.
 
-    Образцы — настоящие данные комнаты `fn` (запрос `t_1b0aa253`), сохранённые в
+    Образцы — вымышленный снимок бэклога комнаты `fn` (запрос `t_1b0aa253`) в
     `fixtures/questions_live_fn.json`: q_e7b16109 (отвечен, а в бэклоге был `open`),
     q_22b45cc3/q_18b309bf (один вопрос с разными id), q_6f877b08 (раунды критика).
     """
@@ -425,7 +425,7 @@ class BacklogQuestionTruthTests(_Base):
         self.seed_backlog(self.live_items())
         view = self.backlog()
         twins = [i for i in view["items"]
-                 if "маркшейдер" in (i.get("text") or "").lower()
+                 if "кладовщик" in (i.get("text") or "").lower()
                  and i.get("kind") == "open_question"]
         self.assertEqual(len(twins), 1, [i["id"] for i in twins])
         self.assertEqual(len(twins[0].get("aliases") or []), 1, twins[0])
@@ -448,9 +448,9 @@ class BacklogQuestionTruthTests(_Base):
 
     def test_detail_hides_service_and_dedupes(self):
         """Деталь: служебный вопрос скрыт, близнецы — один элемент с aliases."""
-        # боевые близнецы: «(маркшейдер, TaskFlow)» и «(маркшейдер)» — один вопрос
+        # боевые близнецы: «(кладовщик, TaskFlow)» и «(кладовщик)» — один вопрос
         twins = [item["text"] for item in self.live["backlog_questions"]
-                 if "маркшейдер" in item["text"]]
+                 if "кладовщик" in item["text"]]
         self.assertEqual(len(twins), 2, twins)
         root = self.sa.card("Проверка вопросов", LEAD, status="running")
         self.sa.finish(root, "Готово.", {

@@ -37,7 +37,7 @@ import { locked } from '../store.js';
 import { firstLine, personName, blockHead } from './request-util.js';
 import { countNoun, ANSWERS_RU, LAYOUT_RU, pendingAnswersLabel } from '../text-ru.js';
 import { createSteps } from './request-steps.js';
-import { blockedCards, inboxSummary } from './backlog-model.js';
+import { blockedCards, inboxSummary, systemPauses } from './backlog-model.js';
 import { createApprovals } from './approvals.js';
 import { foldCard, foldState, setFoldState } from './aside-fold.js';
 import { requestStoreFor, bindLive } from './request-store.js';
@@ -47,6 +47,8 @@ import {
   closedReasonText, isFinishedRequest,
 } from './stale-model.js';
 import { noticeLine, markRequestSeen } from './reaction-notice.js';
+// W29-P2: кнопки заблокированной карточки — один набор на колонку, вкладку и низ страницы.
+import { blockedCardActions, roomModels, roomPeople } from './request-reply.js';
 import {
   CHAIN_HINT, decisionActions, decisionAnswerOf, decisionMutedActions, decisionNotice,
   decisionStatusOf, openDecisionDialog, postDecision,
@@ -907,6 +909,114 @@ export function createAside(R) {
       h('div', { class: 'req-side__closed-body' }, rows));
   }
 
+  /* ── W29-P2: заблокированные карточки и системные паузы ─────────────────── */
+
+  /**
+   * Счётчик «ждёт вас» вместе с заблокированными карточками (W29-P2 п.5).
+   *
+   * Сервер отдаёт `needs_you_count` (вопросы/решения/разрешения/шаги) и отдельно
+   * `needs_you_blocked` — число карточек без системной паузы. Склеиваем здесь, в
+   * одном месте: дальше число и список берутся из одного объекта.
+   */
+  function blockedCounts(detail) {
+    const base = needsYouCount(detail);
+    const blocked = Number(detail && detail.needs_you_blocked);
+    if (!Number.isFinite(blocked)) return base;
+    return Object.assign({}, base || {}, { blocked: Math.max(0, Math.trunc(blocked)) });
+  }
+
+  /** Участники и модели комнаты — для «Сменить модель…» и «Переназначить».
+   *  Читаем лениво (один раз за визит); сбой не мешает: без списка форма
+   *  предложит вписать модель руками. */
+  let roomInfo = null;
+  let roomAsked = false;
+  function roomData() {
+    if (!roomAsked && ctx.api && typeof ctx.api.get === 'function') {
+      roomAsked = true;
+      try {
+        Promise.resolve(ctx.api.get(`/api/rooms/${encodeURIComponent(R.roomId)}`))
+          .then((data) => { roomInfo = data || null; })
+          .catch(() => { roomInfo = null; });
+      } catch { /* старый мост: списка не будет */ }
+    }
+    return roomInfo || {};
+  }
+
+  /** Адрес вкладки «От вас нужно» — только для ЯВНОЙ кнопки «Все нужные ответы». */
+  function backlogHref() {
+    const root = String((R.detail && R.detail.id) || rid || '');
+    return `#/room/${encodeURIComponent(R.roomId)}/backlog?request=${encodeURIComponent(root)}`;
+  }
+
+  /**
+   * Заблокированная карточка в колонке: заголовок, кто ждёт, сколько, причина —
+   * и ВСЕ кнопки прямо здесь («Продолжить», «Дать указание / ответить» с диктовкой,
+   * «Сменить модель…», «Переназначить», «Не актуально»). Переход на вкладку
+   * остаётся отдельной кнопкой внизу блока.
+   */
+  function blockedRow(card) {
+    const since = Number(card.since) || 0;
+    const who = card.assignee ? personName(card.assignee) : 'участник';
+    const head = h('div', { class: 'req-side__blocked-head' },
+      icon('stop-circle', { size: 12, className: 'req-side__blocked-icon' }),
+      h('span', { class: 'req-side__blocked-title' }, firstLine(card.text, 100)));
+    const meta = h('div', { class: 'small muted req-side__blocked-meta' },
+      'Ждёт вашего решения: ' + who + (since ? ' · ' + timeAgo(since) : ''));
+    const hint = card.hint
+      ? h('div', { class: 'small muted req-side__blocked-hint', title: card.hint },
+        firstLine(card.hint, 160))
+      : null;
+    const acts = blockedCardActions({
+      card,
+      requestId: String((R.detail && R.detail.id) || rid || ''),
+      api: ctx.api,
+      toast: ctx.toast,
+      models: () => roomModels(roomData()),
+      people: () => roomPeople(roomData()),
+      onChange: () => { refresh({ force: true, quiet: true }); },
+    });
+    return h('div', { class: 'req-side__blocked-card', 'data-blocked-card': String(card.task_id || '') },
+      head, meta, hint, acts);
+  }
+
+  /**
+   * Системная пауза сторожа: «почему стоит» и «что будет» — тихо, без красного.
+   * Кнопка «Снять паузу сейчас» шлёт существующее действие `card_resume`.
+   */
+  function pausesBlock(pauses) {
+    const rows = pauses.map((p) => {
+      const btn = h('button', {
+        type: 'button', class: 'btn btn--ghost btn--sm', 'data-guard-resume': String(p.task_id || ''),
+        title: 'Не ждать сторожа: снять паузу и вернуть карточку в очередь',
+      }, icon('play', { size: 11 }), 'Снять паузу сейчас');
+      btn.addEventListener('click', async () => {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        try {
+          await ctx.api.post(`/api/requests/${encodeURIComponent(String((R.detail && R.detail.id) || rid))}/actions`,
+            { action: 'card_resume', task_id: String(p.task_id || '') });
+          ctx.toast('Пауза снята — задача продолжается', 'ok');
+          await refresh({ force: true, quiet: true });
+        } catch (err) {
+          ctx.toast((err && err.message) || 'Не удалось снять паузу', 'danger');
+          btn.disabled = false;
+        }
+      });
+      return h('div', { class: 'req-side__pause-row', 'data-guard-hold': String(p.task_id || '') },
+        h('div', { class: 'req-side__pause-text' },
+          h('div', { class: 'req-side__pause-title' }, firstLine(p.text, 90)),
+          h('div', { class: 'small muted' }, 'Контроль моделей: ' + p.reason
+            + ' · ' + (p.label || 'Снимаю автоматически'))),
+        btn);
+    });
+    return h('details', { class: 'req-side__pauses', 'data-guard-pauses': String(pauses.length) },
+      h('summary', { class: 'req-side__pauses-sum small muted' },
+        icon('shield', { size: 11 }),
+        'Контроль моделей снимает паузу сам: ' + String(pauses.length)
+        + ' ' + countNoun(pauses.length, ['задача', 'задачи', 'задач'])),
+      h('div', { class: 'req-side__pauses-body' }, rows));
+  }
+
   /**
    * Содержимое «Нужен ваш ответ»: только пункты с действием (W26 §1, T1).
    * Перерисовывается из стора, не дожидаясь опроса страницы.
@@ -941,6 +1051,9 @@ export function createAside(R) {
     if (!total) {
       box.appendChild(h('div', { class: 'req-side__body' },
         h('div', { class: 'req-aside-empty' }, 'Сейчас от вас ничего не нужно: команда продолжает работу.')));
+      // W29-P2 п.2: системная пауза видна и здесь — человек должен понимать, почему
+      // карточка стоит, даже когда от него ничего не требуется.
+      if (view.pauses && view.pauses.length) box.appendChild(pausesBlock(view.pauses));
       const quietClosed = closedQuestions(view.dismissedQs);
       if (quietClosed) box.appendChild(quietClosed);
       const quiet = resendBlock(view.resend);
@@ -985,16 +1098,26 @@ export function createAside(R) {
     }
 
     if (view.blocked.length) {
-      // Заблокированные задачи считаются в том же числе, что и бейдж «От вас нужно»;
-      // здесь — короткая строка со ссылкой: разбираются они на вкладке «От вас нужно».
-      box.appendChild(h('a', {
-        class: 'req-side__blocked',
-        href: `#/room/${encodeURIComponent(R.roomId)}/backlog?request=${encodeURIComponent(R.detail.id)}`,
-        title: view.blocked.map((b) => b.text).join('; '),
-      }, icon('stop-circle', { size: 12 }),
-        h('span', null, countNoun(view.blocked.length, ['задача', 'задачи', 'задач'])
-          + ' ждёт вашего решения — разобрать в «От вас нужно»')));
+      // W29-P2 (дефект: «ссылка уводит со страницы запроса на вкладку, где пусто»).
+      // Заблокированная карточка — такой же пункт «ждёт вашего решения», как вопрос:
+      // здесь её причина и ВСЕ кнопки. Уйти со страницы можно только явной кнопкой
+      // «Все нужные ответы» внизу блока.
+      box.appendChild(h('div', { class: 'req-side__subhead small muted' },
+        'Заблокированные задачи — ждут вашего решения',
+        h('span', { class: 'tnum' }, ' · ' + view.blocked.length)));
+      box.appendChild(h('div', {
+        class: 'req-side__body', 'data-scroll-key': 'blocked', 'data-blocked-list': '',
+      }, view.blocked.map(blockedRow)));
+      box.appendChild(h('div', { class: 'req-side__blocked-foot' },
+        h('a', {
+          class: 'btn btn--ghost btn--sm', href: backlogHref(),
+          title: 'Открыть вкладку «От вас нужно»: все дела этого запроса списком',
+        }, icon('list-unordered', { size: 12 }), 'Все нужные ответы')));
     }
+
+    // W29-P2 п.2: системная пауза сторожа моделей — спокойно и отдельно; в счётчик
+    // «ждёт вас» она не входит, снять её можно и вручную.
+    if (view.pauses && view.pauses.length) box.appendChild(pausesBlock(view.pauses));
 
     const foot = resendBlock(view.resend);
     if (foot) box.appendChild(foot);
@@ -1338,12 +1461,17 @@ export function createAside(R) {
     // Заблокированные задачи этой ветки: тот же источник, что у вкладки «От вас нужно».
     let blocked = [];
     try { blocked = blockedCards([detail]); } catch { blocked = []; }
+    // W29-P2 п.2: системные паузы сторожа — отдельно, в счётчик не входят.
+    let pauses = [];
+    try { pauses = systemPauses([detail]); } catch { pauses = []; }
     // W22-AP2: запросы разрешений агентам — отдельный вид элемента «Нужен ваш ответ».
     const approvals = approvalsUI.pending();
 
     const inbox = inboxSummary({ questions: openQs, decisions: openDecisions, blocked, approvals,
       // W27-E2 §1: число «ждёт вас» — с сервера (`needs_you_count`), не пересчёт.
-      counts: needsYouCount(detail) });
+      // W29-P2 п.5: число заблокированных карточек сервер отдаёт отдельно
+      // (`needs_you_blocked`) — берём его, чтобы число и список не расходились.
+      counts: blockedCounts(detail) });
     const summary = (detail.answers && detail.answers.summary) || {};
     // W21-Q1 (B-45): автообновление свода включено? Тогда ответы забирает
     // руководитель сам, и кнопка досылки не нужна. Нет поля — считаем выключенным
@@ -1351,7 +1479,7 @@ export function createAside(R) {
     const live = (detail.synthesis && detail.synthesis.live) || {};
     return {
       steps, questions, decisions, future,
-      openQs, answeredQs, dismissedQs, openDecisions, closedDecisions, blocked, inbox, approvals,
+      openQs, answeredQs, dismissedQs, openDecisions, closedDecisions, blocked, inbox, approvals, pauses,
       counts: needsYouCount(detail),
       // W27-E2 §1: сколько пунктов можно закрыть разом у завершённого запроса.
       stale: staleSummary(detail, {

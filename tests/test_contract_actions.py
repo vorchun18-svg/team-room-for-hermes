@@ -99,10 +99,23 @@ NOT_REQUEST_ACTIONS = {
     # другие ручки: у них свой набор действий
     "approve": "дело: POST /api/delos/{id}/actions",
     "done": "дело: POST /api/delos/{id}/actions",
+    # W29B-Q5: доска дел переносит карточку между колонками — эти имена уходят
+    # на /api/delos/{id}/actions (сервер: server/delo.py:ACTIONS), не на /api/requests.
+    "pause": "дело: POST /api/delos/{id}/actions — колонка «На паузе» доски",
+    "resume": "дело: POST /api/delos/{id}/actions — возврат из «На паузе»",
+    "reopen": "дело: POST /api/delos/{id}/actions — возврат из «Закрыто»/«Отменено»",
     "mark_sent": "дело/исходящие: POST /api/delos/{id}/actions",
     "approve_outbox": "исходящие: POST /api/outbox/…",
     "cancel_outbox": "исходящие: POST /api/outbox/…",
     "edit_outbox": "исходящие: POST /api/outbox/…",
+    # W29-I1: пункт «Предлагаю собрать карту проекта» — своя ручка со своим набором
+    # действий (`build`/`later`/`dismiss`), она их и принимает: POST /api/rooms/{id}/results/offer
+    "later": "карта проекта: POST /api/rooms/{id}/results/offer (action=later)",
+    # W29-I1: поле строки вида «Сегодня» (`daily-model.js`) — по нему строится ссылка,
+    # на сервер как действие не уходит вовсе.
+    "open": "поле строки «Сегодня»: означает «открыть ссылку», не действие API",
+    # W29-I1: панель «Паритет моделей» — своя ручка исправления.
+    "reset_model": "паритет моделей: POST /api/rooms/{id}/parity/fix (action=reset_model)",
 }
 
 
@@ -527,6 +540,24 @@ class LiveActionsTest(unittest.TestCase):
         _items, after = self.approvals_of(rid)
         self.assertEqual(after.get("approvals"), counter.get("approvals") - 1, after)
         self.assertFalse((after.get("total") or 0) > (counter.get("total") or 0))
+
+    def test_results_offer_actions_are_accepted(self):
+        """Пункт «Предлагаю собрать карту проекта»: своя ручка принимает `later`.
+
+        W29-I1: интерфейс (`backlog.js`) шлёт `{action:'later'}` на
+        `POST /api/rooms/{id}/results/offer` — контракт один, и он проверяется живым
+        запросом, а не таблицей исключений.
+        """
+        status, payload = self.http("POST", "/api/rooms/%s/results/offer" % self.room_id,
+                                    {"action": "later"})
+        self.assertEqual(200, status, payload)
+        self.assertEqual("later", payload.get("action"), payload)
+        status, payload = self.http("POST", "/api/rooms/%s/results/offer" % self.room_id,
+                                    {"action": "собрать-всё"})
+        self.assertEqual(400, status, payload)
+        allowed = ((payload.get("error") or {}).get("detail") or {}).get("allowed") or []
+        self.assertIn("later", allowed, "сервер не называет допустимое действие `later`")
+        self.assertIn("build", allowed)
 
     def test_press_every_pending_button_changes_state(self):
         """Сторож `check_dead_ends --press` на живом сервере песочницы."""

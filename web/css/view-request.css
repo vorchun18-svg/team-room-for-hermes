@@ -1168,6 +1168,28 @@
   .req__meta-sep { display: none; }
 }
 
+/* ── W29-P4: плашка архивного запроса ──────────────────────────────────────── */
+.req-archived-banner {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.req-archived-banner > svg { flex: 0 0 auto; margin-top: 2px; color: var(--ui-text-secondary); }
+.req-archived-banner .banner__text { flex: 1 1 320px; min-width: 0; }
+.req-archived-banner__title { font-weight: 600; margin-bottom: 2px; }
+.req-archived-banner__actions {
+  display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto;
+}
+.req__archive-btn { white-space: nowrap; }
+
+/* W29-P4: у архивного запроса «Доработать»/«Обновить свод» не показываем: это
+   действия, которые зовут модель (сервер их и так отклонит 409). Чтение и
+   копирование остаются. */
+.req--archived .req-bar__revise,
+.req--archived .req-bar__refresh-item,
+.req--archived .req-answer__foot [data-action="revise"],
+.req--archived .req-answer__foot [data-action="svod-refresh"],
+.req--archived .req-answer__foot [data-action="revise-stale"] { display: none !important; }
+
 /* ── Печать ─────────────────────────────────────────────────────────────── */
 @media print {
   .sidebar, .topbar, .toasts, .req__aside, .req__headactions, .req__crumb,

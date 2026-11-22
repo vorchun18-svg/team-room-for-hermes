@@ -22,9 +22,11 @@ import {
   applyNotifyLabel, notifyChanges, openPalette,
 } from './shell-features.js';
 import { initStatusBanners, renderBanners, dispatcherRunning } from './shell-status.js';
+// W29-P9: компактный индикатор расхода в шапке (одна строка, ссылка в настройки).
+import { limitsChip, refreshLimits, chipSignature } from './limits-chip.js';
 import {
   APP_TITLE, pick, buildSidebar, renderRoomList, markActiveRoom, loadRecent,
-  renderEngineStatus, localTitle, setTodayCount, setDelosCount,
+  renderEngineStatus, localTitle, setTodayCount, setDelosCount, renderBookmarks,
 } from './shell-sidebar.js';
 // W26-D6: число у пункта «Дела» — дела, где ждёт ваше решение (одно чтение при старте).
 import { fetchNeedsBadge } from './views/delo-model.js';
@@ -47,6 +49,11 @@ import {
   FILTER_TABS as SCOPE_FILTER_TABS, phaseLabel, scopeModel, scopeSwitcher, toolsGroup,
 } from './topbar-scope.js';
 import { termHelp } from './term-help.js';
+// W29-Q7: вкладки открытых запросов над страницей, «Недавнее»/«Закладки» в меню
+// и общая «Отмена» 10 с — один каркас на всё приложение.
+import { createRequestTabs, installTabKeys } from './views/request-tabs.js';
+import { pushRecent, renameRecent } from './recents.js';
+import { sharedUndo } from './undo.js';
 // W20-U4 (P9): «руководитель отреагировал на ваш ответ» — бейдж вкладки и отметки.
 import { reactionTabBadge, subscribeReactions } from './views/reaction-notice.js';
 
@@ -323,6 +330,11 @@ async function ensureRequestCrumb(route) {
   if (requestCrumbId !== id) return;
   requestCrumbTitle = info.short || '';
   requestCrumbHint = info.full || '';
+  // Название стало известно — подписываем вкладку и «Недавнее» тем же именем.
+  if (requestCrumbTitle) {
+    renameRecent(id, requestCrumbTitle);
+    if (requestTabs) requestTabs.sync({ name: 'request', roomId: route.roomId, id }, { title: requestCrumbTitle });
+  }
   topbarKey = '';
   renderTopbar(router ? router.route : parseHash());
 }
@@ -548,7 +560,7 @@ function renderTopbar(route) {
     room && room.counts && room.counts.working,
     room && Array.isArray(room.members) ? room.members.length : 0,
     health.get('ok'), health.get('error'), dispatcherRunning(health.get('data')),
-    pick(health.get('data'), 'engine.schema_ok'), navIsOpen(),
+    pick(health.get('data'), 'engine.schema_ok'), navIsOpen(), chipSignature(),
   ].join('|');
   if (key === topbarKey) return;
   topbarKey = key;
@@ -644,6 +656,11 @@ function renderTopbar(route) {
   // W20-U1: поиск, палитра и настройки приложения — одна группа значков с
   // подсказками. Раньше поиск стоял отдельной кнопкой и показывал «Ctrl K», хотя
   // это сочетание открывает палитру: два разных дела выглядели одним.
+  // W29-P9: расход — одна строка в шапке, на любом экране. Чипа нет, пока
+  // данных нет вовсе: прочерк в шапке только пугает.
+  const chip = limitsChip({ navigate });
+  if (chip) meta.push(chip);
+
   if (right.length) right.push(h('span', { class: 'topbar__divider', 'aria-hidden': 'true' }));
   right.push(toolsGroup({ navigate, openPalette }));
 
@@ -832,7 +849,11 @@ async function loadRooms({ silent = false } = {}) {
       return;
     }
     const list = normalizeRooms(payload);
-    rooms.set({ list, loadedAt: Date.now(), loading: false, error: null });
+    // W29-P7: группы левого меню идут вместе со списком комнат — один ответ,
+    // одна перерисовка. Ответ без поля (старый сервер) группы не сбрасывает.
+    const patch = { list, loadedAt: Date.now(), loading: false, error: null };
+    if (Array.isArray(payload && payload.groups)) patch.groups = payload.groups;
+    rooms.set(patch);
     // W27-E4: список — в локальную память: следующий запуск выберет адрес сразу.
     saveRoomsCache(list);
     notifyChanges(list);
@@ -875,6 +896,14 @@ function onRoute(route) {
   // роутер рисует «#» при старте, до того как мы прочитали память. Забывает
   // маршрут только осознанный переход «на все комнаты» (hashchange в route-memory).
   if (!isBareHash(route.hash)) routeMemory.remember(route.hash);
+  // W29-Q7: открытый запрос — вкладка над страницей; «Недавнее» помнит, где вы
+  // были (запрос или дело), чтобы вернуться одним нажатием.
+  if (requestTabs) requestTabs.sync(route, { title: requestCrumbTitle });
+  if (route.name === 'request' && route.id && route.roomId) {
+    pushRecent({ id: route.id, roomId: route.roomId, title: requestCrumbTitle });
+  } else if (route.name === 'delo' && route.id) {
+    pushRecent({ id: route.id, kind: 'delo', title: '' });
+  }
   ensureRequestCrumb(route);
   renderTopbar(route);
   markActiveRoom();
@@ -898,6 +927,9 @@ const ROUTE_CHECK_MS = 2500;
 /** Ручка режима меню (полоса значков) — для повторного применения без перезагрузки. */
 let shellRail = null;
 let quickCapture = null;
+// W29-Q7: полоса вкладок открытых запросов живёт на уровне каркаса (как и
+// «Надиктовать»): переживает перерисовку вида и меняется только по маршруту.
+let requestTabs = null;
 let viewObserver = null;
 let layoutMode = null;
 let asideSheet = null;
@@ -962,6 +994,9 @@ function mountShell() {
     onToggleNotifications: () => toggleNotifications(),
     onCycleTheme: () => cycleTheme(),
     onCloseNav: () => setNavOpen(false),
+    // W29-P7: раскладка меню сохранена/не сохранена — перечитать комнаты или сказать причину.
+    onLayoutSaved: () => { loadRooms({ silent: true }); },
+    onNotice: (text) => { if (typeof toast === 'function') toast(text, 'warn'); },
   });
 
   // W21-R1: меню — полоса значков на окне < 1280 px, кнопка рядом с темой,
@@ -995,6 +1030,22 @@ function mountShell() {
     getRoute: () => (router ? router.route : parseHash()),
     navigate: (hash) => { window.location.hash = hash; },
   });
+
+  // W29-Q7: полоса вкладок открытых запросов — над страницей и вне #view:
+  // перерисовка вида её не трогает, вкладки не мигают при обновлении свода.
+  const tabsHost = h('div', {
+    class: 'req-tabs', id: 'req-tabs', 'aria-label': 'Открытые запросы', hidden: true,
+  });
+  if (mainCol) mainCol.insertBefore(tabsHost, el.view);
+  else el.app.appendChild(tabsHost);
+  requestTabs = createRequestTabs({
+    host: tabsHost,
+    navigate: (hash) => navigate(hash),
+    getRoute: () => (router ? router.route : parseHash()),
+    onNotice: (text) => { if (typeof toast === 'function') toast(text, 'info'); },
+  });
+  // Alt+←/→ и Ctrl+W работают на любом экране: вкладки принадлежат каркасу.
+  installTabKeys({ getTabs: () => requestTabs });
 
   router = createRouter({
     el: el.view,
@@ -1194,11 +1245,18 @@ async function boot() {
     if (String(data.id || '') !== requestCrumbId) return;
     requestCrumbTitle = String(data.title_short || '');
     topbarKey = '';
+    // Переименование сразу видно и во вкладке, и в «Недавнем».
+    renameRecent(requestCrumbId, requestCrumbTitle);
+    if (requestTabs && router) requestTabs.sync(router.route, { title: requestCrumbTitle });
     const route = router ? router.route : parseHash();
     if (route) renderTopbar(route);
     // «Недавнее» в сайдбаре тоже должно показать новое название сразу.
     loadRecent();
   });
+
+  // W29-Q7: звезда поставлена/снята на странице запроса — «Закладки» в меню
+  // меняются сразу, без ожидания опроса сводки.
+  window.addEventListener('teamroom:bookmarks', () => { renderBookmarks(); });
 
   subscribeInbox(() => {
     const route = router ? router.route : parseHash();
@@ -1219,6 +1277,21 @@ async function boot() {
 
   poll(() => loadRooms({ silent: true }), ROOMS_POLL_MS, { pauseHidden: true, immediate: false, onError: () => {} });
   poll(() => loadHealth(), 15000, { pauseHidden: true, immediate: false, onError: () => {} });
+  // W29-P9: расход в шапке — раз в минуту, только когда вкладка видна.
+  refreshLimits(api).then(() => {
+    const r = router ? router.route : parseHash();
+    if (r) renderTopbar(r);
+  });
+  poll(() => refreshLimits(api, { force: true }).then(() => {
+    const r = router ? router.route : parseHash();
+    if (r) renderTopbar(r);
+  }), 60000, { pauseHidden: true, immediate: false, onError: () => {} });
+
+  // W29-Q7: уход со страницы не должен «съесть» отложенное действие — оно
+  // выполняется сразу, а не пропадает вместе с окном.
+  window.addEventListener('pagehide', () => {
+    try { sharedUndo().commitAll(); } catch { /* окно уже закрывается */ }
+  });
 
   window.addEventListener('online', () => { loadHealth(); loadRooms({ silent: true }); loadTodayBadge(); loadDeloBadge().catch(() => {}); });
   // Вернулись в окно — число в меню могло устареть (опрос «Сегодня» шёл без нас).

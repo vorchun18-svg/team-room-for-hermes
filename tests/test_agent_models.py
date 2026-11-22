@@ -452,7 +452,7 @@ class CardTests(_Base):
         self.set_model("team-director")
         status, body, _h = self.app.dispatch(
             "POST", "/api/rooms/%s/requests" % ROOM, {},
-            {"text": "Посчитай экономику набора из шести моти и сроки запуска."})
+            {"text": "Посчитай экономику набора из шести суфле и сроки запуска."})
         self.assertEqual(status, 201, body)
         root_id = body["root_id"]
         card = self.card(root_id)
@@ -1183,7 +1183,7 @@ class RealModelTests(_Base):
         self.set_model("team-cfo", "ollama-cloud", "glm-5.3", "ultra")
         status, body, _h = self.app.dispatch(
             "POST", "/api/rooms/%s/requests" % ROOM, {},
-            {"text": "Посчитать экономику набора из шести моти."})
+            {"text": "Посчитать экономику набора из шести суфле."})
         self.assertEqual(status, 201, body)
         row = self.sb.one("SELECT body FROM tasks WHERE id = ?", (body["root_id"],))
         text = row["body"]
@@ -1432,6 +1432,179 @@ def _real_hermes_home() -> Path | None:
     except Exception:  # noqa: BLE001 - на чистом раннере helpers может не найти путь
         return None
     return home if (home / "config.yaml").exists() else None
+
+
+# ---------------------------------------------------------------- W29-P1: мост и запись
+
+class Wave29Tests(_Base):
+    """Дефекты 10/11 (W29-P1): интерпретатор моста по пробе и запись одного участника."""
+
+    def _inject_room_models(self, models: dict) -> None:
+        """Положить в реестр комнаты запись «как есть» (имитация старого состояния)."""
+        path = rooms_mod._rooms_path(self.cfg)
+        data = json.loads(path.read_text("utf-8"))
+        for room in data.get("rooms") or []:
+            if str(room.get("id")) == ROOM:
+                room["agent_models"] = models
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    def test_interpreter_chosen_by_probe(self):
+        """Дефект 11: интерпретатор моста выбирается ПРОБОЙ, а не «файл существует»."""
+        folder = Path(tempfile.mkdtemp(prefix="w29-py-", dir=str(self.sb.root)))
+        bad = folder / "bad-python.exe"
+        good = folder / "good-python.exe"
+        for path in (bad, good):
+            path.write_text("", encoding="utf-8")
+
+        real = models_mod.python_candidates
+        real_cache = dict(models_mod._PYTHON)
+        models_mod._PYTHON.clear()
+        models_mod.python_candidates = lambda cfg: [str(bad), str(good)]
+        tried: list = []
+
+        def probe(path) -> bool:
+            tried.append(path)
+            return str(path) == str(good)
+
+        try:
+            chosen = models_mod._python(self.cfg, refresh=True, probe=probe)
+            self.assertEqual(chosen, str(good), "выбран интерпретатор без hermes_cli")
+            self.assertEqual(tried, [str(bad), str(good)], "проба перебирает кандидатов по порядку")
+            # второй вызов берёт из кэша и пробу не повторяет
+            again = models_mod._python(self.cfg, probe=lambda path: self.fail("проба повторена"))
+            self.assertEqual(again, str(good))
+        finally:
+            models_mod.python_candidates = real
+            models_mod._PYTHON.clear()
+            models_mod._PYTHON.update(real_cache)
+
+    def test_saving_one_participant_ignores_foreign_non_catalog_model(self):
+        """Дефект 10: чужая некаталожная модель не блокирует сохранение соседа."""
+        # у team-ops в комнате стоит модель, которой нет в тестовом каталоге
+        self._inject_room_models({"team-ops": {"provider": "custom:local",
+                                               "model": "local-2024", "reasoning": "",
+                                               "updated_at": 1}})
+        # 1) меняем только мышление у другого участника
+        status, body, _h = self.put("team-cfo", {"reasoning": "low"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["agent_models"]["team-cfo"]["reasoning"], "low")
+        # 2) меняем модель другого участника
+        status, body, _h = self.put("team-cfo", {"provider": "llamacpp", "model": "qwen36",
+                                                "reasoning": "low"})
+        self.assertEqual(status, 200, body)
+        # чужая запись осталась как была
+        self.assertEqual(self.room()["agent_models"]["team-ops"]["model"], "local-2024")
+
+    def test_uncatalogued_model_used_in_room_is_accepted_with_warning(self):
+        """Дефект 10 п.3: модель, которая уже работает в комнате, принимается с предупреждением."""
+        self._inject_room_models({"team-ops": {"provider": "llamacpp",
+                                               "model": "local-2024", "reasoning": "",
+                                               "updated_at": 1}})
+        status, body, _h = self.put("team-cfo", {"provider": "llamacpp",
+                                                "model": "local-2024"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.room()["agent_models"]["team-cfo"]["model"], "local-2024")
+        warnings = " ".join(body.get("warnings") or [])
+        self.assertIn("нет в каталоге", warnings)
+        self.assertIn("используется как выбрано", warnings)
+
+    def test_own_model_from_input_is_accepted_with_warning(self):
+        """W29-FIX1 п.2: пункт «Своя модель» — вписанное имя принимается с предупреждением.
+
+        Человек выбрал пункт «использовать введённое»: модель попадает в реестр комнаты
+        как его выбор, поэтому сервер не отказывает (даже если каталог о ней не знает),
+        но прямо предупреждает — опечатка не запустится.
+        """
+        status, body, _h = self.put("team-cfo", {"provider": "llamacpp",
+                                                 "model": "qwen36-custom:0901",
+                                                 "reasoning": "high", "custom": True})
+        self.assertEqual(status, 200, body)
+        saved = self.room()["agent_models"]["team-cfo"]
+        self.assertEqual(saved["model"], "qwen36-custom:0901", "вписанное имя сохранено как есть")
+        self.assertEqual(saved["provider"], "llamacpp")
+        warnings = " ".join(body.get("warnings") or [])
+        self.assertIn("нет в каталоге", warnings)
+        self.assertIn("сохранена как ваш выбор", warnings)
+        self.assertEqual(body["applied"]["settings"].get("model"), "qwen36-custom:0901")
+
+    def test_own_model_flag_is_needed_for_uncatalogued_name(self):
+        """Без пометки «своя модель» незнакомое имя по-прежнему отклоняется (не ослабили)."""
+        status, body, _h = self.put("team-cfo", {"provider": "llamacpp",
+                                                 "model": "qwen36-custom:0901"})
+        self.assertEqual(status, 400, body)
+
+    def test_custom_must_be_boolean(self):
+        status, body, _h = self.put("team-cfo", {"provider": "llamacpp", "model": "qwen36",
+                                                 "custom": "да"})
+        self.assertEqual(status, 400, body)
+
+    def test_validation_error_names_participant(self):
+        """Дефект 10 п.4: ошибка называет участника, а не «чужую» запись без имени."""
+        status, body, _h = self.put("team-cfo", {"provider": "llamacpp", "model": "не-модель"})
+        self.assertEqual(status, 400, body)
+        detail = json.dumps(body, ensure_ascii=False)
+        self.assertIn("для «team-cfo»", detail)
+        self.assertIn("нет модели", detail)
+
+
+class RoutineModelTests(_Base):
+    """W29-Q9: модель для рутинного сведения — выбор комнаты, дефолт руководителя."""
+
+    def tearDown(self):
+        try:
+            self.app.call("rooms", "update_room", ((self.cfg, ROOM, {"routine_model": {}}), {}))
+        finally:
+            super().tearDown()
+
+    def test_default_is_the_lead_model(self):
+        room = self.room()
+        lead = models_mod.effective(self.cfg, room, room["orchestrator"])
+        got = models_mod.routine_effective(self.cfg, room)
+        self.assertEqual(got["source"], "lead")
+        self.assertFalse(got["is_custom"])
+        self.assertEqual(got["model"], lead["model"], "по умолчанию — модель руководителя")
+        self.assertEqual(got["provider"], lead["provider"])
+        api = self.room_of_api()
+        self.assertIn("routine", api, "карточка комнаты несёт блок рутины")
+        self.assertIn("routine_estimate", api)
+        self.assertEqual(api["routine"]["source"], "lead")
+        self.assertIsNone(api["routine_estimate"]["savings_pct"])
+
+    def test_room_can_choose_lighter_model_and_cards_get_flags(self):
+        status, body, _h = self.app.dispatch(
+            "PATCH", "/api/rooms/%s" % ROOM, {},
+            {"routine_model": {"provider": "llamacpp", "model": "gemma4", "reasoning": "low"}})
+        self.assertEqual(status, 200, body)
+        room = self.room()
+        self.assertEqual(room["routine_model"]["model"], "gemma4")
+        self.assertEqual(room["routine_model"]["reasoning"], "low")
+        args, settings = ew._routine_args(self.cfg, room, room["orchestrator"])
+        self.assertIn("--model=gemma4", args, args)
+        self.assertIn("--provider=llamacpp", args, args)
+        self.assertEqual(settings["source"], "routine")
+        self.assertEqual(settings["reasoning"], "low")
+        # оценка честная: без сессий обеих моделей процентов не выдумываем
+        estimate = models_mod.routine_estimate(self.cfg, room)
+        self.assertIsNone(estimate["savings_pct"])
+        self.assertIn("после первых запусков", estimate["text"])
+
+    def test_unknown_model_is_rejected_with_field(self):
+        with self.assertRaises(ApiError) as ctx:
+            self.app.dispatch("PATCH", "/api/rooms/%s" % ROOM, {},
+                              {"routine_model": {"provider": "llamacpp", "model": "нет-такой"}})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertIn("нет модели", str(ctx.exception.message or ctx.exception))
+        self.assertEqual((ctx.exception.detail or {}).get("field"), "model")
+
+    def test_empty_choice_returns_to_lead_model(self):
+        self.app.dispatch("PATCH", "/api/rooms/%s" % ROOM, {},
+                          {"routine_model": {"provider": "llamacpp", "model": "gemma4"}})
+        status, body, _h = self.app.dispatch("PATCH", "/api/rooms/%s" % ROOM, {},
+                                             {"routine_model": {}})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.room()["routine_model"], {})
+        got = models_mod.routine_effective(self.cfg, self.room())
+        self.assertEqual(got["source"], "lead")
 
 
 if __name__ == "__main__":

@@ -50,7 +50,7 @@ def make_detail(root_id: str = "t_a1", at: int = AT, title: str = "Дорожн�
              "answered": False, "answer": None, "answered_at": None},
         ],
         "decisions": [
-            {"id": "d_1", "text": "Старт с набора из 6 моти", "why": "себестоимость ниже на 18%",
+            {"id": "d_1", "text": "Старт с набора из 6 суфле", "why": "себестоимость ниже на 18%",
              "status": "proposed"},
         ],
         "future_questions": ["Нужен ли отдельный бренд для B2B?"],
@@ -128,7 +128,7 @@ class TestIngestCore(IngestBase):
 
         decisions = ingest.load_state(self.cfg, "cafe")["decisions"]
         self.assertEqual(len(decisions), 1)
-        self.assertEqual(decisions[0]["text"], "Старт с набора из 6 моти")
+        self.assertEqual(decisions[0]["text"], "Старт с набора из 6 суфле")
         self.assertEqual(decisions[0]["status"], "proposed")
 
         items = self.items()
@@ -219,7 +219,7 @@ class TestIngestCore(IngestBase):
     def test_decision_status_tightens_forward_only(self):
         ingest.ingest_request(self.cfg, self.cafe, self.detail())
         accepted = self.detail()
-        accepted["decisions"] = [{"id": "d_1", "text": "Старт с набора из 6 моти",
+        accepted["decisions"] = [{"id": "d_1", "text": "Старт с набора из 6 суфле",
                                   "why": "себестоимость ниже на 18%", "status": "accepted"}]
         accepted["synthesis"] = dict(accepted["synthesis"], text_md="Ответ v2", version=2)
         ingest.ingest_request(self.cfg, self.cafe, accepted)
@@ -228,7 +228,7 @@ class TestIngestCore(IngestBase):
         self.assertEqual({i["id"]: i for i in state["backlog"]["items"]}["t_a1:d_1"]["status"], "done")
 
         back = self.detail()
-        back["decisions"] = [{"id": "d_1", "text": "Старт с набора из 6 моти",
+        back["decisions"] = [{"id": "d_1", "text": "Старт с набора из 6 суфле",
                               "why": "себестоимость ниже на 18%", "status": "proposed"}]
         back["synthesis"] = dict(back["synthesis"], text_md="Ответ v3", version=3)
         ingest.ingest_request(self.cfg, self.cafe, back)

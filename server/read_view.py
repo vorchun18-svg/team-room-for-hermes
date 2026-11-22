@@ -677,7 +677,7 @@ def attempts(runs, facts=None) -> list:
             continue
         outcome = attempt_outcome(run)
         item = {"n": index, "outcome": outcome, "reason": attempt_reason(run),
-                "model": "", "provider": "", "calls": None,
+                "model": "", "provider": "", "calls": None, "session_id": "",
                 "started_at": run.get("started_at"), "ended_at": run.get("ended_at"),
                 "duration_s": _attempt_duration(run),
                 "guard": is_guard_reclaim(run), "ok": outcome in OK_OUTCOMES,
@@ -688,7 +688,7 @@ def attempts(runs, facts=None) -> list:
             except Exception:  # noqa: BLE001 — подпись модели не должна ронять чтение
                 extra = {}
             if isinstance(extra, dict):
-                for key in ("model", "provider"):
+                for key in ("model", "provider", "session_id"):
                     value = str(extra.get(key) or "").strip()
                     if value:
                         item[key] = value

@@ -163,7 +163,7 @@ class RevisionBodyTest(unittest.TestCase):
         self.prev = "## Ответ\n\nМаржа 49%."
         self.issues = [
             {"where": "Срез 02-CFO", "problem": "себестоимость без роста какао",
-             "fix": "пересчитать моти с ценой какао от 20.10"},
+             "fix": "пересчитать суфле с ценой какао от 20.10"},
             "В шаге 2 нет срока",
         ]
 
@@ -178,7 +178,7 @@ class RevisionBodyTest(unittest.TestCase):
         self.assertIn("ЗАМЕЧАНИЯ КРИТИКА", body)
         self.assertIn("Где: Срез 02-CFO", body)
         self.assertIn("Проблема: себестоимость без роста какао", body)
-        self.assertIn("Исправить: пересчитать моти с ценой какао от 20.10", body)
+        self.assertIn("Исправить: пересчитать суфле с ценой какао от 20.10", body)
         self.assertIn("В шаге 2 нет срока", body)
         self.assertIn("ЗАМЕЧАНИЕ МИХАИЛА", body)
         self.assertIn("Сделай короче, без таблиц", body)

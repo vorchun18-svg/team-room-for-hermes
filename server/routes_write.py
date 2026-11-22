@@ -16,6 +16,8 @@ try:  # пакетный и «плоский» импорт
     from . import decision_registry as dec_reg
     from . import idempotency as idem_mod
     from . import stale as stale_mod
+    from . import archive as archive_mod
+    from . import engine_write as engine_write_mod
     from .app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM, BACKLOG_STATUSES,
                              MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS, REPORT_KEY_RE, TASK_ID_RE,
                              UNASSIGN_VALUES, derive_title, err, has_nul, make_slug, profile_ok,
@@ -31,6 +33,8 @@ except ImportError:  # pragma: no cover
     import decision_registry as dec_reg  # type: ignore
     import idempotency as idem_mod  # type: ignore
     import stale as stale_mod  # type: ignore
+    import archive as archive_mod  # type: ignore
+    import engine_write as engine_write_mod  # type: ignore
     from app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM,  # type: ignore
                             BACKLOG_STATUSES, MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS,
                             REPORT_KEY_RE, TASK_ID_RE, UNASSIGN_VALUES, derive_title, err, has_nul,
@@ -557,6 +561,18 @@ class WriteRoutes:
         if action not in ACTION_ALLOWED:
             raise err(400, "Неизвестное действие", action=action, allowed=list(ACTION_ALLOWED))
         room, rec = self._find_record(rid)
+        # W29-P4: у архивного запроса работа стоит — будить агентов нельзя. Разрешены
+        # только возврат из архива и повторная архивация (она честно ответит «уже»).
+        # Проверка вспомогательная: нет состояния на доске — действуем как раньше.
+        if action not in ("archive", "unarchive"):
+            try:
+                state = self.call("engine_read", "request_states",
+                                  ((self.cfg, room.get("board") or self.board, [rid]), {})) or {}
+            except Exception:  # noqa: BLE001 — защита не должна превращаться в 501
+                state = {}
+            if str((state.get(rid) or {}).get("status") or "") == "archived":
+                raise err(409, "Запрос в архиве — сначала верните его из архива",
+                          code="request_archived", rid=rid)
         if action in ("hint_agent", "trust_profile"):
             # W28-B (дефект 6): карточка «нельзя штатно» шлёт действие СВОИМ именем —
             # `{action:"hint_agent"|"trust_profile", approval_id, ttl?, note?}`. Раньше
@@ -618,6 +634,15 @@ class WriteRoutes:
         if action == "revise" and "task_id" not in kw:
             kw.pop("task_id", None)
         self._check_action_values(room, rec, rid, action, kw)
+        # W29-P4: архив и возврат из архива — свой путь: меняется доска (корень и
+        # дети) и служебные поля реестра. Один и тот же модуль для кнопки на
+        # странице и для массового действия в списке (см. routes_archive.py).
+        if action in ("archive", "unarchive"):
+            payload = self._archive_request(room, rec, rid, action, body)
+            payload["request"] = self._summary_or_local(
+                room, rid, rec.get("text") or "", rec.get("title") or "",
+                bool(rec.get("critic")), rec.get("mode") or "auto", rec.get("answers"))
+            return 200, payload, {}
         # B-25: ключ идемпотентности — повторная доставка того же нажатия «Повторить»
         # не запускает действие второй раз, а получает сохранённый ответ (`duplicate: true`).
         retry_slot = ""
@@ -662,6 +687,8 @@ class WriteRoutes:
             return self._answers_resend(room, rec, rid)
         if action == "svod_refresh":           # W20-S1 §1.1 (B-36): «Обновить сейчас»
             return self._svod_refresh(room, rec, rid, body)
+        if action == "second_opinion":         # W29B-Q4: проверка свода на другой модели
+            return self.h_second_opinion_create(room, rec, rid, body)
         if action in ("step_agree", "step_comment", "step_move", "step_drop"):
             # §12: действия пользователя по шагу — «Согласен», «Прокомментировать»,
             # «Переместить», «Не согласен — убрать» (общий механизм ответа, §5/§6).
@@ -732,32 +759,42 @@ class WriteRoutes:
             # ответ храним в реестре: metadata карточки движок переписывать не даёт
             at = int(time.time())
             qid = str(kw.get("question_id"))
+            # §4: ответ «нет/не нужно» снимает связанные шаги («снят по вашему ответу»)
+            cancelled = [] if need_explanation else self._cancel_steps(room, rid, before,
+                                                                       question, user_text)
+            # W29-Q9 §3: короткое подтверждение план не меняет — только запись в реестре
+            # и одна строка «Учёл» в ленте; сессия руководителя не поднимается.
+            quick = bool(not need_explanation and not cancelled
+                         and answers_mod.is_simple_ack(user_text))
             record = {"text": user_text, "at": at,
                       "answered": not need_explanation,
-                      "status": "waiting_explanation" if need_explanation else "sent",
+                      "status": ("waiting_explanation" if need_explanation
+                                 else ("no_change" if quick else "sent")),
                       "question_text": str(question.get("text") or ""),
                       "steps_at_answer": [str(s.get("id")) for s in steps_before],
                       "unblocked": list(res.get("unblocked") or [])}
+            if cancelled:
+                record["cancelled_steps"] = cancelled
+            if quick:
+                record["quick"] = True
             updated = dict(answers or {})
             updated[qid] = record
             answers = updated
             self._save_answers(room, rid, answers)
-            # §2: руководитель получает ответ рабочей карточкой с контрактом реакции
+            # §2: руководитель получает ответ рабочей карточкой с контрактом реакции;
+            # короткое подтверждение — только «Учёл» в ленте (W29-Q9).
             note = {}
             try:
-                note = self.call("thread", "post_answer_note",
-                                 ((self.cfg, room, rid, dict(question), user_text),
-                                  {"need_explanation": bool(need_explanation)}),
-                                 ((self.cfg, room, rid, dict(question), user_text), {})) or {}
+                if quick:
+                    note = self.call("thread", "post_ack",
+                                     ((self.cfg, room, rid, dict(question), user_text), {})) or {}
+                else:
+                    note = self.call("thread", "post_answer_note",
+                                     ((self.cfg, room, rid, dict(question), user_text),
+                                      {"need_explanation": bool(need_explanation)}),
+                                     ((self.cfg, room, rid, dict(question), user_text), {})) or {}
             except ApiError as exc:
                 self.log.warning("карточка-ответ %s: %s" % (rid, exc.message))
-            # §4: ответ «нет/не нужно» снимает связанные шаги («снят по вашему ответу»)
-            cancelled = [] if need_explanation else self._cancel_steps(room, rid, before,
-                                                                       question, user_text)
-            if cancelled:
-                record["cancelled_steps"] = cancelled
-                updated[qid] = record
-                self._save_answers(room, rid, updated)
             payload["question"] = answers_mod.apply_question(dict(question or {}), record)
             payload["answer"] = {"question_id": qid, "text": user_text, "at": at,
                                  "state": record["status"],
@@ -770,11 +807,14 @@ class WriteRoutes:
                     payload.setdefault("note", {})[key] = note[key]
             payload["unblocked"] = list(res.get("unblocked") or [])
             # W17-B §4: существенное уточнение — пересчитать название (в фоне, с паузой).
-            try:
-                self.mod("titles").maybe_refresh(self.cfg, room, dict(rec, answers=answers),
-                                                 before, answers)
-            except Exception as exc:  # noqa: BLE001 - название вторично
-                self.log.warning("название после ответа %s: %s" % (rid, exc))
+            # W29-Q9: короткое подтверждение не меняет содержание запроса и не будит
+            # модель даже ради названия — только запись и «Учёл».
+            if not quick:
+                try:
+                    self.mod("titles").maybe_refresh(self.cfg, room, dict(rec, answers=answers),
+                                                     before, answers)
+                except Exception as exc:  # noqa: BLE001 - название вторично
+                    self.log.warning("название после ответа %s: %s" % (rid, exc))
         payload["request"] = self._summary_or_local(
             room, rid, rec.get("text") or "", rec.get("title") or "",
             bool(rec.get("critic")), rec.get("mode") or "auto", answers)
@@ -804,6 +844,16 @@ class WriteRoutes:
         room, rec = self._find_record(rid)
         if room.get("archived"):
             raise err(409, "Комната в архиве — сообщения по запросу недоступны", room=room.get("id"))
+        # W29-P4: запрос в архиве — работа стоит. Сообщение разбудило бы руководителя
+        # (карточка + модель), поэтому сначала «Вернуть из архива».
+        try:
+            state = self.call("engine_read", "request_states",
+                              ((self.cfg, room.get("board") or self.board, [rid]), {})) or {}
+        except Exception:  # noqa: BLE001 — вспомогательная проверка, не повод для 501
+            state = {}
+        if str((state.get(rid) or {}).get("status") or "") == "archived":
+            raise err(409, "Запрос в архиве — верните его из архива, чтобы продолжить",
+                      code="request_archived", rid=rid)
         text = body.get("text")
         if not isinstance(text, str) or not text.strip():
             raise err(400, "Пустое сообщение — напишите текст", field="text")
@@ -2193,6 +2243,37 @@ class WriteRoutes:
                                                     rec.get("mode") or "auto",
                                                     rec.get("answers"))
         return 200, payload, {}
+
+    # --- архив запроса: «не актуально → в архив» и «вернуть из архива» (W29-P4) ---
+
+    def _archive_request(self, room: dict, rec: dict, rid: str, action: str, body: dict):
+        """Архив/возврат ОДНОГО запроса. Логика — `server/archive.py`, здесь HTTP.
+
+        `archive` останавливает работу (Hermes архивирует корень и детей и сам
+        завершает воркер) и запоминает прежние статусы; `unarchive` возвращает
+        карточки (завершённые — в `done`, остальные — в `blocked`) и очищает
+        служебные поля. Модели при возврате не запускаются.
+        """
+        if not rid:
+            raise err(400, "Не передан запрос", field="rid")
+        note = body.get("note") if isinstance(body, dict) else None
+        reason = note.strip()[:MAX_NOTE] if isinstance(note, str) and note.strip() else ""
+        if reason and has_nul(reason):
+            raise err(400, "В причине есть NUL-байт", field="note")
+        try:
+            if action == "archive":
+                res = archive_mod.archive_request(self.cfg, room, rec, rid, by="mikhail",
+                                                  reason=reason)
+            else:
+                res = archive_mod.restore_request(self.cfg, room, rec, rid, by="mikhail")
+        except engine_write_mod.EngineWriteError as exc:
+            status = int(getattr(exc, "http_status", None) or 409)
+            raise err(status, exc.message_ru, exc.code, **dict(exc.detail or {})) from exc
+        payload = {"ok": True, "action": action}
+        payload.update(res if isinstance(res, dict) else {})
+        payload["archived"] = bool(action == "archive" and not (res or {}).get("already"))
+        payload["archive_prev"] = dict((res or {}).get("prev") or {})
+        return payload
 
     # --- карточка: остановить / продолжить / сменить модель (W23-MG1 §2.8) ---
 

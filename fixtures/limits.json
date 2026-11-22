@@ -1,0 +1,129 @@
+{
+  "ok": true,
+  "source": "fixtures",
+  "windows": {
+    "5h": {
+      "key": "5h",
+      "title": "за 5 часов",
+      "seconds": 18000,
+      "from": 0,
+      "calls": 46,
+      "sessions": 9,
+      "cost_usd": 1.284,
+      "tokens": {"input": 18240, "cache_read": 512000, "cache_write": 96000, "output": 18400, "reasoning": 2100, "total": 644640},
+      "providers": [
+        {
+          "provider": "anthropic", "title": "Anthropic", "calls": 32, "sessions": 6, "cost_usd": 1.284,
+          "tokens": {"input": 12840, "cache_read": 402000, "cache_write": 74000, "output": 12400, "reasoning": 2100, "total": 501240},
+          "models": [
+            {"model": "claude-sonnet-5-5", "calls": 26, "cost_usd": 1.19, "tokens": {"input": 11000, "cache_read": 356000, "cache_write": 68000, "output": 10200, "reasoning": 2100, "total": 445200}},
+            {"model": "claude-haiku-5-5", "calls": 6, "cost_usd": 0.094, "tokens": {"input": 1840, "cache_read": 46000, "cache_write": 6000, "output": 2200, "reasoning": 0, "total": 56040}}
+          ],
+          "limits": {"5h": {"kind": "tokens", "value": 600000, "used": 501240, "pct": 83.5, "status": "warn"}},
+          "limit": {"kind": "tokens", "value": 600000, "used": 501240, "pct": 83.5, "status": "warn"}
+        },
+        {
+          "provider": "ollama-cloud", "title": "Ollama Cloud", "calls": 14, "sessions": 3, "cost_usd": 0.0,
+          "tokens": {"input": 5400, "cache_read": 110000, "cache_write": 22000, "output": 6000, "reasoning": 0, "total": 143400},
+          "models": [
+            {"model": "deepseek-v4.1-flash:1017", "calls": 14, "cost_usd": 0.0, "tokens": {"input": 5400, "cache_read": 110000, "cache_write": 22000, "output": 6000, "reasoning": 0, "total": 143400}}
+          ],
+          "limits": {"5h": {"kind": "calls", "value": 40, "used": 14, "pct": 35.0, "status": "ok"}},
+          "limit": {"kind": "calls", "value": 40, "used": 14, "pct": 35.0, "status": "ok"}
+        }
+      ],
+      "summary": {"calls": 46, "sessions": 9, "tokens": 644640, "cost_usd": 1.284,
+        "worst_limit": {"kind": "tokens", "value": 600000, "used": 501240, "pct": 83.5, "status": "warn", "provider": "anthropic", "provider_title": "Anthropic"}}
+    },
+    "day": {
+      "key": "day",
+      "title": "за сутки",
+      "seconds": 86400,
+      "from": 0,
+      "calls": 187,
+      "sessions": 31,
+      "cost_usd": 4.62,
+      "tokens": {"input": 61200, "cache_read": 2410000, "cache_write": 410000, "output": 78200, "reasoning": 9600, "total": 2969400},
+      "providers": [
+        {
+          "provider": "anthropic", "title": "Anthropic", "calls": 121, "sessions": 22, "cost_usd": 4.62,
+          "tokens": {"input": 48200, "cache_read": 1980000, "cache_write": 362000, "output": 60200, "reasoning": 9600, "total": 2460400},
+          "models": [
+            {"model": "claude-sonnet-5-5", "calls": 104, "cost_usd": 4.41, "tokens": {"input": 44100, "cache_read": 1820000, "cache_write": 342000, "output": 54000, "reasoning": 9600, "total": 2260100}},
+            {"model": "claude-haiku-5-5", "calls": 17, "cost_usd": 0.21, "tokens": {"input": 4100, "cache_read": 160000, "cache_write": 20000, "output": 6200, "reasoning": 0, "total": 190300}}
+          ],
+          "limits": {},
+          "limit": null
+        },
+        {
+          "provider": "ollama-cloud", "title": "Ollama Cloud", "calls": 66, "sessions": 9, "cost_usd": 0.0,
+          "tokens": {"input": 13000, "cache_read": 430000, "cache_write": 48000, "output": 18000, "reasoning": 0, "total": 509000},
+          "models": [
+            {"model": "deepseek-v4.1-flash:1017", "calls": 66, "cost_usd": 0.0, "tokens": {"input": 13000, "cache_read": 430000, "cache_write": 48000, "output": 18000, "reasoning": 0, "total": 509000}}
+          ],
+          "limits": {"5h": {"kind": "calls", "value": 40, "used": 66, "pct": 165.0, "status": "over"}},
+          "limit": {"kind": "calls", "value": 40, "used": 66, "pct": 165.0, "status": "over"}
+        }
+      ],
+      "summary": {"calls": 187, "sessions": 31, "tokens": 2969400, "cost_usd": 4.62, "worst_limit": null}
+    },
+    "week": {
+      "key": "week",
+      "title": "за неделю",
+      "seconds": 604800,
+      "from": 0,
+      "calls": 903,
+      "sessions": 118,
+      "cost_usd": 21.37,
+      "tokens": {"input": 284000, "cache_read": 13880000, "cache_write": 2140000, "output": 402000, "reasoning": 48000, "total": 16874000},
+      "providers": [
+        {
+          "provider": "anthropic", "title": "Anthropic", "calls": 612, "sessions": 84, "cost_usd": 21.37,
+          "tokens": {"input": 236000, "cache_read": 12140000, "cache_write": 1960000, "output": 318000, "reasoning": 48000, "total": 14694000},
+          "models": [
+            {"model": "claude-sonnet-5-5", "calls": 488, "cost_usd": 20.12, "tokens": {"input": 201000, "cache_read": 10920000, "cache_write": 1780000, "output": 274000, "reasoning": 48000, "total": 13235000}}
+          ],
+          "limits": {"week": {"kind": "tokens", "value": 20000000, "used": 14694000, "pct": 73.5, "status": "warn"}},
+          "limit": {"kind": "tokens", "value": 20000000, "used": 14694000, "pct": 73.5, "status": "warn"}
+        },
+        {
+          "provider": "ollama-cloud", "title": "Ollama Cloud", "calls": 291, "sessions": 34, "cost_usd": 0.0,
+          "tokens": {"input": 48000, "cache_read": 1740000, "cache_write": 180000, "output": 84000, "reasoning": 0, "total": 2180000},
+          "models": [
+            {"model": "deepseek-v4.1-flash:1017", "calls": 291, "cost_usd": 0.0, "tokens": {"input": 48000, "cache_read": 1740000, "cache_write": 180000, "output": 84000, "reasoning": 0, "total": 2180000}}
+          ],
+          "limits": {"week": {"kind": "calls", "value": 1500, "used": 291, "pct": 19.4, "status": "ok"}},
+          "limit": {"kind": "calls", "value": 1500, "used": 291, "pct": 19.4, "status": "ok"}
+        }
+      ],
+      "summary": {"calls": 903, "sessions": 118, "tokens": 16874000, "cost_usd": 21.37,
+        "worst_limit": {"kind": "tokens", "value": 20000000, "used": 14694000, "pct": 73.5, "status": "warn", "provider": "anthropic", "provider_title": "Anthropic"}}
+    }
+  },
+  "limits": {
+    "providers": {
+      "anthropic": {"5h": {"kind": "tokens", "value": 600000}, "week": {"kind": "tokens", "value": 20000000}},
+      "ollama-cloud": {"5h": {"kind": "calls", "value": 40}, "week": {"kind": "calls", "value": 1500}}
+    },
+    "updated_at": 0
+  },
+  "forecast": {
+    "5h": {"items": [
+      {"kind": "tokens", "limit": 600000, "used": 501240, "left": 98760, "hours_left": 0.8, "runs_left": 2, "avg_per_run": 50124, "basis": "средний расход за прошедшую часть окна", "unit": "токенов", "text": "При нынешнем темпе хватит на 44 мин (≈ 2 запуска)", "provider": "anthropic", "provider_title": "Anthropic", "status": "warn", "pct": 83.5}
+    ], "text": "При нынешнем темпе хватит на 44 мин (≈ 2 запуска)"},
+    "day": {"items": [], "text": "Лимиты не заданы — прогноз появится, когда вы зададите потолок"},
+    "week": {"items": [
+      {"kind": "tokens", "limit": 20000000, "used": 14694000, "left": 5306000, "hours_left": 55.3, "runs_left": 30, "avg_per_run": 175000, "basis": "средний расход за прошедшую часть окна", "unit": "токенов", "text": "При нынешнем темпе хватит на 2 дн 7 ч (≈ 30 запусков)", "provider": "anthropic", "provider_title": "Anthropic", "status": "warn", "pct": 73.5}
+    ], "text": "При нынешнем темпе хватит на 2 дн 7 ч (≈ 30 запусков)"}
+  },
+  "top_requests": [
+    {"room": "laundry", "room_title": "Химчистка на углу", "rid": "t_a1b2c3d4", "title": "Свести расход и план на неделю", "calls": 38, "tokens": 1240000, "cost_usd": 2.14, "models": ["claude-sonnet-5-5"]},
+    {"room": "freight", "room_title": "Грузоперевозки", "rid": "t_b2c3d4e5", "title": "Проверить маршруты и тарифы", "calls": 21, "tokens": 640000, "cost_usd": 1.02, "models": ["claude-sonnet-5-5", "deepseek-v4.1-flash:1017"]},
+    {"room": "cafe", "room_title": "Кофейня", "rid": "t_c3d4e5f6", "title": "Черновик меню и закупки", "calls": 12, "tokens": 310000, "cost_usd": 0.48, "models": ["claude-haiku-5-5"]}
+  ],
+  "wasted": {"attempts": 1, "cost_usd": 0.31, "tokens": 190000, "requests": ["t_b2c3d4e5"],
+    "text": "Потрачено зря: 1 запуск на 190 тыс. токенов ($0.31) — модель переключали после старта"},
+  "warnings": [],
+  "line": "Расход за 5 ч: 645 тыс. токенов · $1.28; за неделю 74 % лимита (Anthropic)",
+  "chip": "5 ч: 645 тыс. · 84 %"
+}

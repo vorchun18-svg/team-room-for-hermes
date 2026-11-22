@@ -1,0 +1,137 @@
+/**
+ * request-reply.css — «Написать руководителю / дать указание» и кнопки
+ * заблокированной карточки (W29-P2).
+ *
+ * Правила (WAVE29-RULES §«без тупиков»):
+ * 1. поле внизу страницы запроса не перекрывает содержимое: у страницы есть
+ *    нижний отступ величиной с полосу, поэтому последний блок не «прячется»;
+ * 2. кнопки карточки переносятся по строкам, а не уезжают за край в узкой колонке;
+ * 3. раскрытая форма (указание / модель / переназначение) стоит ПОД кнопками —
+ *    размеры соседних блоков не скачут, колонка не «прыгает» вверх;
+ * 4. цвета — только токены темы (светлая и тёмная), без собственных значений.
+ */
+
+/* ── поле внизу страницы запроса ───────────────────────────────────────── */
+
+.req-reply {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card, var(--background));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Полоса стоит в потоке страницы (не `fixed`): она не перекрывает дерево работ
+   и артефакты, а прокручивается вместе с ними. */
+.req-reply__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.req-reply__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: var(--font-sm);
+  color: var(--foreground);
+}
+
+.req-reply__state { flex: none; }
+.req-reply__state[data-tone="ok"] { color: var(--ok-ink, var(--ok)); }
+.req-reply__state[data-tone="warn"] { color: var(--warn-ink, var(--warn)); }
+.req-reply__state[data-tone="danger"] { color: var(--danger-ink, var(--danger)); }
+.req-reply__state:empty { display: none; }
+
+.req-reply__row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.req-reply__input {
+  flex: 1 1 260px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface, var(--background));
+  color: var(--foreground);
+  font: inherit;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.req-reply__input:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent));
+  outline-offset: 1px;
+}
+
+.req-reply__send { flex: none; white-space: nowrap; }
+.req-reply__hint { margin: 0; }
+
+/* ── кнопки заблокированной карточки ───────────────────────────────────── */
+
+.req-reply__blocked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.req-reply__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.req-reply__acts .btn { font-size: var(--font-sm); }
+
+.req-reply__form-host:empty { display: none; }
+
+.req-reply__form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-muted, var(--background));
+}
+
+.req-reply__form .req-reply__input { flex: none; width: 100%; }
+.req-reply__form-hint { margin: 0; }
+
+.req-reply__select {
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface, var(--background));
+  color: var(--foreground);
+  font: inherit;
+}
+
+/* Узкая колонка (правая колонка запроса, телефон): кнопки — на всю ширину,
+   чтобы подписи не срезались. */
+@media (max-width: 683px) {
+  .req-reply__acts { flex-direction: column; align-items: stretch; }
+  .req-reply__acts .btn { width: 100%; justify-content: center; }
+  .req-reply__row { flex-direction: column; align-items: stretch; }
+  .req-reply__send, .req-reply__row .mic-btn { width: 100%; justify-content: center; }
+}
+
+@container req-side (max-width: 380px) {
+  .req-reply__acts { flex-direction: column; align-items: stretch; }
+  .req-reply__acts .btn { width: 100%; }
+  .req-reply__row { flex-direction: column; align-items: stretch; }
+}

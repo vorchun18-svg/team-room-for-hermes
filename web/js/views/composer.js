@@ -30,6 +30,8 @@ import { createMic } from '../dictation.js';
 import { participantLabel, ensureProfileDirectory, profileEntry, memberOf } from '../participant-label.js';
 import { createFeed } from './composer-feed.js';
 import { BRIEF_LABEL, BRIEF_HINT, briefDefaultOn, briefPayload } from './plan-req.js';
+// W29B-Q3: «Просмотр» у чипа вложения — картинка, PDF, текст, Office, голос.
+import { openAttachPreview } from './attach-preview.js';
 
 /**
  * Проверка критиком — ОДИН список (P10): раньше рядом стояли переключатель
@@ -563,6 +565,22 @@ export async function mount(el, ctx) {
     }, label);
   }
 
+  /**
+   * «Просмотр» чипа (W29B-Q3): панель с содержимым файла без внешней программы.
+   * Расшифровку голосового можно сразу вставить в поле запроса — человек не
+   * перепечатывает наговоренное.
+   */
+  function previewAttach(item) {
+    openAttachPreview({
+      path: item.path,
+      name: item.name || baseName(item.path),
+      api,
+      onInsert: (text) => { insertText(text); },
+    }).catch((err) => {
+      toast((err && err.message) || 'Не удалось открыть предпросмотр', 'danger');
+    });
+  }
+
   function renderAttach() {
     attachList.replaceChildren();
     if (!state.attach.length) return;
@@ -586,6 +604,11 @@ export async function mount(el, ctx) {
         }, 'Всё равно прикрепить'));
       }
       if (!bad) {
+        actions.appendChild(h('button', {
+          class: 'btn btn--ghost btn--sm cmp-attach__act', type: 'button',
+          title: 'Посмотреть «' + item.name + '» здесь, не открывая программу',
+          onclick: () => previewAttach(item),
+        }, icon('eye', { size: 12 }), 'Просмотр'));
         actions.appendChild(attachAction(item, 'open', 'Открыть',
           'Открыть «' + item.name + '» программой по умолчанию'));
         actions.appendChild(attachAction(item, 'reveal', 'Открыть в папке',

@@ -1329,7 +1329,7 @@ def create_update_card(cfg, room, rec, detail, ev: dict, note: str = "", thread=
     seed = event_key(ev) or "none"
     key = "%s%s-%s%s" % (SVOD_KEY_PREFIX, root_id, "m%d-" % version if manual else "", seed)
     card_id = _engine.create_child_card(cfg, room, board, parent, lead, title, body,
-                                        "revision", idem_key=key)
+                                        "revision", idem_key=key, routine=True)
     _register(cfg, room, rec, card_id, ev, note, key, now, manual=manual)
     return card_id
 
@@ -1346,6 +1346,19 @@ def _remember(cfg, room, rec, ev: dict, key: str, now: int) -> None:
         _registry().update(cfg, room_id, root_id, patch)
     except Exception:  # noqa: BLE001 - ключ вторичен: карточка уже стоит
         pass
+
+
+def _board_blocked(cfg, room) -> str:
+    """W29-I1: причина «писать в доску нельзя» (песочница + реальный дом Hermes)."""
+    try:
+        try:
+            from . import board_guard as guard
+        except ImportError:                                   # pragma: no cover
+            import board_guard as guard                       # type: ignore
+        found = guard.check(cfg, str((room or {}).get("board") or getattr(cfg, "board", "") or ""))
+    except Exception:                                         # noqa: BLE001 - защита вторична
+        return ""
+    return str((found or {}).get("message") or "")
 
 
 def tick(cfg, room, rec, detail, thread=None, now=None, since=None, log=None) -> dict:
@@ -1366,6 +1379,14 @@ def tick(cfg, room, rec, detail, thread=None, now=None, since=None, log=None) ->
     туда (не чаще раза в час на комнату), а не пропадает молча.
     """
     now = _now(now)
+    # W29-P4: архивный запрос — свод не обновляем (никаких карточек и моделей).
+    if (isinstance(room, dict) and room.get("archived")) or \
+            (isinstance(detail, dict) and detail.get("archived")):
+        return {"action": "none", "reason": "archived"}
+    # W29-I1: песочница с реальной доской — свод не ставит карточек.
+    blocked = _board_blocked(cfg, room)
+    if blocked:
+        return {"action": "none", "reason": "sandbox_real_board", "text": blocked}
     floor = _int(since, -1)
     if floor < 0:
         floor = start_at(cfg, now)
@@ -1391,6 +1412,9 @@ def refresh_now(cfg, room, rec, detail, note: str = "", thread=None, now=None) -
     if open_update_cards(detail, rec, now):
         raise SvodError("conflict", "Обновление свода уже идёт — дождитесь новой версии.",
                         {"reason": "updating"})
+    blocked = _board_blocked(cfg, room)          # W29-I1: песочница не пишет в доску
+    if blocked:
+        raise SvodError("sandbox_real_board", blocked, {"reason": "sandbox_real_board"})
     ev = events(detail, room, rec, thread)
     card_id = create_update_card(cfg, room, rec, detail, ev, note=note, thread=thread,
                                  manual=True, now=now)

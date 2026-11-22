@@ -101,7 +101,7 @@ test('partitionBacklog из фикстуры: 1 вопрос, 1 решение, 
   assert.equal(parts.questions.length, 1);
   assert.equal(parts.questions[0].id, 't_5c8e4a02:q_1');
   assert.equal(parts.decisions.length, 1);
-  assert.equal(parts.decisions[0].text, 'Стартовать с набора из 6 моти, не с поштучной продажи');
+  assert.equal(parts.decisions[0].text, 'Стартовать с набора из 6 суфле, не с поштучной продажи');
   assert.equal(parts.steps.length, 4);
   assert.equal(parts.steps[0].due, '2026-10-30', 'шаги отсортированы по сроку');
   assert.equal(parts.future.length, 1);

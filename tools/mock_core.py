@@ -238,6 +238,8 @@ ROUTE_METHODS = (
     (r"^/api/dispatcher/kick$", ("POST",)),
     (r"^/api/rooms$", ("GET", "POST")),
     (r"^/api/rooms/check-dir$", ("POST",)),
+    # W29-P7: раскладка меню (порядок, закрепление, группы) — ДО общего правила комнаты.
+    (r"^/api/rooms/order$", ("PUT",)),
     (r"^/api/rooms/%s$" % _ROOM, ("GET", "PATCH", "POST")),
     (r"^/api/rooms/%s/requests$" % _ROOM, ("GET", "POST")),
     (r"^/api/rooms/%s/candidates$" % _ROOM, ("GET",)),
@@ -254,7 +256,10 @@ ROUTE_METHODS = (
     (r"^/api/rooms/%s/autonomy/journal$" % _ROOM, ("GET",)),
     (r"^/api/rooms/%s/autonomy/suggest$" % _ROOM, ("GET",)),
     (r"^/api/rooms/%s/reports$" % _ROOM, ("GET",)),
-    (r"^/api/rooms/%s/archive$" % _ROOM, ("POST",)),
+    (r"^/api/rooms/%s/archive$" % _ROOM, ("GET", "POST")),
+    # W29-P4: раздел «Архив» — массово в архив / из архива.
+    (r"^/api/rooms/%s/archive/requests$" % _ROOM, ("POST",)),
+    (r"^/api/rooms/%s/archive/restore$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/members$" % _ROOM, ("POST",)),
     (r"^/api/rooms/%s/members/[a-z0-9_.-]{2,40}$" % _ROOM, ("DELETE", "PATCH")),
     (r"^/api/rooms/%s/agents/[a-z0-9_.-]{2,40}/notes$" % _ROOM, ("GET", "PUT")),
@@ -292,6 +297,12 @@ ROUTE_METHODS = (
     (r"^/api/stt/recordings$", ("GET",)),
     (r"^/api/stt/recordings/[a-z0-9][a-z0-9_-]{5,40}$", ("GET", "DELETE")),
     (r"^/api/stt/recordings/[a-z0-9][a-z0-9_-]{5,40}/parts/\d{1,3}$", ("GET", "PUT", "POST")),
+    # W29-P8: хранилище (размеры, уборка, настройки хранения, материалы ссылкой).
+    (r"^/api/storage$", ("GET",)),
+    (r"^/api/storage/clean$", ("POST",)),
+    (r"^/api/storage/policy$", ("GET", "PUT")),
+    (r"^/api/storage/materials-policy$", ("GET",)),
+    (r"^/api/rooms/%s/materials-link$" % _ROOM, ("GET", "POST")),
 )
 
 

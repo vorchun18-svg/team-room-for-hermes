@@ -49,6 +49,8 @@ ROUTES = [
     ("POST", r"/api/duty-proposals/(?P<proposal_id>[A-Za-z0-9_.-]{1,64})", "h_duty_proposal_act"),
     ("POST", r"/api/rooms/(?P<room_id>[a-z][a-z0-9_-]{1,31})/duty-cards/(?P<item_id>[A-Za-z0-9_.-]{1,64})",
      "h_duty_card_act"),
+    # --- W29-P5: выбор папки/файла окном Windows для мастера дежурств ----------
+    ("POST", r"/api/folders/pick", "h_folder_pick"),
 ]
 
 #: Сколько знаков отдаём в «кратком итоге» и как зовём общий режим в ответе.
@@ -93,8 +95,14 @@ class DutiesRoutes:
             self.log.error("дежурства: чтение", exc)
             raise err(500, "Не удалось прочитать дежурства") from exc
         # W26-D8: недельная сетка в том же ответе — интерфейсу не нужен второй запрос.
+        # W29-P5: `?start=YYYY-MM-DD` — листание недель стрелками ‹ › и «Сегодня».
+        start = _first(query, "start").strip()
         try:
-            payload["week"] = mod.week(self.cfg, None if room == ROOM_ALL else room)
+            payload["week"] = mod.week(self.cfg, None if room == ROOM_ALL else room,
+                                       start=start or None)
+        except ValueError as exc:
+            raise err(400, str(exc), code="bad_request",
+                      field="start", value=start[:10]) from exc
         except Exception as exc:          # noqa: BLE001 — сетка не должна ломать список
             self.log.error("дежурства: неделя", exc)
             payload["week"] = {"start": None, "end": None, "days": [], "runs": 0,
@@ -355,6 +363,36 @@ class DutiesRoutes:
             self.log.error("дежурства: решение по карточке", exc)
             raise err(500, "Не удалось применить решение по карточке дежурства") from exc
         return 200, result, {"Cache-Control": "no-store"}
+
+    # --- POST /api/folders/pick (W29-P5) ----------------------------------
+    def h_folder_pick(self, query, body):
+        """Окно Windows «Выбрать папку» (или файл) для мастера дежурств.
+
+        Тело: ``{title?, mode?: "folder"|"file"}``. Ответ:
+        ``{ok, path, paths, cancelled, kind, exists, message}``.
+        Окно закрыли — это не ошибка: ``cancelled:true``, человек вписывает путь сам.
+        """
+        data = body if isinstance(body, dict) else {}
+        mod = self.mod("folder_pick")
+        title = data.get("title")
+        if title is not None and not isinstance(title, str):
+            raise err(400, "title: строка", field="title")
+        mode = mod.normalize_mode(data.get("mode"))
+        try:
+            tmp_dir = getattr(self.cfg, "tmp_dir", None)
+        except (AttributeError, TypeError):
+            tmp_dir = None
+        try:
+            path = mod.pick_folder(title or "", mode=mode, tmp_dir=tmp_dir)
+        except mod.PickError as exc:
+            raise ApiError(int(exc.status), exc.message, code=exc.code,
+                           detail=exc.detail) from exc
+        info = mod.check_path(path) if path else {"ok": False, "path": "", "kind": "",
+                                                  "exists": None, "message": ""}
+        return 200, {"ok": True, "path": str(path or ""), "paths": [path] if path else [],
+                     "cancelled": not path, "mode": mode, "kind": info.get("kind") or "",
+                     "exists": info.get("exists"), "message": info.get("message") or ""}, \
+            {"Cache-Control": "no-store"}
 
 
 def install_duties_routes(app_cls, routes: list) -> None:

@@ -148,7 +148,7 @@
     },
     {
       "id": "q_7",
-      "text": "Q7 Единица мощности моти vs наборы (разброс 4× — пересчёт у Анны); замер ёмкости морозилки (0 ₽, 30 мин)",
+      "text": "Q7 Единица мощности суфле vs наборы (разброс 4× — пересчёт у Анны); замер ёмкости морозилки (0 ₽, 30 мин)",
       "for": "mikhail",
       "answered": false,
       "answer": null,
@@ -291,7 +291,7 @@
       "status": "done",
       "started_at": 1793147644,
       "finished_at": 1793147969,
-      "summary_md": "Срез 03-Ops (11 файлов). Готово: rynok-leto (рынок, 3 игрока моти), prodazhi-kanaly, channels-detail (28 TG-каналов), b2b-targets (20 кофейней), sales-agents, geo-leto, D19-инструмент Mom Test 6Q. Закупок и тестовых партий нет.",
+      "summary_md": "Срез 03-Ops (11 файлов). Готово: rynok-leto (рынок, 3 игрока суфле), prodazhi-kanaly, channels-detail (28 TG-каналов), b2b-targets (20 кофейней), sales-agents, geo-leto, D19-инструмент Mom Test 6Q. Закупок и тестовых партий нет.",
       "metadata": {},
       "comments": [],
       "runs": [

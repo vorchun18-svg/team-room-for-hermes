@@ -1,0 +1,38 @@
+/*
+ * undo.css — тост «Отмена» с кнопкой «Вернуть» (W29-Q7).
+ *
+ * Живёт в общем месте тостов (#toasts), поэтому годится для любого действия:
+ * лента запросов, страница запроса, меню строки. Тост не исчезает сам через
+ * 4 секунды, как обычный: у него есть срок (10 с) и кнопка, значит читать его
+ * и нажимать можно не торопясь.
+ */
+
+.toast--undo {
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+  background: var(--popover);
+  max-width: min(420px, calc(100vw - 2rem));
+  animation-duration: var(--dur-base);
+}
+
+.toast--undo .codicon { color: var(--primary); flex: 0 0 auto; }
+
+.undo__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: break-word;
+}
+
+.undo__btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Узкое окно: кнопка «Вернуть» остаётся целиком, текст переносится. */
+@media (max-width: 640px) {
+  .toast--undo { flex-wrap: wrap; }
+  .undo__btn { margin-left: auto; }
+}

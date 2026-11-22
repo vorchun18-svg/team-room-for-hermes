@@ -695,6 +695,11 @@ def _status(root: dict, nodes: list, questions: list, critic=None) -> tuple:
         return "reviewing", "Ответ ждёт проверки"
     if root_status == "running" and all(n.get("status") in CLOSED for n in nodes[1:]):
         return "synthesizing", "Директор сводит ответ из готовых частей"
+    # W29-P4: запрос, остановленный при возврате из архива, — это «ждёт человека»:
+    # работа не идёт (модели не запускаются), человек нажимает «Продолжить».
+    # Без этой строки такой запрос выглядел бы «в очереди» и был бы тупиком.
+    if root_status == "blocked":
+        return "needs_you", "Запрос остановлен — нажмите «Продолжить», чтобы вернуть его в работу"
     if any(n.get("status") in ACTIVE for n in nodes[1:]):
         return "working", None
     if root_status == "running":

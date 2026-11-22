@@ -1,0 +1,63 @@
+/* view-archive.css — вкладка «Архив» (W29-P4). Только токены tokens.css. */
+
+.archive { gap: var(--space-4); }
+.archive__intro { margin: calc(-1 * var(--space-2)) 0 0; max-width: 76ch; }
+.archive__toolbar { gap: var(--space-3); margin-top: calc(-1 * var(--space-2)); }
+.archive__search { flex: 1 1 260px; max-width: 460px; min-width: 0; }
+.archive__search .input { width: 100%; }
+.archive__filters { flex: 0 0 auto; }
+.archive__note:empty { display: none; }
+.archive__actions:empty { display: none; }
+.archive__actions { margin-top: calc(-1 * var(--space-2)); }
+
+.archive__list { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.archive__row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3); align-items: center;
+  padding: var(--space-3);
+  background: var(--surface-1, var(--background));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 10px);
+}
+.archive__row:hover { border-color: var(--ui-stroke-secondary, var(--border)); }
+.archive__main { min-width: 0; }
+.archive__titlerow { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.archive__check { flex: 0 0 auto; }
+.archive__title {
+  flex: 1 1 auto; min-width: 0;
+  font-size: var(--text-base); font-weight: 600; color: var(--ui-text-primary);
+  text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.archive__title:hover { text-decoration: underline; }
+.archive__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); margin-top: 3px; }
+.archive__meta span { display: inline-flex; align-items: center; gap: 3px; }
+.archive__snippet {
+  margin: 4px 0 0; font-size: var(--text-sm); color: var(--ui-text-secondary);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.archive__side { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+
+/* W29-P4: «пора в архив» — мягкая подсказка (автоархив выключен, решает человек). */
+.archive__hintbox {
+  display: grid; gap: var(--space-2); margin: var(--space-3) 0 var(--space-2);
+  padding: var(--space-3); border: 1px solid var(--ui-border);
+  border-left: 3px solid var(--ui-accent); border-radius: var(--radius-md);
+  background: var(--ui-surface-raised);
+}
+.archive__hinthead { display: grid; gap: 2px; }
+.archive__hintrow { align-items: center; gap: var(--space-2); }
+.archive__hinttitle {
+  flex: 1 1 auto; min-width: 0; color: var(--ui-text-primary);
+  text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.archive__hinttitle:hover { text-decoration: underline; }
+.archive__hintdays { flex: 0 0 auto; white-space: nowrap; }
+.archive__hintfoot { justify-content: flex-end; }
+
+@media (max-width: 760px) {
+  .archive__row { grid-template-columns: minmax(0, 1fr); }
+  .archive__side { justify-content: flex-end; }
+  .archive__toolbar { margin-top: 0; }
+  .archive__search { max-width: none; }
+}

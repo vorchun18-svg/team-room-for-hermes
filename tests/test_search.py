@@ -21,7 +21,7 @@ from server import config, search  # noqa: E402
 REQUESTS = {
     "cafe": [
         {"root_id": "t_a1b2c3d4", "slug": "r-20261028-0931-ab12", "title": "Легализация и ИНН",
-         "text": "Как открыть компанию в России. Ёмкость рынка моти и цены.",
+         "text": "Как открыть компанию в России. Ёмкость рынка суфле и цены.",
          "created_at": 1761700000},
         {"root_id": "t_beef0001", "slug": "r-20261028-1000-cd34", "title": "Упаковка и бренд",
          "text": "Дизайн коробки, Роспатент, пробная партия.", "created_at": 1761710000},
@@ -41,14 +41,14 @@ STATE = {
         "decisions": [
             {"id": "d_1", "text": "Регистрировать LTDA, а не ИП", "why": "два собственника",
              "status": "accepted", "source_request": "t_a1b2c3d4", "at": 1761700200},
-            {"id": "d_2", "text": "Цена 220 ₽ за моти", "why": "маржа 48,8 %",
+            {"id": "d_2", "text": "Цена 220 ₽ за суфле", "why": "маржа 48,8 %",
              "status": "proposed", "source_request": "t_a1b2c3d4"},
         ],
         "backlog": [
             {"id": "t_a1b2c3d4:ns_1", "text": "Согласовать цену 220 ₽", "owner": "mikhail",
              "due": "2026-11-05", "status": "open", "source_request": "t_a1b2c3d4",
              "source_title": "Легализация и ИНН", "created_at": 1761700300},
-            {"id": "t_a1b2c3d4:ns_2", "text": "Проверить ёмкость рынка моти", "owner": "team-cfo",
+            {"id": "t_a1b2c3d4:ns_2", "text": "Проверить ёмкость рынка суфле", "owner": "team-cfo",
              "due": None, "status": "open", "source_request": "t_a1b2c3d4"},
         ],
         "journal": [
@@ -118,7 +118,7 @@ class SearchTest(unittest.TestCase):
 
     def test_docs_have_required_fields(self):
         search.build_index(self.cfg, "cafe")
-        hits = search.query(self.cfg, "моти")
+        hits = search.query(self.cfg, "суфле")
         self.assertTrue(hits)
         for h in hits:
             for key in ("type", "room", "id", "title", "snippet", "score", "ranges"):
@@ -234,14 +234,14 @@ class SearchTest(unittest.TestCase):
     # --- кэш ---
     def test_cache_ttl_and_clear(self):
         search.build_index(self.cfg, "cafe")
-        self.assertTrue(search.query(self.cfg, "моти", room="cafe"))
+        self.assertTrue(search.query(self.cfg, "суфле", room="cafe"))
         with mock.patch.object(search, "_list_requests",
                                side_effect=lambda cfg, room, limit=500: []), \
                 mock.patch.object(search, "_load_state", side_effect=lambda cfg, room: {}):
             # в пределах TTL данные берутся из кэша
-            self.assertTrue(search.query(self.cfg, "моти", room="cafe"))
+            self.assertTrue(search.query(self.cfg, "суфле", room="cafe"))
             search.clear_cache()
-            self.assertEqual(search.query(self.cfg, "моти", room="cafe"), [])
+            self.assertEqual(search.query(self.cfg, "суфле", room="cafe"), [])
 
     def test_expired_cache_rebuilds(self):
         search.build_index(self.cfg, "cafe")
@@ -249,7 +249,7 @@ class SearchTest(unittest.TestCase):
                                side_effect=lambda cfg, room, limit=500: []), \
                 mock.patch.object(search, "_load_state", side_effect=lambda cfg, room: {}), \
                 mock.patch.object(search.time, "monotonic", return_value=10 ** 9):
-            self.assertEqual(search.query(self.cfg, "моти", room="cafe"), [])
+            self.assertEqual(search.query(self.cfg, "суфле", room="cafe"), [])
 
     # --- устойчивость ---
     def test_broken_state_does_not_crash(self):

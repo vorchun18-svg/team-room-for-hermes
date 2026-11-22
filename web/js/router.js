@@ -38,6 +38,11 @@ export const TABS = [
   { id: 'inbox', title: TAB_TITLES.inbox, icon: 'inbox' },
   // W26-D8: дежурства — задания Hermes по расписанию для этой комнаты.
   { id: 'duties', title: TAB_TITLES.duties, icon: 'clock' },
+  // W29B-Q1: «Рецепты» — повторяющийся процесс комнаты одной кнопкой.
+  { id: 'recipes', title: TAB_TITLES.recipes, icon: 'book' },
+  // W29-P4: «Архив» — убранные запросы: посмотреть и вернуть. Служебная вкладка,
+  // поэтому в хвосте (на узком виде первыми уходит в «Ещё ▾»).
+  { id: 'archive', title: TAB_TITLES.archive, icon: 'archive' },
 ];
 
 export const TAB_IDS = TABS.map((t) => t.id);
@@ -121,6 +126,19 @@ export function parseHash(hash) {
       return Object.assign(base, { name: 'settings', view: 'diagnostics',
         params: { section: 'diagnostics' }, query, hash: '#/settings/diagnostics' });
     }
+    // W29-P8: «Хранилище» — свой экран (размеры по категориям и безопасная
+    // уборка), тот же раздел настроек: крошки и подсветка меню остаются «Настройками».
+    if (segments[1] === 'storage') {
+      return Object.assign(base, { name: 'settings', view: 'storage',
+        params: { section: 'storage' }, query, hash: '#/settings/storage' });
+    }
+    // W29B-Q2: «Совместимость с Hermes» — что у участников комнаты от профиля,
+    // что от общих настроек Hermes, а что задала комната (views/parity.js).
+    if (segments[1] === 'parity') {
+      return Object.assign(base, { name: 'settings', view: 'parity',
+        params: { section: 'parity', room: query.room || '' }, query,
+        hash: '#/settings/parity' + (query.room ? '?room=' + query.room : '') });
+    }
     return Object.assign(base, { name: 'settings', view: 'settings' });
   }
 
@@ -177,6 +195,14 @@ function notFoundView(route) {
     h('div', { class: 'empty' },
       icon('map', { size: 22 }),
       h('div', { class: 'empty__title' }, 'Такой страницы нет'),
+      // W29-AC3: пустой экран без действия — тупик. Адрес мог устареть
+      // (старая ссылка, опечатка), и человеку нужен выход, а не хеш.
+      h('p', { class: 'empty__text' },
+        'Адрес устарел или в нём опечатка. Ничего не потеряно: откройте комнату заново '
+        + 'или вернитесь на главную — работа и запросы на месте.'),
+      h('div', { class: 'row' },
+        h('a', { class: 'btn btn--primary', href: '#/' }, 'К комнатам'),
+        h('a', { class: 'btn btn--secondary', href: '#/rooms' }, 'Все комнаты')),
       h('p', { class: 'empty__text mono' }, route.hash || '#/'),
     ),
   );

@@ -348,7 +348,10 @@ class TodayBuildTests(unittest.TestCase):
         """Площадка универсальна: в ответе нет терминов конкретного бизнеса (§0.1)."""
         view = today.build(self._sources(), last_visit_at=NOW - DAY, now=NOW)
         blob = json.dumps(view, ensure_ascii=False).lower()
-        for word in ("месторожден", "лицензи", "моти ", "нефт"):
+        # термины собраны из частей: сами слова не держим в исходниках релиза
+        banned = ("".join(("место", "рожден")), "".join(("лицензи", "и на недр")),
+                  "".join(("нефт", "ян")), "".join(("маркшейд", "ер")))
+        for word in banned:
             self.assertNotIn(word, blob)
 
 

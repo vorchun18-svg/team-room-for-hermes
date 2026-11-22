@@ -1,0 +1,259 @@
+/*
+ * attach-preview.css — панель предпросмотра вложения (W29B-Q3).
+ *
+ * Размер окна постоянный (правило волны 29): ширина 880 px, высота 82vh — при
+ * смене типа файла ничего не прыгает, содержимое прокручивается внутри.
+ * На узких экранах — 100vw/100dvh минус отступы, подвал остаётся виден.
+ */
+
+.ap-dialog {
+  width: min(880px, calc(100vw - 32px));
+  height: min(82vh, 820px);
+  max-height: calc(100dvh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ap-dialog .dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+
+.ap-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ap-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.ap-meta__size {
+  color: var(--muted, #8a8a8a);
+  font-size: 12px;
+}
+
+.ap-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.ap-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted, #8a8a8a);
+  padding: 12px 2px;
+}
+
+.ap-status {
+  flex: 0 0 auto;
+  min-height: 18px;
+  color: var(--muted, #8a8a8a);
+}
+
+.ap-status--bad {
+  color: var(--danger, #c0392b);
+}
+
+.ap-note {
+  border: 1px solid var(--border, #d9d9d9);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ap-note--bad {
+  border-color: var(--danger, #c0392b);
+  color: var(--danger, #c0392b);
+}
+
+.ap-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ap-block__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ap-image {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+  border-radius: 8px;
+  padding: 8px;
+  max-height: 46vh;
+  overflow: auto;
+}
+
+.ap-image img {
+  max-width: 100%;
+  max-height: 44vh;
+  object-fit: contain;
+  display: block;
+}
+
+.ap-pdf {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 46vh;
+  height: 46vh;
+  border: 1px solid var(--border, #d9d9d9);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ap-audio {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.ap-text,
+.ap-transcript,
+.ap-slide__text {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #d9d9d9);
+  border-radius: 8px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 52vh;
+  overflow: auto;
+}
+
+.ap-table-wrap {
+  overflow: auto;
+  max-height: 52vh;
+  border: 1px solid var(--border, #d9d9d9);
+  border-radius: 8px;
+}
+
+.ap-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+}
+
+.ap-table th,
+.ap-table td {
+  border-bottom: 1px solid var(--border, #d9d9d9);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+  max-width: 320px;
+  overflow-wrap: anywhere;
+}
+
+.ap-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface, #fff);
+  z-index: 1;
+  font-weight: 600;
+}
+
+.ap-slides {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ap-slide__num {
+  font-size: 12px;
+  color: var(--muted, #8a8a8a);
+  margin-bottom: 4px;
+}
+
+.ap-hint {
+  padding: 2px 2px 4px;
+}
+
+.ap-progress {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border, #d9d9d9);
+  overflow: hidden;
+  width: min(320px, 100%);
+}
+
+.ap-progress__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 8%;
+  background: var(--accent, #2f6feb);
+  transition: width 0.3s ease;
+}
+
+.ap-stt__run {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ap-ocr {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ap-clip {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  opacity: 0;
+}
+
+@media (max-width: 720px) {
+  .ap-dialog {
+    width: calc(100vw - 16px);
+    height: auto;
+    max-height: calc(100dvh - 24px);
+  }
+  .ap-pdf {
+    min-height: 38vh;
+    height: 38vh;
+  }
+  .ap-text,
+  .ap-transcript {
+    max-height: 40vh;
+  }
+}

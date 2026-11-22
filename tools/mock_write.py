@@ -12,9 +12,12 @@ from mock_core import (MAX_ATTACH, MAX_NOTE, MAX_TEXT, ROOT, ApiError, backlog_c
                        detail_to_summary, now, short_title, slugify)
 from mock_versions import normalize_v2
 import mock_backlog
+import mock_batchb        # W29-AC2: ручки партии B в демо
+import mock_ac1           # W29-AC1: разбор «Входящих» в демо
 import mock_delos
 import mock_notes
 import mock_duties_fe   # W27-E8: дежурства комнаты
+import mock_recipes      # W29B-Q1: рецепты комнаты
 import mock_paths
 import mock_plan
 import mock_stt
@@ -682,6 +685,15 @@ class MockWrite:
                 "at": now()}
 
     def post(self, path: str, query: dict, body: dict) -> tuple:
+        hit = mock_batchb.handle(self, "POST", path, query, body or {})
+        if hit is not None:                     # W29-AC2: итог дня, совместимость, уведомления
+            return hit
+        hit = mock_ac1.handle(self, "POST", path, query, body or {})
+        if hit is not None:                     # W29-AC1: разбор «Входящих»
+            return hit
+        # W29-P5: окно выбора папки/файла для мастера дежурств (мок: без окна Windows).
+        if path == "/api/folders/pick":
+            return 200, mock_duties_fe.folder_pick(self, body)
         # W27-E8: дежурства комнаты — мастер (предпросмотр и создание), корзина,
         # сухой прогон, действия и ответы на предложения. Демо-состояние в памяти.
         m = re.fullmatch(r"/api/duties/proposals/([A-Za-z0-9_.-]{1,64})/actions", path)
@@ -690,6 +702,28 @@ class MockWrite:
         m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/duties", path)
         if m:
             return 200, mock_duties_fe.create(self, m.group(1), body)
+        # W29B-Q1: рецепты комнаты — создать, запустить, вернуть из корзины.
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/([A-Za-z0-9_-]{1,64})/launch", path)
+        if m:
+            try:
+                return 201, mock_recipes.launch(m.group(2), body or {})
+            except ValueError as exc:
+                raise ApiError(400, "bad_request", str(exc), {}) from exc
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/([A-Za-z0-9_-]{1,64})/restore", path)
+        if m:
+            try:
+                return 200, mock_recipes.restore(m.group(2))
+            except ValueError as exc:
+                raise ApiError(404, "not_found", str(exc), {}) from exc
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/from-request", path)
+        if m:
+            try:
+                return 201, mock_recipes.from_request(body or {})
+            except ValueError as exc:
+                raise ApiError(400, "bad_request", str(exc), {}) from exc
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes", path)
+        if m:
+            return 201, mock_recipes.create(body or {})
         m = re.fullmatch(r"/api/duties/([A-Za-z0-9_.-]{1,64})/(restore|dry_run|actions)", path)
         if m:
             if m.group(2) == "restore":
@@ -784,6 +818,12 @@ class MockWrite:
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})", path)
         if m:
             return 200, self.patch_room(m.group(1), body)
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/archive/requests", path)
+        if m:
+            return 200, self.archive_many(m.group(1), body or {})
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/archive/restore", path)
+        if m:
+            return 200, self.archive_many(m.group(1), body or {}, restore=True)
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/archive", path)
         if m:
             room = self.room(m.group(1))
@@ -823,9 +863,41 @@ class MockWrite:
             return 200, self.open_path(body)
         raise ApiError(404, "not_found", "Неизвестный эндпоинт", {"path": path})
 
+    def put_limits(self, body: dict) -> dict:
+        """PUT /api/limits/settings — проверенные лимиты остаются в памяти демо (W29-P9)."""
+        src = body.get("providers") if isinstance(body, dict) else None
+        providers = {}
+        for key, raw in (src or {}).items():
+            name = str(key or "").strip()[:64]
+            if not name or not isinstance(raw, dict):
+                continue
+            item = {}
+            for window in ("5h", "week"):
+                limit = raw.get(window)
+                if not isinstance(limit, dict):
+                    continue
+                kind = "calls" if str(limit.get("kind")) == "calls" else "tokens"
+                try:
+                    value = int(limit.get("value") or 0)
+                except (TypeError, ValueError):
+                    value = 0
+                if value > 0:
+                    item[window] = {"kind": kind, "value": value}
+            if item:
+                providers[name] = item
+        self.demo_limits = {"providers": providers}
+        return {"ok": True, "limits": {"providers": providers, "updated_at": now()}}
+
     def put(self, path: str, query: dict, body: dict) -> tuple:
+        hit = mock_batchb.handle(self, "PUT", path, query, body or {})
+        if hit is not None:                     # W29-AC2: настройки уведомлений
+            return hit
         if path == "/api/stt/dictionary":
             return 200, mock_stt.put_dictionary(body)
+        if path == "/api/limits/settings":            # W29-P9: лимиты человека (в памяти демо)
+            return 200, self.put_limits(body or {})
+        if path == "/api/rooms/order":                 # W29-P7: раскладка меню
+            return 200, self.apply_layout(body or {})
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/agents/([a-z0-9_.-]{2,40})/notes", path)
         if m:
             return 200, self.put_notes(m.group(1), m.group(2), body)
@@ -839,6 +911,12 @@ class MockWrite:
         raise ApiError(404, "not_found", "Неизвестный эндпоинт", {"path": path})
 
     def patch(self, path: str, query: dict, body: dict) -> tuple:
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/([A-Za-z0-9_-]{1,64})", path)
+        if m:                       # W29B-Q1: правка рецепта (пример становится копией)
+            try:
+                return 200, mock_recipes.patch(m.group(2), body or {})
+            except ValueError as exc:
+                raise ApiError(404, "not_found", str(exc), {}) from exc
         m = re.fullmatch(r"/api/duties/([A-Za-z0-9_.-]{1,64})", path)
         if m:                       # W27-E8: правка расписания/задания/правила
             return 200, mock_duties_fe.patch(self, m.group(1), body)
@@ -959,6 +1037,12 @@ class MockWrite:
                 "title_locked": saved["title_locked"]}
 
     def delete(self, path: str, query: dict, body: dict) -> tuple:
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/([A-Za-z0-9_-]{1,64})", path)
+        if m:                       # W29B-Q1: рецепт → корзина (можно вернуть)
+            try:
+                return 200, mock_recipes.remove(m.group(2))
+            except ValueError as exc:
+                raise ApiError(404, "not_found", str(exc), {}) from exc
         m = re.fullmatch(r"/api/duties/([A-Za-z0-9_.-]{1,64})", path)
         if m:                       # W27-E8: удаление → корзина на 30 дней
             return 200, mock_duties_fe.delete(self, m.group(1))
@@ -1134,6 +1218,75 @@ class MockWrite:
         self.rooms.append(room)
         return self.with_models(room)
 
+    # W29-P7: порядок комнат, закрепление и группы — в памяти демо, как в реестре.
+    def apply_layout(self, body: dict) -> dict:
+        """`PUT /api/rooms/order` — тот же контракт, что у сервера (`rooms.apply_layout`)."""
+        groups = body.get("groups")
+        if groups is not None:
+            if not isinstance(groups, list):
+                raise ApiError(400, "bad_request", "Группы комнат — список", {"field": "groups"})
+            clean = []
+            seen = set()
+            for raw in groups:
+                item = raw if isinstance(raw, dict) else {}
+                gid = str(item.get("id") or "").strip().lower()
+                title = " ".join(str(item.get("title") or "").split())
+                if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,23}", gid or "") or not title:
+                    raise ApiError(400, "bad_request",
+                                   "Группа: нужен id (латиница, цифры, -, _) и название",
+                                   {"field": "groups", "value": gid[:40]})
+                if gid in seen:
+                    raise ApiError(400, "bad_request", "Группа «%s» уже есть" % gid,
+                                   {"field": "groups.id", "value": gid})
+                seen.add(gid)
+                clean.append({"id": gid, "title": title[:60], "collapsed": bool(item.get("collapsed"))})
+            self.groups = clean
+        order = body.get("order")
+        if order is not None:
+            if not isinstance(order, list):
+                raise ApiError(400, "bad_request", "Порядок комнат — список id", {"field": "order"})
+            known = [r["id"] for r in self.rooms]
+            seen_ids = set()
+            for raw in order:
+                rid = str(raw or "")
+                if rid not in known:
+                    raise ApiError(400, "bad_request", "Комнаты «%s» нет — порядок не сохранён" % rid,
+                                   {"field": "order", "value": rid})
+                if rid in seen_ids:
+                    raise ApiError(400, "bad_request", "Комната «%s» в списке дважды" % rid,
+                                   {"field": "order", "value": rid})
+                seen_ids.add(rid)
+            sequence = [str(i) for i in order] + [rid for rid in known if rid not in seen_ids]
+            for pos, rid in enumerate(sequence):
+                self.room(rid)["order"] = pos + 1
+        patch = body.get("rooms")
+        if patch is not None:
+            if not isinstance(patch, dict):
+                raise ApiError(400, "bad_request", "Правки комнат — объект", {"field": "rooms"})
+            gids = {g["id"] for g in self.groups}
+            for rid, item in patch.items():
+                room = self.room(str(rid))
+                if not isinstance(item, dict):
+                    raise ApiError(400, "bad_request", "Правка комнаты — объект", {"field": "rooms"})
+                if "pinned" in item:
+                    room["pinned"] = bool(item["pinned"])
+                if "group" in item:
+                    group = str(item.get("group") or "").strip().lower()
+                    if group and group not in gids:
+                        raise ApiError(400, "bad_request", "Группы «%s» нет" % group,
+                                       {"field": "rooms.group", "value": group})
+                    room["group"] = group
+        gids = {g["id"] for g in self.groups}
+        for room in self.rooms:
+            if room.get("group") and room["group"] not in gids:
+                room["group"] = ""
+        base_ids = list(self.room_details)
+        ids = sorted(base_ids, key=lambda rid: (0 if self.room(rid).get("pinned") else 1,
+                                                int(self.room(rid).get("order") or 0) or 10 ** 9,
+                                                base_ids.index(rid)))
+        return {"ok": True, "changed": True,
+                "rooms": [self.room_summary(rid) for rid in ids], "groups": self.groups}
+
     def patch_room(self, room_id: str, body: dict) -> dict:
         room = self.room(room_id)
         allowed = {"title", "icon", "orchestrator", "critic", "context_files", "project_dir",
@@ -1147,7 +1300,9 @@ class MockWrite:
                    # W20-W1 §1.6: «Ход работы» — подробность ленты и частота итога
                    "worklog_mode", "digest_every_min",
                    # W23-MG2 §W23.7: контроль моделей — «строго» или «только предупреждать»
-                   "model_guard"}
+                   "model_guard",
+                   # W29-Q9: модель для рутинного сведения (автосвод и «Уточнение»)
+                   "routine_model"}
         bad = sorted(set(body) - allowed)
         if bad:
             raise ApiError(400, "bad_request", "Поля нельзя менять", {"fields": bad, "allowed": sorted(allowed)})
@@ -1177,6 +1332,16 @@ class MockWrite:
                 room[key] = check_int(body, key, lo=30, hi=3600, default=180)
             elif key == "auto_svod_min_gap_s":
                 room[key] = check_int(body, key, lo=60, hi=86400, default=600)
+            elif key == "routine_model":
+                # W29-Q9: пусто — «как у руководителя»; пара проверяется по фикстуре каталога.
+                raw = body.get(key)
+                if not isinstance(raw, dict) or not raw.get("provider") or not raw.get("model"):
+                    room[key] = {}
+                else:
+                    provider = check_str(raw, "provider", required=True, maxlen=64)
+                    model = check_str(raw, "model", required=True, maxlen=200)
+                    reasoning = check_str(raw, "reasoning", maxlen=16) if raw.get("reasoning") else ""
+                    room[key] = {"provider": provider, "model": model, "reasoning": reasoning}
             elif key == "context_files":
                 room[key] = list(check_list(body, key, default=[], of_str=True))
             elif key == "critic":
@@ -1241,6 +1406,7 @@ class MockWrite:
         # W23.7: настройка новая, у комнат из старых фикстур её нет — берём значение
         # сервера по умолчанию, иначе копирование полей ниже падало (KeyError → 500).
         room.setdefault("model_guard", "enforce")
+        room.setdefault("routine_model", {})            # W29-Q9: рутина — как у руководителя
         room["worklog"] = _worklog_block(room.get("worklog_mode"), room.get("digest_every_min"))
         svod_defaults(room)                              # W20-S1 §1.1: живой свод и его подписи
         for r in self.rooms:
@@ -1249,7 +1415,7 @@ class MockWrite:
                             "max_rounds", "archived", "launch_mode", "max_parallel_streams", "project_mode",
                             "worklog_mode", "digest_every_min", "worklog",
                             "auto_svod", "auto_svod_quiet_s", "auto_svod_min_gap_s", "svod",
-                            "critic_mode", "critic_round_cap", "model_guard"):
+                            "critic_mode", "critic_round_cap", "model_guard", "routine_model"):
                     r[key] = room[key]
         summary = self.room_summary(room_id)
         return {**self.with_models(room), "counters": summary["counters"], "phase": summary["phase"],
@@ -1506,9 +1672,19 @@ class MockWrite:
                    # W26-D2: рычаги для блокировок, которые нельзя снять разрешением
                    "hint_agent", "trust_profile", "dismiss",
                    # W27-E2 §1: «Не актуально»/«Вернуть» с `target:{kind,id}`
-                   "restore"]
+                   "restore",
+                   # W29-P4: вернуть весь запрос из архива (в демо — снять флаг)
+                   "unarchive",
+                   # W29B-Q4: «Спросить другую модель» — карточка-проверка свода
+                   "second_opinion"]
         if action not in allowed:
             raise ApiError(400, "bad_request", "Неизвестное действие", {"action": action, "allowed": allowed})
+        if action == "second_opinion":          # W29-AC2: демо-ответ вторым мнением
+            status, payload = mock_batchb.second_opinion_run(self, rid, body or {})
+            if status != 200:
+                raise ApiError(status, payload["error"]["code"], payload["error"]["message"],
+                               payload["error"].get("detail") or {})
+            return 200, payload
         extra = {"ok": True, "action": action}
         tree = detail.get("tree") or []
         root = self._root(tree)
@@ -2207,9 +2383,26 @@ class MockWrite:
         elif action == "archive":
             changed = not detail.get("archived")
             detail["archived"] = True
+            detail["archived_at"] = now()
             if rid in self.requests:
                 self.requests[rid]["archived"] = True
             extra.update({"archived": [n["id"] for n in tree], "changed": changed})
+        elif action == "unarchive":
+            # W29-P4: возврат из архива — карточки снова «готовы», модели не зовём.
+            changed = bool(detail.get("archived"))
+            detail["archived"] = False
+            detail["archived_at"] = 0
+            for node in tree:
+                if node.get("status") == "archived":
+                    node["status"] = "done"
+            if detail.get("synthesis"):
+                detail["status"] = "done"
+            elif detail.get("status") in ("archived", "queued", "done"):
+                detail["status"] = "needs_you"
+            if rid in self.requests:
+                self.requests[rid]["archived"] = False
+            extra.update({"restored": [n["id"] for n in tree], "count": len(tree),
+                          "changed": changed, "message": "Запрос возвращён из архива"})
         elif action == "clone":
             clone = self.new_live_request(detail["room"], detail["text"],
                                           body.get("title") or detail["title"] + " (копия)", detail["critic"])

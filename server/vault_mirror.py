@@ -519,6 +519,22 @@ def _md_link(label: str, path) -> str:
     return "[%s](<%s>)" % (clean, _file_url(path))
 
 
+def _material_lines(cfg, path, label=None) -> list[str]:
+    """Строки вложения: размер, «что это», хэш и объяснение, где лежит файл.
+
+    W29-P8: вместо копии в Vault — заметка-ссылка (оригинал остаётся на месте).
+    Модуль хранилища импортируется лениво: зеркало работает и без него.
+    """
+    try:
+        from . import storage as storage_mod
+    except ImportError:                     # запуск как скрипт
+        import storage as storage_mod       # type: ignore
+    lines = storage_mod.material_note_lines(cfg, path, label)
+    link = _md_link(label or Path(str(path)).name, path)
+    lines.append("  - открыть: %s" % link)
+    return lines
+
+
 # --- заметка запроса --------------------------------------------------------
 
 def _request_sections(cfg, room: dict, root_id: str, detail: dict) -> list:
@@ -547,10 +563,17 @@ def _request_sections(cfg, room: dict, root_id: str, detail: dict) -> list:
     attach = detail.get("attach") or detail.get("attachments") or []
     if isinstance(attach, (list, tuple)) and attach:
         request += ["", "**Вложения:**", ""]
+        # W29-P8: материалы не копируются в Vault целиком. Крупный или нетекстовый
+        # файл описывается ссылкой (путь, размер, хэш, «что это») — оригинал остаётся
+        # на месте; маленькие текстовые копируются как раньше (server/storage.py).
         for item in attach:
             path = item.get("path") if isinstance(item, dict) else item
             label = (item.get("title") if isinstance(item, dict) else None) or Path(str(path)).name
-            if path:
+            if not path:
+                continue
+            try:
+                request.extend(_material_lines(cfg, path, label))
+            except Exception:  # noqa: BLE001 — зеркало не должно падать из-за файла
                 request.append("- " + _md_link(label, path))
     blocks.append(("request", "\n".join(request)))
 

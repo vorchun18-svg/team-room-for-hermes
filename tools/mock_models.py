@@ -168,10 +168,32 @@ class MockModels:
         return out
 
     def with_models(self, room: dict) -> dict:
-        """Копия комнаты для ответа: у участников — `model_settings`/`agent_default`."""
+        """Копия комнаты для ответа: у участников — `model_settings`/`agent_default`.
+
+        W29-Q9: плюс выбор «модель для рутинного сведения» и честная (пустая) оценка
+        экономии — демо не выдумывает проценты без сессий.
+        """
         out = copy.deepcopy(room)
         out["agent_models"] = public_map(room.get("agent_models"))
         out["members"] = [self.member_view(room, m) for m in room.get("members") or []]
+        raw = room.get("routine_model") if isinstance(room.get("routine_model"), dict) else {}
+        provider = str((raw or {}).get("provider") or "")
+        model = str((raw or {}).get("model") or "")
+        chosen = bool(provider and model)
+        out["routine_model"] = ({"provider": provider, "model": model,
+                                 "reasoning": str((raw or {}).get("reasoning") or "")}
+                                if chosen else {})
+        out["routine"] = {"provider": provider, "model": model if chosen else "",
+                          "reasoning": str((raw or {}).get("reasoning") or ""),
+                          "source": "routine" if chosen else "lead",
+                          "is_custom": chosen,
+                          "label": (provider + " · " + model) if chosen else ""}
+        out["routine_estimate"] = {
+            "savings_pct": None, "lead_usd": None, "routine_usd": None, "source": "none",
+            "text": ("Оценка появится после первых запусков: в демо сессий нет — цифры "
+                     "не выдумываем." if chosen
+                     else "Рутинные карточки идут на модели руководителя — экономия не настроена."),
+        }
         return out
 
     def member_row(self, room: dict, profile: str) -> dict:
@@ -237,6 +259,13 @@ class MockModels:
                            % (provider["label"], self._available()),
                            {"field": "provider", "provider": provider["id"], "reason": "provider_not_configured"})
         model = self.provider_model(provider["id"], clean["model"])
+        if model is None and body.get("custom") is True:
+            # «Своя модель» (W29-FIX1 п.2): человек вписал название сам — демо-сервер,
+            # как и боевой, принимает его и предупреждает, а не отказывает.
+            reasoning = clean["reasoning"] or self.effective(room, profile)["reasoning"]
+            return {"provider": provider["id"], "model": clean["model"], "reasoning": reasoning,
+                    "_warning": "Модели «%s» нет в каталоге Hermes — сохранена как ваш выбор; "
+                                "если название с опечаткой, задача не запустится." % clean["model"]}
         if model is None:
             raise ApiError(400, "bad_request",
                            "У провайдера «%s» нет модели «%s». Доступны: %s"
@@ -264,6 +293,7 @@ class MockModels:
         for profile, item in value.items():
             clean = self.validate_change(room, str(profile), item)
             if clean is not None:
+                clean.pop("_warning", None)
                 stored[str(profile)] = {**clean, "updated_at": now()}
         room["agent_models"] = stored
         return warnings
@@ -318,6 +348,8 @@ class MockModels:
         clean = self.validate_change(room, profile, body)
         counts = self.applied_counts(room_id, profile)
         warnings = []
+        if clean and clean.get("_warning"):        # «своя модель»: предупреждение, не отказ
+            warnings.append(str(clean.pop("_warning")))
         if clean is None:
             room.setdefault("agent_models", {}).pop(profile, None)
             saved = {}

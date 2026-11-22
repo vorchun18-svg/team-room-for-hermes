@@ -883,8 +883,36 @@ export async function mount(el, ctx) {
       h('ul', { class: 'rm-next__list' }, steps.map(nextStepItem)));
   }
 
+  /**
+   * W29-P6: «Собрать этапы по выполненным запросам» — одна дешёвая проверка по
+   * названиям и итогам готовых запросов (без запуска модели). Результат — обычное
+   * предложение этапов комнаты: принять/поправить/отклонить, и пункт в «От вас нужно».
+   */
+  function buildPhasesButton(label) {
+    const btn = h('button', {
+      class: 'btn btn--primary btn--sm', type: 'button',
+      title: 'Собрать этапы карты по завершённым запросам комнаты — без запуска модели',
+      onclick: async () => {
+        btn.disabled = true;
+        try {
+          const res = await api.post('/api/rooms/' + encodeURIComponent(roomId) + '/phases/from-requests', {});
+          toast(String((res && res.message) || 'Этапы предложены — примите или поправьте'), 'ok');
+          state.proposalSig = '';
+          state.emptySig = '';
+          await load({ silent: true });
+        } catch (err) {
+          toast('Этапы не собрались: ' + String((err && err.message) || 'сервер не ответил'), 'warn');
+        } finally {
+          btn.disabled = false;
+        }
+      },
+    }, icon('map', { size: 13 }), label || 'Собрать этапы по выполненным запросам');
+    return btn;
+  }
+
   /** Действие пустой карты: редактор этапов, предложение руководителю или режим. */
   function nextAction(key, label, primary = true) {
+    if (key === 'build') return buildPhasesButton(label);
     if (key === 'propose') return proposeButton();
     if (key === 'mode') {
       return h('button', {

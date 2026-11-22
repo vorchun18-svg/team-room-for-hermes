@@ -1,0 +1,83 @@
+/* ============================================================================
+   view-daily.css — карточка «Итог дня» на экране «Сегодня» (W29B-Q8).
+
+   Сворачиваемый блок на общем компоненте W21 (section-collapse). Раскладка —
+   по ширине ВИДА (@container view), а не окна: на половине экрана строки
+   уходят в одну колонку, ничего не перекрывается. Цвета — только токены темы.
+   ========================================================================== */
+
+.day-card { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.day-card__head {
+  display: flex; align-items: baseline; gap: var(--space-3);
+  flex-wrap: wrap; min-width: 0;
+}
+.day-card__period {
+  font-size: var(--text-md); font-weight: 650; letter-spacing: -0.01em;
+}
+.day-card__chips { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.day-card__chip { font-variant-numeric: tabular-nums; }
+.day-card__spent { margin: 0; }
+
+.day-card__lists { display: flex; flex-direction: column; gap: var(--space-3); }
+.day-card__sec { display: flex; flex-direction: column; gap: 4px; }
+.day-card__sec-title {
+  margin: 0; font-weight: 600; color: var(--muted-foreground);
+  text-transform: none; letter-spacing: 0;
+}
+.day-card__rows { display: flex; flex-direction: column; gap: 2px; }
+
+.day-row {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px; align-items: start; padding: 5px 0;
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, .14));
+}
+.day-row:last-child { border-bottom: 0; }
+.day-row__mark { color: var(--muted-foreground); line-height: 1.6; }
+.day-row__mark--warn { color: var(--warn, #b58100); }
+.day-row--danger .day-row__mark { color: var(--danger, #b03a2e); }
+.day-row__main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.day-row__text { min-width: 0; overflow-wrap: anywhere; }
+.day-row__link { color: inherit; text-decoration: none; }
+.day-row__link:hover { text-decoration: underline; }
+.day-row__meta { display: flex; flex-wrap: wrap; gap: 2px; align-items: baseline; }
+.day-row__dot { opacity: .7; }
+.day-row__status { font-weight: 600; }
+.day-row__open { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.day-row__open:hover { text-decoration: underline; }
+.day-row__kind { font-weight: 600; }
+
+.day-card__more { margin: 0; }
+
+.day-card__short {
+  display: flex; flex-direction: column; gap: 6px;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border, rgba(127, 127, 127, .14));
+}
+.day-card__short-row {
+  display: flex; align-items: center; gap: var(--space-3);
+  flex-wrap: wrap; justify-content: space-between;
+}
+.day-card__short-label { color: var(--muted-foreground); }
+.day-card__short-btn { white-space: nowrap; }
+.day-card__short-text {
+  margin: 0; padding: 8px 10px; white-space: pre-wrap;
+  background: var(--muted); border-radius: var(--radius-md);
+  font-size: var(--text-sm); line-height: 1.5;
+}
+.day-card__short-error { margin: 0; color: var(--danger, #b03a2e); }
+
+.day-card__empty {
+  display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+  padding: var(--space-3); border-radius: var(--radius-md);
+  background: var(--muted);
+}
+.day-card__empty-title { font-weight: 600; }
+
+.day-card__foot { margin: 0; }
+
+@container view (max-width: 720px) {
+  .day-card__head { align-items: flex-start; }
+  .day-card__short-row { align-items: stretch; }
+  .day-card__short-btn { width: 100%; justify-content: center; }
+}

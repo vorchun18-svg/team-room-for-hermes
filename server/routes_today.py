@@ -85,6 +85,10 @@ def waiting_items(app, room: dict, rec: dict) -> list[dict]:
     for node in detail.get("tree") or []:
         if not isinstance(node, dict) or str(node.get("status") or "") != "blocked":
             continue
+        # W29-P2 п.2: пауза сторожа моделей снимается сама — от человека ничего не
+        # требуется, поэтому в «ждёт вас» (и в число) она не входит.
+        if isinstance(node.get("hold"), dict):
+            continue
         out.append({"kind": "blocked", "id": str(node.get("id") or ""),
                     "text": str(node.get("title") or "Заблокированная задача"),
                     "since": _item_since(node, rec)})

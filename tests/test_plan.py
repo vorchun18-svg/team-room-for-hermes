@@ -151,7 +151,7 @@ class PlanBase(unittest.TestCase):
         self._tmp.cleanup()
 
     def make_room(self, **extra):
-        data = {"title": "Моти", "orchestrator": ORCH,
+        data = {"title": "Суфле", "orchestrator": ORCH,
                 "members": [{"profile": p} for p in WORKERS],
                 "max_parallel_streams": self.max_parallel,
                 # W17-R §3: у НОВОЙ комнаты режим «сразу, без подтверждения».
@@ -186,7 +186,7 @@ class PlanBase(unittest.TestCase):
 class ValidationTests(PlanBase):
     def test_ids_are_assigned_and_unknown_fields_dropped(self):
         result = plan.validate_plan(self.room, [
-            mkstream("Рецептура моти", secret="утечка", request_id="t_12345678"),
+            mkstream("Рецептура суфле", secret="утечка", request_id="t_12345678"),
             mkstream("Упаковка и бренд", owner="worker-b"),
         ])
         self.assertEqual([s["id"] for s in result["streams"]], ["s1", "s2"])
@@ -536,12 +536,12 @@ class StreamBodyTests(PlanBase):
 
     def test_brief_title_replaces_technical_id(self):
         registry.add_request(self.cfg, self.room["id"], {
-            "root_id": "t_brief001", "slug": "brief-1", "title": "Набор моти к декабрю",
-            "text": "Моти", "created_at": int(time.time()), "brief": True})
+            "root_id": "t_brief001", "slug": "brief-1", "title": "Набор суфле к декабрю",
+            "text": "Суфле", "created_at": int(time.time()), "brief": True})
         self.ingest([mkstream("Рецептура")])
         stored = self.current()
         body = plan._stream_body(self.cfg, stored, stored["streams"][0], self.room)
-        self.assertIn("«Набор моти к декабрю»", body)
+        self.assertIn("«Набор суфле к декабрю»", body)
         self.assertNotIn("Бриф: t_", body)
         head, _, service = body.partition("Служебное")
         self.assertNotIn("t_brief001", head)
@@ -676,7 +676,7 @@ class MetaTests(PlanBase):
     def test_brief_flag_comes_from_registry(self):
         registry.add_request(self.cfg, self.room["id"], {
             "root_id": "t_brief001", "slug": "brief-1", "title": "Главный запрос",
-            "text": "Моти", "created_at": int(time.time()), "brief": True})
+            "text": "Суфле", "created_at": int(time.time()), "brief": True})
         self.ingest([mkstream("Рецептура")], root="t_brief001")
         self.assertTrue(plan.detail_meta(self.cfg, self.room["id"], "t_brief001")["brief"])
 

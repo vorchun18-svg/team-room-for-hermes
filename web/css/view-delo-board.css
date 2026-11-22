@@ -1,0 +1,303 @@
+/* view-delo-board.css — «Доска» и «Время» экрана «Дела» (W29B-Q5).
+ *
+ * Только токены темы (переменные вида `--имя`) — обе темы и плотности. Раскладка по ширине
+ * ВИДА (`@container delo` из view-delo.css): узкий вид — колонки стопкой и одна
+ * неделя в строку без горизонтальной прокрутки страницы.
+ */
+
+/* ── Переключатель «Список / Доска / Время» ─────────────────────────────── */
+
+.delo__modes { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+.delo-mode { cursor: pointer; height: auto; line-height: 1.6; gap: var(--space-1); }
+.delo-mode[aria-pressed="true"] { border-color: transparent; }
+
+/* ── Доска ──────────────────────────────────────────────────────────────── */
+
+.delo-board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-2);
+  align-items: start;
+  min-width: 0;
+}
+
+.delo-bcol {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-secondary);
+  padding: var(--space-1);
+}
+
+.delo-bcol__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  padding: 2px var(--space-1) 2px;
+  min-width: 0;
+}
+.delo-bcol__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--ui-text-secondary);
+  text-transform: none;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.delo-bcol__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--ui-text-quaternary);
+  flex: none;
+}
+.delo-bcol__dot--open { background: var(--info); }
+.delo-bcol__dot--waiting { background: var(--warn); }
+.delo-bcol__dot--paused { background: var(--ui-text-tertiary); }
+.delo-bcol__dot--done { background: var(--ok); }
+.delo-bcol__dot--cancelled { background: var(--danger); opacity: .5; }
+
+.delo-bcol__count {
+  font-size: var(--text-2xs);
+  color: var(--ui-text-tertiary);
+  background: var(--ui-bg-tertiary);
+  border-radius: var(--radius-full);
+  padding: 0 6px;
+  line-height: 16px;
+  min-width: 16px;
+  text-align: center;
+}
+.delo-bcol__add { flex: none; white-space: nowrap; }
+
+.delo-bcol__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-height: 72px;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  transition: background var(--dur-fast) var(--ease);
+}
+.delo-bcol__body.delo-bcol--over {
+  background: var(--ui-row-active-background);
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+.delo-bcol__empty { margin: 0; padding: var(--space-2); text-align: center; }
+.delo-bcol__note { margin: 0; padding: 0 var(--space-1) var(--space-1); }
+
+/* Карточка дела на доске */
+.delo-bcard {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  cursor: grab;
+  touch-action: pan-y;
+  min-width: 0;
+}
+.delo-bcard:hover { border-color: var(--border); background: var(--ui-row-hover-background); }
+.delo-bcard:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.delo-bcard--needs { border-left-color: var(--warn); }
+.delo-bcard--overdue { border-left-color: var(--danger); }
+.delo-bcard--dragging { opacity: .55; cursor: grabbing; box-shadow: var(--shadow-md); }
+body.delos-dragging { cursor: grabbing; user-select: none; }
+
+.delo-bcard__top { display: flex; align-items: flex-start; gap: var(--space-1); min-width: 0; }
+.delo-bcard__title {
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+  color: var(--ui-text-primary);
+  overflow-wrap: anywhere;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.delo-bcard__meta { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+.delo-bcard__room { overflow-wrap: anywhere; }
+.delo-bcard__due { height: auto; line-height: 1.5; }
+.delo-bcard__stage { overflow-wrap: anywhere; }
+
+/* Мини-форма «+ Дело» */
+.delo-bcreate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+}
+.delo-bcreate__input {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--ui-bg-input);
+  color: var(--ui-text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.delo-bcreate__input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.delo-bcreate__btns { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+
+/* ── Таймлайн «Время» ──────────────────────────────────────────────────── */
+
+.delo-tl { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+
+.delo-tl__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.delo-tl__nav { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+.delo-tl__period { font-size: var(--text-sm); font-weight: 600; color: var(--ui-text-primary); }
+.delo-tl__step { padding: 0 var(--space-1); }
+.delo-tl__scales { display: flex; gap: var(--space-1); }
+.delo-tl__scale { cursor: pointer; height: auto; line-height: 1.6; }
+.delo-tl__scale[aria-pressed="true"] { border-color: transparent; }
+
+.delo-tl__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-secondary);
+  padding: var(--space-1);
+  min-width: 0;
+}
+.delo-tl__weekdays,
+.delo-tl__week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+  min-width: 0;
+}
+.delo-tl__weekday {
+  text-align: center;
+  text-transform: lowercase;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.delo-tl__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 84px;
+  min-width: 0;
+  padding: var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: var(--card);
+}
+.delo-tl__cell--past { background: var(--ui-bg-tertiary); }
+.delo-tl__cell--today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.delo-tl__cell--outside { opacity: .55; }
+.delo-tl__grid--month .delo-tl__cell { min-height: 76px; }
+
+.delo-tl__cell-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  color: var(--ui-text-tertiary);
+}
+.delo-tl__cell-day { font-weight: 600; }
+.delo-tl__today { color: var(--accent); white-space: nowrap; }
+.delo-tl__cell-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.delo-tl__card {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  padding: 2px var(--space-1);
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--ui-bg-primary);
+  color: var(--ui-text-primary);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.delo-tl__card:hover { background: var(--ui-row-hover-background); border-color: var(--border); }
+.delo-tl__card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.delo-tl__card--needs { border-left-color: var(--warn); }
+.delo-tl__card--overdue { border-left-color: var(--danger); }
+.delo-tl__card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.delo-tl__more {
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0 2px;
+  text-align: left;
+  font: inherit;
+  font-size: var(--text-2xs);
+}
+.delo-tl__more:hover { text-decoration: underline; }
+
+.delo-tl__overdue {
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.delo-tl__overdue-head { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; color: var(--danger-ink); }
+.delo-tl__overdue-list { display: flex; flex-direction: column; gap: 2px; }
+.delo-tl__overdue-row { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.delo-tl__overdue-chip { flex: none; height: auto; line-height: 1.5; }
+
+.delo-tl__nodue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  min-width: 0;
+}
+.delo-tl__nodue-list { display: flex; gap: 2px; flex-wrap: wrap; min-width: 0; }
+.delo-tl__nodue-list .delo-tl__card { width: auto; max-width: 260px; }
+.delo-tl__outside { margin: 0; }
+
+/* ── Узкий вид ─────────────────────────────────────────────────────────── */
+
+@container delo (max-width: 1100px) {
+  .delo-board { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+}
+@container delo (max-width: 720px) {
+  .delo-board { grid-template-columns: minmax(0, 1fr); }
+  .delo-tl__weekdays { display: none; }
+  .delo-tl__week { grid-template-columns: minmax(0, 1fr); }
+  .delo-tl__cell { min-height: 0; }
+}

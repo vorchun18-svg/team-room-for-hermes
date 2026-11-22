@@ -317,7 +317,7 @@ class PostMessageTests(_Base):
 
     def test_failed_request_is_retried(self):
         rid = self.rid("failed")
-        status, payload, _ = self.post(rid, "Разбей партию на две по 15 моти")
+        status, payload, _ = self.post(rid, "Разбей партию на две по 15 суфле")
         self.assertEqual(status, 201, payload)
         self.assertIn("retry", payload, payload)
         self.assertIn("unblock", self.shim.verbs(), self.shim.calls)

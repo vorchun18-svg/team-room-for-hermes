@@ -141,10 +141,10 @@ class FakeEngine:
         self.created = []
 
     def create_child_card(self, cfg, room, board, parent_id, assignee, title, body, kind,
-                          idem_key=None):
+                          idem_key=None, routine=False):
         self.created.append({"room": room, "board": board, "parent": parent_id,
                              "assignee": assignee, "title": title, "body": body,
-                             "kind": kind, "idem_key": idem_key})
+                             "kind": kind, "idem_key": idem_key, "routine": routine})
         return "t_a000000%d" % len(self.created)
 
 
@@ -936,6 +936,8 @@ class WaitingCardsTest(SvodBase):
         res = svod_live.tick(CFG, make_room(), make_rec(), detail, now=NOW + 3600, since=V1_AT)
         self.assertEqual(res["action"], "created")
         self.assertEqual(len(self.engine.created), 1, "после цепочки — обычная «тишина»")
+        self.assertTrue(self.engine.created[0]["routine"],
+                        "W29-Q9: обновление свода — рутинная карточка (своя модель)")
 
     def test_card_waiting_for_human_does_not_hold(self):
         detail = self._detail()

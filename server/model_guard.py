@@ -33,6 +33,7 @@ tenant и доски не трогаем; при неопределённой м
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -318,7 +319,11 @@ def state_path(cfg, room_id) -> Path:
 def _blank_state() -> dict:
     return {"updated_at": 0, "restarts": {}, "user_model": {}, "stopped": {},
             "unknown": {}, "warned": {}, "events": [], "pins": {}, "holds": {},
-            "reclaimed": {}, "attempts": {}, "pin_cursor": 0}
+            "reclaimed": {}, "attempts": {}, "pin_cursor": 0, "incidents": [], "effort": {},
+            # W29-I1: карточки, которые сторож УЖЕ ставил на паузу по нашей причине —
+            # второй раз не блокируем никогда (иначе «блок ↔ снять» и размыкатель петель
+            # Hermes уводит карточку в triage, где её подхватывает чужой specifier).
+            "park_once": {}}
 
 
 def read_state(cfg, room_id) -> dict:
@@ -331,12 +336,14 @@ def read_state(cfg, room_id) -> dict:
     if not isinstance(raw, dict):
         return data
     for key in ("restarts", "user_model", "stopped", "unknown", "warned",
-                "pins", "holds", "reclaimed", "attempts"):
+                "pins", "holds", "reclaimed", "attempts", "effort", "park_once"):
         value = raw.get(key)
         if isinstance(value, dict):
             data[key] = {str(k): v for k, v in value.items() if isinstance(v, dict)}
     events = raw.get("events")
     data["events"] = [e for e in (events or []) if isinstance(e, dict)][-MAX_EVENTS:]
+    incidents = raw.get("incidents")
+    data["incidents"] = [i for i in (incidents or []) if isinstance(i, dict)][-MAX_INCIDENTS:]
     for key in ("updated_at", "pin_cursor"):
         try:
             data[key] = int(raw.get(key) or 0)
@@ -520,6 +527,96 @@ def events(cfg, room_id, root_id=None, *, limit: int = 50) -> list:
     return items[:max(1, int(limit))]
 
 
+# ---------------------------------------------------------------- инциденты сторожа
+#
+# W29-P1 п.6: сторож — редкая страховка, цель — 0 вмешательств. Поэтому КАЖДОЕ его
+# вмешательство (пин, пауза, снятие паузы, остановка) — запись с фактами: карточка, кто её
+# создал, через сколько секунд после создания сторож вмешался и каким путём. Счётчик
+# «вмешательств контроля моделей за 7 дней» уходит в `/api/health` и в «Проверку системы»:
+# пока он растёт, корень (пин при создании) не закрыт.
+
+
+def _card_meta(con, card_id) -> dict:
+    """Кто и когда создал карточку: `{created_by, created_at}` (для журнала вмешательств)."""
+    if con is None or not str(card_id or "").strip():
+        return {}
+    try:
+        row = con.execute("SELECT created_by, created_at FROM tasks WHERE id = ?",
+                          (str(card_id),)).fetchone()
+    except sqlite3.Error:
+        return {}
+    if row is None:
+        return {}
+    text = row["created_by"] if "created_by" in row.keys() else ""
+    try:
+        created = int(row["created_at"] or 0)
+    except (TypeError, ValueError):
+        created = 0
+    return {"created_by": str(text or ""), "created_at": created}
+
+
+def incident(cfg, room_id, kind: str, *, card_id="", profile="", root_id="", path="",
+             con=None, meta=None, expected=None, actual=None, text="", at=None) -> dict:
+    """Записать вмешательство сторожа (карточка, создатель, секунды после создания, путь)."""
+    stamp = int(at or time.time())
+    info = meta if isinstance(meta, dict) and meta else _card_meta(con, card_id)
+    created = 0
+    try:
+        created = int((info or {}).get("created_at") or 0)
+    except (TypeError, ValueError):
+        created = 0
+    item = {"at": stamp, "kind": str(kind or ""), "path": str(path or ""),
+            "card_id": str(card_id or ""), "profile": str(profile or ""),
+            "root_id": str(root_id or ""),
+            "created_by": str((info or {}).get("created_by") or ""),
+            "age_s": (stamp - created) if created else None,
+            "expected": {"provider": str((expected or {}).get("provider") or ""),
+                         "model": str((expected or {}).get("model") or "")},
+            "actual": {"provider": str((actual or {}).get("provider") or ""),
+                       "model": str((actual or {}).get("model") or "")},
+            "text": _one_line(text)[:300]}
+
+    def change(data):
+        data["incidents"] = (data.get("incidents") or []) + [item]
+
+    _mutate(cfg, room_id, change)
+    return item
+
+
+def incidents(cfg, room_id, *, days: float = 7, limit: int = 100) -> list:
+    """Вмешательства сторожа за период (новые первыми)."""
+    since = int(time.time()) - int(days * 86400)
+    items = [i for i in (read_state(cfg, room_id).get("incidents") or [])
+             if int(i.get("at") or 0) >= since]
+    items.sort(key=lambda i: int(i.get("at") or 0), reverse=True)
+    return items[:max(1, int(limit))]
+
+
+def incidents_count(cfg, room_id, *, days: float = 7, now=None) -> int:
+    """Сколько раз сторож вмешивался за период (счётчик «за 7 дней»)."""
+    since = int(now or time.time()) - int(days * 86400)
+    return sum(1 for i in (read_state(cfg, room_id).get("incidents") or [])
+               if int(i.get("at") or 0) >= since)
+
+
+def incidents_count_all(cfg, rooms=None, *, days: float = 7) -> int:
+    """То же по всем комнатам (строка «вмешательств за 7 дней» в `/api/health`)."""
+    total = 0
+    for room in rooms or []:
+        if not isinstance(room, dict) or not room.get("id"):
+            continue
+        try:
+            total += incidents_count(cfg, room.get("id"), days=days)
+        except Exception:                    # noqa: BLE001 - счётчик не валит отчёт
+            continue
+    return total
+
+
+def incidents_text(count: int) -> str:
+    """Готовая строка счётчика: «Вмешательств контроля моделей за 7 дней: 3»."""
+    return ("Вмешательств контроля моделей за 7 дней: %d" % int(count or 0))
+
+
 def counters(cfg, room_id, *, now=None, window: int = 86400) -> dict:
     """Счётчики сторожа за сутки: исправления, остановки, оценка сэкономленного."""
     since = int(now or time.time()) - int(window)
@@ -533,7 +630,8 @@ def counters(cfg, room_id, *, now=None, window: int = 86400) -> dict:
         if event.get("kind") in ("stopped", "stopped_by_user") and event.get("cost_usd"):
             saved += float(event["cost_usd"])
     return {"fixed_24h": fixed, "stopped_24h": stopped, "warned_24h": warned,
-            "saved_usd_est": round(saved, 2)}
+            "saved_usd_est": round(saved, 2),
+            "incidents_7d": incidents_count(cfg, room_id, now=now)}
 
 
 def counters_text(data: dict, mode: str) -> str:
@@ -799,6 +897,16 @@ def tick(cfg, room, *, now=None, log=None, limit: int = 80) -> dict:
         out["skipped_reason"] = "not_room_tenant"
         return out
     board = str(room.get("board") or getattr(cfg, "board", "") or "team")
+    stopped_by_board = _board_blocked(cfg, board)
+    if stopped_by_board:                     # W29-I1: песочница не пишет на реальную доску
+        out["skipped_reason"] = "sandbox_real_board"
+        out["errors"].append(stopped_by_board)
+        return out
+    if "agent_models" not in room:
+        # W29-I1: в реестре комнаты нет записей о моделях вовсе (старая/свежая копия
+        # реестра). Ни пинов, ни пауз: чужие карточки не трогаем.
+        out["skipped_reason"] = "no_agent_models"
+        return out
     con = _connect(cfg, board)
     if con is None:
         out["skipped_reason"] = "no_board"
@@ -875,6 +983,10 @@ def tick(cfg, room, *, now=None, log=None, limit: int = 80) -> dict:
                        expected=expected,
                        actual={"provider": card.get("provider"), "model": card.get("model")},
                        text="Модель карточки исправлена до запуска: %s → %s" % (was, now_label))
+                incident(cfg, room_id, "fixed", card_id=cid, profile=profile, root_id=root_id,
+                         path="tick", con=con, expected=expected,
+                         actual={"provider": card.get("provider"), "model": card.get("model")},
+                         text="Модель карточки исправлена до запуска: %s → %s" % (was, now_label))
                 continue
             # --- карточка уже идёт: сверяем ФАКТ из сессии воркера
             got = _actual_of(cfg, con, card)
@@ -918,7 +1030,7 @@ def tick(cfg, room, *, now=None, log=None, limit: int = 80) -> dict:
                 # раз не убиваем (иначе «ошибки» в интерфейсе растут из наших же остановок):
                 # парковка и вопрос человеку.
                 _park(cfg, room, card, room_id=room_id, root_id=root_id,
-                      profile=profile, expected=expected, actual=got, gmode=gmode)
+                      profile=profile, expected=expected, actual=got, gmode=gmode, con=con)
                 out["stopped"].append(cid)
                 continue
             want = _want_for(cfg, room, profile, cid)
@@ -948,6 +1060,10 @@ def tick(cfg, room, *, now=None, log=None, limit: int = 80) -> dict:
                    expected=expected, actual=got, cost_usd=got.get("cost_usd"),
                    text="Запуск шёл на %s вместо %s — остановлено и перезапущено на %s"
                         % (actual_label, expected_label, expected_label))
+            incident(cfg, room_id, "stopped", card_id=cid, profile=profile, root_id=root_id,
+                     path="tick", con=con, expected=expected, actual=got,
+                     text="Запуск шёл на %s вместо %s — остановлено и перезапущено"
+                          % (actual_label, expected_label))
             _note(cfg, room, root_id or cid,
                   "Запуск шёл на %s вместо %s — остановила и перезапустила на %s"
                   % (actual_label, expected_label, expected_label))
@@ -956,7 +1072,8 @@ def tick(cfg, room, *, now=None, log=None, limit: int = 80) -> dict:
     return out
 
 
-def _park(cfg, room, card, *, room_id, root_id, profile, expected, actual, gmode) -> None:
+def _park(cfg, room, card, *, room_id, root_id, profile, expected, actual, gmode,
+          con=None) -> None:
     """После 2 перезапусков: остановить, поставить на паузу, спросить человека.
 
     Остановка и пауза — одно действие (`card_stop`, W23-AT1): карточка ни на миг не остаётся
@@ -978,6 +1095,8 @@ def _park(cfg, room, card, *, room_id, root_id, profile, expected, actual, gmode
                                GUARD_MAX_RESTARTS))
     record(cfg, room_id, "stopped", card_id=cid, root_id=root_id, profile=profile,
            expected=expected, actual=actual, cost_usd=actual.get("cost_usd"), text=text)
+    incident(cfg, room_id, "parked", card_id=cid, profile=profile, root_id=root_id,
+             path="tick", con=con, expected=expected, actual=actual, text=text)
     if gmode != "enforce":
         return
     _note(cfg, room, root_id or cid,
@@ -1026,6 +1145,16 @@ PREFLIGHT_EVENTS = 500
 ATTEMPT_OUTCOME = "guard_reclaimed"
 ATTEMPT_REASON = "guard_reclaimed"
 PARK_REASON = "модель не подтверждена — карточка ждёт простановки модели"
+#: потолок автоматической паузы сторожа (W29-P1 п.2): дольше карточка на паузе не держится
+HOLD_MAX_S = 60
+#: как часто пробовать записать мышление карточке, где расходится ТОЛЬКО оно
+EFFORT_RETRY_S = 300
+#: окно счётчика «вмешательств контроля моделей»
+INCIDENT_WINDOW = 7 * 86400
+#: сколько вмешательств храним в состоянии комнаты
+MAX_INCIDENTS = 500
+#: по этим словам узнаём СВОЮ паузу (причину пишем мы сами — см. `_hold_card`)
+OUR_PAUSE_MARKERS = ("модель не подтверждена",)
 
 
 def _want_with(user, room, profile, card_id=None) -> dict:
@@ -1042,10 +1171,21 @@ def _want_with(user, room, profile, card_id=None) -> dict:
 
 
 def _outdated(card: dict, want: dict) -> bool:
-    """Расходится ли карточка с желаемым (модель/провайдер и уровень мышления)."""
-    if needs_update(card, want):
-        return True
-    return str((card or {}).get("reasoning") or "") != str((want or {}).get("reasoning") or "")
+    """Расходится ли карточка с желаемым ПО МОДЕЛИ И ПРОВАЙДЕРУ (W29-P1 п.1).
+
+    Уровень мышления здесь не учитывается сознательно: расхождение только по нему не имеет
+    права держать карточку на паузе. Раньше `_outdated` считал и мышление, а `preflight`
+    писал только модель — пауза «модель не подтверждена» не снималась никогда (реальная
+    карточка `t_b48b4883`). Мышление пишется вместе с моделью, ошибка — предупреждение.
+    """
+    return needs_update(card, want)
+
+
+def _effort_differs(card: dict, want: dict) -> bool:
+    """Расходится ли только уровень мышления (не повод ни паузы, ни остановки)."""
+    if not isinstance(want, dict) or not want.get("model"):
+        return False
+    return str((card or {}).get("reasoning") or "") != str(want.get("reasoning") or "")
 
 
 def _chunks(items, size: int):
@@ -1142,6 +1282,72 @@ def _release_card(cfg, board: str, card: dict) -> bool:
     return bool(res)
 
 
+def _blocked_by_us(con, card_id) -> bool:
+    """Пауза поставлена нами? (последнее событие `blocked` — с причиной нашего сторожа).
+
+    ВНИМАНИЕ (W29-I1): как решающего признака больше не используется. Причина должна
+    совпасть ТОЧНО (``_our_block_since``), иначе сторож мог снять паузу человека.
+    """
+    return _our_block_since(con, str(card_id or "")) is not None
+
+
+def _our_block_since(con, card_id) -> int | None:
+    """Когда поставлена НАША пауза по доске: точное совпадение причины, иначе None.
+
+    ``PARK_REASON`` — фиксированный текст сторожа. Человек и другие механизмы пишут свои
+    причины, поэтому точное сравнение (а не «маркер внутри текста») — граница между
+    «наша пауза» и «чужая»: чужую сторож не снимает никогда.
+    """
+    if con is None or not str(card_id or "").strip():
+        return None
+    try:
+        row = con.execute("SELECT payload, created_at FROM task_events "
+                          "WHERE task_id = ? AND kind = 'blocked' ORDER BY id DESC LIMIT 1",
+                          (str(card_id),)).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    raw = row["payload"]
+    try:
+        data = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        data = {}
+    text = str((data or {}).get("reason") or "") if isinstance(data, dict) else str(raw or "")
+    if text.strip() != PARK_REASON:
+        return None
+    try:
+        return int(row["created_at"] or 0) or None
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _room_models(room) -> dict:
+    """Выбор моделей комнаты в канонической форме (пусто — комната моделей не задавала)."""
+    try:
+        raw = models.settings_of(room or {})
+    except Exception:                                     # noqa: BLE001 - реестр вторичен
+        raw = {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(name): item for name, item in raw.items()
+            if isinstance(item, dict) and (item.get("model") or item.get("provider"))}
+
+
+def _board_blocked(cfg, board: str) -> str:
+    """Причина «писать в доску нельзя» (W29-I1) или пустая строка."""
+    try:
+        try:
+            from . import board_guard as guard
+        except ImportError:                                   # pragma: no cover
+            import board_guard as guard                       # type: ignore
+        found = guard.check(cfg, board)
+    except Exception:                                         # noqa: BLE001 - защита вторична
+        return ""
+    return str((found or {}).get("message") or "")
+
+
+
 def close_attempt(cfg, room_id, card_id, session_id, *, profile="", model="", provider="",
                   outcome: str = ATTEMPT_OUTCOME, reason: str = ATTEMPT_REASON,
                   cost_usd=None, calls=None, input_tokens=None, output_tokens=None) -> dict:
@@ -1212,6 +1418,11 @@ def _claimed_wrong(cfg, con, room, room_id, board: str, card: dict, want: dict,
            profile=profile, expected=want, actual=got, cost_usd=got.get("cost_usd"),
            text="Карточку взяли на %s вместо %s — остановлено один раз, попытка закрыта "
                 "(guard_reclaimed)" % (actual_label or "модель профиля", expected_label))
+    incident(cfg, room_id, "reclaimed", card_id=cid, profile=profile,
+             root_id=str((card or {}).get("root_id") or ""), path="preflight", con=con,
+             expected=want, actual=got,
+             text="Карточку взяли на %s вместо %s — остановлено один раз"
+                  % (actual_label or "модель профиля", expected_label))
     _note(cfg, room, cid, "Попытка остановлена контролем моделей: работа пошла на %s вместо %s. "
                           "Дальше карточка пойдёт на выбранной в комнате модели."
           % (actual_label or "модели профиля", expected_label))
@@ -1232,7 +1443,7 @@ def preflight(cfg, room, *, now=None, limit: int = PREFLIGHT_LIMIT) -> dict:
     room_id = str(room.get("id") or "")
     out = {"room": room_id, "at": int(now or time.time()), "checked": 0, "delta": 0,
            "pinned": [], "reclaimed": [], "held": [], "released": [], "errors": [],
-           "skipped_reason": ""}
+           "warnings": [], "skipped_reason": ""}
     if not room_id or room.get("archived"):
         out["skipped_reason"] = "no_room"
         return out
@@ -1247,13 +1458,25 @@ def preflight(cfg, room, *, now=None, limit: int = PREFLIGHT_LIMIT) -> dict:
         out["skipped_reason"] = "warn_mode"
         return out
     board = str(room.get("board") or getattr(cfg, "board", "") or "team")
+    stopped_by_board = _board_blocked(cfg, board)
+    if stopped_by_board:
+        # W29-I1: в песочнице с реальной доской сторож не пишет НИЧЕГО (ни пинов, ни пауз).
+        out["skipped_reason"] = "sandbox_real_board"
+        out["errors"].append(stopped_by_board)
+        return out
+    if not _room_models(room):
+        # Реестр комнаты пуст (рассинхрон/свежая копия): не снимаем пины с доски — именно
+        # это 21.11 снесло пины и паузы у восьми боевых карточек.
+        out["skipped_reason"] = "no_agent_models"
+        return out
     con = _connect(cfg, board)
     if con is None:
         out["skipped_reason"] = "no_board"
         return out
     stamp = out["at"]
     state = read_state(cfg, room_id)
-    changes = {"pins": {}, "holds": {}, "drop": [], "reclaimed": {}, "cursor": None}
+    changes = {"pins": {}, "holds": {}, "drop": [], "reclaimed": {}, "cursor": None,
+               "effort": {}}
     try:
         new_ids, cursor = _created_since(con, int(state.get("pin_cursor") or 0))
         out["delta"] = len(new_ids)
@@ -1276,6 +1499,7 @@ def preflight(cfg, room, *, now=None, limit: int = PREFLIGHT_LIMIT) -> dict:
         user = user_models(cfg, room_id)
         wants: dict = {}
         groups: dict = {}
+        effort_only: dict = {}
         for cid, card in cards.items():
             status = str(card.get("status") or "")
             profile = str(card.get("assignee") or "")
@@ -1286,10 +1510,17 @@ def preflight(cfg, room, *, now=None, limit: int = PREFLIGHT_LIMIT) -> dict:
             pinned = bool(card.get("model") or card.get("provider"))
             if not want.get("model") and not pinned:
                 continue                     # комната не выбирала и пина нет — нечего делать
+            # Пустой реестр комнаты целиком (рассинхрон/свежая копия) отсечён выше
+            # (`no_agent_models`): именно он 21.11 снёс пины. Остаток — устаревший пин
+            # участника, которому комната модель не выбрала, снимается как и раньше.
             if status not in PREFLIGHT_SCAN_STATUSES:
                 continue
             out["checked"] += 1
             if not _outdated(card, want):
+                # W29-P1 п.1: расходится только мышление — это НЕ пауза и не удержание.
+                # Пробуем записать его (не чаще EFFORT_RETRY_S), ошибка — предупреждение.
+                if _effort_differs(card, want):
+                    effort_only.setdefault(str(want.get("reasoning") or ""), []).append(card)
                 continue
             key = (str(want.get("provider") or ""), str(want.get("model") or ""),
                    str(want.get("reasoning") or ""))
@@ -1307,8 +1538,50 @@ def preflight(cfg, room, *, now=None, limit: int = PREFLIGHT_LIMIT) -> dict:
                     changes["pins"][cid] = {"model": want["model"], "provider": want["provider"],
                                             "reasoning": want["reasoning"], "at": stamp,
                                             "source": "preflight"}
+                    incident(cfg, room_id, "pinned", card_id=cid,
+                             profile=str((cards.get(cid) or {}).get("assignee") or ""),
+                             path="preflight", con=con, expected=want,
+                             actual={"provider": (cards.get(cid) or {}).get("provider"),
+                                      "model": (cards.get(cid) or {}).get("model")},
+                             text="Модель проставлена до старта")
                 for item in failed or []:
+                    cid = str(item.get("id") or "")
+                    # Мост мог записать модель и отказать только на мышлении: пауза не нужна —
+                    # сверяем по доске, расхождение по мышлению остаётся предупреждением.
+                    fresh = _cards_by_ids(con, [cid]).get(cid) if cid else {}
+                    if cid and fresh and not _outdated(fresh, want):
+                        out["pinned"].append(cid)
+                        changes["pins"][cid] = {"model": want["model"],
+                                                "provider": want["provider"],
+                                                "reasoning": str(fresh.get("reasoning") or ""),
+                                                "at": stamp, "source": "preflight"}
+                        out["warnings"].append(
+                            "%s: модель записана, мышление — нет (%s)"
+                            % (cid, str(item.get("reason") or "")[:120]))
+                        continue
                     out["errors"].append("не удалось: %s" % str(item.get("reason") or "")[:100])
+        # Мышление — отдельно и без паузы: ошибка здесь ничего не блокирует (W29-P1 п.1).
+        if effort_only:
+            tried = state.get("effort") or {}
+            for effort, group in effort_only.items():
+                due = [c for c in group
+                       if stamp - int(((tried.get(c["id"]) or {}) or {}).get("at") or 0)
+                       >= EFFORT_RETRY_S]
+                if not due:
+                    continue
+                for card in due:
+                    changes["effort"][str(card["id"])] = {"at": stamp}
+                for chunk in _chunks(due, PREFLIGHT_BATCH):
+                    try:
+                        _done, failed = models.push_effort(cfg, board,
+                                                          [c["id"] for c in chunk], effort)
+                    except Exception as exc:  # noqa: BLE001 - мышление вторично
+                        out["warnings"].append("мышление: %s" % str(exc)[:120])
+                        continue
+                    for item in failed or []:
+                        out["warnings"].append(
+                            "мышление %s: %s" % (str(item.get("id") or ""),
+                                                 str(item.get("reason") or "")[:100]))
         # Проверка по доске (мост мог ответить «ок», а запись не встать) и удержание:
         # карточка в `ready` без верной модели диспетчеру не отдаётся (п.5).
         written = {str(cid) for cid in out["pinned"]}
@@ -1322,22 +1595,64 @@ def preflight(cfg, room, *, now=None, limit: int = PREFLIGHT_LIMIT) -> dict:
                     continue
                 if not _outdated(card, wants.get(cid) or {}):
                     continue
+                # W29-I1: карточку НАШЕЙ причиной держим ОДИН раз за жизнь. Второй
+                # «блок ↔ снять» — это цикл, на котором размыкатель петель Hermes
+                # (`block_loop_detected`) уводит карточку в triage, и её подхватывает
+                # чужой specifier (так и вышло 21.11). Второй попытки не делаем.
+                parked_before = (cid in (state.get("park_once") or {})
+                                 or _our_block_since(con, cid) is not None)
+                if parked_before:
+                    out["warnings"].append(
+                        "%s: карточка уже стояла на паузе контроля моделей — второй раз не "
+                        "блокирую (иначе цикл «блок ↔ снять» и размыкатель петель Hermes)"
+                        % cid)
+                    continue
                 if _hold_card(cfg, board, card):
                     out["held"].append(cid)
                     changes["holds"][cid] = {"at": stamp, "reason": PARK_REASON}
+                    changes.setdefault("park_once", {})[cid] = {"at": stamp,
+                                                                "reason": PARK_REASON}
                     changes["pins"].pop(cid, None)
-        # Удержанные раньше: модель встала — вернуть диспетчеру
-        for cid in list((state.get("holds") or {})):
-            card = cards.get(cid)
-            if not card:
+                    incident(cfg, room_id, "held", card_id=cid,
+                             profile=str(card.get("assignee") or ""), path="preflight",
+                             con=con, expected=wants.get(cid) or {},
+                             actual={"provider": card.get("provider"), "model": card.get("model")},
+                             text="Карточка удержана: модель не встала, диспетчеру не отдаём")
+        # Паузы снимаются ТОЛЬКО свои (W29-I1): карточка в НАШИХ `holds` с точной причиной
+        # `PARK_REASON` — или пауза, у которой последнее событие `blocked` несёт ТУ ЖЕ причину
+        # дословно (пауза до W29). Пауза человека и других механизмов не трогается никогда.
+        ours = {str(cid): item for cid, item in (state.get("holds") or {}).items()}
+        for cid, card in cards.items():
+            if str(card.get("status") or "") != "blocked":
                 continue
-            card = _cards_by_ids(con, [cid]).get(cid) or card
-            want = wants.get(cid) or _want_with(user, room, str(card.get("assignee") or ""), cid)
-            if _outdated(card, want) or str(card.get("status")) != "blocked":
+            hold = ours.get(cid)
+            if hold is not None:
+                if str((hold or {}).get("reason") or "") != PARK_REASON:
+                    continue                 # наша запись, но причина другая — не трогаем
+            else:
+                since = _our_block_since(con, cid)
+                if not since:
+                    continue                 # пауза человека/другого механизма — не наше дело
+                hold = {"at": since, "reason": PARK_REASON}
+            fresh = _cards_by_ids(con, [cid]).get(cid) or card
+            if str(fresh.get("status") or "") != "blocked":
                 continue
-            if _release_card(cfg, board, card):
+            want = wants.get(cid) or _want_with(user, room, str(fresh.get("assignee") or ""), cid)
+            ok = not _outdated(fresh, want)
+            age = (stamp - int((hold or {}).get("at") or 0)) if hold else 0
+            if not ok and (not hold or age < HOLD_MAX_S):
+                continue                     # модель ещё не встала — следующий проход попробует
+            if _release_card(cfg, board, fresh):
                 out["released"].append(cid)
                 changes["drop"].append(cid)
+                incident(cfg, room_id, "released" if ok else "released_by_ceiling",
+                         card_id=cid, profile=str(fresh.get("assignee") or ""),
+                         path="preflight", con=con, expected=want,
+                         actual={"provider": fresh.get("provider"),
+                                 "model": fresh.get("model")},
+                         text=("Пауза снята сама: модель верна" if ok else
+                               "Пауза снята по потолку %d с: модель так и не встала"
+                               % HOLD_MAX_S))
         # Взятые на чужой модели — остановить один раз (п.4)
         for cid, card in cards.items():
             if str(card.get("status") or "") != "running":
@@ -1376,6 +1691,10 @@ def _apply_changes(cfg, room_id, changes) -> None:
             data["pins"].pop(str(cid), None)
         for cid, item in (changes.get("reclaimed") or {}).items():
             data["reclaimed"][str(cid)] = item
+        for cid, item in (changes.get("effort") or {}).items():
+            data["effort"][str(cid)] = item
+        for cid, item in (changes.get("park_once") or {}).items():
+            data["park_once"][str(cid)] = item
         if changes.get("cursor") is not None:
             try:
                 data["pin_cursor"] = int(changes["cursor"])
@@ -1724,6 +2043,7 @@ def diag_item(cfg, room=None, *, rooms=None) -> dict:
     targets = [room] if isinstance(room, dict) else list(rooms or [])
     problems: list = []
     fixed = stopped = 0
+    interventions = 0
     mode = DEFAULT_MODE
     checked_cards = 0
     for item in targets:
@@ -1733,6 +2053,7 @@ def diag_item(cfg, room=None, *, rooms=None) -> dict:
         data = counters(cfg, item.get("id"))
         fixed += int(data.get("fixed_24h") or 0)
         stopped += int(data.get("stopped_24h") or 0)
+        interventions += int(data.get("incidents_7d") or 0)
         try:
             check = model_check(cfg, item)
         except Exception as exc:             # noqa: BLE001 - проверка не должна падать
@@ -1746,7 +2067,12 @@ def diag_item(cfg, room=None, *, rooms=None) -> dict:
     status = "warn" if (problems or mode == "warn") else "ok"
     value = counters_text({"fixed_24h": fixed, "stopped_24h": stopped,
                            "saved_usd_est": 0}, mode)
-    return _item(status, value, problems)
+    item = _item(status, value, problems)
+    # W29-P1 п.6: цель сторожа — 0 вмешательств; счётчик за неделю рядом со строкой.
+    item["details"] = ([incidents_text(interventions)]
+                       + list(item.get("details") or []))[:5]
+    item["incidents_7d"] = interventions
+    return item
 
 
 def _item(status: str, value: str, problems=None) -> dict:
@@ -2064,8 +2390,10 @@ def is_resume_text(text: str) -> bool:
 
 __all__ = ["MODES", "DEFAULT_MODE", "MODE_LABELS", "MODE_HINTS", "GUARD_TICK", "GUARD_MIN_AGE",
            "PREFLIGHT_TICK", "PREFLIGHT_SCAN_STATUSES", "ATTEMPT_OUTCOME", "ATTEMPT_REASON",
+           "HOLD_MAX_S", "EFFORT_RETRY_S", "INCIDENT_WINDOW", "PARK_REASON",
            "preflight", "close_attempt", "wrong_model_spend", "wrong_spend_text",
-           "room_model_table",
+           "room_model_table", "incident", "incidents", "incidents_count", "incidents_count_all",
+           "incidents_text",
            "GUARD_MAX_RESTARTS", "PENDING_STATUSES", "RUNNING_STATUSES", "ALIASES",
            "GuardError", "canon_model", "canon_provider", "same_model", "same_name", "short",
            "normalize_mode", "mode_of", "mode_block", "expected_model", "override_for_card",

@@ -1,0 +1,176 @@
+/* ============================================================================
+   view-limits.css — панель «Расход и лимиты» (W29-P9).
+
+   Один экран: переключатель периода, таблица по провайдерам, прогноз,
+   топ запросов и редактор лимитов. Полосы прогресса — цветом порогов
+   (70 % — жёлтый, 90 % — красный), подписи остаются читаемыми в обеих темах.
+   ========================================================================== */
+
+.lim { display: flex; flex-direction: column; gap: var(--space-4); }
+
+.lim__head {
+  display: flex; align-items: center; gap: var(--space-3);
+  flex-wrap: wrap; justify-content: space-between;
+}
+
+.lim__tabs {
+  display: inline-flex; padding: 3px; gap: 2px;
+  background: var(--muted); border-radius: var(--radius-md);
+}
+.lim__tab {
+  appearance: none; border: 0; cursor: pointer;
+  padding: 5px 12px; border-radius: var(--radius-sm);
+  background: transparent; color: var(--muted-foreground);
+  font: inherit; font-size: var(--text-sm);
+}
+.lim__tab:hover { color: var(--foreground); }
+.lim__tab.is-active {
+  background: var(--card); color: var(--foreground);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, .12));
+}
+.lim__tab:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 1px; }
+
+.lim__summary {
+  display: flex; align-items: center; gap: var(--space-3);
+  flex-wrap: wrap; justify-content: flex-end; min-width: 0;
+}
+.lim__line { font-size: var(--text-sm); font-weight: 600; }
+.lim__window-summary { margin: -6px 0 0; }
+
+.lim__body { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* ── таблица по провайдерам ─────────────────────────────────────────────── */
+
+.lim__table {
+  display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden;
+}
+.lim__tr {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.6fr) 70px minmax(150px, 1.1fr) 80px minmax(190px, 1.3fr);
+  gap: var(--space-3); align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: var(--text-sm);
+}
+.lim__tr:last-child { border-bottom: 0; }
+.lim__tr--head {
+  font-size: var(--text-xs); color: var(--muted-foreground);
+  background: var(--muted);
+  text-transform: none;
+}
+.lim__tr--head span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.lim__who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lim__provider { font-weight: 600; }
+.lim__models { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.lim__num { text-align: right; white-space: nowrap; }
+.lim__tr--head .lim__num { text-align: right; }
+.lim__cell-limit { min-width: 0; }
+
+.lim__warn-row { padding: 0 var(--space-3) var(--space-3); }
+.lim__banner { margin: 0; }
+
+/* ── полоса прогресса ───────────────────────────────────────────────────── */
+
+.lim__limit { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.lim__bar {
+  position: relative; height: 8px; border-radius: 999px;
+  background: var(--muted); overflow: hidden;
+}
+.lim__bar-fill {
+  position: absolute; inset: 0 auto 0 0; display: block;
+  background: var(--ok); border-radius: inherit; transition: width .3s ease;
+}
+.lim__limit--warn .lim__bar-fill { background: var(--warn); }
+.lim__limit--alert .lim__bar-fill,
+.lim__limit--over .lim__bar-fill { background: var(--danger); }
+.lim__limit-text { color: var(--muted-foreground); }
+.lim__limit--warn .lim__limit-text { color: var(--warn-ink); }
+.lim__limit--alert .lim__limit-text,
+.lim__limit--over .lim__limit-text { color: var(--danger-ink); font-weight: 600; }
+.lim__no-limit { white-space: nowrap; }
+
+/* ── прогноз и топ ──────────────────────────────────────────────────────── */
+
+.lim__forecast, .lim__top {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.lim__forecast--quiet { gap: 2px; }
+.lim__forecast-title,
+.lim__section-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: var(--text-sm); font-weight: 600;
+}
+.lim__forecast-line { margin: 0; font-size: var(--text-sm); line-height: var(--leading-relaxed); }
+.lim__forecast-line.is-bad strong { color: var(--danger-ink); }
+
+.lim__top-list { display: flex; flex-direction: column; }
+.lim__top-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, auto) 90px 80px;
+  gap: var(--space-3); align-items: center;
+  padding: 7px var(--space-2); border-radius: var(--radius-sm);
+  color: inherit; text-decoration: none; font-size: var(--text-sm);
+  border-bottom: 1px solid var(--border-soft);
+}
+.lim__top-row:last-child { border-bottom: 0; }
+.lim__top-row:hover { background: var(--muted); }
+.lim__top-row:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 1px; }
+.lim__top-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lim__wasted { margin: 0; padding-top: var(--space-1); color: var(--muted-foreground); }
+.lim__wasted.is-bad { color: var(--warn-ink); }
+
+/* ── редактор лимитов ───────────────────────────────────────────────────── */
+
+.lim__edit {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.lim__edit-hint { margin: 0; max-width: 82ch; }
+.lim__edit-grid { display: flex; flex-direction: column; gap: var(--space-2); }
+.lim__edit-head,
+.lim__edit-row {
+  display: grid; grid-template-columns: minmax(140px, 1.2fr) minmax(150px, 1fr) minmax(150px, 1fr);
+  gap: var(--space-3); align-items: center;
+}
+.lim__edit-head { font-size: var(--text-xs); color: var(--muted-foreground); }
+.lim__cell-edit { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.lim__cell-edit .lim__value { width: 110px; min-width: 0; }
+.lim__cell-edit .lim__kind { width: 92px; flex: 0 0 auto; }
+.lim__edit-foot {
+  display: flex; align-items: center; gap: var(--space-3);
+  flex-wrap: wrap; padding-top: var(--space-2);
+}
+
+.lim__empty {
+  display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start;
+  padding: var(--space-4);
+  background: var(--card); border: 1px dashed var(--border);
+  border-radius: var(--radius-lg); font-size: var(--text-sm);
+}
+.lim__empty p { margin: 0; }
+
+/* Узкие экраны: таблица не рвётся, столбцы переносятся строками. */
+@media (max-width: 860px) {
+  .lim__head { align-items: flex-start; }
+  .lim__summary { justify-content: flex-start; }
+  .lim__tr { grid-template-columns: minmax(0, 1fr) 70px; row-gap: 4px; }
+  .lim__tr > *:nth-child(3),
+  .lim__tr > *:nth-child(4) { grid-column: 1; }
+  .lim__tr > *:nth-child(5) { grid-column: 1 / -1; }
+  .lim__tr--head > *:nth-child(3),
+  .lim__tr--head > *:nth-child(4) { display: none; }
+  .lim__tr--head > *:nth-child(5) { grid-column: auto; }
+  .lim__top-row { grid-template-columns: minmax(0, 1fr) 90px 80px; }
+  .lim__top-row > *:nth-child(2) { display: none; }
+  .lim__edit-head { display: none; }
+  .lim__edit-row { grid-template-columns: 1fr; row-gap: var(--space-2); }
+  .lim__cell-edit { justify-content: space-between; }
+  .lim__cell-edit .lim__value { flex: 1 1 auto; width: auto; }
+}

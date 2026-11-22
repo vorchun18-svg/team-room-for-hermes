@@ -1,0 +1,109 @@
+/* ============================================================================
+   view-recipes.css — вкладка «Рецепты» (W29B-Q1).
+
+   Список рецептов карточками, граф шагов слоями, история запусков, редактор
+   в диалоге фиксированной ширины. Все цвета — из токенов темы, поэтому
+   светлая и тёмная темы читаются одинаково. Кнопки не «выглядят ссылками»:
+   ссылкой остаётся только переход к запросу.
+   ========================================================================== */
+
+.rcp { display: flex; flex-direction: column; gap: var(--space-4); }
+.rcp__head { display: flex; flex-direction: column; gap: var(--space-2); }
+.rcp__hint { margin: 0; max-width: 78ch; }
+.rcp__body { display: flex; flex-direction: column; gap: var(--space-3); }
+.rcp__history { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.rcp__list { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+.rcp__list--trash { grid-template-columns: 1fr; }
+
+/* ── карточка рецепта ────────────────────────────────────────────────────── */
+.rcp-card {
+  display: flex; flex-direction: column; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--card); min-width: 0;
+}
+.rcp-card--trash { flex-direction: row; align-items: center; padding: var(--space-2) var(--space-3); }
+.rcp-card__main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.rcp-card__title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.rcp-card__title { font-weight: 600; font-size: var(--text-md, 15px); overflow-wrap: anywhere; }
+.rcp-card__desc { color: var(--muted-foreground); font-size: var(--text-sm); }
+.rcp-card__meta { display: flex; gap: 8px; flex-wrap: wrap; }
+.rcp-card__actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+.rcp-card__steps { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.rcp-card__layer { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.rcp-card__layer-n {
+  flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600;
+  background: var(--muted); color: var(--muted-foreground);
+}
+.rcp-card__step-text { font-size: var(--text-sm); overflow-wrap: anywhere; }
+
+/* ── история запусков ────────────────────────────────────────────────────── */
+.rcp-runs { display: flex; flex-direction: column; gap: 6px; }
+.rcp-run {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card);
+}
+.rcp-run__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rcp-run__title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rcp-run__link { color: var(--primary, var(--accent)); text-decoration: none; font-weight: 600; }
+.rcp-run__link:hover { text-decoration: underline; }
+.rcp-run__link:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
+.rcp-run__meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.rcp-run__steps { color: var(--muted-foreground); overflow-wrap: anywhere; }
+.rcp-run__error { color: var(--danger, #b3261e); overflow-wrap: anywhere; }
+
+/* ── формы (запуск и редактор) ───────────────────────────────────────────── */
+.rcp-form { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.rcp-form__error { color: var(--danger, #b3261e); min-height: 1em; }
+.rcp-form__error:empty { display: none; }
+.rcp-form__subtitle { font-weight: 600; font-size: var(--text-sm); margin-top: var(--space-2); }
+
+.rcp-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rcp-field--tight { gap: 2px; }
+.rcp-field__label { font-size: var(--text-sm); font-weight: 500; }
+.rcp-field__req { color: var(--danger, #b3261e); }
+.rcp-field__hint { margin: 0; }
+
+.rcp-edit-fields, .rcp-edit-steps { display: flex; flex-direction: column; gap: 8px; }
+.rcp-edit-row { display: grid; grid-template-columns: minmax(120px, 1fr) 140px auto auto; gap: 6px; align-items: center; }
+.rcp-edit-check { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.rcp-edit-step {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--muted, var(--card));
+}
+.rcp-edit-step__head { display: grid; grid-template-columns: 24px minmax(120px, 1fr) auto; gap: 6px; align-items: center; }
+.rcp-edit-step__n {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; background: var(--card);
+}
+
+/* выбранный запрос в диалоге «Сохранить как рецепт» */
+.rcp-requests { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow: auto; }
+.rcp-request {
+  display: flex; justify-content: space-between; gap: 10px; align-items: center;
+  width: 100%; text-align: left; cursor: pointer;
+  padding: 7px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--card); color: inherit;
+  font: inherit;
+}
+.rcp-request:hover { background: var(--row-hover, var(--muted)); }
+.rcp-request.is-active { border-color: var(--primary, var(--accent)); box-shadow: inset 0 0 0 1px var(--primary, var(--accent)); }
+.rcp-request:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 1px; }
+.rcp-request__title { font-weight: 500; overflow-wrap: anywhere; }
+
+.rcp__trash { display: flex; justify-content: flex-start; }
+
+@media (max-width: 720px) {
+  .rcp__list { grid-template-columns: 1fr; }
+  .rcp-edit-row { grid-template-columns: 1fr 110px; }
+  .rcp-edit-row .btn { justify-self: end; }
+  .rcp-edit-step__head { grid-template-columns: 24px 1fr auto; }
+}

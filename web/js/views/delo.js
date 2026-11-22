@@ -23,6 +23,8 @@ import { icon } from '../icons.js';
 import { api, poll } from '../api.js';
 import { ensureCss, errorBanner, skeleton } from '../ui.js';
 import { createSection } from './section-collapse.js';
+import { renderBoard, createStatusFor, BOARD_COLUMNS } from './delo-board.js';
+import { renderTimeline, shiftAnchor } from './delo-timeline.js';
 import { setDelosCount } from '../shell-sidebar.js';
 import {
   NEED_KIND_LABEL, OUTBOX_KIND_LABEL, OUTBOX_STATE_LABEL, OUTBOX_STATE_TONE, STATUS_LABEL, STATUS_TONE,
@@ -32,13 +34,23 @@ import {
 } from './delo-model.js';
 
 export const VIEW_CSS = 'css/view-delo.css';
+export const BOARD_CSS = 'css/view-delo-board.css';
 export const POLL_MS = 30000;
 
 const FILTER_KEY = 'teamroom.delos.filter';
+const MODE_KEY = 'teamroom.delos.mode';
+const SCALE_KEY = 'teamroom.delos.scale';
 const FILTERS = [
   { id: 'all', title: 'Все' },
   { id: 'needs', title: 'Ждут вашего решения' },
   { id: 'overdue', title: 'Просрочены' },
+];
+
+/** Как показать дела: список, доска колонками, сроки по времени (W29B-Q5). */
+const MODES = [
+  { id: 'list', title: 'Список', icon: 'list-unordered', hint: 'Строки дел с этапами и следующим шагом' },
+  { id: 'board', title: 'Доска', icon: 'layout', hint: 'Колонки по состоянию; перетащите карточку, чтобы сменить состояние' },
+  { id: 'time', title: 'Время', icon: 'calendar', hint: 'Сроки дел по неделям и месяцам' },
 ];
 
 /* ─────────────────────────────────────────────────────────── общие мелочи */
@@ -326,6 +338,8 @@ function dutiesNode(delo) {
 
 export async function mount(el, ctx) {
   await ensureCss(VIEW_CSS);
+  // W29B-Q5: стили доски и таймлайна — отдельным файлом, чтобы список не разбухал.
+  await ensureCss(BOARD_CSS);
   const apiRef = (ctx && ctx.api) || api;
   const route = (ctx && ctx.route) || { name: 'delos', roomId: null, id: null };
   const navigate = (ctx && ctx.navigate) || ((hash) => { location.hash = hash; });
@@ -344,6 +358,26 @@ export async function mount(el, ctx) {
     const saved = localStorage.getItem(FILTER_KEY);
     if (saved && FILTERS.some((f) => f.id === saved)) filter = saved;
   } catch { /* приватный режим */ }
+
+  let mode = 'list';
+  let scale = 'week';
+  try {
+    const savedMode = localStorage.getItem(MODE_KEY);
+    if (savedMode && MODES.some((m) => m.id === savedMode)) mode = savedMode;
+    const savedScale = localStorage.getItem(SCALE_KEY);
+    if (savedScale === 'month' || savedScale === 'week') scale = savedScale;
+  } catch { /* приватный режим */ }
+  let anchor = new Date();
+
+  function setMode(next) {
+    if (!MODES.some((m) => m.id === next) || next === mode) return;
+    mode = next;
+    try { localStorage.setItem(MODE_KEY, mode); } catch { /* ignore */ }
+    renderList(lastItems);
+  }
+  function saveScale() {
+    try { localStorage.setItem(SCALE_KEY, scale); } catch { /* ignore */ }
+  }
 
   const isCard = route.name === 'delo' && route.id;
   const root = h('div', { class: ['delo', isCard ? 'delo--card' : 'delo--list'], 'data-view': isCard ? 'delo' : 'delos' });
@@ -369,6 +403,39 @@ export async function mount(el, ctx) {
   }
 
   const actCtx = { act, toast, api: apiRef, roomId: route.roomId || '' };
+
+  /* --- доска: перенос карточки и «+ Дело» (W29B-Q5) --------------------- */
+
+  async function moveDelo(delo, outcome, toCol) {
+    const id = String((delo && delo.id) || '');
+    if (!id || !outcome || outcome.ok !== true) return;
+    const title = String((BOARD_COLUMNS.find((c) => c.id === toCol) || {}).title || toCol);
+    try {
+      await apiRef.post('/api/delos/' + encodeURIComponent(id) + '/actions',
+        Object.assign({ action: outcome.action }, { delo_id: id }));
+      toast('Дело: «' + title + '»', 'ok');
+      await load(false);
+      refreshBadge();
+    } catch (err) {
+      toast('Не получилось перенести: ' + String((err && err.message) || 'сервер не ответил'), 'warn');
+      await load(false);
+    }
+  }
+
+  async function createDelo(columnId, title) {
+    const room = route.roomId;
+    const text = String(title || '').trim();
+    if (!text) { toast('Впишите название дела', 'warn'); return; }
+    if (!room) { toast('Дело создаётся в комнате: откройте «Дела» комнаты', 'warn'); return; }
+    const status = createStatusFor(columnId) || 'open';
+    try {
+      await apiRef.post('/api/rooms/' + encodeURIComponent(room) + '/delos', { title: text, status });
+      toast('Дело создано: ' + text, 'ok');
+      await load(false);
+    } catch (err) {
+      toast('Дело не создалось: ' + String((err && err.message) || 'сервер не ответил'), 'warn');
+    }
+  }
 
   /* --- список ----------------------------------------------------------- */
 
@@ -407,6 +474,15 @@ export async function mount(el, ctx) {
               ? 'от вас ждут ' + counters.needs + ' ' + pluralRu(counters.needs, ['решение', 'решения', 'решений'])
               : 'решений не ждут')
             : 'Пока ни одного дела')),
+      h('div', { class: 'delo__modes', role: 'group', 'aria-label': 'Как показать дела' },
+        ...MODES.map((m) => h('button', {
+          class: ['chip', 'delo-mode', mode === m.id ? 'chip--accent' : 'chip--outline'],
+          type: 'button',
+          'aria-pressed': mode === m.id ? 'true' : 'false',
+          'data-mode': m.id,
+          title: m.hint,
+          onclick: () => setMode(m.id),
+        }, icon(m.icon, { size: 12 }), m.title))),
       h('div', { class: 'delo__filters', role: 'group', 'aria-label': 'Что показать' },
         ...FILTERS.map((f) => h('button', {
           class: ['chip', 'delo-filter', filter === f.id ? 'chip--accent' : 'chip--outline'],
@@ -420,23 +496,51 @@ export async function mount(el, ctx) {
           },
         }, f.title))));
 
-    const body = h('div', { class: 'delo-list' });
-    if (!shown.length) {
-      body.appendChild(h('div', { class: 'card delo-empty' },
-        icon('checklist', { size: 20 }),
-        h('div', { class: 'delo-empty__title' }, counters.total ? 'По этому фильтру дел нет' : 'Дел пока нет'),
-        h('p', { class: 'small muted' },
-          counters.total
-            ? 'Выберите «Все» — там ' + counters.total + '.'
-            : 'Дела появляются из запросов комнат или создаются вручную.'),
-        counters.total ? h('button', {
-          class: 'btn btn--sm btn--secondary', type: 'button',
-          onclick: () => { filter = 'all'; renderList(items); },
-        }, 'Показать все') : null));
+    let body;
+    if (mode === 'board') {
+      body = renderBoard(shown, {
+        nowMs: nowSec * 1000,
+        allowCreate: Boolean(route.roomId),
+        roomTitle: (id) => (route.roomId ? '' : roomTitle(id)),
+        onOpen: (delo) => navigate('#/delo/' + encodeURIComponent(delo.id)),
+        onMove: (delo, outcome, fromCol, toCol) => moveDelo(delo, outcome, toCol),
+        onBlocked: (reason) => toast(reason, 'warn'),
+        onCreate: (columnId, title) => createDelo(columnId, title),
+      });
+    } else if (mode === 'time') {
+      body = renderTimeline(shown, {
+        scale,
+        anchor,
+        nowMs: nowSec * 1000,
+        onOpen: (delo) => navigate('#/delo/' + encodeURIComponent(delo.id)),
+        onScale: (next) => { scale = next === 'month' ? 'month' : 'week'; saveScale(); renderList(items); },
+        onShift: (delta) => { anchor = shiftAnchor(anchor, scale, delta); renderList(items); },
+        onToday: () => { anchor = new Date(); renderList(items); },
+        onMode: (next) => setMode(next),
+      });
     } else {
-      for (const delo of shown) body.appendChild(listRow(delo, { roomTitle }, nowSec));
+      const listEl = h('div', { class: 'delo-list' });
+      if (!shown.length) {
+        listEl.appendChild(h('div', { class: 'card delo-empty' },
+          icon('checklist', { size: 20 }),
+          h('div', { class: 'delo-empty__title' }, counters.total ? 'По этому фильтру дел нет' : 'Дел пока нет'),
+          h('p', { class: 'small muted' },
+            counters.total
+              ? 'Выберите «Все» — там ' + counters.total + '.'
+              : 'Дела появляются из запросов комнаты. Каждый запрос — уже работа: '
+                + 'ниже его можно сделать делом, чтобы вести этапы, срок и ожидания.'),
+          counters.total ? h('button', {
+            class: 'btn btn--sm btn--secondary', type: 'button',
+            onclick: () => { filter = 'all'; renderList(items); },
+          }, 'Показать все') : null));
+      } else {
+        for (const delo of shown) listEl.appendChild(listRow(delo, { roomTitle }, nowSec));
+      }
+      body = listEl;
     }
-    host.replaceChildren(head, body);
+    // W29-P6: под списком явных дел — запросы комнаты, из которых ещё не сделали дело.
+    const block = (mode === 'list' && noDelo) ? noDeloBlock(noDelo) : null;
+    host.replaceChildren(...[head, body, block].filter(Boolean));
   }
 
   /* --- карточка --------------------------------------------------------- */
@@ -565,6 +669,85 @@ export async function mount(el, ctx) {
   /* --- загрузка --------------------------------------------------------- */
 
   let lastItems = [];
+  let noDelo = null;             // запросы комнаты без дела (W29-P6)
+
+  /** «Запросы без дела»: каждый запрос комнаты — неявное дело, пока из него не сделали дело. */
+  async function loadNoDeleo(roomId) {
+    if (!roomId) return null;
+    try {
+      return await apiRef.get('/api/rooms/' + encodeURIComponent(roomId) + '/results');
+    } catch {
+      return null;
+    }
+  }
+
+  /** Сделать дело из запроса: штатная ручка, одно дело на запрос. */
+  async function makeDelo(requestIds, title) {
+    const ids = (Array.isArray(requestIds) ? requestIds : [requestIds]).filter(Boolean);
+    if (!ids.length) return;
+    if (state_busy_guard()) return;
+    try {
+      const res = await apiRef.post('/api/rooms/' + encodeURIComponent(route.roomId) + '/delos/from-request',
+        ids.length > 1 ? { request_ids: ids } : { request_id: ids[0] });
+      const made = (res && res.created) || [];
+      const skipped = (res && res.skipped) || [];
+      if (made.length) toast('Дело открыто: ' + made.length + ' — ' + String(title || 'из запросов комнаты'), 'ok');
+      else if (skipped.length) toast('Дело уже есть — открываю список дел', 'info');
+      else toast(String((res && res.message) || 'Дело не открылось'), 'warn');
+      await load(false);
+    } catch (err) {
+      toast('Не получилось: ' + String((err && err.message) || 'сервер не ответил'), 'warn');
+    }
+  }
+
+  let busyNoDelo = false;
+  function state_busy_guard() {
+    if (busyNoDelo) return true;
+    busyNoDelo = true;
+    setTimeout(() => { busyNoDelo = false; }, 600);
+    return false;
+  }
+
+  /** Блок «Запросы без дела»: явно говорит, что запросы комнаты — уже работа. */
+  function noDeloBlock(payload) {
+    const list = (payload && Array.isArray(payload.without_delo)) ? payload.without_delo : [];
+    const counters = (payload && payload.counts) || {};
+    const box = h('section', { class: 'delo-nodelo', 'data-block': 'without-delo' },
+      h('h2', { class: 'delo-nodelo__title' }, 'Запросы без дела',
+        h('span', { class: 'muted small' }, list.length ? ' · ' + list.length : '')),
+      h('p', { class: 'delo-nodelo__lead small muted' },
+        Number(counters.requests || 0)
+          ? 'Каждый запрос комнаты — уже работа. Дело добавляет к нему этапы, срок, ожидания и письма: '
+            + 'сделайте дело из запроса, чтобы вести его дальше.'
+          : 'Запросов в комнате пока нет — дела появятся сами, как только вы поставите первый запрос.'));
+    if (!list.length) return box;
+    const rows = h('div', { class: 'delo-nodelo__list' }, ...list.slice(0, 12).map((req) => h('div', {
+      class: 'delo-nodelo__row', 'data-request': String(req.id || ''),
+    },
+    h('a', {
+      class: 'delo-nodelo__title',
+      href: '#/room/' + encodeURIComponent(route.roomId) + '/request/' + encodeURIComponent(req.id),
+      title: req.title || req.id,
+    }, String(req.title || req.id)),
+    h('span', { class: 'chip chip--outline delo-nodelo__status' },
+      String(req.status || '') === 'done' ? 'завершён' : (req.status ? String(req.status) : 'в работе')),
+    h('button', {
+      class: 'btn btn--sm btn--secondary', type: 'button', 'data-act': 'make-delo',
+      title: 'Создать дело из этого запроса: этапы, срок, следующий шаг',
+      onclick: (ev) => { ev.preventDefault(); ev.stopPropagation(); makeDelo([req.id], req.title); },
+    }, 'Сделать делом'))));
+    box.appendChild(rows);
+    if (list.length > 1) {
+      box.appendChild(h('div', { class: 'delo-nodelo__bulk' },
+        h('button', {
+          class: 'btn btn--sm btn--ghost', type: 'button',
+          title: 'Создать дела для всех запросов без дела (одно дело на запрос)',
+          onclick: () => makeDelo(list.map((x) => x.id), 'запросы комнаты'),
+        }, 'Сделать делами все (' + list.length + ')'),
+        h('span', { class: 'small muted' }, 'одно дело на запрос — повторов не будет')));
+    }
+    return box;
+  }
 
   async function load(first) {
     if (stopped) return;
@@ -576,9 +759,10 @@ export async function mount(el, ctx) {
         if (!raw) throw new Error('дело не найдено');
         renderCard(raw);
       } else {
-        const items = await loadList();
+        const [items, results] = await Promise.all([loadList(), loadNoDeleo(route.roomId)]);
         if (stopped) return;
         lastItems = items;
+        noDelo = results;
         renderList(items);
         setDelosCountSafe(items.reduce((sum, d) => sum + d.needs_you.length, 0));
       }
@@ -619,4 +803,4 @@ export async function mount(el, ctx) {
   };
 }
 
-export default { mount, VIEW_CSS, POLL_MS };
+export default { mount, VIEW_CSS, BOARD_CSS, POLL_MS };

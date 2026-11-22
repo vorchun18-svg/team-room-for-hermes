@@ -403,6 +403,25 @@ def backlog_view(cfg, room_id: str) -> dict:
         items = [proposal_item] + items
         sections["inbox"] = [proposal_item] + sections["inbox"]
         sections["proposal"] = [proposal_item]
+    # W29-P6: карта проекта не собрана, а завершённые запросы есть — один раз
+    # показываем пункт «Предлагаю собрать карту проекта» с кнопками. Живёт в ответе
+    # (файл бэклога не меняется), «Не сейчас» откладывает его на две недели.
+    roadmap_offer = None
+    if not proposal_item:
+        try:
+            from . import results as results_mod
+        except ImportError:              # pragma: no cover - плоский импорт
+            results_mod = None           # type: ignore
+        if results_mod is not None:
+            try:
+                roadmap_offer = results_mod.roadmap_offer(
+                    cfg, rooms_mod.get_room(cfg, str(room_id)) or {})
+            except Exception:            # noqa: BLE001 — подсказка вторична
+                roadmap_offer = None
+    if roadmap_offer:
+        items = [roadmap_offer] + items
+        sections["inbox"] = [roadmap_offer] + sections["inbox"]
+        sections["roadmap_offer"] = [roadmap_offer]
     updated = 0
     for item in items:
         updated = max(updated, _as_int(item.get("updated_at")))
@@ -411,6 +430,7 @@ def backlog_view(cfg, room_id: str) -> dict:
             # Строка предложения — отдельно от записей бэклога (id `phases_proposal`):
             # её нельзя закрыть статусом, только «принять/отклонить» на карте.
             "proposal_item": proposal_item,
+            "roadmap_offer": roadmap_offer,
             "sections": sections}
 
 

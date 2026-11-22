@@ -350,7 +350,7 @@ def _meta(sb, owner: str = "team-ops") -> dict:
                         "due": "2026-11-20"},
                        {"text": "Свести смету в один файл", "owner": owner, "due": None}],
         "open_questions": [],
-        "decisions": [{"text": "Стартовать с набора из 6 моти", "why": "упаковка на набор дешевле",
+        "decisions": [{"text": "Стартовать с набора из 6 суфле", "why": "упаковка на набор дешевле",
                        "status": "accepted"}],
         "stage": {"packaging": "в работе: смета собрана", "production": "не начат"},
         "future_questions": ["Стоит ли выходить в B2B с наборами для кофеен?"],
@@ -958,7 +958,7 @@ def run(with_posts: bool = True, verbose: bool = False) -> int:
     with Live(posts=with_posts) as live:
         requests = _fixture_requests(live)
         if "search.json" in data:
-            q = str((data["search.json"] or {}).get("q") or "моти")
+            q = str((data["search.json"] or {}).get("q") or "суфле")
             for item in requests:
                 if item.get("q"):
                     from urllib.parse import quote

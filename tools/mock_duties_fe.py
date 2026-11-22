@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
+import os
 import re
 import time
 
@@ -274,7 +276,44 @@ def enrich(app, payload: dict) -> dict:
         item.setdefault("source", "manual")
         item.setdefault("history", _history_for(job_id, 3))
     items.extend(copy.deepcopy(st["created"]))
+    for item in items:
+        item.setdefault("scope", "room" if item.get("bound_rooms") else "system")
+        item.setdefault("model", "")
+        item.setdefault("provider", "")
+        item.setdefault("workdir", "")
+        item.setdefault("deliver", {
+            "where": "inbox" if item.get("bound_rooms") else "local",
+            "label": "Входящие комнаты" if item.get("bound_rooms") else "Не в комнату",
+            "room": (item.get("bound_rooms") or [""])[0],
+            "href": ("#/room/%s/inbox" % item["bound_rooms"][0]) if item.get("bound_rooms") else "",
+            "target": "local",
+            "text": ("Итог придёт во «Входящие» комнаты — при изменении." if item.get("bound_rooms")
+                     else "Дежурство не привязано к комнате: результат остаётся в журнале Hermes."),
+        })
     payload["items"] = items
+    # Системные задачи: из выборки «комната» они отфильтрованы, поэтому берём и
+    # отдельный список от чтения, чтобы блок «не относятся к комнатам» не пропадал.
+    in_items = {str(one.get("job_id")) for one in items}
+    system = [one for one in items if one.get("scope") == "system"]
+    for one in payload.get("system") or []:
+        if str(one.get("job_id")) not in in_items:
+            one.setdefault("scope", "system")
+            one.setdefault("model", "")
+            one.setdefault("provider", "")
+            one.setdefault("enabled", True)
+            one.setdefault("schedule_human", _human(str(one.get("schedule") or "")))
+            one.setdefault("deliver", {
+                "where": "local", "label": "Не в комнату", "room": "", "href": "",
+                "target": "local",
+                "text": "Дежурство не привязано к комнате: результат остаётся в журнале Hermes.",
+            })
+            system.append(one)
+    payload["system"] = system
+    payload["counts"] = {"room": len([1 for one in items if one.get("scope") != "system"]),
+                         "system": len(payload["system"]),
+                         "total": len(items) + max(0, len(payload["system"]) - len(
+                             [one for one in items if one.get("scope") == "system"])),
+                         "bound_here": len(items)}
     payload["trash"] = copy.deepcopy(st["trash"])
     payload["proposals"] = copy.deepcopy(st["proposals"])
     if not payload.get("week") or not payload["week"].get("days"):
@@ -282,23 +321,56 @@ def enrich(app, payload: dict) -> dict:
     return payload
 
 
-def demo_week(items: list) -> dict:
-    """Неделя для демо: понедельник — сегодня, плашки дежурств и «план»."""
+def folder_pick(app, body: dict) -> dict:
+    """`POST /api/folders/pick` в демо: путь из TEAMROOM_PICK_FAKE, без окна Windows."""
+    data = body if isinstance(body, dict) else {}
+    mode = str(data.get("mode") or "folder").strip().lower()
+    if mode not in ("folder", "file"):
+        raise ApiError(400, "bad_request", "mode: folder или file", {"field": "mode"})
+    fake = str(os.environ.get("TEAMROOM_PICK_FAKE") or "").strip()
+    path = ""
+    if fake.startswith("["):
+        try:
+            rows = json.loads(fake)
+            path = str((rows or [""])[0] or "") if isinstance(rows, list) else ""
+        except ValueError:
+            path = ""
+    elif fake:
+        path = fake.splitlines()[0].strip()
+    if not path:
+        return {"ok": True, "path": "", "paths": [], "cancelled": True, "mode": mode,
+                "kind": "", "exists": None, "message": "", "mock": True}
+    return {"ok": True, "path": path, "paths": [path], "cancelled": False, "mode": mode,
+            "kind": mode, "exists": True, "message": "", "mock": True}
+
+
+def demo_week(items: list, start: str = "") -> dict:
+    """Неделя для демо: плашки дежурств, «план», панель дня (W29-P5: любая неделя).
+
+    ``start`` — понедельник нужной недели (``YYYY-MM-DD``); пусто — текущая.
+    """
     days = []
     labels = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
     full = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
-    today = time.localtime()
-    monday = today
-    shift = (today.tm_wday + 7) % 7
-    monday_ts = time.mktime(today) - shift * 86400
+    today_clock = time.localtime()
+    today_key = time.strftime("%Y-%m-%d", today_clock)
+    if start:
+        try:
+            monday = time.mktime(time.strptime(start[:10], "%Y-%m-%d"))
+        except ValueError:
+            monday = time.mktime(today_clock)
+    else:
+        monday = time.mktime(today_clock)
+    monday -= ((time.localtime(monday).tm_wday + 7) % 7) * 86400
     runs_total = failed_total = missed_total = 0
     for index in range(7):
-        moment = time.localtime(monday_ts + index * 86400)
+        moment = time.localtime(monday + index * 86400)
+        key = time.strftime("%Y-%m-%d", moment)
         planned = 8 if index < 5 else 2
-        past = index <= shift
+        past = key <= today_key
         runs = planned if past else 0
-        failed = 1 if index == 1 else 0
-        missed = 1 if index == 2 else 0
+        failed = 1 if past and index == 1 else 0
+        missed = 1 if past and index == 2 else 0
         runs_total += runs
         failed_total += failed
         missed_total += missed
@@ -307,16 +379,27 @@ def demo_week(items: list) -> dict:
             for item in items[:3]:
                 jobs.append({"job_id": item.get("job_id"), "name": item.get("name"),
                              "runs": 2, "state": "failed" if failed and item is items[0] else "ok"})
+        planned_jobs = []
+        if planned:
+            for item in items[:3]:
+                planned_jobs.append({"job_id": item.get("job_id"), "name": item.get("name"),
+                                     "runs": max(1, planned // 3)})
         days.append({
-            "date": time.strftime("%Y-%m-%d", moment),
+            "date": key,
             "weekday": moment.tm_wday, "label": labels[index], "full": full[index],
             "day": moment.tm_mday, "month": moment.tm_mon,
-            "today": index == shift, "future": index > shift,
+            "today": key == today_key, "future": key > today_key,
             "runs": runs, "failed": failed, "missed": missed,
             "planned": planned, "more": max(0, len(items) - 3), "jobs": jobs,
+            # W29-P5: плановые запуски дня — панель будущего дня не пустая.
+            "planned_jobs": planned_jobs, "planned_more": 0,
         })
-    return {"start": days[0]["date"], "end": days[-1]["date"], "days": days,
-            "runs": runs_total, "failed": failed_total, "missed": missed_total, "error": ""}
+    return {"start": days[0]["date"], "end": days[-1]["date"],
+            "prev": time.strftime("%Y-%m-%d", time.localtime(monday - 7 * 86400)),
+            "next": time.strftime("%Y-%m-%d", time.localtime(monday + 7 * 86400)),
+            "today": today_key,
+            "days": days, "runs": runs_total, "failed": failed_total,
+            "missed": missed_total, "error": ""}
 
 
 def templates() -> dict:

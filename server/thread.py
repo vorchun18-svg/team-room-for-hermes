@@ -29,7 +29,7 @@ try:  # пакетный и «плоский» импорт (python server/app.p
     from .app_common import MAX_TEXT
     from .engine_cli import EngineWriteError, _run, _run_json, opt
     from .engine_db import like_prefix
-    from .engine_write import CREATED_BY, _write_body
+    from .engine_write import CREATED_BY, _push_reasoning, _routine_args, _write_body
     from .engine_write_guard import assert_task_id, no_nul, tree_ids
 except ImportError:  # pragma: no cover
     import answers  # type: ignore
@@ -37,7 +37,7 @@ except ImportError:  # pragma: no cover
     from app_common import MAX_TEXT  # type: ignore
     from engine_cli import EngineWriteError, _run, _run_json, opt  # type: ignore
     from engine_db import like_prefix  # type: ignore
-    from engine_write import CREATED_BY, _write_body  # type: ignore
+    from engine_write import CREATED_BY, _push_reasoning, _routine_args, _write_body  # type: ignore
     from engine_write_guard import assert_task_id, no_nul, tree_ids  # type: ignore
 
 DEFAULT_BOARD = "team"
@@ -45,6 +45,8 @@ TENANT_PREFIX = "room:"
 
 #: метка сообщения Михаила (по ней исполнители обязаны перечитать комментарии)
 NOTE_MARK = "[Михаил · уточнение]"
+#: W29-Q9: короткое подтверждение внесено в реестр без запуска руководителя — в ленте одна запись
+ACK_MARK = "[Михаил · учтено]"
 #: метка передачи работы руководителем участнику
 LEAD_MARK = "[Руководитель → "
 NOTE_TITLE = "Уточнение от Михаила"
@@ -276,6 +278,9 @@ def _comment_item(cfg, room: dict, row, roster: dict) -> dict:
         if status_action:
             item["svod_event"] = False          # B-47: не событие живого свода
             item["decision_action"] = status_action
+        # W29-Q9: «Учёл» — не отдельное событие свода: ответ уже учтён меткой ответа.
+        if body.startswith(ACK_MARK):
+            item["svod_event"] = False
     # W14-D §1: ответ на вопрос — ОТДЕЛЬНЫЙ тип записи со ссылкой на вопрос,
     # а не обычное сообщение в общем чате.
     kind = answers.answer_kind_of(body) if mikhail else ""
@@ -457,32 +462,48 @@ def _team_line(cfg, room: dict) -> str:
     return "; ".join(parts)
 
 
-def build_note_body(cfg, room: dict, root: str, row: dict, text: str, attach=None,
-                    lead: str = "", urgent: bool = False) -> str:
-    """Тело карточки «Уточнение от Михаила»: текст + инструкция руководителю (Д1 а–е)."""
+def note_contract_path(cfg, room: dict, root: str) -> str:
+    """Путь к файлу подробной инструкции «Уточнения» в папке проекта комнаты (W29-Q9).
+
+    ``""`` — папки проекта нет: в карточке останется краткая инструкция, которой
+    достаточно для работы (все правила в ней есть, файл — только подробности).
+    """
+    name = str(root or "").strip()
+    if not name:
+        return ""
+    try:
+        try:
+            from . import contract as contract_mod
+        except ImportError:  # pragma: no cover - плоский импорт
+            import contract as contract_mod  # type: ignore
+        project, _mirror = contract_mod.files_places(room, cfg)
+    except Exception:  # noqa: BLE001 - путь не должен мешать создать карточку
+        return ""
+    if not project:
+        return ""
+    try:
+        return str(Path(project) / ("УТОЧНЕНИЕ-%s.md" % name))
+    except (TypeError, ValueError):        # pragma: no cover - экзотический путь
+        return ""
+
+
+def note_contract_text(cfg, room: dict, root: str, lead: str, urgent: bool = False) -> str:
+    """Подробная инструкция руководителю (то, что раньше целиком лежало в карточке).
+
+    W29-Q9: тело «Уточнения» было 1 780 знаков, из них 1 583 — инструкция а–е.
+    Теперь в карточке — краткая инструкция (`build_note_instruction`), а подробности
+    (форматы metadata, перечень состава, примеры) живут файлом в папке проекта.
+    """
     tenant = _tenant(room)
-    title = str(row.get("title") or "")
-    status = _STATUS_RU.get(str(row.get("status") or ""), str(row.get("status") or ""))
-    lines = [
-        "СООБЩЕНИЕ МИХАИЛА (дословно, передано приложением «Комната команды»):",
-        "<<<УТОЧНЕНИЕ>>>", text, "<<<КОНЕЦ УТОЧНЕНИЯ>>>", "",
-        "Запрос: %s «%s» (сейчас %s)." % (root, _short(title, 120), status or "неизвестно"),
-    ]
-    if attach:
-        lines.append("Приложенные файлы: " + "; ".join(attach))
-    lines += [
-        "",
-        "Ты — руководитель комнаты «%s» (%s). Сообщение пришло ТЕБЕ; остальные участники "
-        "его не получали." % (str(room.get("title") or room.get("id") or "комната"), lead),
-        "Что сделать:",
-    ]
-    if urgent:
-        lines.append(URGENT_LINE)
     team = _team_line(cfg, room)
-    lines += [
+    lines = [
+        "Подробная инструкция к карточке «%s» (краткая версия — в карточке)." % NOTE_TITLE,
+        "Запрос: %s. Руководитель комнаты: %s." % (root, lead),
+        "Что сделать:",
         "а) Перечитай корень и все карточки запроса: kanban_show(task_id=\"%s\") — статусы, тела, "
         "комментарии; дочерние карточки видны в parents/children." % root,
-        "б) Реши, кого это касается по компетенции, а кого — нет. Состав комнаты: %s." % (team or "—"),
+        "б) Реши, кого это касается по компетенции, а кого — нет. Состав комнаты: %s."
+        % (team or "—"),
         "в) Каждому затронутому — комментарий на ЕГО карточку: "
         "kanban_comment(task_id=\"<карточка>\", body=\"[Руководитель → <роль>] <что учесть и что "
         "сделать>\"). Если нужной карточки нет — создай её: kanban_create(title=…, "
@@ -497,6 +518,8 @@ def build_note_body(cfg, room: dict, root: str, row: dict, text: str, attach=Non
         "передано, по-русски>, metadata={\"relayed\":[{\"to\":\"<профиль>\",\"what\":\"…\"}], "
         "\"acknowledged\":[\"…\"]}). В своде обязательно блок «Учтено из уточнений».",
     ]
+    if urgent:
+        lines.insert(2, "Срочность: " + URGENT_LINE)
     if bool(room.get("project_mode")):
         lines += [
             "ж) Проектный режим включён: если сообщение меняет карту проекта, приложи к своей "
@@ -511,11 +534,97 @@ def build_note_body(cfg, room: dict, root: str, row: dict, text: str, attach=Non
             "сделанного ждут «Запустить» у Михаила. Исполнители — только из состава комнаты.",
         ]
     lines += [
-        "",
         "Твой свод и комментарии попадут в диалог запроса автоматически. Работать можно только "
         "инструментами канбана (%s) и своими обычными навыками Hermes." % ", ".join(LEAD_TOOLS),
     ]
     return "\n".join(lines)
+
+
+def ensure_note_contract_file(cfg, room: dict, root: str, lead: str, urgent: bool = False) -> str:
+    """Положить подробную инструкцию файлом в папку проекта и вернуть путь (W29-Q9).
+
+    Пишем только если папка проекта уже существует (как `contract.ensure_contract_file`):
+    создавать каталоги из сборки карточки нельзя. Ошибка записи не мешает карточке.
+    """
+    path = note_contract_path(cfg, room, root)
+    if not path:
+        return ""
+    target = Path(path)
+    try:
+        if not target.parent.is_dir():
+            return ""
+        text = note_contract_text(cfg, room, root, lead, urgent)
+        if target.is_file():
+            try:
+                if target.read_text(encoding="utf-8", errors="replace") == text:
+                    return path
+            except OSError:
+                pass
+        target.write_text(text, encoding="utf-8")
+        return path
+    except (OSError, ValueError):
+        return ""
+
+
+def build_note_instruction(cfg, room: dict, root: str, lead: str, urgent: bool = False,
+                           file_path: str = "") -> str:
+    """Краткая инструкция руководителю (W29-Q9): все правила, без повторов и примеров.
+
+    Смысловые правила сохранены: перечитать корень, передать только затронутым,
+    не останавливать работу, блокировать лишь при невозможности продолжать,
+    отметить на корне, завершить свою карточку с «Учтено из уточнений», plan_patch
+    в проектном режиме. Подробности (форматы, состав) — файлом по ``file_path``.
+    """
+    tenant = _tenant(room)
+    lines = [
+        "Ты — руководитель комнаты «%s» (%s); сообщение пришло ТЕБЕ, не остальным."
+        % (str(room.get("title") or room.get("id") or "комната"), lead),
+    ]
+    if urgent:
+        lines.append(URGENT_LINE)
+    lines += [
+        "Что сделать:",
+        "1) Перечитай корень и карточки: kanban_show(task_id=\"%s\") — статусы, тела, "
+        "комментарии." % root,
+        "2) Передай затронутым: kanban_comment(task_id=\"…\", body=\"[Руководитель → <роль>] "
+        "что учесть и что сделать\"). Нет карточки — kanban_create(assignee, "
+        "parents=[\"%s\"], tenant=\"%s\") + kanban_link при связи; переназначить "
+        "существующую нельзя." % (root, tenant),
+        "3) Остальных не трогай, работу не останавливай; kanban_block — только если без "
+        "ответа продолжать нельзя. На корне: kanban_comment(task_id=\"%s\", "
+        "body=\"Принял; передал: …\")." % root,
+        "4) Заверши свою: kanban_complete(summary=<что учтено и кому передано>, "
+        "metadata={relayed, acknowledged}); в своде блок «Учтено из уточнений».",
+    ]
+    if bool(room.get("project_mode")):
+        lines.append(
+            "5) Проектный режим: меняешь карту — metadata.plan_patch {add, change, drop, "
+            "note} + причина; правки приложение применит само, новое и перезапуск ждут "
+            "«Запустить», исполнители — из состава.")
+    lines.append("Свод и комментарии попадут в диалог автоматически. Работай инструментами "
+                 "канбана и своими навыками Hermes.")
+    if file_path:
+        lines.append("Подробная инструкция (форматы metadata, частые ошибки): %s" % file_path)
+    return "\n".join(lines)
+
+
+def build_note_body(cfg, room: dict, root: str, row: dict, text: str, attach=None,
+                    lead: str = "", urgent: bool = False) -> str:
+    """Тело карточки «Уточнение от Михаила»: текст + краткая инструкция (W29-Q9)."""
+    title = str(row.get("title") or "")
+    status = _STATUS_RU.get(str(row.get("status") or ""), str(row.get("status") or ""))
+    lines = [
+        "СООБЩЕНИЕ МИХАИЛА (дословно, передано приложением «Комната команды»):",
+        "<<<УТОЧНЕНИЕ>>>", text, "<<<КОНЕЦ УТОЧНЕНИЯ>>>", "",
+        "Запрос: %s «%s» (сейчас %s)." % (root, _short(title, 120), status or "неизвестно"),
+    ]
+    if attach:
+        lines.append("Приложенные файлы: " + "; ".join(attach))
+    lines.append("")
+    path = ensure_note_contract_file(cfg, room, root, lead, urgent)
+    lines.append(build_note_instruction(cfg, room, root, lead, urgent, path))
+    return "\n".join(lines)
+
 
 
 def _comment(cfg, board: str, task_id: str, text: str, author: str = "mikhail") -> int:
@@ -531,9 +640,14 @@ def _create_note(cfg, room: dict, board: str, root: str, row: dict, text: str, a
     key = NOTE_KEY_PREFIX + root + "-" + hashlib.sha1(
         (text + "|" + str(int(urgent)) + "|" + key_seed).encode("utf-8")).hexdigest()[:10]
     path = _write_body(cfg, body, "note-" + root)
+    # W29-P10: карточка «Уточнение» уходит РУКОВОДИТЕЛЮ — модель комнаты нужна сразу в
+    # `create`, иначе она стартует на модели профиля (единственный путь создания карточек
+    # вне `engine_write`, который этого не делал). W29-Q9: у «Уточнения» своя рутина —
+    # модель для рутинного сведения, если комната её выбрала, иначе модель руководителя.
+    model_args, settings = _routine_args(cfg, room, lead)
     try:
         args = ["create", NOTE_TITLE, opt("assignee", lead), opt("tenant", _tenant(room)),
-                opt("created-by", CREATED_BY), opt("idempotency-key", key),
+                opt("created-by", CREATED_BY), *model_args, opt("idempotency-key", key),
                 opt("body-file", path), "--json"]
         data, _ms = _run_json(cfg, board, args)
     finally:
@@ -545,6 +659,7 @@ def _create_note(cfg, room: dict, board: str, root: str, row: dict, text: str, a
     if not card_id:
         raise EngineWriteError("engine_error", "Канбан не вернул id карточки «Уточнение».",
                               json.dumps(data, ensure_ascii=False)[:400])
+    _push_reasoning(cfg, board, card_id, str((settings or {}).get("reasoning") or ""))
     return card_id
 
 
@@ -655,6 +770,30 @@ def post_message(cfg, room, rid, text, attach=None, urgent: bool = False) -> dic
     result["message"], result["thread"] = message, thread
     _sync_vault(cfg, room, root)
     return result
+
+
+def post_ack(cfg, room, rid, question: dict, text: str) -> dict:
+    """«Учёл» без запуска руководителя (W29-Q9, п.3).
+
+    Короткое подтверждение («спасибо», «понял», «принято») не меняет план: ответ
+    уже лежит в реестре и комментарием на корне, а здесь — ОДНА запись в ленте,
+    чтобы человек видел, что услышан. Карточка «Уточнение» не создаётся, сессия
+    руководителя не поднимается.
+    """
+    root = assert_task_id(rid, "rid")
+    room = _room(cfg, room)
+    if not room:
+        raise EngineWriteError("not_found", "Комната запроса не найдена.",
+                               detail={"reason": "room_not_found"}, http_status=404)
+    board = _board_of(room)
+    qid = str((question or {}).get("id") or "").strip()
+    body = ACK_MARK + (" Учёл ответ на вопрос %s — работа не меняется." % qid if qid
+                       else " Учёл — работа не меняется.")
+    answer = " ".join(str(text or "").split())[:200]
+    if answer:
+        body += " «%s»" % answer
+    _comment(cfg, board, root, body)
+    return {"task_id": root, "text": body}
 
 
 def build_answer_body(cfg, room: dict, root: str, row: dict, question: dict, text: str,
@@ -1000,8 +1139,9 @@ def _sync_vault(cfg, room: dict, root: str) -> None:
         pass
 
 
-__all__ = ["NOTE_MARK", "LEAD_MARK", "NOTE_TITLE", "URGENT_LINE", "LEAD_TOOLS", "ROLE_RU",
-           "get_thread", "post_message", "build_note_body", "author_label", "role_label",
+__all__ = ["NOTE_MARK", "ACK_MARK", "LEAD_MARK", "NOTE_TITLE", "URGENT_LINE", "LEAD_TOOLS", "ROLE_RU",
+           "get_thread", "post_message", "post_ack", "build_note_body", "build_note_instruction",
+           "note_contract_path", "ensure_note_contract_file", "author_label", "role_label",
            "card_row", "NOTE_KEY_PREFIX",
            # W14-D: ответ на вопрос — своя метка, свой бриф, своя карточка руководителю
            # W17-B §3: накопленные ответы — одна карточка по кнопке

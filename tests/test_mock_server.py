@@ -81,6 +81,50 @@ class MockServerTest(unittest.TestCase):
         self.assertTrue(mock.port_in_use("127.0.0.1", self.port))
         self.assertFalse(mock.port_in_use("127.0.0.1", 0))
 
+    # --- W29-FIX1 п.3: «Запросы без дела» на моке --------------------------
+    def test_room_results_served_with_counters_and_without_delo(self):
+        """`GET /api/rooms/{id}/results` отдаёт строки и ЧЕСТНЫЕ счётчики.
+
+        Раньше блок «Запросы без дела» рисовал 11 строк, а подпись говорила
+        «запросов в комнате пока нет»: счётчика `requests` в ответе не было.
+        """
+        status, _head, body = self.json("/api/rooms/cafe/results")
+        self.assertEqual(status, 200, body)
+        self.assertIn("without_delo", body)
+        self.assertTrue(body["without_delo"], "у комнаты cafe есть запросы без дела")
+        counts = body["counts"]
+        self.assertGreater(counts["requests"], 0, "число запросов не врёт")
+        self.assertEqual(counts["without_delo"], len(body["without_delo"]),
+                         "счётчик равен числу пунктов в списке")
+        self.assertEqual(counts["requests"],
+                         counts["done"] + counts["pending"], counts)
+
+    def test_delo_from_request_removes_row_from_without_delo(self):
+        """«Сделать делом» в демо работает: строка уходит из блока, а не в пустоту."""
+        status, _head, body = self.json("/api/rooms/cafe/results")
+        rid = body["without_delo"][0]["id"]
+        status, _head, made = self.json("/api/rooms/cafe/delos/from-request",
+                                        method="POST", body={"request_id": rid})
+        self.assertEqual(status, 200, made)
+        self.assertEqual(made["created"], [rid])
+        status, _head, after = self.json("/api/rooms/cafe/results")
+        ids = [row["id"] for row in after["without_delo"]]
+        self.assertNotIn(rid, ids, "оформленный запрос больше не «без дела»")
+        self.assertEqual(after["counts"]["without_delo"], len(after["without_delo"]))
+
+    def test_own_model_in_dialog_is_accepted_with_warning(self):
+        """`PUT …/agents/{profile}/model` с `custom: true` — «своя модель» принимается."""
+        status, _head, body = self.json(
+            "/api/rooms/cafe/agents/team-lawyer/model", method="PUT",
+            body={"provider": "oblako-a", "model": "dilizhans-own:0901", "custom": True})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["applied"]["settings"]["model"], "dilizhans-own:0901")
+        self.assertIn("нет в каталоге", " ".join(body["warnings"]))
+        status, _head, bad = self.json(
+            "/api/rooms/cafe/agents/team-lawyer/model", method="PUT",
+            body={"provider": "oblako-a", "model": "dilizhans-own:0902"})
+        self.assertEqual(status, 400, "без пометки «своя модель» — по-прежнему отказ")
+
     # --- помощники -------------------------------------------------------
     def call(self, path, method="GET", body=None, headers=None):
         data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -341,14 +385,14 @@ class MockServerTest(unittest.TestCase):
     # --- создание и эволюция --------------------------------------------
     def test_create_request_evolves_with_critic(self):
         status, head, created = self.json("/api/rooms/cafe/requests", "POST",
-                                          {"text": "Проверь упаковку моти", "critic": True})
+                                          {"text": "Проверь упаковку суфле", "critic": True})
         self.assertEqual(status, 201)
         self.assertIn("Location", head)
         rid = created["root_id"]
         self.assertRegex(rid, r"^t_[0-9a-f]{8}$")
         self.assertEqual(created["request"]["status"], "queued")
         self.assertEqual(created["request"]["mode"], "auto")
-        self.assertEqual(self.detail(rid)["text"], "Проверь упаковку моти")
+        self.assertEqual(self.detail(rid)["text"], "Проверь упаковку суфле")
 
         seen, d = self.wait_status(rid)
         self.assertEqual(seen, ["queued", "working", "reviewing", "synthesizing", "done"])
@@ -546,7 +590,7 @@ class MockServerTest(unittest.TestCase):
 
     def test_live_demo_report_and_answer(self):
         """Новый запрос — это сценарий: свои карточки, отчёт (таблица/графики/граф) и вопрос Михаилу."""
-        text = ("Сравни «Едок» и «Развоз» для первых 100 наборов моти: комиссии, охват, "
+        text = ("Сравни «Едок» и «Развоз» для первых 100 наборов суфле: комиссии, охват, "
                 "скорость выплат. Нужна рекомендация.")
         status, _, created = self.json("/api/rooms/cafe/requests", "POST", {"text": text, "critic": True})
         self.assertEqual(status, 201)
@@ -810,7 +854,7 @@ class MockServerTest(unittest.TestCase):
 
         def get_dictionary(self, cfg):
             self.seen["get_cfg"] = cfg
-            return {"terms": ["моти"], "replacements": [], "updated_at": 1}
+            return {"terms": ["суфле"], "replacements": [], "updated_at": 1}
 
         def put_dictionary(self, cfg, obj):
             self.seen["put"] = (cfg, obj)
@@ -819,15 +863,15 @@ class MockServerTest(unittest.TestCase):
 
         def learn(self, cfg, raw, final, *, apply=False):
             self.seen["learn"] = {"cfg": cfg, "raw": raw, "final": final, "apply": apply}
-            return {"suggestions": [{"from": "моти", "to": "моти"}], "saved": []}
+            return {"suggestions": [{"from": "суфле", "to": "суфле"}], "saved": []}
 
     def test_stt_unavailable_is_honest_503(self):
         mock_stt.FORCE_UNAVAILABLE = True
         for path, method, body in (
                 ("/api/stt/status", "GET", None),
                 ("/api/stt/dictionary", "GET", None),
-                ("/api/stt/dictionary", "PUT", {"terms": ["моти"]}),
-                ("/api/stt/learn", "POST", {"raw": "моти", "final": "моти"})):
+                ("/api/stt/dictionary", "PUT", {"terms": ["суфле"]}),
+                ("/api/stt/learn", "POST", {"raw": "суфле", "final": "суфле"})):
             status, _, data = self.json(path, method, body)
             self.assertEqual(status, 503, path)
             self.assertEqual(data["error"]["code"], "stt_unavailable", path)
@@ -855,14 +899,14 @@ class MockServerTest(unittest.TestCase):
         self.assertTrue(str(cfg.dictionary_path).startswith(str(cfg.data_dir)))
 
         status, _, data = self.json("/api/stt/dictionary")
-        self.assertEqual((status, data["terms"]), (200, ["моти"]))
-        status, _, data = self.json("/api/stt/dictionary", "PUT", {"terms": ["моти"], "replacements": []})
+        self.assertEqual((status, data["terms"]), (200, ["суфле"]))
+        status, _, data = self.json("/api/stt/dictionary", "PUT", {"terms": ["суфле"], "replacements": []})
         self.assertEqual(status, 200)
-        self.assertEqual(fake.seen["put"][1]["terms"], ["моти"])
-        status, _, data = self.json("/api/stt/learn", "POST", {"raw": "моти", "final": "моти", "apply": True})
+        self.assertEqual(fake.seen["put"][1]["terms"], ["суфле"])
+        status, _, data = self.json("/api/stt/learn", "POST", {"raw": "суфле", "final": "суфле", "apply": True})
         self.assertEqual(status, 200)
         self.assertEqual(fake.seen["learn"]["apply"], True)
-        self.assertEqual(fake.seen["learn"]["raw"], "моти")
+        self.assertEqual(fake.seen["learn"]["raw"], "суфле")
         self.assertEqual(self.json("/api/stt/learn", "POST", {"raw": 5, "final": "x"})[0], 400)
 
         req = urllib.request.Request(self.base + "/api/stt/transcribe?language=ru",
@@ -882,7 +926,7 @@ class MockServerTest(unittest.TestCase):
         tmp = tempfile.mkdtemp(prefix="teamroom-dict-")
         self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
         with umock.patch.dict(os.environ, {"TEAMROOM_DATA_DICT": tmp}):
-            status, _, _ = self.json("/api/stt/dictionary", "PUT", {"terms": ["моти"]})
+            status, _, _ = self.json("/api/stt/dictionary", "PUT", {"terms": ["суфле"]})
         self.assertEqual(status, 200)
         cfg = fake.seen["put"][0]
         self.assertEqual(str(cfg.data_dir), tmp)
@@ -1330,7 +1374,7 @@ class MockServerTest(unittest.TestCase):
 
     def test_brief_request_gets_draft_plan_in_demo_tempo(self):
         status, _, res = self.json("/api/rooms/fn/requests", "POST",
-                                   {"text": "Хочу продавать наборы моти с доставкой", "brief": True})
+                                   {"text": "Хочу продавать наборы суфле с доставкой", "brief": True})
         self.assertEqual(status, 201)
         rid = res["root_id"]
         self.assertIs(res["request"]["brief"], True)

@@ -65,7 +65,7 @@ export function usageText(payload) {
  * Что ещё важно знать про расход (расшифровка под строкой).
  *
  * @param {object} payload ответ `/usage`
- * @returns {{note: string, warning: string, models: Array<{model: string, calls: number, cost: number}>}}
+ * @returns {{note: string, warning: string, models: Array<{model: string, calls: number, cost: number}>, cards: Array<{id: string, cost: number}>}}
  */
 export function usageNote(payload) {
   const data = payload || {};
@@ -77,16 +77,28 @@ export function usageNote(payload) {
   const notes = [];
   const cost = Number(data.cost_usd) || 0;
   if (cost > 0) notes.push('≈ $' + cost.toFixed(2));
+  // W29-Q9 п.5: по карточкам — кто сжёг больше (первые три, остальное счётчиком).
+  const cards = (Array.isArray(data.by_card) ? data.by_card : [])
+    .map((item) => ({ id: String((item && item.task_id) || '—'), cost: Number((item && item.cost_usd) || 0) }))
+    .filter((item) => item.cost > 0).slice(0, 3);
+  if (cards.length) {
+    notes.push('по карточкам: ' + cards.map((c) => c.id + ' — $' + c.cost.toFixed(2)).join(', '));
+  }
   if (data.source === 'fixtures') notes.push('демо-данные');
   if (data.source === 'none') notes.push('сессий ещё нет');
   const mismatched = data.mismatched || {};
   const attempts = Number(mismatched.attempts) || 0;
+  const wasted = data.wasted || {};
   let warning = '';
   if (attempts > 0) {
     warning = 'Попыток не на той модели: ' + attempts
       + ' — карточку перезапускали, токены ушли дважды.';
   }
-  return { note: notes.join(' · '), warning, models };
+  if (Number(wasted.cost_usd) > 0) {
+    warning += (warning ? ' ' : '') + String(wasted.text || '')
+      + ' Эти деньги ушли на перезапуск.';
+  }
+  return { note: notes.join(' · '), warning, models, cards };
 }
 
 /**

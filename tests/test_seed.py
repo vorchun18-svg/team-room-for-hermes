@@ -247,7 +247,7 @@ class SeedSandboxTest(unittest.TestCase):
     def test_content_is_russian_cafe(self):
         titles = [r["title"] for r in self.sb.rows("SELECT title FROM tasks")]
         self.assertTrue(any("Лето" in t for t in titles))
-        self.assertTrue(any("моти" in t for t in titles))
+        self.assertTrue(any("суфле" in t for t in titles))
         self.assertTrue(any("Заозёрье" in t for t in titles))
 
     # --- защита реальной БД -------------------------------------------------

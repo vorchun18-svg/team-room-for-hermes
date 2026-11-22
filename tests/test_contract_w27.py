@@ -66,6 +66,18 @@ def object_keys(text: str, name: str) -> set:
     return set(re.findall(r"^\s{2}([A-Za-z_][A-Za-z0-9_]*)\s*:", match.group(1), re.M))
 
 
+def object_values(text: str, name: str) -> dict:
+    """Значения объектной константы: `{ ключ: 'подпись', … }` — для сверки БУКВАЛЬНО."""
+    match = re.search(r"export const %s = \{(.*?)\n\};" % re.escape(name), text, re.S)
+    if match is None:
+        raise AssertionError("в js не найден объект %s" % name)
+    out: dict = {}
+    for key, value in re.findall(r"^\s{2}([A-Za-z_][A-Za-z0-9_]*)\s*:\s*'([^']*)'",
+                                 match.group(1), re.M):
+        out[key] = value.strip()
+    return out
+
+
 #: Состояния, которые интерфейс знает СВЕРХ счётного словаря §1 (W26/W28-B: подсказка
 #: участнику, «нельзя штатно», жёсткий запрет, доверие профилю, скрытая строка). Это не
 #: расхождение контракта: сервер отдаёт их в `approvals[].state` (W28-B), но в
@@ -100,6 +112,16 @@ class StateMirrorTest(unittest.TestCase):
                          set(stale.CLOSED_REASONS),
                          "причины закрытия: сервер и интерфейс разошлись")
         self.assertEqual(set(stale.REASON_RU), set(stale.CLOSED_REASONS))
+        # W29-P4 (проверка W29-I1): подписи — БУКВАЛЬНО те же. Иначе человек видит на
+        # сервере «запрос в архиве», а в интерфейсе другой текст (или пустоту).
+        client = object_values(self.stale_model, "CLOSED_REASON_RU")
+        for reason in stale.CLOSED_REASONS:
+            self.assertIn(reason, client, "в CLOSED_REASON_RU нет «%s»" % reason)
+            self.assertEqual(client[reason], stale.REASON_RU[reason],
+                             "подпись причины «%s» разошлась: сервер «%s», интерфейс «%s»"
+                             % (reason, stale.REASON_RU[reason], client[reason]))
+        self.assertIn("request_archived", stale.CLOSED_REASONS,
+                      "архив запроса не закрывает пункты причиной `request_archived`")
 
     def test_every_non_waiting_state_is_known_to_client(self):
         known = set_literal(self.stale_model, "NOT_WAITING")

@@ -36,6 +36,11 @@ try:  # W17-B §4: короткое название запроса (≤ 60 зн
 except ImportError:  # pragma: no cover
     import title_short as _title  # type: ignore
 
+try:  # W29-P2 п.2: системная пауза сторожа — не «ждёт вашего решения»
+    from . import stale as _stale
+except ImportError:  # pragma: no cover
+    import stale as _stale  # type: ignore
+
 # --- раскладка по файлам: перенесённые имена доступны отсюда, как и раньше ---
 try:
     from .engine_db import (ACTIVE, CLOSED, EVENT_TEXT, EngineError, FAILED_STATUS, MAX_DEPTH, MAX_NODES,
@@ -286,6 +291,8 @@ def _attempt_facts(cfg, board, con, node, run) -> dict:
     except Exception:  # noqa: BLE001 — подпись попытки не должна ронять дерево
         return {}
     return {"model": str(got.get("model") or ""), "provider": str(got.get("provider") or ""),
+            # W29B-Q2: id сеанса Hermes этой попытки — ссылка «Сеанс в Hermes».
+            "session_id": str(got.get("session_id") or ""),
             "calls": got.get("calls")}
 
 
@@ -295,6 +302,13 @@ def _load(cfg, board, root_id, room=None, extra_cards=None, enabled=None, answer
     with _conn(cfg, board) as con:
         ctx = _collect(con, root_id)
         nodes = _tree(ctx, room_dict, extra, cfg, board)
+        # W29-P2 п.2: системная пауза сторожа моделей — отдельным полем `hold`,
+        # чтобы интерфейс и счётчики не считали её «ждёт вашего решения».
+        try:
+            _stale.mark_system_pauses(cfg, str((room_dict or {}).get("id") or ""), nodes)
+            _stale.mark_blocked_actions(nodes)
+        except Exception:                   # noqa: BLE001 - разметка вторична
+            pass
         # W28-C2: попытки карточки — с итогом каждой, фактической моделью и числом
         # вызовов. Ошибка ставится только по ИТОГУ карточки: убитая контролем
         # моделей попытка (`reclaimed`) — не сбой, карточка просто пошла заново.

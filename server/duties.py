@@ -645,6 +645,27 @@ def bound_rooms(cfg, job_id) -> list[str]:
     return [room_id for room_id in out if room_id]
 
 
+def deliver_info(job: dict, bound: list | None) -> dict:
+    """Куда придёт результат дежурства (W29-P5, пункт «Куда придёт результат»).
+
+    Для дежурства комнаты итог запуска попадает во «Входящие» этой комнаты —
+    и только когда что-то изменилось; тихий запуск оставляет строку в истории.
+    Непривязанное задание остаётся в журнале Hermes: в комнате его не видно.
+    """
+    rooms = [str(one) for one in (bound or []) if one]
+    target = str(job.get("deliver") or "local")
+    if rooms:
+        room = rooms[0]
+        return {"where": "inbox", "label": "Входящие комнаты", "room": room,
+                "href": "#/room/%s/inbox" % room, "target": target,
+                "text": "Итог придёт во «Входящие» комнаты — при изменении. "
+                        "Без изменений останется тихая строка в истории."}
+    return {"where": "local", "label": "Не в комнату", "room": "", "href": "",
+            "target": target,
+            "text": "Дежурство не привязано к комнате: результат остаётся в журнале "
+                    "Hermes. Привяжите его к комнате, чтобы итог приходил во «Входящие»."}
+
+
 def items(cfg, room=None, now: int | None = None) -> dict:
     """``GET /api/duties`` — все дежурства (или только привязанные к комнате ``room``)."""
     now = int(now if now is not None else time.time())
@@ -657,16 +678,15 @@ def items(cfg, room=None, now: int | None = None) -> dict:
     except Exception:                    # noqa: BLE001
         rooms_map = {}
     out: list[dict] = []
+    system: list[dict] = []
     for job in jobs(cfg):
         job_id = str(job.get("id"))
         rows = rows_by_job.get(job_id) or []
         bound = [room_id for room_id, one in rooms_map.items()
                  if isinstance(one.get("duties"), list)
                  and job_id in [str(x) for x in one.get("duties") or []]]
-        if room and room != "all" and room not in bound:
-            continue
         last = _last_run(job, rows, now)
-        out.append({
+        entry = {
             "job_id": job_id,
             "name": str(job.get("name") or job_id),
             "enabled": bool(job.get("enabled")),
@@ -679,9 +699,31 @@ def items(cfg, room=None, now: int | None = None) -> dict:
             "recent": _recent(rows),
             "excerpt": excerpt(cfg, job_id),
             "problem": _problem(job, last, rows, now),
-        })
+            # W29-P5: чьё это дежурство и куда придёт результат.
+            "scope": "room" if bound else "system",
+            "deliver": deliver_info(job, bound),
+            "model": str(job.get("model") or ""),
+            "provider": str(job.get("provider") or ""),
+            "workdir": str(job.get("workdir") or ""),
+            "skills": [str(x) for x in (job.get("skills") or [])][:6],
+            "script": str(job.get("script") or ""),
+            "monitor_url": str(job.get("monitor_url") or ""),
+        }
+        if entry["scope"] == "system":
+            system.append(entry)         # видно всегда: «не относятся к комнатам»
+        if room and room != "all" and room not in bound:
+            continue
+        out.append(entry)
     out.sort(key=lambda item: (item["problem"] is None, item["name"].lower()))
-    return {"generated_at": now, "items": out}
+    system.sort(key=lambda item: (item["problem"] is None, item["name"].lower()))
+    # W29-P5: «дежурства комнат» и «системные задачи Hermes» — разные вещи.
+    # `items` остаётся прежним списком (совместимость), а системные отдаём и отдельным
+    # ключом: интерфейс показывает их свёрнутым блоком «не относятся к комнатам».
+    return {"generated_at": now, "items": out, "system": system,
+            "counts": {"room": len([one for one in out if one["scope"] != "system"]),
+                       "system": len(system), "total": len(out),
+                       "bound_here": len([one for one in out if room and room != "all"
+                                          and room in (one.get("bound_rooms") or [])])}}
 
 
 def problems(cfg, now: int | None = None) -> list[dict]:
@@ -749,6 +791,8 @@ WEEK_LABELS = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
 WEEK_FULL = ("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")
 #: Сколько плашек задания показываем в дне; остальные — «+N ещё».
 WEEK_DAY_JOBS = 3
+#: Сколько плановых запусков перечисляем в панели дня (W29-P5).
+WEEK_DAY_PLAN = 12
 
 
 def _runs_between(cfg, start_ts: int, end_ts: int) -> list[tuple]:
@@ -827,6 +871,11 @@ def week(cfg, room=None, now: int | None = None, start=None) -> dict:
     запусков ещё нет, и врать «0 запусков» без слова «план» нельзя.
     """
     now = int(now if now is not None else time.time())
+    if isinstance(start, str) and start.strip():
+        try:                              # `?start=2026-11-16` — листание недель
+            start = datetime.strptime(start.strip()[:10], "%Y-%m-%d").date()
+        except ValueError:
+            raise ValueError("Не понял дату недели: нужен вид 2026-11-16") from None
     start = start if isinstance(start, date) else datetime.fromtimestamp(now).date()
     start = start - timedelta(days=start.weekday())      # всегда понедельник недели
     days = [start + timedelta(days=idx) for idx in range(7)]
@@ -872,10 +921,18 @@ def week(cfg, room=None, now: int | None = None, start=None) -> dict:
                   "state": "failed" if one["failed"] else "ok"}
                  for one in job_list[:WEEK_DAY_JOBS]]
         planned = 0
+        planned_jobs: list = []
         for job in all_jobs:
             if bound is not None and str(job.get("id")) not in bound:
                 continue
-            planned += _planned_on(job, day)
+            count = _planned_on(job, day)
+            if not count:
+                continue
+            planned += count
+            planned_jobs.append({"job_id": str(job.get("id")),
+                                 "name": names.get(str(job.get("id")), str(job.get("id"))),
+                                 "runs": int(count)})
+        planned_jobs.sort(key=lambda one: one["name"].lower())
         out_days.append({
             "date": day.isoformat(),
             "weekday": int(day.weekday()),
@@ -891,9 +948,16 @@ def week(cfg, room=None, now: int | None = None, start=None) -> dict:
             "jobs": items,
             "more": max(0, len(job_list) - WEEK_DAY_JOBS),
             "planned": int(planned),
+            # W29-P5: что именно запустится по расписанию — чтобы будущий день
+            # открывался списком плановых запусков, а не пустой плашкой.
+            "planned_jobs": planned_jobs[:WEEK_DAY_PLAN],
+            "planned_more": max(0, len(planned_jobs) - WEEK_DAY_PLAN),
         })
     total_runs = sum(day["runs"] for day in out_days)
     return {"start": days[0].isoformat(), "end": days[-1].isoformat(),
+            "prev": (start - timedelta(days=7)).isoformat(),
+            "next": (start + timedelta(days=7)).isoformat(),
+            "today": today_stamp.isoformat(),
             "days": out_days, "runs": int(total_runs),
             "failed": sum(day["failed"] for day in out_days),
             "missed": sum(day["missed"] for day in out_days)}
@@ -1366,6 +1430,10 @@ def edit_argv(job_id: str, ready: dict, changed: set) -> list[str]:
         argv += ["--monitor-script", ready["monitor_script"]]
     if "monitor_url" in changed:
         argv += ["--monitor-url", ready["monitor_url"]]
+    if "model" in changed:                # W29-P5: выбор модели из каталога
+        argv += ["--model", ready["model"]]
+    if "provider" in changed:
+        argv += ["--provider", ready["provider"]]
     return argv
 
 
@@ -1581,7 +1649,9 @@ def _ready_from_job(cfg, job: dict, room_id: str) -> dict:
 
 
 #: Какие поля `PATCH` меняет через Hermes (остальные — только внутреннее правило).
-PATCH_CLI_FIELDS = ("schedule", "prompt", "title", "workdir", "monitor_script", "monitor_url")
+PATCH_CLI_FIELDS = ("schedule", "prompt", "title", "workdir", "monitor_script", "monitor_url",
+                    # W29-P5: модель выбирается в мастере — её смена тоже уходит в Hermes.
+                    "model", "provider")
 #: Какие поля меняют только правило (Hermes не трогаем).
 PATCH_RULE_FIELDS = ("changed_rule", "on_change", "level", "notify", "source", "template")
 
@@ -1613,6 +1683,8 @@ def patch(cfg, job_id, room, payload: dict, *, preview_only=False, confirm=False
             value = _workdir(cfg, room, value)
         elif key in ("monitor_script",):
             value = _script(value, key)
+        elif key in ("model", "provider"):
+            value = str(value or "").strip()[:80]
         elif key == "monitor_url":
             value = str(value or "").strip()
             if value and not re.match(r"^https?://[^\s]+$", value):

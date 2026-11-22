@@ -37,6 +37,7 @@ from server.watcher import Watcher                  # noqa: E402
 from server.routes_read import ReadRoutes           # noqa: E402
 from server.routes_write import WriteRoutes         # noqa: E402
 from server.routes_stt import SttRoutes, body_policy as stt_body_policy   # noqa: E402
+from server.routes_rooms_order import RoomOrderRoutes                       # noqa: E402
 from server.guard import GuardRoutes                # noqa: E402
 
 from server.app_common import (                    # noqa: E402
@@ -81,7 +82,7 @@ def cli_available(command: str) -> bool:
 
 
 # --- приложение ------------------------------------------------------------
-class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
+class App(GuardRoutes, ReadRoutes, WriteRoutes, RoomOrderRoutes, SttRoutes):
     """Доменные обработчики + таблица маршрутов. Один экземпляр на сервер.
 
     Хендлеры разложены по миксинам: страж — ``guard.GuardRoutes`` (валидация тела
@@ -237,7 +238,11 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
             match = pattern.fullmatch(path)
             if match:
                 params = {key: unquote(value) for key, value in match.groupdict().items() if value is not None}
-                return getattr(self, handler)(query, body, **params)
+                result = getattr(self, handler)(query, body, **params)
+                if isinstance(result, tuple) and len(result) == 3:
+                    return result
+                # Обработчик отдал только данные (миксин новой подсистемы) - это 200, не сбой.
+                return 200, result, {"Cache-Control": "no-store"}
         for _method, pattern, _handler in ROUTES:
             if pattern.fullmatch(path):
                 raise err(405, "Метод %s не поддерживается" % method, method=method, path=path)
@@ -376,6 +381,14 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
             out = [r for r in out if not r.get("archived")]
         return out
 
+    def _room_groups(self) -> list:
+        """Группы комнат для левого меню (W29-P7); сбой реестра — «групп нет»."""
+        try:
+            groups = self.call("rooms", "list_groups", ((self.cfg,), {}))
+        except Exception:  # noqa: BLE001 - меню важнее групп
+            return []
+        return [g for g in groups or [] if isinstance(g, dict) and g.get("id")]
+
     def _room(self, room_id: str) -> dict:
         room = self.call("rooms", "get_room", ((self.cfg, room_id), {}), ((self.cfg,), {"room_id": room_id}))
         if not room or not isinstance(room, dict):
@@ -507,6 +520,10 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, SttRoutes):
                 "auto_svod": room.get("auto_svod") is not False,
                 "auto_svod_quiet_s": int(room.get("auto_svod_quiet_s") or 180),
                 "auto_svod_min_gap_s": int(room.get("auto_svod_min_gap_s") or 600),
+                # W29-P7: устройство левого меню — порядок, закрепление и группа.
+                "order": int(room.get("order") or 0),
+                "pinned": bool(room.get("pinned")),
+                "group": str(room.get("group") or ""),
                 "counters": counters,
                 "phase": phase,
                 "updated_at": int(cached.get("updated_at") or room.get("created_at") or 0)}
@@ -654,6 +671,8 @@ ROUTES = [(method, re.compile(pattern), handler) for method, pattern, handler in
     ("GET", r"/api/rooms/summary", "h_rooms_summary"),
     ("POST", r"/api/rooms", "h_room_create"),
     ("POST", r"/api/rooms/check-dir", "h_room_check_dir"),
+    # W29-P7: порядок меню — перетаскивание, закрепление, группы комнат.
+    ("PUT", r"/api/rooms/order", "h_rooms_order_put"),
     ("GET", r"/api/rooms/" + _ROOM, "h_room_get"),
     ("PATCH", r"/api/rooms/" + _ROOM, "h_room_patch"),
     ("POST", r"/api/rooms/" + _ROOM + r"/archive", "h_room_archive"),
@@ -723,6 +742,12 @@ from server.routes_models import install_model_routes                    # noqa:
 
 install_model_routes(App, ROUTES)
 
+# --- защита выбора модели на доске (W29-P10) -------------------------------
+# Статус/установка/удаление триггера БД — только по явному действию человека.
+from server.routes_models_trigger import install_model_trigger_routes      # noqa: E402
+
+install_model_trigger_routes(App, ROUTES)
+
 # --- особенности для этой комнаты (WAVE14 пакет I, пункт 13) ----------------
 # Записи участникам, журнал изменений и откат: ``server/routes_notes.py``.
 from server.routes_notes import install_notes_routes                      # noqa: E402
@@ -772,6 +797,13 @@ from server.usage import install_usage_routes                                 # 
 
 install_usage_routes(App, ROUTES)
 
+# --- расход и лимиты по провайдерам (W29-P9) ---------------------------------
+# ``GET /api/limits`` — расход за 5 ч / сутки / неделю, прогноз, топ запросов;
+# ``PUT /api/limits/settings`` — лимиты человека (``data/state/limits.json``).
+from server.limits import install_limits_routes                                  # noqa: E402
+
+install_limits_routes(App, ROUTES)
+
 # --- экран «Сегодня» (W24 §3.1, пакет N2): что ждёт человека ------------------
 # ``GET /api/today`` — сводка по всем комнатам, ``POST /api/today/seen`` — отметка
 # захода (``data/state/today.json``). Правила — server/today.py.
@@ -800,12 +832,36 @@ from server.routes_inbox import install_inbox_routes                            
 
 install_inbox_routes(App, ROUTES)
 
+# --- архив запросов (W29-P4): «не актуально → в архив», раздел «Архив», возврат --
+# ``GET /api/rooms/{id}/archive``, ``POST …/archive``, ``POST …/archive/restore``
+# — server/archive.py, server/routes_archive.py. Одиночные кнопки — действиями
+# запроса: ``{action: "archive"|"unarchive"}`` (тот же модуль).
+from server.routes_archive import install_archive_routes                          # noqa: E402
+
+install_archive_routes(App, ROUTES)
+
+# --- совместимость с Hermes (W29B-Q2): «Проверка» → что у участника от комнаты ---
+# ``GET /api/rooms/{id}/parity`` — профиль, модель и её источник, инструменты,
+# навыки, MCP, разрешения и расхождения с обычным запуском агента (только чтение);
+# ``POST …/parity/fix {action:"reset_model"}`` — вернуть модель профиля участнику.
+from server.routes_parity import install_parity_routes                            # noqa: E402
+
+install_parity_routes(App, ROUTES)
+
 # --- дела (W26 §1–2, пакет D5): долгоживущий объект комнаты ---------------------
 # ``GET/POST /api/rooms/{id}/delos``, ``GET /api/delos[/{id}]``,
 # ``POST /api/delos/{id}/actions`` — server/delo.py, server/routes_delo.py.
 from server.routes_delo import install_delo_routes                               # noqa: E402
 
 install_delo_routes(App, ROUTES)
+
+# --- результаты комнаты (W29-P6): итоги завершённых запросов, «дела из запроса», --
+# «этапы по выполненным запросам» (эвристика, без запуска модели) --------------
+# ``GET /api/rooms/{id}/results``, ``POST …/delos/from-request``,
+# ``POST …/phases/from-requests``, ``POST …/results/offer`` — server/results.py.
+from server.routes_results import install_results_routes                          # noqa: E402
+
+install_results_routes(App, ROUTES)
 
 # --- уровни автономии комнаты (W27 §2, пакет E5) -------------------------------
 # ``GET/POST /api/rooms/{id}/autonomy``, ``…/autonomy/journal``, ``…/autonomy/suggest``
@@ -823,6 +879,71 @@ install_autonomy_routes(App, ROUTES)
 from server.routes_files_pick import install_pick_routes                           # noqa: E402
 
 install_pick_routes(App)
+
+
+# --- хранилище и Obsidian без дублей (W29-P8) --------------------------------
+# ``GET /api/storage``, ``POST /api/storage/clean``, ``…/policy``,
+# ``…/materials-policy``, ``…/rooms/{id}/materials-link`` — server/storage.py,
+# server/routes_storage.py. Удаление — только внутри перечисленных корней и по
+# явному подтверждению; Vault и Hermes не удаляются никогда.
+from server.routes_storage import install_storage_routes                          # noqa: E402
+
+install_storage_routes(App, ROUTES)
+
+
+# --- вложения с пониманием (W29B-Q3): предпросмотр, расшифровка, OCR ----------
+# ``GET /api/attach/preview``, ``GET /api/attach/file``, ``POST /api/attach/transcribe``,
+# ``GET /api/attach/transcribe``, ``POST /api/attach/ocr`` — server/attach_preview.py,
+# server/routes_attach_preview.py. Только чтение; расшифровка — штатный STT
+# приложения (в песочнице ``TEAMROOM_STT_FAKE``), OCR — только при найденном
+# tesseract (``TEAMROOM_OCR_FAKE``), ничего не устанавливаем.
+from server.routes_attach_preview import install_attach_preview_routes             # noqa: E402
+
+install_attach_preview_routes(App, ROUTES)
+
+
+# --- рецепты комнаты (W29B-Q1): повторяющийся процесс одной кнопкой ----------
+# ``GET/POST /api/rooms/{id}/recipes``, ``POST …/recipes/from-request``,
+# ``PATCH/DELETE /api/rooms/{id}/recipes/{rid}``, ``POST …/{rid}/launch|restore``
+# — server/recipes.py, server/routes_recipes.py. Запуск создаёт запрос с готовым
+# планом и карточки шагов сразу с моделью комнаты (общий путь engine_write).
+from server.routes_recipes import install_recipes_routes                         # noqa: E402
+
+install_recipes_routes(App, ROUTES)
+
+
+# --- уведомления Windows (W29B-Q6): по умолчанию выключены -------------------
+# ``GET /api/notify`` — настройки, канал, тихие часы, журнал; ``PUT /api/notify/settings``;
+# ``POST /api/notify/test`` — «Проверить». Один вызов из тика сторожа — server/watcher.py,
+# правила и канал — server/notify.py; в песочнице ``TEAMROOM_NOTIFY_FAKE``.
+from server.routes_notify import install_notify_routes                             # noqa: E402
+
+install_notify_routes(App, ROUTES)
+
+
+# --- второе мнение и версии свода (W29B-Q4): проверка на ДРУГОЙ модели ------------
+# ``GET /api/requests/{id}/second-opinion`` — выбор модели, оценка расхода, что уже
+# спрашивали; действие ``second_opinion`` (POST .../actions) — карточка-проверка.
+# Только чтение каталога Hermes и выбор человека; профили не меняются.
+from server.second_opinion import install_second_opinion_routes                  # noqa: E402
+
+install_second_opinion_routes(App, ROUTES)
+
+
+# --- «Итог дня» и поиск по памяти комнат (W29B-Q8) --------------------------
+# ``GET /api/daily`` (что сделано/решено/ждёт/остановлено за сутки + расход),
+# ``POST /api/daily/shorten`` («Короче» — один вызов дешёвой модели, стоимость
+# известна до нажатия; в песочнице ``TEAMROOM_DAILY_FAKE``) — server/daily.py,
+# server/routes_daily.py. ``GET /api/memory/search`` — «почему мы так решили»:
+# реестр решений, своды, ответы, журнал, заметки Vault — server/memory_search.py.
+# Только чтение, модели по умолчанию не вызываются.
+from server.routes_daily import install_daily_routes                               # noqa: E402
+
+install_daily_routes(App, ROUTES)
+
+from server.memory_search import install_memory_search_routes                      # noqa: E402
+
+install_memory_search_routes(App, ROUTES)
 
 
 # --- сервер ----------------------------------------------------------------

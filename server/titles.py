@@ -450,6 +450,9 @@ def maybe_refresh(cfg, room, rec, detail=None, answers=None, force: bool = False
     rid = str(rec.get("root_id") or "")
     if not rid or not isinstance(room, dict):
         return {"scheduled": False, "reason": "no_request"}
+    # W29-P4: архивный запрос не переименовываем — это вызов модели, а архив = стоп.
+    if room.get("archived") or (isinstance(detail, dict) and detail.get("archived")):
+        return {"scheduled": False, "reason": "archived"}
     if fields(rec)["title_locked"] or rec.get("title_locked"):
         return {"scheduled": False, "reason": "locked"}
     now = int(time.time())

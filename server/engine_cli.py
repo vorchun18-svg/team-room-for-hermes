@@ -202,10 +202,30 @@ def _error_from(stderr: str, code: str | None = None) -> EngineWriteError:
     return EngineWriteError(kind, message, stderr)
 
 
+def _board_guard(cfg, board: str | None, args) -> None:
+    """W29-I1: песочница/мок/демо не пишет на реальную доску Hermes.
+
+    Одна проверка на ВСЕ глаголы записи: через ``_run`` пишут ``engine_write``,
+    ``model_guard``, ``archive``, ``thread`` и ``engine_write_guard``. Чтение
+    (``show``/``ls``/…) не запрещается — песочнице можно смотреть боевую доску.
+    """
+    try:
+        from . import board_guard as guard
+    except ImportError:                                   # pragma: no cover
+        import board_guard as guard                       # type: ignore
+    if not guard.is_write_command(args):
+        return
+    found = guard.check(cfg, board)
+    if found:
+        raise EngineWriteError(guard.CODE, found["message"], detail=found["detail"],
+                               http_status=409)
+
+
 def _run(cfg, board: str | None, args, *, timeout: int = DEFAULT_TIMEOUT):
     """Один вызов CLI. Возвращает (stdout, ms); ошибки → EngineWriteError."""
     argv = _argv(cfg, board, args)
     _guard_argv(argv)
+    _board_guard(cfg, board, args)
     if board and not Path(cfg.kanban_db(board)).is_file():
         # Доски нет — CLI начал бы создавать окружение и висеть минутами. Отвечаем сразу.
         raise EngineWriteError(

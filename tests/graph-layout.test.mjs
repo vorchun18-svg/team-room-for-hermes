@@ -94,7 +94,7 @@ test('wrapLabel: длинная русская подпись ≤ 3 строк �
   assert.ok(lines.length <= 3);
   assert.ok(lines.every((l) => l.length <= 16), JSON.stringify(lines));
   assert.ok(lines[lines.length - 1].endsWith('…'));
-  assert.equal(wrapLabel('Моти', 16, 3).length, 1);
+  assert.equal(wrapLabel('Суфле', 16, 3).length, 1);
   assert.deepEqual(wrapLabel('', 16, 3), ['']);
   const longWord = wrapLabel('Сверхдлинноесловобезпробелов', 8, 3);
   assert.ok(longWord.length <= 3);
@@ -102,8 +102,8 @@ test('wrapLabel: длинная русская подпись ≤ 3 строк �
 });
 
 test('nodeBox: размер растёт от подписи и size', () => {
-  const small = nodeBox({ id: 'a', label: 'Моти' });
-  const big = nodeBox({ id: 'b', label: 'Договор с поставщиком моти в Сан-Паулу', size: 1.4 });
+  const small = nodeBox({ id: 'a', label: 'Суфле' });
+  const big = nodeBox({ id: 'b', label: 'Договор с поставщиком суфле в Сан-Паулу', size: 1.4 });
   assert.ok(big.w >= small.w);
   assert.ok(big.h >= small.h);
   assert.ok(big.lines.length <= 3);

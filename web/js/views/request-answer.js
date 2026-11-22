@@ -27,6 +27,10 @@ import {
 import { exportGroup } from './request-export.js';
 // W25-L2 (R5 §7.2): «Что изменилось» — сворачиваемый блок (общий компонент У-1).
 import { createSection, sectionDefaults } from './section-collapse.js';
+// W29B-Q4: различия версий считаются в браузере (слова/абзацы) — без вызовов модели.
+import { diffParagraphs, diffCounts, countsText, changeIndexes } from '../svod-diff.js';
+// W29B-Q4: «Второе мнение» — проверка свода на ДРУГОЙ модели (только по кнопке).
+import { createSecondOpinion } from './second-opinion.js';
 
 /** Фраза, если человек запускает доработку без своего замечания (только «учти ответы»). */
 export const REVISE_NO_NOTE = 'Доработать свод с учётом моих ответов на вопросы и уточнений в диалоге';
@@ -456,6 +460,16 @@ export function createAnswer(R) {
   }
 
   /**
+   * W29B-Q4: «Второе мнение» — одна фабрика на страницу запроса. Блок стоит под
+   * «Что изменилось», кнопка в нём открывает выбор модели; сама проверка — карточка
+   * на другой модели, поэтому результат приходит деревом, а не мгновенно.
+   */
+  const secondOpinion = createSecondOpinion({
+    ctx, rid, root, runAction,
+    getDetail: () => R.detail,
+  });
+
+  /**
    * W25.5: выбрать версию свода — единственная реализация.
    * Её дёргают и переключатель в липкой панели (shell-svod-bar.js), и меню
    * «Ещё ▾» на узком виде; внутри карточки переключателя больше нет.
@@ -484,32 +498,96 @@ export function createAnswer(R) {
   // Здесь его больше нет — было два места с одним и тем же управлением; выбор
   // версии делается функцией `setVersion` выше.
 
-  /* ── «Что изменилось» и сравнение версий (W17-S §3) ─────────── */
+  /* ── «Что изменилось» и сравнение версий (W17-S §3, W29B-Q4) ─────────── */
 
-  /** Простой поабзацный diff: добавленное и удалённое (для «сравнить с версией N»). */
-  function diffParagraphs(before, after) {
-    const left = String(before || '').split(/\n{2,}/).map((x) => x.trim()).filter(Boolean).slice(0, 120);
-    const right = String(after || '').split(/\n{2,}/).map((x) => x.trim()).filter(Boolean).slice(0, 120);
-    const n = left.length;
-    const m = right.length;
-    const dp = [];
-    for (let i = 0; i <= n; i += 1) dp.push(new Array(m + 1).fill(0));
-    for (let i = n - 1; i >= 0; i -= 1) {
-      for (let j = m - 1; j >= 0; j -= 1) {
-        dp[i][j] = left[i] === right[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  /**
+   * Сравнение версий по тексту: добавленное и удалённое, по абзацам и словам.
+   *
+   * W29B-Q4: разница считается в браузере (`web/js/svod-diff.js`), модель не
+   * вызывается. Над списком — счётчики и переход «‹ ›» между правками без
+   * перерисовки страницы (иначе терялась бы позиция чтения).
+   * @param {string} prevText текст версии N−1
+   * @param {string} curText текст версии N
+   * @param {number} prevVersion
+   * @param {number} curVersion
+   * @returns {HTMLElement}
+   */
+  function compareBlock(prevText, curText, prevVersion, curVersion) {
+    const blocks = diffParagraphs(prevText, curText);
+    const counts = diffCounts(blocks);
+    const marks = changeIndexes(blocks);
+    if (!marks.length) {
+      return h('div', { class: 'req-answer__diff svd', 'data-diff': 'none' },
+        h('div', { class: 'small muted' }, 'Различий по абзацам и словам нет.'));
+    }
+    const counter = h('span', { class: 'svd__count chip chip--muted tnum' }, countsText(counts));
+    const where = h('span', { class: 'svd__where small muted tnum' }, '');
+    let at = 0;
+
+    const lines = h('div', { class: 'svd__body' });
+    for (const block of blocks) {
+      if (block.kind === 'same') {
+        lines.appendChild(h('div', { class: 'svd__line svd__line--same' },
+          shortLine(block.text, 300)));
+        continue;
       }
+      const line = h('div', {
+        class: 'svd__line svd__line--change', 'data-change': String(at),
+        title: 'Абзац изменён в версии ' + curVersion,
+      });
+      for (const op of block.words || []) {
+        if (op.kind === 'same') {
+          line.appendChild(h('span', { class: 'svd__same' }, shortLine(op.text, 400)));
+        } else {
+          line.appendChild(h('span', {
+            class: op.kind === 'add' ? 'svd__add' : 'svd__del',
+            title: op.kind === 'add' ? 'Добавлено' : 'Убрано',
+          }, op.kind === 'add' ? '+' : '−', shortLine(op.text, 400)));
+        }
+      }
+      lines.appendChild(line);
+      at += 1;
     }
-    const out = [];
-    let i = 0;
-    let j = 0;
-    while (i < n && j < m) {
-      if (left[i] === right[j]) { i += 1; j += 1; continue; }
-      if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ kind: 'del', text: left[i] }); i += 1; }
-      else { out.push({ kind: 'add', text: right[j] }); j += 1; }
-    }
-    while (i < n) { out.push({ kind: 'del', text: left[i] }); i += 1; }
-    while (j < m) { out.push({ kind: 'add', text: right[j] }); j += 1; }
-    return out.slice(0, 200);
+    const total = marks.length;
+    let cursor = 0;                 // номер правки, на которой стоит человек
+
+    /** Показать правку №i: прокрутка и подсветка, без перерисовки страницы. */
+    const show = (index) => {
+      cursor = Math.max(0, Math.min(Number(index) || 0, total - 1));
+      const node = lines.querySelector('[data-change="' + String(marks[cursor]) + '"]');
+      if (!node) return;
+      for (const other of Array.from(lines.querySelectorAll('.is-current'))) other.classList.remove('is-current');
+      node.classList.add('is-current');
+      if (typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      where.textContent = 'правка ' + (cursor + 1) + ' из ' + total;
+    };
+    const step = (dir) => show((cursor + (Number(dir) < 0 ? -1 : 1) + total) % total);
+
+    const nav = h('div', { class: 'svd__nav' },
+      h('button', {
+        type: 'button', class: 'btn btn--ghost btn--sm svd__prev', title: 'Предыдущее изменение',
+        'aria-label': 'Предыдущее изменение', onclick: () => step(-1),
+      }, icon('chevron-up', { size: 12 })),
+      h('button', {
+        type: 'button', class: 'btn btn--ghost btn--sm svd__next', title: 'Следующее изменение',
+        'aria-label': 'Следующее изменение', onclick: () => step(1),
+      }, icon('chevron-down', { size: 12 })),
+      where);
+
+    const box = h('div', {
+      class: 'req-answer__diff svd', 'data-diff': String(total),
+      'data-from': String(prevVersion), 'data-to': String(curVersion),
+    },
+    h('div', { class: 'svd__head' },
+      h('span', { class: 'svd__title' },
+        'Версии ' + prevVersion + ' → ' + curVersion + ': красное — убрано, зелёное — добавлено'),
+      counter,
+      h('div', { class: 'spacer' }),
+      total > 1 ? nav : null),
+    lines);
+    // Первая правка отмечена сразу: человек видит, куда смотреть, без клика.
+    show(0);
+    return box;
   }
 
   /** Список «Что изменилось» под версией. */
@@ -821,6 +899,14 @@ export function createAnswer(R) {
       // «Что изменилось» — под текстом: на первом экране остаётся свод (R5 §7.3).
       if (vcap) card.append(vcap);
       if (changes) card.append(changes);
+
+      // W29B-Q4: «Второе мнение» — под различиями, перед кнопками. Кнопка одна и
+      // та же, что в липкой панели (там она в меню «Ещё ▾»).
+      if (!isOld) {
+        const soBlock = secondOpinion.buildBlock();
+        if (soBlock) card.append(soBlock);
+        if (!secondOpinion.data()) secondOpinion.start();
+      }
 
       if (!isOld && (c.state === 'reviewing' || d.status === 'reviewing')) {
         card.insertBefore(

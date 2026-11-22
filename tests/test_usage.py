@@ -130,6 +130,38 @@ class UsageTest(unittest.TestCase):
         self.assertIn("t_3000cccc", got["mismatched"]["cards"])
         self.assertEqual(got["cards"], 3)
 
+    def test_by_card_and_wasted_are_separate(self):
+        """W29-Q9 п.5: расход по карточкам и «потрачено зря» — отдельные поля."""
+        self._prepare()
+        got = usage_mod.usage(self.cfg, room(), RID, detail=detail(), rec=rec(),
+                              state_dir=str(self.base))
+        by_card = {c["task_id"]: c for c in got["by_card"]}
+        self.assertEqual(set(by_card), {RID, "t_2000bbbb", "t_3000cccc"})
+        self.assertAlmostEqual(by_card[RID]["cost_usd"], 0.31, places=6)
+        self.assertEqual(by_card[RID]["calls"], 8)
+        self.assertGreater(by_card[RID]["tokens"], 0)
+        self.assertEqual(got["wasted"]["attempts"], 1)
+        self.assertEqual(got["wasted"]["cards"], ["t_3000cccc"])
+        # сессии попытки s9 в state.db нет — деньги не выдумываем
+        self.assertEqual(got["wasted"]["cost_usd"], 0.0)
+        self.assertIn("Потрачено зря: 1 попытка", got["wasted"]["text"])
+
+    def test_model_rates_are_read_from_state_db(self):
+        """W29-Q9 п.2: средняя цена вызова по модели — из сессий, только чтение."""
+        self._prepare()
+        usage_mod._RATE_CACHE.clear()
+        rates = usage_mod.model_rates(str(self.base))
+        self.assertIn("model-a", rates)
+        calls = 8 + 5 + 2
+        cost = 0.31 + 0.19 + 0.05
+        self.assertEqual(rates["model-a"]["calls"], calls)
+        self.assertAlmostEqual(rates["model-a"]["usd_per_call"], cost / calls, places=6)
+        # чтение не меняет state.db: хеш до/после
+        before = hashlib.sha256(self.state.read_bytes()).hexdigest()
+        usage_mod._RATE_CACHE.clear()
+        usage_mod.model_rates(str(self.base))
+        self.assertEqual(hashlib.sha256(self.state.read_bytes()).hexdigest(), before)
+
     def test_line_is_short_and_has_the_parts(self):
         self._prepare()
         got = usage_mod.usage(self.cfg, room(), RID, detail=detail(), rec=rec(),

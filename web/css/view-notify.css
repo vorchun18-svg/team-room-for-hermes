@@ -1,0 +1,62 @@
+/* view-notify.css — раздел «Уведомления» в настройках (W29B-Q6).
+   Только этот раздел: тумблер включения, виды, тихие часы, журнал.
+   Ничего не перекрывает: блоки идут в потоке страницы настроек. */
+
+.notify { display: flex; flex-direction: column; gap: 12px; margin: 8px 0 24px; }
+.notify__head { display: flex; align-items: flex-start; gap: 16px; justify-content: space-between; }
+.notify__head-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.notify__title { font-size: 15px; font-weight: 600; color: var(--fg, #e8e8ea); }
+.notify__sub { font-size: 12.5px; line-height: 1.45; color: var(--fg-muted, #9a9aa2); max-width: 62ch; }
+.notify__head-actions { flex: 0 0 auto; }
+
+.notify__toggle {
+  appearance: none; border: 1px solid var(--border, #34343c); background: var(--bg-2, #1c1c21);
+  color: var(--fg-muted, #9a9aa2); border-radius: 999px; padding: 6px 16px;
+  font: inherit; font-size: 12.5px; cursor: pointer; min-width: 108px; transition: background .15s, color .15s;
+}
+.notify__toggle:hover { border-color: var(--border-strong, #4a4a55); }
+.notify__toggle--on { background: var(--accent, #4c7dd6); border-color: var(--accent, #4c7dd6); color: #fff; }
+
+.notify__channel { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg-muted, #9a9aa2); }
+.notify__channel-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok, #46a758); flex: 0 0 auto; }
+.notify__channel--off .notify__channel-dot { background: var(--warn, #d9a13b); }
+
+.notify__group { border: 1px solid var(--border, #34343c); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.notify__group-title { font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted, #9a9aa2); }
+.notify__checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px 18px; }
+.notify__check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; min-height: 24px; }
+.notify__check input { width: 15px; height: 15px; accent-color: var(--accent, #4c7dd6); flex: 0 0 auto; }
+.notify__check input:disabled { opacity: .45; cursor: default; }
+.notify__check-text { color: var(--fg, #e8e8ea); }
+
+.notify__row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.notify__row--tight { gap: 8px; }
+.notify__row--actions { justify-content: flex-start; gap: 14px; }
+.notify__quiet-range { display: flex; align-items: center; gap: 6px; }
+.notify__time, .notify__select {
+  font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 7px;
+  border: 1px solid var(--border, #34343c); background: var(--bg-2, #1c1c21); color: var(--fg, #e8e8ea);
+}
+.notify__time:disabled, .notify__select:disabled { opacity: .5; }
+.notify__muted { font-size: 12.5px; color: var(--fg-muted, #9a9aa2); }
+
+.notify__note { font-size: 12.5px; line-height: 1.45; border-radius: 8px; padding: 8px 10px; }
+.notify__note--ok { background: rgba(70, 167, 88, .12); color: var(--ok, #6cc27e); }
+.notify__note--warn { background: rgba(217, 161, 59, .12); color: var(--warn, #d9a13b); }
+.notify__note--error { background: rgba(214, 88, 88, .12); color: var(--err, #e07a7a); }
+
+.notify__history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.notify__history-item { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; font-size: 12.5px; }
+.notify__history-time { color: var(--fg-muted, #9a9aa2); }
+.notify__history-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notify__history-state { color: var(--fg-muted, #9a9aa2); }
+.notify__history-item--fail .notify__history-state { color: var(--warn, #d9a13b); }
+.notify__hint { font-size: 12.5px; line-height: 1.45; color: var(--fg-muted, #9a9aa2); margin: 0; }
+.notify__loading { font-size: 12.5px; color: var(--fg-muted, #9a9aa2); }
+
+@media (max-width: 720px) {
+  .notify__head { flex-direction: column; align-items: stretch; }
+  .notify__head-actions { align-self: flex-start; }
+  .notify__history-item { grid-template-columns: 92px minmax(0, 1fr); }
+  .notify__history-state { grid-column: 2; }
+}

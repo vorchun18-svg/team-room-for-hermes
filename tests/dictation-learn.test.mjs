@@ -63,14 +63,14 @@ test('недре → Гранит', () => {
     [['недре', 'Гранит']]);
 });
 
-test('мотти → моти', () => {
-  assert.deepEqual(pairs('встреча с мотти', 'встреча с моти'), [['мотти', 'моти']]);
+test('безэ → суфле', () => {
+  assert.deepEqual(pairs('встреча с безэ', 'встреча с суфле'), [['безэ', 'суфле']]);
 });
 
 test('несколько имён в одной фразе — по порядку', () => {
   assert.deepEqual(
-    pairs('тескфло и диаген и мотти', 'TaskFlow и Атлас и моти'),
-    [['тескфло', 'TaskFlow'], ['диаген', 'Атлас'], ['мотти', 'моти']],
+    pairs('тескфло и диаген и безэ', 'TaskFlow и Атлас и суфле'),
+    [['тескфло', 'TaskFlow'], ['диаген', 'Атлас'], ['безэ', 'суфле']],
   );
 });
 
@@ -85,7 +85,7 @@ test('регистр целой фразы — не ошибка', () => {
 });
 
 test('пунктуация не считается', () => {
-  assert.deepEqual(pairs('моти, ты где?', 'моти ты где'), []);
+  assert.deepEqual(pairs('суфле, ты где?', 'суфле ты где'), []);
 });
 
 test('ё и е не считаются разными', () => {
@@ -257,13 +257,13 @@ test('плашка не появляется, если править нечег
 test('одна правка: текст, кнопки и подпись', withDom(async () => {
   const host = fakeDoc.createElement('div');
   const res = offerLearning({ toast: () => {} },
-    { raw: 'встреча с мотти', final: 'встреча с моти', anchor: host, ttlMs: 0 });
+    { raw: 'встреча с безэ', final: 'встреча с суфле', anchor: host, ttlMs: 0 });
   assert.ok(res && res.el);
   assert.equal(host.childNodes.length, 1);
   const text = res.el.textContent;
   assert.match(text, /Запомнить исправление\?/);
-  assert.match(text, /«мотти»/);
-  assert.match(text, /«моти»/);
+  assert.match(text, /«безэ»/);
+  assert.match(text, /«суфле»/);
   assert.ok(buttonByText(res.el, 'Запомнить'));
   assert.ok(buttonByText(res.el, 'Не надо'));
   // «Запомнить все» остаётся в наборе даже для одной пары — обещано в макете.

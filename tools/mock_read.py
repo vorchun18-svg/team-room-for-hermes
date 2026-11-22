@@ -14,10 +14,13 @@ from mock_core import (ALLOWED_EXT, DENY_NAME_PARTS, FILE_ROOTS, MIME, MOCK, MOC
                        export_markdown, ics_escape, inside, is_service_question, now, short_title,
                        split_heartbeats)
 import mock_backlog
+import mock_ac1         # W29-AC1: результаты комнаты, входящие, расход запроса
+import mock_batchb       # W29-AC2: совместимость, второе мнение, итог дня, память, уведомления
 import mock_demo as demo
 import mock_delos
 import mock_stt
 import mock_duties_fe   # W27-E8: демо-сервер дежурств комнаты
+import mock_recipes      # W29B-Q1: демо-сервер рецептов комнаты
 from mock_write import collapse_approvals   # W22-ST: строки-группы разрешений (одно правило)
 
 _LABEL_DASH = re.compile("\\s*[\u2014\u2013\u2015\u2012\u2212-]{1,2}\\s*")
@@ -168,8 +171,17 @@ def shift_date(text: str, days: int) -> str:
 
 class MockRead:
     def get(self, path: str, query: dict) -> tuple:
+        hit = mock_batchb.handle(self, "GET", path, query, {})
+        if hit is not None:                 # W29-AC2: ручки партии B
+            return hit
+        hit = mock_ac1.handle(self, "GET", path, query, {})
+        if hit is not None:                 # W29-AC1: результаты, входящие, расход
+            return hit
         if path == "/api/health":
             return 200, self.health()
+        # W29-P9: расход и лимиты по провайдерам — демо из fixtures/limits.json.
+        if path == "/api/limits":
+            return 200, self.limits_panel()
         # W26-D4: существование файла для чипов-ссылок свода (демо: набор путей).
         if path == "/api/files/info":
             return 200, self.files_info(query)
@@ -181,6 +193,9 @@ class MockRead:
         # W27-E8: шаблоны дежурств и история запусков (свои блоки демо-сервера).
         if path == "/api/duty-templates":
             return 200, mock_duties_fe.templates()
+        # W29B-Q1: рецепты комнаты — список, корзина, история запусков, роли.
+        if re.fullmatch(r"/api/rooms/[a-z][a-z0-9_-]{1,31}/recipes", path):
+            return 200, mock_recipes.listing()
         m = re.fullmatch(r"/api/duties/([A-Za-z0-9_.-]{1,64})/history", path)
         if m:
             return 200, mock_duties_fe.history(self, m.group(1))
@@ -234,8 +249,14 @@ class MockRead:
             return 200, self.fixture("profiles.json")
         if path == "/api/rooms":
             include = query.get("include_archived", ["0"])[0] in ("1", "true", "yes")
-            rooms = [self.room_summary(rid) for rid in self.room_details if include or not self.room(rid)["archived"]]
-            return 200, {"rooms": rooms, "engine": {"ok": True, "board": "team", "warning": None},
+            # W29-P7: тот же порядок, что на сервере — закреплённые, затем `order`.
+            ids = list(self.room_details)
+            ids.sort(key=lambda rid: (0 if self.room(rid).get("pinned") else 1,
+                                      int(self.room(rid).get("order") or 0) or 10 ** 9,
+                                      list(self.room_details).index(rid)))
+            rooms = [self.room_summary(rid) for rid in ids if include or not self.room(rid)["archived"]]
+            return 200, {"rooms": rooms, "groups": self.groups,
+                         "engine": {"ok": True, "board": "team", "warning": None},
                          "updated_at": now()}
         if path == "/api/rooms/summary":
             return 200, self.rooms_summary(query)          # W17-B §1: одно чтение на меню
@@ -272,6 +293,10 @@ class MockRead:
                          "phases_proposal_text": (rules.state_text(room.get("phases_proposal"))
                                                   if rules else ""),
                          "dispatcher": {"ok": True, "state": "running", "warning": None}}
+        m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/archive", path)
+        if m:
+            # W29-P4: раздел «Архив» в демо — из того, что уже убрано в памяти.
+            return 200, self.archive_list(m.group(1), query)
         m = re.fullmatch(r"/api/rooms/([a-z0-9-]{2,32})/requests", path)
         if m:
             return 200, self.list_requests(m.group(1), query)
@@ -414,18 +439,50 @@ class MockRead:
         data.pop("_comment", None)
         room = (query.get("room") or ["all"])[0].strip() or "all"
         items = list(data.get("items") or [])
+        # W29-P5: системные задачи Hermes — отдельно, в любой выборке.
+        system = [item for item in items if not item.get("bound_rooms")]
         if room not in ("all", "*"):
             items = [item for item in items if room in (item.get("bound_rooms") or [])]
         data["items"] = items
+        data["system"] = system
         data["generated_at"] = now()
         # W27-E8: поля дежурства комнаты (тип/правило/итог), корзина и предложения.
-        return mock_duties_fe.enrich(self, data)
+        payload = mock_duties_fe.enrich(self, data)
+        # W29-P5: `?start=YYYY-MM-DD` — стрелки ‹ › листают неделю и в демо.
+        start = (query.get("start") or [""])[0].strip()
+        if start:
+            payload["week"] = mock_duties_fe.demo_week(payload.get("items") or [], start)
+        return payload
 
     def health_integrations(self) -> dict:
         """GET /api/health/integrations — сводка проверок (контракт §3.3)."""
         data = self._shifted("health_integrations.json")
         data.pop("_comment", None)
         data["generated_at"] = now()
+        return data
+
+    def limits_panel(self) -> dict:
+        """GET /api/limits — демо-расход, прогресс к лимитам и строка для шапки (W29-P9)."""
+        data = self.fixture("limits.json")
+        data["generated_at"] = now()
+        data["source"] = "fixtures"
+        providers = (getattr(self, "demo_limits", None) or {}).get("providers") or {}
+        data["limits"] = {"providers": copy.deepcopy(providers), "updated_at": 0}
+        for key in ("5h", "day", "week"):
+            window = (data.get("windows") or {}).get(key) or {}
+            for row in window.get("providers") or []:
+                limit = (providers.get(row.get("provider")) or {}).get(key)
+                if not limit:
+                    row["limit"] = None
+                    row["limits"] = {}
+                    continue
+                used = (row.get("tokens") or {}).get("total", 0) if limit.get("kind") == "tokens" else row.get("calls", 0)
+                value = int(limit.get("value") or 0)
+                pct = round(100.0 * (used or 0) / value, 1) if value else 0.0
+                status = "over" if pct >= 100 else "alert" if pct >= 90 else "warn" if pct >= 70 else "ok"
+                row["limit"] = {"kind": limit.get("kind"), "value": value,
+                                "used": used, "pct": pct, "status": status}
+                row["limits"] = {key: row["limit"]}
         return data
 
     def health(self) -> dict:
@@ -520,6 +577,26 @@ class MockRead:
                for a in pending):
             detail["needs_you"] = True
         detail["model_guard"] = self.guard_events(str(detail.get("room") or ""))
+        # W29-P2: заблокированная карточка — пункт «ждёт вашего решения» с кнопками.
+        # Мок отдаёт то же, что сервер: `actions[]` у узла, `hold` у системной паузы,
+        # число `needs_you_blocked` и список `blocked_waiting` (один источник).
+        _waiting_cards = []
+        for node in detail.get("tree") or []:
+            if not isinstance(node, dict) or str(node.get("status")) != "blocked":
+                continue
+            if isinstance(node.get("hold"), dict):
+                node["actions"] = [{"id": "resume", "label": "Снять паузу сейчас", "kind": "system"}]
+                node["needs_you"] = False
+                continue
+            node["actions"] = [{"id": "resume"}, {"id": "instruct"}, {"id": "model"},
+                               {"id": "reassign"}, {"id": "dismiss"}]
+            node["needs_you"] = True
+            _waiting_cards.append({"id": str(node.get("id") or ""),
+                                   "title": str(node.get("title") or ""),
+                                   "assignee": str(node.get("assignee") or ""),
+                                   "actions": [a["id"] for a in node["actions"]]})
+        detail["needs_you_blocked"] = len(_waiting_cards)
+        detail["blocked_waiting"] = _waiting_cards
         # Демо: у идущих карточек показываем «уже N мин», а не месяцы.
         for node in detail.get("tree") or []:
             if isinstance(node, dict) and str(node.get("status")) in ("running", "review"):
@@ -1435,7 +1512,7 @@ class MockRead:
         if room["id"] == "cafe":
             own = [
                 ("team-ops", "свои скрипты", 42 * 60, "Собрать отчёт по упаковке за неделю", "t_a1b2c3d4"),
-                ("team-cfo", "свои скрипты", 3 * 3600, "Юнит-экономика набора из 6 моти", "t_3b7e9d11"),
+                ("team-cfo", "свои скрипты", 3 * 3600, "Юнит-экономика набора из 6 суфле", "t_3b7e9d11"),
                 ("team-runner", "чтение файлов в папке комнаты", 5 * 3600,
                  "Дорожная карта проекта: где мы сейчас", "t_a1b2c3d4"),
                 ("team-lawyer", "свои скрипты", 26 * 3600, "Разбор договора поставки упаковки", "t_5d0c11a2"),

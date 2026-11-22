@@ -385,3 +385,41 @@
 @media print {
   .delo-card__foot, .delo__filters, .delo-btn { display: none; }
 }
+
+/* ── W29-P6: «Запросы без дела» — запросы комнаты, из которых ещё не сделали дело ── */
+
+.delo-nodelo {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  margin-top: var(--space-5);
+  padding: var(--space-3) 0 0;
+  border-top: 1px solid var(--border);
+  min-width: 0;
+}
+.delo-nodelo__title {
+  display: flex; align-items: baseline; gap: var(--space-1);
+  margin: 0; font-size: var(--text-md); font-weight: 600;
+}
+.delo-nodelo__lead { margin: 0; max-width: 80ch; }
+.delo-nodelo__list { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.delo-nodelo__row {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 8px var(--space-2);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface); min-width: 0;
+}
+.delo-nodelo__title { flex: 1 1 auto; min-width: 0; }
+.delo-nodelo__row .delo-nodelo__title {
+  font-weight: 600; font-size: var(--text-md); font-weight: 600;
+  color: var(--text); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.delo-nodelo__row .delo-nodelo__title:hover { color: var(--accent); text-decoration: underline; }
+.delo-nodelo__status { flex: 0 0 auto; }
+.delo-nodelo__bulk {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  margin-top: 2px;
+}
+@media (max-width: 640px) {
+  .delo-nodelo__row { flex-wrap: wrap; }
+  .delo-nodelo__row .delo-nodelo__title { flex-basis: 100%; white-space: normal; }
+}

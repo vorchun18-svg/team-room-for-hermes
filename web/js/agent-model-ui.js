@@ -78,13 +78,37 @@ function detach(node) {
   node.parentNode = null;
 }
 
+/* ─────────────────────────────────────────────────────── каталог: полнота */
+
+/**
+ * Плашка «Список моделей неполный» — когда каталог собран не из Hermes, а «из профилей».
+ *
+ * Дефект 11: раньше подмена была молчаливой (предупреждение уходило только в JSON), и
+ * человек видел у `anthropic` одну модель из пятнадцати. Теперь причина видна в диалоге,
+ * рядом кнопка «Обновить».
+ * @param {object|null} catalog ответ `GET /api/models`
+ * @returns {{text: string, reason: string}|null}
+ */
+export function catalogNotice(catalog) {
+  const data = catalog && typeof catalog === 'object' ? catalog : null;
+  if (!data) return null;
+  const source = String(data.source || '').trim();
+  // `override` — тестовый/демонстрационный каталог, он полный по определению.
+  if (source !== 'profiles') return null;
+  const list = Array.isArray(data.warnings) ? data.warnings : [];
+  const reason = list.map((w) => String(w || '').trim()).filter(Boolean).join(' ')
+    || 'Hermes не ответил';
+  return { text: 'Список моделей неполный: Hermes не ответил (' + reason + ')', reason };
+}
+
 /* ─────────────────────────────────────────────────────── монтирование */
 
-async function fetchCatalog(ctx) {
+async function fetchCatalog(ctx, opts = {}) {
   const api = ctx && ctx.api;
   if (!api || typeof api.get !== 'function') return { catalog: null, error: '' };
   try {
-    const data = await api.get('/api/models');
+    const path = opts.refresh ? '/api/models?refresh=1' : '/api/models';
+    const data = await api.get(path);
     return { catalog: data && typeof data === 'object' ? data : null, error: '' };
   } catch (err) {
     return { catalog: null, error: 'Список моделей недоступен — показываем настройки агента. Проверьте, что приложение запущено.' };
@@ -128,6 +152,44 @@ export async function mountAgentModel(container, ctx = {}, opts = {}) {
     host.appendChild(h('div', { class: 'banner banner--warn agent-model__catalog-error' },
       icon('warning', { size: 13 }), h('div', { class: 'banner__text' }, catalogError)));
   }
+
+  // Дефект 11: список собран «из профилей» — говорим об этом прямо и даём «Обновить»,
+  // иначе человек выбирает модель из урезанного списка и не понимает, почему её нет.
+  let noticeText = h('div', { class: 'banner__text' });
+  const notice = h('div', { class: 'banner banner--warn agent-model__catalog-incomplete' },
+    icon('warning', { size: 13 }), noticeText);
+  const refreshBtn = h('button', {
+    class: 'btn btn--ghost btn--sm agent-model__catalog-refresh', type: 'button',
+    title: 'Запросить список моделей у Hermes заново',
+    onclick: async () => {
+      refreshBtn.disabled = true;
+      const got = await fetchCatalog(ctx, { refresh: true });
+      refreshBtn.disabled = false;
+      if (got.catalog) {
+        catalog = got.catalog;
+        paintNotice();
+        build();
+      }
+    },
+  }, 'Обновить');
+  notice.appendChild(refreshBtn);
+
+  function paintNotice() {
+    const info = catalogNotice(catalog);
+    if (!info) {
+      // Мини-DOM в тестах не знает `style`: скрываем и атрибутом, и стилем, если они есть.
+      noticeText.textContent = '';
+      if (typeof notice.setAttribute === 'function') notice.setAttribute('hidden', 'hidden');
+      if (notice.style) notice.style.display = 'none';
+      return;
+    }
+    noticeText.textContent = info.text;
+    if (typeof notice.removeAttribute === 'function') notice.removeAttribute('hidden');
+    if (notice.style) notice.style.display = '';
+  }
+
+  paintNotice();
+  host.appendChild(notice);
 
   const listHost = h('div', { class: 'agent-model__list' });
   host.appendChild(listHost);
@@ -206,7 +268,8 @@ export async function mountAgentModel(container, ctx = {}, opts = {}) {
   return {
     element: host,
     mode,
-    catalog,
+    /** Актуальный каталог: после «Обновить» здесь уже полный список. */
+    get catalog() { return catalog; },
     refresh: build,
     rowFor(profile) { return rows.get(String(profile || '')) || null; },
     /** {профиль: {provider, model, reasoning}} — только изменённое против агента. */

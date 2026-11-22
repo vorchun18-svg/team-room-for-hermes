@@ -138,3 +138,45 @@
   .rep-doc { padding: var(--space-3); }
   .rep-frame { height: 70dvh; }
 }
+
+/* ── W29-P6: «Результаты» — итоги завершённых запросов ───────────────────── */
+
+.rep__sub {
+  display: flex; align-items: baseline; gap: var(--space-1);
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-md); font-weight: 600;
+}
+.rep__sub:first-child { margin-top: 0; }
+.rep__sub-count { font-weight: 500; }
+
+.result-list { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.result-row {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface); min-width: 0;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.result-row:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.result-row__main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.result-row__title {
+  font-weight: 600; color: var(--text); text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.result-row__title:hover { color: var(--accent); text-decoration: underline; }
+.result-row__short {
+  margin: 0; color: var(--text-soft); font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.result-row__meta { display: flex; flex-wrap: wrap; gap: 4px; }
+.result-row__foot {
+  display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center;
+}
+.result-row__foot .chip { text-decoration: none; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .result-row { padding: var(--space-2); }
+  .result-row__foot .chip { max-width: 100%; }
+}

@@ -235,6 +235,13 @@
 
 .agent-model__host { min-width: 0; }
 .agent-model__dialog-body { min-width: 0; }
+/* W29-P3: окно «Модель участника» постоянного размера — раскрытие и сворачивание
+   участника прокручивает тело (общее правило .dialog__body), а не растягивает окно
+   и не сдвигает подвал. Размеры — единственное, что здесь меняется. */
+.dialog.agent-model__dialog { height: min(84vh, 720px); max-height: calc(100dvh - 2 * var(--space-6)); }
+@media (max-width: 899px) {
+  .dialog.agent-model__dialog { height: min(calc(100dvh - 2 * var(--space-3)), 720px); }
+}
 
 @media (min-width: 720px) {
   .agent-model__panel {

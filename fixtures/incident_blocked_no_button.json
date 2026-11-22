@@ -1,0 +1,17 @@
+{
+  "_комментарий": "Инцидент W29-P2: заблокированная карточка считалась в «ждёт вашего решения», но кнопок у неё не было — тупик. Фикстура для tests/test_dead_ends_blocked.py.",
+  "id": "t_incident",
+  "title": "Собрать прайс для кофейни",
+  "status": "working",
+  "needs_you": true,
+  "tree": [
+    {"id": "t_incident", "status": "working", "title": "Собрать прайс для кофейни", "assignee": "team-ops"},
+    {"id": "t_blocked_dead", "status": "blocked", "title": "Сверить цены с поставщиком",
+     "assignee": "team-buyer", "actions": []},
+    {"id": "t_blocked_ok", "status": "blocked", "title": "Проверить размеры стаканов",
+     "assignee": "team-ops",
+     "actions": [{"id": "resume"}, {"id": "instruct"}, {"id": "model"},
+                 {"id": "reassign"}, {"id": "dismiss"}]}
+  ],
+  "needs_you_blocked": 2
+}

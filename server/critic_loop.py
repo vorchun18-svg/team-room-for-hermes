@@ -435,6 +435,10 @@ def plan(room: dict, record: dict, detail: dict, now: int) -> list[dict]:
     room = room or {}
     record = record or {}
     detail = detail or {}
+    # W29-P4: запрос в архиве — цикл не работает (ни критик, ни доработка, ни
+    # переназначение): модели не запускаются, пока запрос не вернут из архива.
+    if room.get("archived") or detail.get("archived"):
+        return []
     root = _root_node(detail, record)
     root_id = str(record.get("root_id") or root.get("id") or "")
     if not root_id:
@@ -776,6 +780,19 @@ def _pin_assigned(cfg, room: dict, card_id: str) -> dict:
         return {}
 
 
+def _board_blocked(cfg, room) -> str:
+    """W29-I1: причина «писать в доску нельзя» (песочница + реальный дом Hermes)."""
+    try:
+        try:
+            from . import board_guard as guard
+        except ImportError:                                   # pragma: no cover
+            import board_guard as guard                       # type: ignore
+        found = guard.check(cfg, str((room or {}).get("board") or getattr(cfg, "board", "") or ""))
+    except Exception:                                         # noqa: BLE001 - защита вторична
+        return ""
+    return str((found or {}).get("message") or "")
+
+
 def run_step(cfg, room: dict, record: dict, detail: dict) -> list[dict]:
     """Выполнить plan() через engine_write. Возвращает отчёт по каждому действию."""
     room = room or {}
@@ -789,6 +806,9 @@ def run_step(cfg, room: dict, record: dict, detail: dict) -> list[dict]:
     results: list[dict] = []
     if not root_id or not board:
         return results
+    blocked = _board_blocked(cfg, room)          # W29-I1: ни карточек, ни записей в доску
+    if blocked:
+        return [{"action": "none", "reason": "sandbox_real_board", "text": blocked}]
 
     # История раундов: держим в реестре, чтобы UI показывал ход цикла, а страховки
     # («нет прогресса») работали даже если карточки пропали из дерева.

@@ -58,7 +58,10 @@
         "digest_every_min": 2,
         "digest_label": "Каждые 2 минуты",
         "on": true
-      }
+      },
+      "order": 10,
+      "pinned": false,
+      "group": ""
     },
     {
       "id": "fn",
@@ -89,7 +92,10 @@
         "digest_every_min": 5,
         "digest_label": "Каждые 5 минут",
         "on": true
-      }
+      },
+      "order": 20,
+      "pinned": false,
+      "group": ""
     },
     {
       "id": "long",
@@ -158,7 +164,10 @@
         "digest_every_min": 0,
         "digest_label": "Выключено",
         "on": false
-      }
+      },
+      "order": 30,
+      "pinned": false,
+      "group": ""
     }
   ],
   "engine": {
@@ -166,5 +175,6 @@
     "board": "team",
     "warning": null
   },
-  "updated_at": 1793171850
+  "updated_at": 1793171850,
+  "groups": []
 }

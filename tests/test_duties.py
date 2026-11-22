@@ -26,6 +26,10 @@ from tests.helpers import _outside_hermes_base   # noqa: E402
 
 NOW = int(time.time())      # «сейчас» для расчётов: окна пропусков считаются от реального времени
 DAY = 86400
+# В воскресенье в неделе нет будущих дней — тесты «будущий день/плановые запуски» краснели
+# бы раз в неделю по календарю, а не по вине продукта. Воскресенье сдвигаем на пятницу.
+if time.localtime(NOW).tm_wday == 6:
+    NOW -= 2 * DAY
 
 
 def _iso(stamp: int) -> str:
@@ -230,7 +234,10 @@ class DutiesReadTests(DutiesBase):
         self.assertEqual(payload["generated_at"], NOW)
         self.assertEqual(len(payload["items"]), 3)
         keys = {"job_id", "name", "enabled", "schedule", "schedule_human", "bound_rooms",
-                "last_run", "next_run_at", "missed_recent", "recent", "excerpt", "problem"}
+                "last_run", "next_run_at", "missed_recent", "recent", "excerpt", "problem",
+                # W29-P5: чьё это дежурство и куда придёт результат (контракт расширен).
+                "scope", "deliver", "model", "provider", "workdir", "skills", "script",
+                "monitor_url"}
         for item in payload["items"]:
             self.assertEqual(set(item), keys)
         self.assertIsInstance(payload["items"][0]["bound_rooms"], list)

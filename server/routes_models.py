@@ -36,8 +36,10 @@ ROUTES = [
     ("GET", r"/api/rooms/" + ROOM_RE + r"/model-check", "h_room_model_check"),
 ]
 
-#: что принимаем в теле PUT (всё остальное — ошибка, а не тихо игнорируется)
-FIELDS = ("provider", "model", "reasoning")
+#: что принимаем в теле PUT (всё остальное — ошибка, а не тихо игнорируется).
+#: `custom` — человек выбрал пункт «своя модель»: имя принимается с предупреждением,
+#: если его нет в каталоге (W29-FIX1 п.2).
+FIELDS = ("provider", "model", "reasoning", "custom")
 
 _STATUS = {"bad_request": 400, "not_found": 404, "unavailable": 503, "conflict": 409}
 
@@ -164,10 +166,14 @@ class ModelRoutes:
         provider = data.get("provider")
         model = data.get("model")
         reasoning = data.get("reasoning")
+        custom = data.get("custom")
         for name, value in (("provider", provider), ("model", model), ("reasoning", reasoning)):
             if value is not None and not isinstance(value, str):
                 raise err(400, "Поле «%s» должно быть строкой" % name, field=name,
                           type=type(value).__name__)
+        if custom is not None and not isinstance(custom, bool):
+            raise err(400, "Поле «custom» — да/нет", field="custom",
+                      type=type(custom).__name__)
         if provider and not str(model or "").strip():
             raise err(400, "Выберите модель для выбранного провайдера", field="model")
 
@@ -177,7 +183,8 @@ class ModelRoutes:
         else:
             res = self._models_call("set", (self.cfg, room_id, profile),
                                     {"provider": provider or "", "model": model or "",
-                                     "reasoning": "" if reasoning is None else reasoning})
+                                     "reasoning": "" if reasoning is None else reasoning,
+                                     "custom": custom is True})
         cleared = bool(res.get("cleared"))
         try:                       # сразу применить к не идущим карточкам участника
             applied = self._models_call("apply_profile", (self.cfg, room_id, profile), {})

@@ -37,6 +37,7 @@ import {
   needsYouVisible, postponeOptions, runningRow, stepQueue,
 } from './today-model.js';
 import { applyStepAction, openStepQueue } from './step-focus.js';
+import { createDaily } from './daily.js';
 
 export const VIEW_CSS = 'css/view-today.css';
 
@@ -344,7 +345,17 @@ export async function mount(el, ctx) {
   const runningSec = makeSection('running', { title: 'Идёт сейчас', defaultOpen: true });
   const dutiesSec = makeSection('duties', { title: 'Дежурства', defaultOpen: true });
 
-  const mainCol = h('div', { class: 'today__col today__col--main' }, needsSec.element, runningSec.element);
+  // W29B-Q8: «Итог дня» — своя карточка в основной колонке, выше «Ждёт вас».
+  // Данные (`/api/daily`) грузятся вместе с остальными; ошибка итога не мешает
+  // остальному экрану — карточка покажет причину и кнопку «Попробовать снова».
+  const daily = createDaily({
+    api: apiRef,
+    toast,
+    room: String((ctx && ctx.route && ctx.route.roomId) || (ctx && ctx.room && ctx.room.id) || ''),
+  });
+
+  const mainCol = h('div', { class: 'today__col today__col--main' },
+    daily.element, needsSec.element, runningSec.element);
   const sideCol = h('div', { class: 'today__col today__col--side' },
     overdueSec.element, soonSec.element, changedSec.element, dutiesSec.element);
 
@@ -727,6 +738,7 @@ export async function mount(el, ctx) {
       apiRef.get('/api/today'),
       apiRef.get('/api/health/integrations').catch(() => null),
       apiRef.get('/api/duties?room=all').catch(() => null),
+      daily.load().catch(() => null),
     ]);
     if (stopped) return;
     data = todayData || null;
@@ -777,6 +789,7 @@ export async function mount(el, ctx) {
       if (stopPoll && typeof stopPoll.stop === 'function') stopPoll.stop();
       else if (typeof stopPoll === 'function') stopPoll();
       if (seenTimer) { clearTimeout(seenTimer); seenTimer = null; }
+      if (daily && typeof daily.destroy === 'function') daily.destroy();
       for (const key of Object.keys(sections)) {
         if (sections[key] && typeof sections[key].destroy === 'function') sections[key].destroy();
       }

@@ -186,9 +186,9 @@ class TestReplacements(unittest.TestCase):
 
     def test_word_boundaries(self):
         rules = [{"from": "гранит", "to": "Гранит"}]
-        text = "гранит, недропользование и поднедровье"
+        text = "гранит, грузоперевозки и поднедровье"
         self.assertEqual(stt.apply_replacements(text, rules)[0],
-                         "Гранит, недропользование и поднедровье")
+                         "Гранит, грузоперевозки и поднедровье")
 
     def test_multiword_rule_and_longest_first(self):
         rules = [{"from": "гранит", "to": "N1"}, {"from": "гранит управление", "to": "Гранит-управление"}]
@@ -266,8 +266,8 @@ class TestLearn(unittest.TestCase):
         self.assertEqual(stt.learn(self.cfg, raw, final)["suggestions"], [])
 
     def test_two_word_replacement(self):
-        result = stt.learn(self.cfg, "открыть недро пользование", "открыть недропользование")
-        self.assertEqual(result["suggestions"], [{"from": "недро пользование", "to": "недропользование"}])
+        result = stt.learn(self.cfg, "открыть грузо перевозки", "открыть грузоперевозки")
+        self.assertEqual(result["suggestions"], [{"from": "грузо перевозки", "to": "грузоперевозки"}])
 
     def test_apply_saves_replacement_and_term(self):
         result = stt.learn(self.cfg, "в тескфло всё готово", "в TaskFlow всё готово", apply=True)

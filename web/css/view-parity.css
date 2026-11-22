@@ -1,0 +1,77 @@
+/* view-parity.css — экран «Совместимость с Hermes» (W29B-Q2).
+   Строка = участник: имя, профиль, модель с источником, средства, разрешения.
+   Красное — только расхождение, которое меняет запуск карточки. */
+
+.par { display: flex; flex-direction: column; gap: 12px; max-width: 1100px; }
+.par__intro { margin: 0; max-width: 78ch; line-height: 1.45; }
+
+.par__picker { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.par__picker-label { white-space: nowrap; }
+.par__select {
+  min-width: 220px; max-width: 100%; padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--line, #d6d6d6); background: var(--surface, #fff);
+  color: inherit; font: inherit;
+}
+
+.par__body { display: flex; flex-direction: column; gap: 12px; min-height: 80px; }
+
+.par__summary {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--surface-2, #f6f6f4); border: 1px solid var(--line, #e2e2df);
+}
+.par__summary-text { flex: 1 1 220px; }
+
+.par__chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 9px; border-radius: 999px; font-size: 12px; line-height: 18px;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.par__chip--ok { background: rgba(35, 140, 90, .12); color: #1f7a4f; border-color: rgba(35, 140, 90, .3); }
+.par__chip--warn { background: rgba(180, 120, 10, .14); color: #8a5e00; border-color: rgba(180, 120, 10, .32); }
+.par__chip--fail { background: rgba(190, 45, 45, .12); color: #b02525; border-color: rgba(190, 45, 45, .34); }
+.par__chip--off { background: rgba(120, 120, 120, .14); color: #555; border-color: rgba(120, 120, 120, .3); }
+
+.par__list { display: flex; flex-direction: column; gap: 10px; }
+.par__card {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px; border-radius: 12px;
+  border: 1px solid var(--line, #e2e2df); background: var(--surface, #fff);
+  border-left: 3px solid var(--line, #d9d9d6);
+}
+.par__card--fail { border-left-color: #be2d2d; }
+.par__card--warn { border-left-color: #b4780a; }
+.par__card--ok { border-left-color: #23845a; }
+
+.par__card-head { display: flex; align-items: flex-start; gap: 10px; }
+.par__who { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.par__name { font-weight: 600; }
+.par__tech { overflow-wrap: anywhere; }
+
+.par__facts {
+  display: grid; grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 4px 12px; margin: 0; font-size: 13px;
+}
+.par__facts dt { color: var(--muted, #666); }
+.par__facts dd { margin: 0; overflow-wrap: anywhere; }
+
+.par__differences { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.par__diffs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.par__diff {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px; border-radius: 8px;
+  background: rgba(180, 120, 10, .08); border: 1px solid rgba(180, 120, 10, .25);
+  font-size: 13px;
+}
+.par__diff--fail { background: rgba(190, 45, 45, .08); border-color: rgba(190, 45, 45, .28); }
+.par__diff-text { flex: 1 1 260px; }
+
+.par__notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+
+/* Кнопка «Сеанс в Hermes» у карточки запроса (request-parts-tree.js). */
+.rp-node__session { padding-left: 0; font-size: 12px; }
+
+@media (max-width: 720px) {
+  .par__facts { grid-template-columns: 1fr; }
+  .par__facts dt { margin-top: 6px; }
+}

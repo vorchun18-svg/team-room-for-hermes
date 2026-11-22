@@ -98,12 +98,18 @@ async function press(node) {
 }
 
 function makeCtx(text = '') {
-  const calls = { posts: [], texts: [] };
+  const calls = { posts: [], texts: [], gets: [] };
   return {
     calls,
     api: {
       post: async (url, body) => { calls.posts.push({ url, body }); return { ok: true }; },
       text: async (url) => { calls.texts.push(url); return text; },
+      // W29B-Q3: предпросмотр берёт готовый разбор файла у сервера.
+      get: async (url) => {
+        calls.gets.push(url);
+        const kind = /\.(?:docx|xlsx|pptx)$/i.test(url) ? 'docx' : 'text';
+        return { ok: true, kind, name: 'файл', size: 512, text, caps: {} };
+      },
     },
     toast: () => {},
   };
@@ -150,12 +156,19 @@ test('кнопки у файла: Открыть · Просмотр · Копи
   } finally { uninstallDom(); }
 });
 
-test('«Просмотр» только у текстовых типов', () => {
+// W29B-Q3: «Просмотр» есть у всех понятных типов — картинка, PDF, текст,
+// таблица, Word/Excel/PowerPoint, голосовое. Раньше он был только у текста,
+// и человек уходил в другую программу, чтобы понять, что принёс.
+test('«Просмотр» есть у всех понятных типов, у неизвестных — нет', () => {
   assert.equal(canPreview('C:\\x\\итог.md'), true);
   assert.equal(canPreview('C:\\x\\лог.txt'), true);
-  assert.equal(canPreview('C:\\x\\письмо.docx'), false);
-  assert.equal(canPreview('C:\\x\\таблица.xlsx'), false);
-  assert.equal(canPreview('C:\\x\\схема.png'), false);
+  assert.equal(canPreview('C:\\x\\письмо.docx'), true);
+  assert.equal(canPreview('C:\\x\\таблица.xlsx'), true);
+  assert.equal(canPreview('C:\\x\\схема.png'), true);
+  assert.equal(canPreview('C:\\x\\скан.pdf'), true);
+  assert.equal(canPreview('C:\\x\\голос.ogg'), true);
+  assert.equal(canPreview('C:\\x\\setup.exe'), false, 'исполняемые не показываем');
+  assert.equal(canPreview('C:\\x\\архив.zip'), false, 'неизвестный тип — только «Открыть»');
   assert.equal(canPreview(''), false);
 });
 
@@ -202,19 +215,20 @@ test('пропавший файл: открытия нет, путь скопи�
   } finally { uninstallDom(); }
 });
 
-test('«Просмотр» показывает текст во встроенном окне, без новой вкладки', async () => {
+test('«Просмотр» показывает файл во встроенной панели, без новой вкладки', async () => {
   installDom();
   const opened = [];
   globalThis.window = { open: (...args) => { opened.push(args); return null; } };
   try {
     const ctx = makeCtx('# Сводка\n\nКоротко: всё готово.');
-    const dlg = await openPreview(ctx, `${PROJECT}\\Итог\\сводка.md`, ROOM);
+    const dlg = await openPreview(ctx, `${PROJECT}\\Итог\\сводка.md`, ROOM, 't_w26d3');
     assert.equal(opened.length, 0, 'никаких новых окон');
-    assert.equal(ctx.calls.texts.length, 1);
-    assert.ok(String(ctx.calls.texts[0]).startsWith('/api/file?path='), String(ctx.calls.texts[0]));
-    assert.ok(String(ctx.calls.texts[0]).includes('&room=fn'), 'текст берём в контексте комнаты');
+    // W29B-Q3: разбор файла отдаёт сервер (`/api/attach/preview`), в контексте комнаты.
+    assert.equal(ctx.calls.gets.length, 1);
+    assert.ok(String(ctx.calls.gets[0]).startsWith('/api/attach/preview?path='), String(ctx.calls.gets[0]));
+    assert.ok(String(ctx.calls.gets[0]).includes('&room=fn'), 'файл читаем в контексте комнаты');
     const pre = walk(dlg.dialog, (n) => n.tagName === 'pre')[0];
-    assert.ok(pre, 'во встроенном окне есть область текста');
+    assert.ok(pre, 'в панели есть область текста');
     assert.ok(textOf(pre).includes('всё готово'), textOf(pre));
     dlg.close();
   } finally {

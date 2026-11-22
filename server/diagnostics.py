@@ -662,6 +662,29 @@ def _model_guard_check(cfg, room=None) -> dict:
 
 # ------------------------------------------------------------------ сводка
 
+def _model_trigger_check(cfg, room=None) -> dict:
+    """Пункт «Защита выбора модели» (W29-P10): триггер БД + таблица выбора комнаты.
+
+    Только чтение: ничего не устанавливает и не правит доску. Если защита была, а
+    триггеров нет (обновление Hermes пересоздало `tasks`) — предупреждение с действием.
+    """
+    try:
+        try:
+            from . import model_trigger as trigger
+        except ImportError:  # pragma: no cover - плоский импорт
+            import model_trigger as trigger  # type: ignore
+        item = trigger.diag_item(cfg, room)
+        return _item(str(item.get("id") or "model_trigger"),
+                     str(item.get("title") or "Защита выбора модели"),
+                     str(item.get("status") or "off"), value=str(item.get("value") or ""),
+                     hint=str(item.get("hint") or ""), details=item.get("details") or [])
+    except Exception as exc:  # noqa: BLE001 - проверка не должна ронять весь отчёт
+        return _item("model_trigger", "Защита выбора модели", "warn",
+                     value="Проверка недоступна",
+                     hint="Модуль защиты выбора модели не загрузился",
+                     details=[str(exc)[:200]])
+
+
 def summarize(checks) -> dict:
     """Сколько пунктов в каждом статусе (для сводки на экране)."""
     counts = {"ok": 0, "warn": 0, "fail": 0, "off": 0}
@@ -691,6 +714,7 @@ def report(cfg, *, port=None, board: str = "team", room: dict | None = None,
     if isinstance(room, dict):
         checks.append(_project_check(room))
     checks.append(_model_guard_check(cfg, room))
+    checks.append(_model_trigger_check(cfg, room))
     checks += [
         _port_check(cfg, port),
         _autostart_check(),

@@ -300,11 +300,17 @@ export async function mount(el, ctx = {}) {
               if (typeof setTimeout === 'function') setTimeout(focus, 120);
             },
           }, icon('comment', { size: 13 }), 'Надиктовать'),
+          h('button', {
+            class: 'btn btn--ghost', type: 'button', 'data-inbox-duty': 'true',
+            title: 'Создать дежурство: задание по расписанию, результат придёт сюда',
+            onclick: () => navigate(`#/room/${encodeURIComponent(roomId)}/duties`),
+          }, icon('clock', { size: 13 }), 'Создать дежурство'),
         ),
       ),
       h('p', { class: 'inbox__subtitle' },
-        'Сюда попадает всё, что вы надиктовали или набрали в комнате. Разбор — ваш: '
-        + 'дело, шаг, вопрос, дежурство, справка. «Разобрать руководителем» приносит готовое предложение.'),
+        'Входящие комнаты — один ящик для того, что приходит само: результаты дежурств, '
+        + 'ваши надиктовки и входящие материалы. Разбор — ваш: дело, шаг, вопрос, дежурство, '
+        + 'справка. «Разобрать руководителем» приносит готовое предложение.'),
       h('div', { class: 'inbox__filters' },
         segmented({
           options: FILTERS.map((f) => ({
@@ -332,8 +338,22 @@ export async function mount(el, ctx = {}) {
       parts.push(emptyState({
         icon: 'inbox',
         title: state.filter === 'processed' ? 'Разобранных записей пока нет'
-          : state.filter === 'all' ? 'Входящие пусты' : 'Новых записей нет',
-        text: 'Нажмите «Надиктовать» или клавишу N в комнате — запись появится здесь.',
+          : state.filter === 'all' ? 'Входящие пусты' : 'Здесь появятся входящие комнаты',
+        text: 'Сюда приходят результаты дежурств, надиктованное вами и входящие материалы. '
+          + 'Пока ничего не пришло: надиктуйте мысль (кнопка ниже) или создайте дежурство — '
+          + 'оно само сообщит, когда что-то изменится.',
+        action: {
+          label: 'Надиктовать',
+          onclick: () => {
+            navigate(`#/room/${encodeURIComponent(roomId)}/composer`);
+            const focus = () => {
+              const field = typeof document !== 'undefined' && document.getElementById
+                ? document.getElementById('quick-capture-text') : null;
+              if (field && typeof field.focus === 'function') field.focus();
+            };
+            if (typeof setTimeout === 'function') setTimeout(focus, 120);
+          },
+        },
       }));
     } else {
       parts.push(h('div', { class: 'inbox__list' },

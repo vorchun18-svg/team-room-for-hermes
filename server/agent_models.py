@@ -62,7 +62,13 @@ except ImportError:                      # python server/app.py (плоский 
 
 MAX_MODEL = 200                          # знаков в имени модели
 CACHE_TTL = 60                           # секунд: каталог меняется только при смене ключей
+#: каталог, собранный «из профилей» (Hermes не ответил), повторяем реже: иначе каждый
+#: опрос `/api/health` снова поднимал бы мост и снова ждал его таймаут
+CACHE_TTL_FAIL = 300
 BRIDGE_TIMEOUT = 40                      # секунд: импорт hermes_cli ~1 с, запас на диск
+#: проба интерпретатора моста (дефект 11): одного `hermes_cli` мало — падал `ruamel`
+PROBE_CODE = "import hermes_cli, ruamel.yaml"
+PROBE_TIMEOUT = 25
 MAX_CARDS = 120                          # карточек за один проход сторожа
 MAX_TENANT_CARDS = 300                   # карточек комнаты за один проход (весь tenant)
 #: сколько раз перехватываем одну карточку, ушедшую не на ту модель (защита от петли)
@@ -91,7 +97,7 @@ TENANT_PREFIX = "room:"
 _new_set = set
 
 #: каталог: один на процесс, ключ — путь к Hermes (в песочнице меняется редко)
-_CACHE: dict = {"key": None, "at": 0.0, "data": None}
+_CACHE: dict = {"key": None, "at": 0.0, "data": None, "ttl": CACHE_TTL}
 #: фактические модели сессий: (путь state.db, id сессии) → (время, {provider, model})
 _SESSION_CACHE: dict = {}
 _PYTHON: dict = {}
@@ -154,27 +160,91 @@ def bridge_path(cfg=None) -> Path:
     return app_dir / "tools" / "kb_bridge.py"
 
 
-def _python(cfg) -> str:
-    """Интерпретатор Hermes: текущий, иначе python из установок Hermes."""
+def _python(cfg, *, refresh: bool = False, probe=None) -> str:
+    """Интерпретатор моста — выбранный по ПРОБЕ, а не по факту существования файла.
+
+    Дефект 11 (20.11): раньше кандидаты перебирались «наличием файла», и вторым шёл
+    `sys.executable` — он существует всегда, поэтому мост запускался интерпретатором
+    сервера, в котором нет `hermes_cli`/`ruamel`, падал и молча подменял каталог
+    «списком из профилей». Теперь кандидат годится только если импортирует
+    `hermes_cli` И `ruamel.yaml` (проба — реальный запуск), порядок:
+
+    1. `TEAMROOM_HERMES_PYTHON` (явное указание человека — без перебора),
+    2. `installs/*/environments/*/venv/Scripts/python.exe` (окружения Hermes),
+    3. `sys.executable` (свой интерпретатор — последний шанс).
+
+    Результат кешируется по каталогу Hermes; исчез — ищем заново (обновление Hermes
+    пересоздаёт venv). Та же функция обслуживает ВСЕ операции моста (`--catalog`,
+    `--set`, запись мышления): второго пути выбора интерпретатора нет.
+    """
     key = str(getattr(cfg, "hermes_home", ""))
-    if key in _PYTHON:
-        return _PYTHON[key]
-    candidates: list[str] = []
-    for value in (os.environ.get("TEAMROOM_HERMES_PYTHON"), sys.executable):
-        if value:
-            candidates.append(str(value))
+    hit = _PYTHON.get(key)
+    if not refresh and hit and Path(str(hit[0])).is_file():
+        return str(hit[0])
+    candidates = python_candidates(cfg)
+    check = probe or _probe_python
+    chosen = ""
+    for candidate in candidates:
+        try:
+            if candidate and check(candidate):
+                chosen = str(candidate)
+                break
+        except Exception:                    # noqa: BLE001 - одна проба не решает за всех
+            continue
+    if not chosen:
+        # Ни один кандидат не умеет hermes_cli: мост всё равно нужен — отдаём последний
+        # (свой интерпретатор), а причину покажет ответ моста и плашка в диалоге.
+        chosen = str(candidates[-1] if candidates else (sys.executable or "python"))
+    _PYTHON[key] = (str(chosen), time.time())
+    return str(chosen)
+
+
+def python_candidates(cfg) -> list:
+    """Кандидаты интерпретатора моста по порядку (дефект 11): явный → venv → свой."""
+    explicit = str(os.environ.get("TEAMROOM_HERMES_PYTHON") or "").strip()
+    if explicit:
+        return [explicit]
+    found: list = []
     installs = _root(cfg) / "installs"
     if installs.is_dir():
         try:
-            for env_dir in sorted(installs.glob("*/environments/*/venv/Scripts/python.exe")):
-                candidates.append(str(env_dir))
+            for path in sorted(installs.glob("*/environments/*/venv/Scripts/python.exe"),
+                               reverse=True):
+                text = str(path)
+                if text not in found:
+                    found.append(text)
         except OSError:
             pass
-    for candidate in candidates:
-        if candidate and Path(candidate).exists():
-            _PYTHON[key] = candidate
-            return candidate
-    return sys.executable or "python"
+    own = str(getattr(cfg, "hermes_python", "") or "").strip()
+    if own and own not in found:
+        found.append(own)
+    me = str(sys.executable or "").strip()
+    if me and me not in found:
+        found.append(me)
+    return found
+
+
+def _probe_python(python) -> bool:
+    """Умеет ли интерпретатор импортировать `hermes_cli` и `ruamel.yaml` (реальный запуск)."""
+    text = str(python or "").strip()
+    if not text or not Path(text).is_file():
+        return False
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("HERMES_KANBAN_") and k != "HERMES_DELEGATED_CHILD_CONTEXT"}
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    try:
+        done = proc.run([text, "-B", "-c", PROBE_CODE], stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=PROBE_TIMEOUT, env=env)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return int(getattr(done, "returncode", 1) or 0) == 0
+
+
+def reset_python_cache() -> None:
+    """Забыть выбранный интерпретатор (тесты и «Обновить список» в диалоге)."""
+    _PYTHON.clear()
+
 
 
 def _env(cfg) -> dict:
@@ -190,8 +260,33 @@ def _env(cfg) -> dict:
     return env
 
 
+def _write_guard(cfg, args: list[str]) -> None:
+    """W29-I1: мост в песочнице не пишет в реальную доску — отказ ДО запуска процесса."""
+    write = any(str(a) in ("--set", "--clear-model", "--clear-effort") for a in (args or []))
+    if not write:
+        return
+    db = None
+    for index, token in enumerate(args):
+        if str(token) == "--db" and index + 1 < len(args):
+            db = str(args[index + 1])
+            break
+    try:
+        try:
+            from . import board_guard as guard
+        except ImportError:                                    # pragma: no cover
+            import board_guard as guard                        # type: ignore
+        found = guard.check(cfg, db=db)
+    except ModelError:
+        raise
+    except Exception:                                          # noqa: BLE001 - защита вторична
+        return
+    if found:
+        raise ModelError(found["message"], guard.CODE, dict(found["detail"]))
+
+
 def _bridge(cfg, args: list[str]) -> dict:
     """Вызвать мост и разобрать JSON-ответ. Ошибки — `ModelError` с русским текстом."""
+    _write_guard(cfg, args)
     script = bridge_path(cfg)
     if not script.exists():
         raise ModelError("Мост к Hermes не найден — выбор модели недоступен.", "unavailable",
@@ -312,7 +407,7 @@ def catalog(cfg, force: bool = False) -> dict:
         _CACHE.update({"key": key, "at": time.time(), "data": data})
         return data
     if not force and _CACHE["data"] is not None and _CACHE["key"] == key \
-            and time.time() - float(_CACHE["at"] or 0) < CACHE_TTL:
+            and time.time() - float(_CACHE["at"] or 0) < float(_CACHE.get("ttl") or CACHE_TTL):
         data = dict(_CACHE["data"])
         data["cached"] = True
         return data
@@ -324,8 +419,45 @@ def catalog(cfg, force: bool = False) -> dict:
     except ModelError as exc:
         data = _fallback_catalog(cfg)
         data["warnings"].append(str(exc.message))
-    _CACHE.update({"key": key, "at": time.time(), "data": data})
+    # Неответ Hermes кешируем дольше: иначе каждое открытие «/api/health» и диалога модели
+    # снова поднимало бы мост и ждало его таймаут. Полный каталог — как раньше, 60 с.
+    ttl = CACHE_TTL if data.get("source") != "profiles" else CACHE_TTL_FAIL
+    _CACHE.update({"key": key, "at": time.time(), "data": data, "ttl": ttl})
     return data
+
+
+def _plural(count: int, one: str, few: str, many: str) -> str:
+    num = abs(int(count or 0))
+    if num % 10 == 1 and num % 100 != 11:
+        return one
+    if 2 <= num % 10 <= 4 and num % 100 not in (12, 13, 14):
+        return few
+    return many
+
+
+def catalog_line(cfg, *, force: bool = False) -> dict:
+    """Строка «Каталог моделей: …» для `/api/health` и «Проверки системы» (дефект 11 п.4).
+
+    Человек должен видеть, откуда список: из Hermes (сколько провайдеров и моделей) или
+    «из профилей» — и почему Hermes не ответил. Секретов в строке нет.
+    """
+    data = catalog(cfg, force=force)
+    providers = [p for p in data.get("providers") or [] if p.get("models")]
+    total = sum(len(p.get("models") or []) for p in providers)
+    source = str(data.get("source") or "")
+    reason = " ".join(str(w) for w in (data.get("warnings") or []) if str(w).strip()).strip()
+    if source in ("hermes:inventory", "hermes"):
+        text = "Каталог моделей: Hermes (%d %s, %d %s)" % (
+            len(providers), _plural(len(providers), "провайдер", "провайдера", "провайдеров"),
+            total, _plural(total, "модель", "модели", "моделей"))
+        ok = True
+    else:
+        text = "Каталог моделей: из профилей — %s" % (reason or "Hermes не ответил")
+        if not providers:
+            text = "Каталог моделей: из профилей — список пуст (%s)" % (reason or "нет настроек")
+        ok = False
+    return {"ok": ok, "text": text, "source": source, "providers": len(providers),
+            "models": total, "reason": reason, "warnings": list(data.get("warnings") or [])}
 
 
 def _providers(data=None) -> dict:
@@ -454,7 +586,8 @@ def _check_reasoning(value) -> str:
                      {"field": "reasoning", "value": value, "allowed": list(EFFORTS)})
 
 
-def validate(cfg, provider=None, model=None, reasoning=None, *, data=None) -> tuple[dict, list[str]]:
+def validate(cfg, provider=None, model=None, reasoning=None, *, data=None,
+             custom=False) -> tuple[dict, list[str]]:
     """Проверить выбор: провайдер только настроенный, модель — строго из его каталога.
 
     Пара «провайдер+модель» неполная — ошибка (`400`); `reasoning` независим и может быть
@@ -511,6 +644,16 @@ def validate(cfg, provider=None, model=None, reasoning=None, *, data=None) -> tu
         return clean, warnings
     elsewhere = sorted(pid for pid, prow in rows.items()
                        if any(m["id"] == model for m in prow.get("models") or []))
+    # «Своя модель» (W29-FIX1 п.2): человек вписал название сам и выбрал пункт
+    # «использовать введённое». Модель попадает в реестр комнаты как ЕГО выбор, поэтому
+    # не отказываем — но честно предупреждаем: в каталоге её нет, и если это опечатка,
+    # задача не запустится. Сторожа это не обходит: пауза сторожа — про расхождение, а не
+    # про каталог.
+    if custom:
+        warnings.append("Модели «%s» нет в каталоге Hermes — сохранена как ваш выбор; "
+                        "если название с опечаткой, задача не запустится." % model)
+        clean.update({"provider": row["id"], "model": model})
+        return clean, warnings
     detail = {"field": "model", "value": model, "provider": row["id"],
               "suggestions": [mid for mid in known if mid.lower() == model.lower()][:5],
               "models": sorted(known)[:50]}
@@ -554,8 +697,56 @@ def normalize(value) -> dict:
     return out
 
 
-def validate_map(cfg, value, members=None, *, data=None) -> dict:
-    """Строгая проверка поля комнаты `agent_models` (API): профили — из состава."""
+def _same_pair(a_provider, a_model, b_provider, b_model) -> bool:
+    """Та же пара «провайдер+модель»: модель — по буквам, провайдер — без учёта регистра.
+
+    Регистр модели НЕ нормализуется (`Model-A` и `model-a` у провайдера разные модели),
+    иначе «уже используется в комнате» пропускало бы не ту модель (W10-EXACT).
+    """
+    ap, am = str(a_provider or "").strip().lower(), str(a_model or "").strip()
+    bp, bm = str(b_provider or "").strip().lower(), str(b_model or "").strip()
+    if not am or am != bm:
+        return False
+    return not ap or not bp or ap == bp
+
+
+def used_elsewhere(cfg, provider, model, *, room_map=None, members=None) -> str:
+    """Где эта модель уже работает, если её нет в каталоге: «в комнате» / «в профилях» / "".
+
+    Дефект 10 п.3: каталог — не единственный источник правды. Модель, которая уже идёт у
+    участника комнаты или стоит в настройках профиля Hermes, принимается с предупреждением
+    «нет в каталоге — используется как выбрано», а не отказом: иначе рабочую модель нельзя
+    ни подтвердить, ни сохранить рядом с ней другого участника.
+    """
+    model = str(model or "").strip()
+    if not model:
+        return ""
+    for item in (room_map or {}).values():
+        if isinstance(item, dict) and _same_pair(provider, model, item.get("provider"),
+                                                 item.get("model")):
+            return "в комнате"
+    names = [str(name) for name in (members or []) if str(name or "").strip()]
+    for name in names:
+        try:
+            info = default_info(cfg, name)
+        except Exception:                    # noqa: BLE001 - конфиг нечитаем: не источник правды
+            continue
+        if _same_pair(provider, model, info.get("provider"), info.get("model")):
+            return "в профилях"
+    return ""
+
+
+def validate_map(cfg, value, members=None, *, data=None, previous=None, warnings=None) -> dict:
+    """Строгая проверка поля комнаты `agent_models` (API): профили — из состава.
+
+    Дефект 10 (20.11): проверяется ТОЛЬКО изменённый участник. Если у профиля не менялись
+    провайдер и модель (например, человек поменял лишь уровень мышления), каталог заново не
+    спрашивается: чужая запись, которой нет в урезанном каталоге, больше не блокирует
+    сохранение соседа. Остальные записи идут как есть. Ошибка всегда называет участника.
+
+    `previous` — текущая карта комнаты (`room["agent_models"]`), `warnings` — список, куда
+    складываются предупреждения (принимаются, но не блокируют).
+    """
     if value in (None, "", {}):
         return {}
     if not isinstance(value, dict):
@@ -564,6 +755,8 @@ def validate_map(cfg, value, members=None, *, data=None) -> dict:
     allowed = None
     if members is not None:
         allowed = {_profile(p) for p in members if _profile(p)}
+    prev_map = previous if isinstance(previous, dict) else {}
+    notes = warnings if isinstance(warnings, list) else []
     out: dict[str, dict] = {}
     for raw_profile, raw in value.items():
         profile = _profile(raw_profile)
@@ -580,13 +773,60 @@ def validate_map(cfg, value, members=None, *, data=None) -> dict:
         if not isinstance(raw, dict):
             raise ModelError("Настройки модели «%s»: нужен объект" % profile, "bad_request",
                              {"field": "agent_models", "profile": profile})
-        clean, _warnings = validate(cfg, raw.get("provider"), raw.get("model"),
-                                   raw.get("reasoning"), data=data)
+        prev = prev_map.get(profile) if isinstance(prev_map.get(profile), dict) else {}
+        # Сравнение — ПО БУКВАМ: `Model-A` и `model-a` у провайдера разные модели, и
+        # «модель не менялась» не должно съедать точный выбор человека.
+        prev_model = str(prev.get("model") or "").strip()
+        prev_provider = str(prev.get("provider") or "").strip()
+        raw_model = str(raw.get("model") or "").strip()
+        raw_provider = str(raw.get("provider") or "").strip()
+        same = bool(prev_model) and raw_model == prev_model and (
+            not raw_provider or not prev_provider or raw_provider == prev_provider)
+        if same:
+            # модель не менялась — каталог не спрашиваем: проверяем только мышление
+            try:
+                item = {"provider": str(prev.get("provider") or ""),
+                        "model": str(prev.get("model") or ""),
+                        "reasoning": _check_reasoning(raw.get("reasoning"))}
+            except ModelError as exc:
+                raise _with_profile(profile, exc) from exc
+            item["updated_at"] = _int(raw.get("updated_at")) or _int(prev.get("updated_at")) \
+                or _now()
+            out[profile] = item
+            continue
+        try:
+            clean, _warnings = validate(cfg, raw.get("provider"), raw.get("model"),
+                                        raw.get("reasoning"), data=data,
+                                        custom=raw.get("custom") is True)
+        except ModelError as exc:
+            where = ""
+            if str(exc.detail.get("field") or "") == "model":
+                where = used_elsewhere(cfg, raw.get("provider"), raw.get("model"),
+                                       room_map=prev_map,
+                                       members=allowed if allowed is not None else None)
+            if not where:
+                raise _with_profile(profile, exc) from exc
+            clean = {"provider": str(raw.get("provider") or "").strip(),
+                     "model": str(raw.get("model") or "").strip(),
+                     "reasoning": _check_reasoning(raw.get("reasoning"))}
+            notes.append("Модели «%s» нет в каталоге Hermes — она уже работает %s, "
+                         "используется как выбрано." % (clean["model"], where))
         if not clean["provider"] and not clean["reasoning"]:
             continue
         clean["updated_at"] = _int(raw.get("updated_at")) or _now()
         out[profile] = clean
     return out
+
+
+def _with_profile(profile, exc) -> ModelError:
+    """Ошибка участника: «для «юрист»: …» (дефект 10 п.4 — не чужая ошибка без имени)."""
+    message = str(getattr(exc, "message", "") or exc)
+    if message.startswith("для «"):
+        return exc
+    detail = dict(getattr(exc, "detail", None) or {})
+    detail.setdefault("profile", str(profile))
+    return ModelError("для «%s»: %s" % (profile, message),
+                      str(getattr(exc, "code", "bad_request") or "bad_request"), detail)
 
 
 def _int(value) -> int:
@@ -650,6 +890,98 @@ def effective(cfg, room, profile) -> dict:
             "source": source, "updated_at": _int(settings.get("updated_at"))}
 
 
+def routine_model(room) -> dict:
+    """Выбор комнаты «модель для рутинного сведения» (W29-Q9) или ``{}``.
+
+    Хранится в реестре комнат полем ``routine_model``: ``{provider, model, reasoning}``.
+    Пусто/неполная пара — «как у руководителя» (поведение по умолчанию).
+    """
+    raw = (room or {}).get("routine_model") if isinstance(room, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    provider = str(raw.get("provider") or "").strip()
+    model = str(raw.get("model") or "").strip()
+    if not (provider and model):
+        return {}
+    reasoning = str(raw.get("reasoning") or "").strip().lower()
+    return {"provider": provider, "model": model,
+            "reasoning": reasoning if reasoning in EFFORTS else "",
+            "updated_at": _int(raw.get("updated_at"))}
+
+
+def routine_effective(cfg, room, data=None) -> dict:
+    """Что применится к рутинной карточке: выбор комнаты либо модель руководителя.
+
+    ``source``: ``routine`` — выбрана модель для рутинного сведения; ``lead`` —
+    по умолчанию модель руководителя (комнаты или профиля). ``is_custom`` — выбрана
+    ли лёгкая модель явно. Оценка экономии — отдельно (`routine_estimate`), здесь
+    только факт выбора: цифры без данных не выдумываем.
+    """
+    room = room if isinstance(room, dict) else {}
+    lead = str(room.get("orchestrator") or "").strip()
+    base = effective(cfg, room, lead) if lead else {"provider": "", "model": "", "reasoning": ""}
+    chosen = routine_model(room)
+    if chosen:
+        out = dict(chosen)
+        out.update({"source": "routine", "is_custom": True,
+                    "label": human(chosen["provider"], chosen["model"], chosen.get("reasoning"),
+                                   data, cfg=cfg)})
+    else:
+        out = dict(base)
+        out.update({"source": "lead", "is_custom": False,
+                    "label": human(base.get("provider"), base.get("model"),
+                                   base.get("reasoning"), data, cfg=cfg)})
+    out["lead"] = {"provider": base.get("provider") or "", "model": base.get("model") or "",
+                   "reasoning": base.get("reasoning") or "", "source": base.get("source") or ""}
+    return out
+
+
+def routine_estimate(cfg, room) -> dict:
+    """Оценка экономии рутинной модели по РЕАЛЬНЫМ сессиям (`state.db`, read-only).
+
+    Сравниваем среднюю цену вызова модели руководителя и выбранной рутинной модели.
+    Нет данных по одной из них — ``savings_pct=None`` и честный текст, без выдуманных
+    процентов. Возвращает ``{savings_pct, lead_usd, routine_usd, text, source}``.
+    """
+    room = room if isinstance(room, dict) else {}
+    chosen = routine_model(room)
+    lead_profile = str(room.get("orchestrator") or "").strip()
+    lead = effective(cfg, room, lead_profile) if lead_profile else {}
+    out = {"savings_pct": None, "lead_usd": None, "routine_usd": None,
+           "source": "none", "text": ""}
+    if not chosen:
+        out["text"] = "Рутинные карточки идут на модели руководителя — экономия не настроена."
+        return out
+    try:
+        try:
+            from . import usage as usage_mod
+        except ImportError:  # pragma: no cover - плоский импорт
+            import usage as usage_mod  # type: ignore
+        rates = usage_mod.model_rates(getattr(cfg, "hermes_home", None)
+                                      or usage_mod._default_state_dir()) or {}
+    except Exception:  # noqa: BLE001 - оценка не должна мешать странице комнаты
+        rates = {}
+    lead_rate_row = rates.get(str(lead.get("model") or "")) or {}
+    routine_rate_row = rates.get(chosen["model"]) or {}
+    lead_usd = lead_rate_row.get("usd_per_call")
+    routine_usd = routine_rate_row.get("usd_per_call")
+    if lead_usd and routine_usd:
+        out.update({"lead_usd": lead_usd, "routine_usd": routine_usd, "source": "state.db"})
+        delta = (1.0 - float(routine_usd) / float(lead_usd)) * 100.0
+        out["savings_pct"] = int(round(delta))
+        if delta >= 0:
+            out["text"] = ("≈ %d%% дешевле за вызов по вашим сессиям ($%.3f → $%.3f)."
+                           % (out["savings_pct"], float(lead_usd), float(routine_usd)))
+        else:
+            out["text"] = ("Дороже на %d%% за вызов по вашим сессиям ($%.3f → $%.3f) — "
+                           "выбрана не более лёгкая модель."
+                           % (abs(out["savings_pct"]), float(lead_usd), float(routine_usd)))
+        return out
+    out["text"] = ("Оценка появится после первых запусков: нужны сессии обеих моделей "
+                   "в state.db — цифры не выдумываем.")
+    return out
+
+
 def model_settings(cfg, room, profile) -> dict:
     """Что применится к следующей карточке: `source` = `room` (выбрано) или `agent`.
 
@@ -699,8 +1031,10 @@ def _write(cfg, room_id, profile, item: dict | None) -> dict:
         settings.pop(name, None)
     else:
         settings[name] = dict(item, updated_at=_now())
+    notes: list = []
     try:
-        updated = _modules().update_room(cfg, str(room_id), {"agent_models": settings})
+        updated = _modules().update_room(cfg, str(room_id), {"agent_models": settings},
+                                         warnings=notes)
     except ModelError:
         raise
     except Exception as exc:  # noqa: BLE001 - RoomsError и занятый реестр
@@ -713,28 +1047,64 @@ def _write(cfg, room_id, profile, item: dict | None) -> dict:
     fresh = settings_of(updated if isinstance(updated, dict) else room)
     return {"profile": name, "agent_models": fresh,
             "member": {"profile": name, "role": role_ru(room, name)},
-            "room_setting": fresh.get(name) or {}}
+            "room_setting": fresh.get(name) or {}, "warnings": notes}
 
 
 def set(cfg, room_id, profile, provider=None, model=None, reasoning=None, *,
-        data=None) -> dict:
-    """Задать модель/мышление участнику (пустой выбор = вернуть по умолчанию)."""
+        data=None, custom=False) -> dict:
+    """Задать модель/мышление участнику (пустой выбор = вернуть по умолчанию).
+
+    Дефект 10 п.3: если модели нет в каталоге, но она уже работает в этой комнате (или
+    стоит в настройках профиля Hermes), выбор принимается с предупреждением — каталог не
+    единственный источник правды. Ошибка называет участника.
+    `custom=True` — человек выбрал пункт «своя модель»: вписанное имя принимается с
+    предупреждением даже если такой модели в каталоге нет (W29-FIX1 п.2).
+    """
     provider = str(provider or "").strip()
     model = "" if model is None else str(model).strip()
     if not provider and not model and (reasoning is None or str(reasoning).strip() == ""):
         return clear(cfg, room_id, profile)
-    clean, warnings = validate(cfg, provider, model, reasoning,
-                               data=data if data is not None else catalog(cfg))
+    warnings: list = []
+    try:
+        clean, warnings = validate(cfg, provider, model, reasoning,
+                                   data=data if data is not None else catalog(cfg),
+                                   custom=bool(custom))
+    except ModelError as exc:
+        room = _modules().get_room(cfg, str(room_id)) or {}
+        members = [p for p, _role in participants(room)] if room else []
+        where = used_elsewhere(cfg, provider, model,
+                              room_map=settings_of(room) if room else {}, members=members)
+        if not where or str(exc.detail.get("field") or "") != "model":
+            raise _with_profile(_profile(profile), exc) from exc
+        clean = {"provider": provider, "model": model,
+                 "reasoning": _check_reasoning(reasoning)}
+        warnings = ["Модели «%s» нет в каталоге Hermes — она уже работает %s, "
+                    "используется как выбрано." % (model, where)]
     item = {"provider": clean["provider"], "model": clean["model"],
             "reasoning": clean["reasoning"]}
+    if custom:
+        # Пометку «своя модель» несём через запись в реестр: `validate_map` при
+        # сохранении комнаты проверяет запись заново, и без пометки она бы отклонилась
+        # (в реестре её не остаётся — `normalize` хранит только провайдер/модель/мышление).
+        item["custom"] = True
     if not item["provider"] and not item["reasoning"]:
         result = clear(cfg, room_id, profile)
         result["warnings"] = warnings + list(result.get("warnings") or [])
         return result
     written = _write(cfg, room_id, profile, item)
-    written["warnings"] = warnings
+    written["warnings"] = _uniq(warnings + list(written.get("warnings") or []))
     written["cleared"] = False
     return written
+
+
+def _uniq(items) -> list:
+    """Одинаковые предупреждения — один раз (их добавляют два слоя проверки)."""
+    out: list = []
+    for item in items or []:
+        text = str(item or "").strip()
+        if text and text not in out:
+            out.append(text)
+    return out
 
 
 def clear(cfg, room_id, profile) -> dict:
@@ -1863,6 +2233,13 @@ def decorate_room(cfg, detail: dict) -> dict:
                          "agent_default": agent_default(cfg, profile),
                          "agent_default_info": default_info(cfg, profile)}
     detail["agent_models_meta"] = meta
+    # W29-Q9: «Модель для рутинного сведения» — что применится и сколько это сэкономит.
+    try:
+        detail["routine"] = routine_effective(cfg, room)
+        detail["routine_estimate"] = routine_estimate(cfg, room)
+    except Exception:  # noqa: BLE001 - комната важнее оценки экономии
+        detail.setdefault("routine", {"source": "lead", "is_custom": False})
+        detail.setdefault("routine_estimate", {"savings_pct": None, "text": "", "source": "none"})
     members = []
     for member in room.get("members") or []:
         if not isinstance(member, dict):

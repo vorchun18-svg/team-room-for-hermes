@@ -54,6 +54,11 @@ WORKER = "team-ops"
 CHEAP = ("llamacpp", "qwen36v")                   # модель профиля исполнителя
 EXPECTED = ("ollama-cloud", "deepseek-v4.1-flash:1017")   # что выбрано в комнате
 ITERATIONS = 200
+#: PID «воркера», которого на самом деле нет. Раньше здесь стояло 4242 — на живой машине
+#: этот номер может принадлежать ЧУЖОМУ процессу, и библиотека Hermes честно считала воркер
+#: живым (пид есть, отпечатка запуска нет → «не отпускать рядом с возможно живым»), из-за
+#: чего остановка в тесте «не удавалась». Номер заведомо больше любого pid_max.
+FAKE_WORKER_PID = 999_999_996
 
 CONFIGS = {
     LEAD: "model:\n  provider: anthropic\n  default: claude-sonnet-5-5\n",
@@ -345,8 +350,9 @@ class Base(unittest.TestCase):
                 started = int(time.time())
                 con = self.sa.connect()
                 try:
-                    con.execute("UPDATE tasks SET status='running', claim_lock='w1', worker_pid=4242, "
-                                "started_at=? WHERE id=?", (started, cid))
+                    con.execute("UPDATE tasks SET status='running', claim_lock='w1', worker_pid=?, "
+                                "worker_started_at=?, started_at=? WHERE id=?",
+                                (FAKE_WORKER_PID, started, started, cid))
                     con.execute("INSERT INTO task_runs (task_id, profile, status, started_at, metadata) "
                                 "VALUES (?,?,?,?,?)",
                                 (cid, str(row["assignee"] or ""), "running", started,
@@ -845,6 +851,174 @@ class ContractTests(Base):
         spend = guard.wrong_model_spend(self.cfg, self.room())
         self.assertEqual(spend["calls"], 0)
         self.assertEqual(spend["text"], "Ошибочных запусков не было")
+
+
+# ---------------------------------------------------------------- W29-P1: сценарий целиком
+
+class ScenarioTests(Base):
+    """Полный сценарий волны 29: карточка НЕ остаётся на паузе сторожа навсегда.
+
+    triage → specified + promoted → claim на модели профиля → пин позже → карточка не
+    остаётся `blocked`; расхождение только по мышлению не блокирует; любая пауза сторожа
+    снимается на проходе; у паузы есть потолок `HOLD_MAX_S`; вмешательства считаются.
+    """
+
+    def _claim(self, card_id: str, model: str, provider: str, sid: str) -> None:
+        """Диспетчер Hermes взял карточку: `running` + прогон + сессия воркера."""
+        started = int(time.time())
+        con = self.sa.connect()
+        try:
+            con.execute("UPDATE tasks SET status='running', claim_lock='w1', worker_pid=?, "
+                        "worker_started_at=?, started_at=? WHERE id=?",
+                        (FAKE_WORKER_PID, started, started, card_id))
+            con.execute("INSERT INTO task_runs (task_id, profile, status, started_at, metadata) "
+                        "VALUES (?,?,?,?,?)",
+                        (card_id, WORKER, "running", started,
+                         json.dumps({"worker_session_id": sid})))
+            run_id = con.execute("SELECT max(id) FROM task_runs WHERE task_id = ?",
+                                 (card_id,)).fetchone()[0]
+            con.execute("UPDATE tasks SET current_run_id=? WHERE id=?", (run_id, card_id))
+            con.commit()
+        finally:
+            con.close()
+        self.session(WORKER, sid, model, provider, calls=0)
+
+    def test_full_scenario_never_leaves_card_blocked(self):
+        """triage → specified+promoted → claim → пин позже: карточка не остаётся `blocked`."""
+        self.select_room_model()
+        root = self.card(assignee="", status="triage")
+        self.preflight()                             # корень без исполнителя — ничего не делаем
+        # штатный specifier: назначил исполнителя и сразу перевёл в todo
+        con = self.sa.connect()
+        try:
+            con.execute("UPDATE tasks SET assignee=?, status='todo' WHERE id=?", (WORKER, root))
+            con.commit()
+        finally:
+            con.close()
+        self.preflight()
+        con = self.sa.connect()
+        try:                                        # родитель завершился → promote в ready
+            con.execute("UPDATE tasks SET status='ready' WHERE id=?", (root,))
+            con.commit()
+        finally:
+            con.close()
+        self._claim(root, CHEAP[1], CHEAP[0], "sess-full")   # взяли на модели профиля
+        res = self.preflight()
+        self.assertIn(root, res["reclaimed"], res)
+        for _ in range(6):                          # ещё проходы: пауза не должна «залипнуть»
+            self.preflight()
+        row = self.row(root)
+        self.assertEqual(row.get("model_override"), EXPECTED[1], row)
+        self.assertNotEqual(row.get("status"), "blocked",
+                            "карточка осталась на паузе сторожа навсегда")
+        self.assertIn(row.get("status"), ("ready", "todo"), row)
+
+    def test_reasoning_only_never_blocks(self):
+        """Расхождение ТОЛЬКО по мышлению — не пауза и не удержание (W29-P1 п.1)."""
+        status, _body, _h = self.app.dispatch(
+            "PUT", "/api/rooms/%s/agents/%s/model" % (ROOM, WORKER), {},
+            {"provider": EXPECTED[0], "model": EXPECTED[1], "reasoning": "high"})
+        self.assertEqual(status, 200)
+        card_id = self.card(assignee=WORKER, status="todo", model=EXPECTED[1],
+                            provider=EXPECTED[0])
+        con = self.sa.connect()
+        try:
+            con.execute("UPDATE tasks SET status='ready' WHERE id=?", (card_id,))
+            con.commit()
+        finally:
+            con.close()
+        calls: list = []
+
+        def effort(cfg, board, ids, reasoning):
+            calls.append((list(ids), reasoning))
+            return list(ids), []
+
+        real = models_mod.push_effort
+        models_mod.push_effort = effort
+        try:
+            res = self.preflight()
+            self.assertNotIn(card_id, res["held"], res)
+            self.assertNotIn(card_id, res["released"], res)
+            status = self.status(card_id)
+            self.assertEqual(status, "ready", "мышление не имеет права держать карточку на паузе")
+            self.assertEqual(len(calls), 1, calls)      # попытка записать мышление была
+            self.assertEqual(calls[0][0], [card_id])
+            self.assertEqual(self.row(card_id).get("model_override"), EXPECTED[1])
+            # повторный проход не долбит мост чаще EFFORT_RETRY_S
+            self.preflight()
+            self.assertEqual(len(calls), 1, calls)
+        finally:
+            models_mod.push_effort = real
+
+    def test_any_guard_pause_released_when_model_is_right(self):
+        """Любая пауза сторожа снимается сама: модель верна → `unblock` (W29-P1 п.2)."""
+        self.select_room_model()
+        card_id = self.card(assignee=WORKER, status="blocked", model=EXPECTED[1],
+                            provider=EXPECTED[0])
+        con = self.sa.connect()
+        try:                                        # пауза поставлена до W29: в `holds` её нет
+            con.execute("INSERT INTO task_events (task_id, kind, payload, created_at) "
+                        "VALUES (?,?,?,?)",
+                        (card_id, "blocked",
+                         json.dumps({"reason": guard.PARK_REASON, "kind": "needs_input"}),
+                         int(time.time())))
+            con.commit()
+        finally:
+            con.close()
+        res = self.preflight()
+        self.assertIn(card_id, res["released"], res)
+        self.assertEqual(self.status(card_id), "ready")
+        kinds = [i.get("kind") for i in guard.incidents(self.cfg, ROOM)]
+        self.assertIn("released", kinds)
+
+    def test_hold_ceiling_releases_and_records_incident(self):
+        """Потолок паузы: дольше HOLD_MAX_S карточка не держится (W29-P1 п.2)."""
+        self.select_room_model()
+        card_id = self.card(assignee=WORKER, status="blocked")     # модель так и не встала
+        old = int(time.time()) - (guard.HOLD_MAX_S + 30)
+
+        def change(data):
+            data["holds"][card_id] = {"at": old, "reason": guard.PARK_REASON}
+
+        guard._mutate(self.cfg, ROOM, change)
+
+        def broken_push(cfg, board, cards, want):
+            return [], [{"id": c["id"], "reason": "мост недоступен"} for c in cards]
+
+        real = models_mod.push_model
+        models_mod.push_model = broken_push
+        try:
+            res = self.preflight()                 # пин не встал, пауза старая → снимаем
+        finally:
+            models_mod.push_model = real
+        self.assertIn(card_id, res["released"], res)
+        self.assertNotEqual(self.status(card_id), "blocked", "пауза осталась навсегда")
+        items = guard.incidents(self.cfg, ROOM)
+        ceiling = [i for i in items if i.get("kind") == "released_by_ceiling"]
+        self.assertEqual(len(ceiling), 1, items)
+        self.assertEqual(ceiling[0]["card_id"], card_id)
+        self.assertEqual(ceiling[0]["path"], "preflight")
+
+    def test_incident_journal_records_facts_and_counter(self):
+        """Каждое вмешательство — запись (карточка, создатель, секунды, путь) и счётчик 7 дней."""
+        self.select_room_model()
+        card_id = self.card(assignee=WORKER, status="todo")
+        self.preflight()
+        items = guard.incidents(self.cfg, ROOM)
+        self.assertTrue(items, "вмешательство не записано")
+        item = items[0]
+        self.assertEqual(item["card_id"], card_id)
+        self.assertEqual(item["kind"], "pinned")
+        self.assertEqual(item["path"], "preflight")
+        self.assertIn("created_by", item)
+        self.assertIsNotNone(item["age_s"], "не записаны секунды после создания карточки")
+        self.assertEqual(guard.incidents_count(self.cfg, ROOM), 1)
+        self.assertGreaterEqual(guard.incidents_count_all(self.cfg, [self.room()]), 1)
+        # счётчик виден в «Проверке системы»
+        item = guard.diag_item(self.cfg, self.room())
+        self.assertEqual(item.get("incidents_7d"), 1)
+        self.assertIn("Вмешательств контроля моделей за 7 дней: 1",
+                      " ".join(item.get("details") or []))
 
 
 if __name__ == "__main__":

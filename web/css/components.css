@@ -136,7 +136,12 @@
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   display: flex; flex-direction: column; gap: 1px; padding-bottom: var(--space-2);
 }
-.nav { display: flex; flex-direction: column; gap: 1px; min-height: 0; }
+/* W29-FIX1: список комнат (и двух строк «Сегодня/Дела» над ним) — обычные блоки
+   с собственной высотой. Раньше здесь стоял `min-height: 0` при flex-сжатии по
+   умолчанию, и в колонке `.sidebar__scroll` список комнат сжимался до нуля:
+   строки рисовались ПОВЕРХ «Недавнего», и пустая группа не принимала
+   перетаскивание — курсор попадал в «Недавнее», а не в тело группы. */
+.nav { display: flex; flex-direction: column; gap: 1px; flex: 0 0 auto; }
 
 .nav-item {
   display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 30px;
@@ -152,6 +157,92 @@
 .nav-item--active .codicon { color: var(--accent-strong); }
 
 .nav-item__badges { display: flex; align-items: center; gap: var(--space-1); }
+
+/* ── W29-P7: порядок комнат — ручка, закрепление, группы ─────────────────────
+   Ручка перетаскивания (⋮⋮) появляется при наведении и фокусе, 📌 — когда
+   комната закреплена или на неё навели. В полосе значков (rail) и на узком
+   экране ручка скрыта: там порядок меняют Alt+↑/↓ и кнопка «Закрепить». */
+.nav-item { position: relative; }
+.room-drag {
+  flex: none; width: 10px; margin: 0 -2px 0 -4px; padding: 0;
+  font-size: 11px; line-height: 1; letter-spacing: -1px;
+  color: var(--ui-text-tertiary); opacity: 0; cursor: grab;
+  user-select: none; touch-action: none;
+  transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.nav-item:hover .room-drag, .nav-item:focus-within .room-drag { opacity: .9; }
+.room-drag:hover { color: var(--foreground); }
+.nav-item--armed { cursor: grabbing; }
+.nav-item--armed .room-drag { cursor: grabbing; color: var(--accent-strong); opacity: 1; }
+.nav-item--dragging {
+  opacity: .45; background: var(--ui-row-active-background);
+  outline: 1px dashed var(--accent-strong); outline-offset: -1px;
+  pointer-events: none;               /* курсор «видит» строку под перетаскиваемой */
+}
+body.room-dragging { user-select: none; cursor: grabbing; }
+.room-drop {
+  height: 2px; margin: 1px 6px; border-radius: var(--radius-full);
+  background: var(--accent-strong); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-strong) 30%, transparent);
+  /* Курсор не должен «находить» саму линию вставки: иначе цель перетаскивания
+     замирает на первом разделе и комната уезжает не туда. */
+  pointer-events: none;
+}
+.room-pin {
+  flex: none; display: grid; place-items: center; width: 18px; height: 18px;
+  border-radius: var(--radius-sm); color: var(--ui-text-tertiary);
+  opacity: 0; cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.nav-item:hover .room-pin, .nav-item:focus-within .room-pin { opacity: .8; }
+.room-pin:hover { color: var(--foreground); background: var(--ui-row-hover-background); }
+/* Закреплённая комната: 📌 видна всегда и окрашена — состояние не «наведением». */
+.room-pin--on { opacity: 1; color: var(--accent-strong); }
+.room-pin:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 1px; opacity: 1; }
+
+/* Группы комнат: заголовок с названием и числом, тело со строками. */
+.room-group { display: flex; flex-direction: column; gap: 1px; }
+.room-group__body { display: flex; flex-direction: column; gap: 1px; }
+.room-group--collapsed .room-group__body { display: none; }
+.room-group__head {
+  display: flex; align-items: center; gap: var(--space-1);
+  min-height: 24px; margin-top: var(--space-2); padding: 0 var(--space-2) 0 2px;
+  border-radius: var(--radius-sm); color: var(--ui-text-tertiary);
+  font-size: var(--text-sm); font-weight: 600;
+}
+.room-group:first-child > .room-group__head { margin-top: 0; }
+.room-group__head--pinned { margin-top: 0; }
+.room-group__head:hover { background: var(--ui-row-hover-background); color: var(--ui-text-secondary); }
+.room-group__title { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto; }
+.room-group__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-group__count {
+  flex: none; min-width: 14px; text-align: center; font-weight: 500;
+  color: var(--ui-text-tertiary); font-variant-numeric: tabular-nums;
+}
+.room-group__fold, .room-group__tool {
+  display: grid; place-items: center; width: 18px; height: 18px; padding: 0;
+  border: 0; border-radius: var(--radius-sm); background: transparent;
+  color: var(--ui-text-tertiary); cursor: pointer;
+}
+.room-group__fold:hover, .room-group__tool:hover { background: var(--ui-row-active-background); color: var(--foreground); }
+.room-group__tools { display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+.room-group__head:hover .room-group__tools, .room-group__head:focus-within .room-group__tools { opacity: 1; }
+.room-group__empty {
+  margin: 2px 6px 4px; padding: 6px 8px; border: 1px dashed var(--ui-stroke-quaternary);
+  border-radius: var(--radius-sm); color: var(--ui-text-tertiary); font-size: var(--text-sm);
+}
+.room-group__edit { display: flex; align-items: center; gap: var(--space-1); padding: 4px 2px; }
+.room-group__input {
+  flex: 1 1 auto; min-width: 0; height: 26px; padding: 0 6px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--ui-bg-primary); color: var(--foreground); font-size: var(--text-sm);
+}
+.room-group__input:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 0; }
+/* Полоса значков: ручки и заголовки групп убираем — строки те же, порядок тот же. */
+.app.is-rail .room-drag, .app.is-rail .room-pin, .app.is-rail .room-group__head { display: none; }
+.app.is-rail .room-group { gap: 0; }
+@media (max-width: 639px) {
+  .room-drag { display: none; }
+}
 /* Счётный бейдж — один класс на все счётчики: сайдбар, вкладки, версия ответа. */
 .count-pill {
   display: inline-flex; align-items: center; justify-content: center; gap: 3px;

@@ -36,6 +36,8 @@ PATCH_FIELDS = {"title", "icon", "orchestrator", "critic", "context_files", "pro
                 "worklog_mode", "digest_every_min",
                 # W23 §2.3 «Контроль моделей»: строго (исправляем сами) | только предупреждать.
                 "model_guard",
+                # W29-Q9: модель для рутинного сведения (автосвод и «Уточнение»).
+                "routine_model",
                 # W17-R §1 (B-8): этапы проекта — свойство комнаты, правятся в её настройках.
                 "phases",
                 # W24 §3.2: дежурства комнаты — только привязка id заданий Hermes.
@@ -59,7 +61,13 @@ ACTION_ALLOWED = ("dispatch", "comment", "answer", "unblock", "reassign", "rewor
                   # W28-B (дефект 6): недоговорные действия по разрешению приходят СВОИМИ
                   # именами (их шлёт карточка «нельзя штатно»), а не полем decision.
                   "card_stop", "card_resume", "card_model", "dismiss", "restore",
-                  "hint_agent", "trust_profile")
+                  "hint_agent", "trust_profile",
+                  # W29-P4: «Не актуально → в архив» и «Вернуть из архива» на странице
+                  # запроса. `restore` уже занят пунктами (target{kind,id}), поэтому
+                  # возврат всего запроса — своим именем, без второго значения.
+                  # W29B-Q4: «Второе мнение» — карточка-проверка на ДРУГОЙ модели
+                  # (server/second_opinion.py, тело {provider?, model}).
+                  "unarchive", "second_opinion")
 ACTION_REQUIRED = {"answer": ("question_id",), "reassign": ("task_id", "profile"),
                    "answer_remind": ("question_id",), "step_drop": ("step_id",),
                    "step_agree": ("step_id",), "step_comment": ("step_id",),

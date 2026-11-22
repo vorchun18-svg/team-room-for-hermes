@@ -27,10 +27,16 @@ import { createNotices } from './notice-state.js';
 import { firstLine, blockHead, personName } from './request-util.js';
 import { countNoun, FILES_RU } from '../text-ru.js';
 import { createSection, sectionDefaults, artifactsSummaryChips } from './section-collapse.js';
+// W29B-Q3: предпросмотр вложения (картинка, PDF, текст, таблица, Word/Excel/
+// PowerPoint, голос с расшифровкой, OCR) — своя панель вместо окна только с текстом.
+import { openAttachPreview, canPreview } from './attach-preview.js';
 // W23-MG2 «Контроль моделей»: лента событий сторожа (остановлено/исправлено).
 import { buildRequestFeed } from './model-guard.js';
 
 export { renderTree };
+
+// Совместимость: `canPreview` раньше жил здесь, им пользуются кнопки «Просмотр».
+export { canPreview };
 
 // Свои стили — отдельным файлом, лениво (ui.ensureCss дедуплицирует по href).
 ensureCss('css/view-request-parts.css');
@@ -378,18 +384,9 @@ function artifactPathChip(full, rel, ctx, roomId) {
 /* B-22 (WAVE19): файлы карточки открываются в контексте КОМНАТЫ — тогда сервер
  * разрешает её папку проекта и зеркало в Vault. Без `room` сервер искал файл
  * только в общих корнях и отвечал «файл не найден» на существующие файлы. */
-/* W26-D3: «Просмотр» — только текстовые типы, которые читаются во встроенной
- * панели. Всё остальное (Word, Excel, PDF, картинки) открывает программа по
- * умолчанию: `window.open` внутри окна Hermes Desktop блокируется, поэтому
- * открытие стало серверным действием. */
-const TEXT_PREVIEW_RE = /\.(?:md|markdown|txt|log|json|jsonl|csv|tsv|ya?ml|xml|html?|ics|py|js|mjs|css|sh|ini|conf|cfg)$/i;
-/** Предел текста в панели «Просмотр» — чтобы окно не вставало на гигантском логе. */
-const PREVIEW_LIMIT = 400000;
-
-/** Текстовый ли файл: у таких есть кнопка «Просмотр» (W26-D3). */
-export function canPreview(path) {
-  return TEXT_PREVIEW_RE.test(String(path === null || path === undefined ? '' : path).trim());
-}
+/* W29B-Q3: «Просмотр» — своя панель для любого типа (картинка, PDF, текст,
+ * таблица, Word/Excel/PowerPoint, голосовое с расшифровкой). Раньше здесь было
+ * окно с одним текстом, а у остальных типов кнопки не было вовсе. */
 
 /** URL файла карточки: путь + комната (папка проекта этой комнаты — в белом списке). */
 export function artifactUrl(path, roomId) {
@@ -443,57 +440,31 @@ export async function revealFile(ctx, path, roomId) {
 }
 
 /**
- * «Просмотр» (W26-D3): текст файла во встроенном окне приложения.
+ * «Просмотр» (W26-D3 → W29B-Q3): вложение в панели приложения.
  *
  * Никакого `window.open`: в окне Hermes Desktop новые окна молча блокируются.
- * Текст берём тем же `GET /api/file?path=…&room=…`, что и раньше, — белый
- * список и корни комнаты проверяет сервер.
+ * Панель читает файл через `/api/attach/preview` (сервер проверяет путь и корни
+ * комнаты) и умеет картинку, PDF, текст, таблицу, Word/Excel/PowerPoint и
+ * голосовое с расшифровкой. Раньше здесь было окно только с текстом.
  *
  * @param {object} ctx
  * @param {string} path
  * @param {string} roomId
- * @returns {Promise<object|null>} диалог или null, если путь пустой
+ * @param {string} [requestId] куда отправить расшифровку («Добавить в запрос»)
+ * @returns {Promise<object|null>} панель или null, если путь пустой
  */
-export async function openPreview(ctx, path, roomId) {
+export async function openPreview(ctx, path, roomId, requestId) {
   const p = String(path === null || path === undefined ? '' : path).trim();
   if (!p) return null;
-  const pre = h('pre', { class: 'rp-preview__text', tabindex: '0' }, '…');
-  let dlg = null;
-  const close = () => { if (dlg) dlg.close(); };
-  dlg = buildDialog({
-    title: FILES_RU.previewTitle,
-    wide: true,
-    onCancel: close,
-    body: h('div', { class: 'rp-preview', 'data-rp': 'preview' },
-      h('div', { class: 'rp-preview__path small mono', title: p }, p),
-      pre),
-    buttons: [
-      button(FILES_RU.open, {
-        variant: 'secondary', size: 'sm', icon: 'open-preview', title: FILES_RU.openHint,
-        onclick: () => { openFile(ctx, p, roomId).catch(() => {}); },
-      }),
-      button(FILES_RU.reveal, {
-        variant: 'ghost', size: 'sm', icon: 'folder-opened', title: FILES_RU.revealHint,
-        onclick: () => { revealFile(ctx, p, roomId).catch(() => {}); },
-      }),
-      button(FILES_RU.close, { variant: 'primary', size: 'sm', onclick: close }),
-    ],
+  const name = p.split(/[\\/]/).pop() || FILES_RU.previewTitle;
+  return openAttachPreview({
+    path: p,
+    name,
+    room: String(roomId || ''),
+    requestId: String(requestId || ''),
+    api: (ctx && ctx.api) || undefined,
+    onChanged: () => { try { changed(ctx); } catch { /* странице нечего обновлять */ } },
   });
-  try {
-    const text = await ctx.api.text(artifactUrl(p, roomId));
-    const body = String(text === null || text === undefined ? '' : text);
-    if (!body) {
-      pre.textContent = FILES_RU.previewEmpty;
-    } else {
-      pre.textContent = body.length > PREVIEW_LIMIT
-        ? body.slice(0, PREVIEW_LIMIT) + '\n… (показаны первые ' + PREVIEW_LIMIT + ' знаков)'
-        : body;
-    }
-  } catch (err) {
-    pre.classList.add('rp-preview__fail');
-    pre.textContent = (err && err.message) || FILES_RU.previewFailed;
-  }
-  return dlg;
 }
 
 /**
@@ -641,7 +612,7 @@ function artifactRow(artifact, ctx, roomId, projectDir, opts = {}) {
     if (canPreview(path)) {
       acts.appendChild(button(FILES_RU.preview, {
         variant: 'ghost', size: 'sm', icon: 'eye', title: FILES_RU.previewHint,
-        onclick: () => { openPreview(ctx, path, roomId).catch(() => {}); },
+        onclick: () => { openPreview(ctx, path, roomId, opts.requestId).catch(() => {}); },
       }));
     }
   }
@@ -668,7 +639,7 @@ function artifactRow(artifact, ctx, roomId, projectDir, opts = {}) {
 }
 
 /** Свёрнутая папка: заголовок со счётчиком и файлы внутри (B-43). */
-function folderRow(folder, ctx, roomId, projectDir) {
+function folderRow(folder, ctx, roomId, projectDir, opts = {}) {
   const key = String(folder.folder || folder.title || folder.path || '');
   const details = h('details', {
     class: 'rp-artifacts__folder', 'data-folder': key,
@@ -689,7 +660,8 @@ function folderRow(folder, ctx, roomId, projectDir) {
     folder.newer_than_svod ? artifactNewerChip(folder) : null));
   const sublist = h('ul', { class: 'rp-artifacts__sublist' });
   for (const item of Array.isArray(folder.items) ? folder.items : []) {
-    sublist.appendChild(artifactRow(item, ctx, roomId, projectDir, { nested: true }));
+    sublist.appendChild(artifactRow(item, ctx, roomId, projectDir,
+      { nested: true, requestId: (opts || {}).requestId }));
   }
   details.appendChild(sublist);
   return h('li', { class: 'rp-artifacts__folder-item' }, details);
@@ -709,6 +681,8 @@ export function renderArtifacts(detail, ctx, opts = {}) {
   const o = opts || {};
   const projectDir = String(o.projectDir || o.project_dir || '').trim();
   const roomId = String((detail && detail.room) || o.room || '').trim();
+  // W29B-Q3: «Добавить расшифровку в запрос» — сообщением в этот запрос.
+  const requestId = String((detail && detail.id) || o.requestId || '').trim();
   const items = (detail && Array.isArray(detail.artifacts) ? detail.artifacts : [])
     .filter((a) => a && typeof a === 'object' && (a.path || isFolderNode(a)));
   if (!items.length) return null;
@@ -735,8 +709,8 @@ export function renderArtifacts(detail, ctx, opts = {}) {
       const ul = h('ul', { class: 'rp-artifacts__list' });
       for (const item of list) {
         ul.appendChild(isFolderNode(item)
-          ? folderRow(item, ctx, roomId, projectDir)
-          : artifactRow(item, ctx, roomId, projectDir));
+          ? folderRow(item, ctx, roomId, projectDir, { requestId })
+          : artifactRow(item, ctx, roomId, projectDir, { requestId }));
       }
       section.appendChild(ul);
       nodes.push(section);

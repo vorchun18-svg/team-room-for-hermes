@@ -553,7 +553,7 @@ report: KickReport, dispatcher: {ok, state, warning}, at: int}`.
             "started": [{"id": "t_e9c6c2b2", "assignee": "lawyer", "title": "Юр-проверка ИП и ОКВЭД"}],
             "counts": {"ready": 0, "stuck": 0, "running": 3, "review": 0, "input": 1, "blocked": 0,
                        "deps": 2, "triage": 0, "scheduled": 0, "queued": 0, "done": 12, "total": 18},
-            "cards": [{"id": "t_776c0be5", "title": "Пробный прогон 30 моти", "assignee": "team-ops",
+            "cards": [{"id": "t_776c0be5", "title": "Пробный прогон 30 суфле", "assignee": "team-ops",
                        "status": "blocked", "reason_code": "input", "reason": "ждёт вашего ответа",
                        "tenant": "room:cafe", "since": 1793195160}],
             "useful": false, "error": null, "at": 1793912795}}
@@ -870,6 +870,44 @@ actor?, pinned?}`, `201` → `{ok, profile, entries, text, entry, duplicate, rev
 `phases` вместе с остальными полями — поэтому «Сохранить» в разделе «Проект» сохраняет и режим, и
 этапы, а карта проекта обновляется тем же ответом (`project_mode` читается обратно из `GET /api/rooms/{id}`).
 `200` → `RoomDetail`. `400 bad_request` — неизменяемое поле (`id`, `board`, `tenant`) или неизвестное (`detail.fields`), `mode_default="swarm"`, `max_rounds` вне 1..2, `critic_mode` не из `rounds|until_approved`, `critic_round_cap` вне 2..30. `404 not_found`. `409 conflict` — `orchestrator`/`critic` не из ростера. Отклонённая правка ничего не меняет (проверка до записи).
+
+#### `PUT /api/rooms/order`
+Порядок комнат в левом меню, закрепление и группы (W29-P7). Одно движение сохраняет всё устройство меню:
+порядок, 📌 и группы живут в реестре комнат (`data/rooms.json`), профили Hermes не меняются.
+
+Тело (все ключи необязательны):
+
+```json
+{"order": ["cafe", "laundry", "freight"],
+ "groups": [{"id": "work", "title": "Работа", "collapsed": false}],
+ "rooms": {"cafe": {"pinned": true, "group": "work"}}}
+```
+
+* `order` — желаемая последовательность id. Часть списка допустима: неперечисленные комнаты
+  остаются на своих местах после присланных. В `order` реестра пишется ПОЛНАЯ последовательность
+  (1…N) — дыр и повторов не бывает.
+* `groups` — полная замена списка групп: `id` (латиница, цифры, `-`, `_`, до 24 знаков),
+  название 1…60 знаков, `collapsed`. При удалении группы её комнаты остаются в меню без группы.
+* `rooms` — точечные правки: `pinned` (только `true`/`false`) и `group` (id существующей группы
+  или `""`). Другие поля здесь отклоняются.
+
+`200` → `{ok: true, changed: bool, rooms: RoomSummary[], groups: [{id, title, collapsed}]}` —
+комнаты уже в порядке меню (закреплённые сверху, затем `order`, затем время создания), чтобы
+интерфейс не пересортировывал список по-своему. `GET /api/rooms` отдаёт те же `groups` и поля
+`order`, `pinned`, `group` в каждой комнате; `Room` (§3.2) их тоже содержит.
+
+`400 bad_request` — неизвестная комната в `order` (`detail.value`), повтор в `order`,
+несуществующая группа (`detail.field="rooms.<id>.group"`), чужое поле в `rooms`, `pinned` не bool,
+битый `id`/название группы. Проверка идёт ДО записи: отклонённая раскладка файл не меняет.
+`502 engine_error` — реестр занят или недоступен (порядок не изменён).
+
+В интерфейсе: ручка ⋮⋮ у названия комнаты (перетаскивание Pointer Events, подсветка места
+вставки), `Alt+↑/↓` с клавиатуры, 📌 — «закрепить наверху», папка в заголовке «Комнаты» — новая
+группа (создать, переименовать, свернуть, перетащить комнату в группу). В полосе значков (свёрнутое
+меню) порядок тот же, ручки скрыты — порядок не тянется мышью, но и не теряется.
+
+Логика порядка — один модуль `web/js/rooms-order.js` (её же проверяют `tests/rooms-order.test.mjs`);
+живая проверка реальной мышью — `tools/probe_rooms_order.py` (Chromium, порт мока 8861).
 
 #### `POST /api/rooms/{id}/archive`
 Архивирует комнату (карточки не трогает, комната скрывается из списка).
@@ -1513,10 +1551,17 @@ Hermes на диске, а с `?room=<id>` ещё и участники этой
 
 #### `PUT /api/rooms/{id}/agents/{profile}/model`
 ```
-{provider?: string, model?: string|null, reasoning?: string|null}
+{provider?: string, model?: string|null, reasoning?: string|null, custom?: boolean}
 ```
 Пустой объект, `null` в теле или `model: null` без `provider` — «вернуть по умолчанию»: запись
 участника стирается, действуют настройки агента.
+
+`custom: true` — человек выбрал в диалоге пункт «Своя модель» («использовать введённое»): имя
+принимается, даже если его нет в каталоге Hermes, и попадает в реестр комнаты как ВЫБОР человека;
+ответ несёт `warnings` («Модели «…» нет в каталоге Hermes — сохранена как ваш выбор…»), интерфейс
+показывает их строкой под кнопками. Без `custom` незнакомое имя по-прежнему `400` — проверка по
+каталогу не ослаблена. Сторож моделей такая запись не обходит: пауза сторожа — про расхождение
+модели/провайдера у карточки, а не про наличие в каталоге.
 `200` →
 ```
 {ok: true, profile,
@@ -2982,8 +3027,8 @@ PATCH /api/requests/t_a1b2c3d4
 (то же место, куда приложение ведёт `Запросы/<YYYY-MM-DD> <название> (<id>).md`):
 
 ```json
-{"ok": true, "format": "obsidian", "path": "…\\Запросы\\2026-11-11 Мука для моти (t_a1b2c3d4).md",
- "folder": "…\\Запросы", "name": "2026-11-11 Мука для моти (t_a1b2c3d4).md",
+{"ok": true, "format": "obsidian", "path": "…\\Запросы\\2026-11-11 Мука для суфле (t_a1b2c3d4).md",
+ "folder": "…\\Запросы", "name": "2026-11-11 Мука для суфле (t_a1b2c3d4).md",
  "changed": true, "room": "cafe", "request": "t_a1b2c3d4"}
 ```
 
@@ -5132,6 +5177,42 @@ approvals.js`: `APPROVAL_STATES`, `ACTIONABLE_STATES`), поэтому у кар
 **Замер тела карточки.** `python tools/measure_context.py` — состав первого запроса по
 блокам (знаки и ≈токены) и база по `state.db`; `--json` сохраняет замер.
 
+## W29-P9 — расход и лимиты по провайдерам
+
+Расход читается из `state.db` профилей Hermes (`mode=ro`, ничего не пишется), лимиты
+человека — из данных приложения (`data/state/limits.json`). Сеть не используется.
+
+### `GET /api/limits`
+
+Один ответ для панели «Расход и лимиты» (`web/js/views/limits.js`, раздел настроек
+`#set-limits`) и для чипа в шапке (`web/js/limits-chip.js`).
+
+| Поле | Что значит |
+|---|---|
+| `windows["5h"\|"day"\|"week"]` | окно: `calls`, `sessions`, `cost_usd`, `tokens{input,cache_read,cache_write,output,reasoning,total}`, `providers[]`, `summary` |
+| `providers[]` | `{provider, title, calls, sessions, cost_usd, tokens, models[], limits{…}, limit}` — провайдер и его модели |
+| `models[]` | `{model, calls, cost_usd, tokens}` — по убыванию токенов |
+| `limit` | `{kind:"tokens"\|"calls", value, used, pct, status:"ok"\|"warn"\|"alert"\|"over"}` или `null` (порог 70 % — `warn`, 90 % — `alert`, 100 % — `over`) |
+| `limits` | `{providers:{<провайдер>:{ "5h"\|"week": {kind, value}}}, updated_at}` — ваши лимиты; по умолчанию пусто |
+| `forecast["5h"\|"week"]` | `{items:[{provider, pct, left, hours_left, runs_left, text}], text}` — прогноз по среднему расходу прошедшей части окна |
+| `top_requests[]` | `{room, room_title, rid, title, calls, tokens, cost_usd, models}` — дорогие запросы со ссылкой `#/room/<id>/request/<rid>` |
+| `wasted` | `{attempts, cost_usd, tokens, requests[], text}` — запуски на «не той модели» (`reclaimed` / `model_override_set`) |
+| `line`, `chip` | готовые строки: полная («Расход за 5 ч: …; за неделю N % лимита») и короткая для шапки («5 ч: 645 тыс. · 84 %») |
+| `source` | `state.db` · `fixtures` (песочница/демо) · `none` (за неделю запусков нет) |
+| `warnings[]` | почему цифры неполные (провайдер не сообщил стоимость, база недоступна и т. п.) |
+
+### `PUT /api/limits/settings`
+
+Тело: `{"providers": {"<провайдер>": {"5h": {"kind":"tokens"|"calls","value":N}, "week": {…}}}}`.
+Пустое значение или `value <= 0` — лимита нет; вид `calls`/`tokens`, отрицательные
+значения и мусор отбрасываются. Ответ `200 {"ok": true, "limits": {...}}`.
+`503 limits_unavailable` — файл занят или прочитать/сохранить нельзя (без 500).
+
+**Интерфейс.** Экран: «Настройки» → раздел «Расход и лимиты» (переключатель 5 ч / сутки /
+неделя, таблица по провайдерам с полосами, предупреждения 70 %/90 %, прогноз, топ
+запросов, «потрачено зря», редактор лимитов). Шапка: чип одной строкой, ведёт в раздел.
+Пустое состояние объясняет, что экран показывает, и даёт кнопку «Обновить».
+
 ## W28-B — свод: ширина колонки и «Коротко» из metadata (v1.5.0, WAVE28b, дефекты 8 и 9)
 
 Две правки интерфейса свода; новых маршрутов нет, формат ответа расширен **необязательным**
@@ -5168,3 +5249,1083 @@ approvals.js`: `APPROVAL_STATES`, `ACTIONABLE_STATES`), поэтому у кар
 Замер: `tools/probe_w25_modes.py` (строка свода 45–120 знаков), проверки —
 `tests/svod-format.test.mjs`, `tests/w25-polish.test.mjs`.
 
+
+## W29-P10 — защита выбора модели на доске (v1.6.0-dev, WAVE29 §P10)
+
+Первопричина выбора модели: пин ставится в той же транзакции, что и создание карточки.
+Подробно — `docs/MODEL-TRIGGER.md`; модуль `server/model_trigger.py`, CLI
+`tools/install_model_trigger.py`.
+
+### `GET /api/rooms/{room}/model-trigger`
+
+Только чтение. Отдаёт состояние защиты по доске комнаты:
+
+```json
+{"ok": true, "room": "cafe", "board": "team",
+ "installed": true, "healthy": true, "table": true,
+ "triggers": {"trg_teamroom_model_pin_insert": true, "trg_teamroom_model_pin_update": true},
+ "rows": 2, "rows_expected": 2, "version": "w29.1", "installed_at": 1763700000,
+ "problems": [], "text": "Защита выбора модели: установлена · триггеров 2 из 2 · участников 2"}
+```
+
+`problems` — по-русски, с причиной (например, «Триггеры сняты (1 из 2): …» — так выглядит
+обновление Hermes, пересоздавшее `tasks`). Ничего не устанавливает и не правит.
+
+### `POST /api/rooms/{room}/model-trigger`
+
+Тело: `{"action": "install" | "uninstall" | "sync", "purge": false}`. Без `action` — 400
+(`allowed: ["install", "uninstall", "sync"]`), доска не меняется.
+
+| Действие | Что делает |
+|---|---|
+| `install` | перед установкой — резервная копия доски и проверка схемы `tasks`; создаёт таблицу `teamroom_room_models` и два триггера идемпотентно; пишет текущий выбор комнаты в таблицу |
+| `uninstall` | снимает триггеры; `"purge": true` — удаляет и таблицу; пины на карточках остаются |
+| `sync` | перезаписывает таблицу выбором комнаты (идемпотентно, без смены объектов) |
+
+Ответ — тот же объект состояния + `action`, `backup` (имя файла копии), для `sync` —
+`synced`/`skipped`. Ошибки: 400 (неверное действие), 409 (`bad_schema` — в `tasks` нет
+нужных колонок), 503 (доска недоступна). Установка и удаление — только по явному действию
+человека: старт сервера и тики сторожа этих ручек не вызывают.
+
+### Синхронизация таблицы
+
+`PATCH /api/rooms/{id}` с `agent_models` и `PUT /api/rooms/{id}/agents/{profile}/model`
+после сохранения реестра вызывают `model_trigger.sync_room()`: строки «тенант + исполнитель →
+провайдер/модель/мышление». Ошибка синхронизации не отменяет сохранение выбора (в ответе
+`warnings`). Без установленной защиты таблица не ведётся — синхронизация молча пропускается.
+
+### «Проверка системы»
+
+`GET /api/diagnostics` получает пункт `model_trigger` («Защита выбора модели»):
+`ok` — установлена и здорова; `warn` — триггеры сняты (с действием «переустановите»);
+`off` — не установлена (и предложение, если в комнате есть выбор моделей).
+
+---
+
+## W29-P6. Результаты комнаты, «запросы без дела», этапы по выполненным запросам
+
+Вкладка «Отчёты» переименована в **«Результаты»** (`title` в `web/js/text-ru.js`) и стала
+списком итогов ВСЕХ завершённых запросов комнаты; страницы-отчёты — отдельный блок внутри.
+
+### `GET /api/rooms/{id}/results`
+
+Один ответ на две вкладки («Результаты» и «Дела»). Ничего не пишет.
+
+| Поле | Что это |
+|---|---|
+| `items[]` | завершённые запросы (`status = "done"`), свежие сверху: `id`, `title`, `title_short`, `status`, `created_at`, `finished_at`, `short` («Коротко» из последнего свода), `reports[]` (`key`/`title`/`kind` этого запроса), `delo` (`id`/`title` или `null`) |
+| `pending[]` | запросы в работе — чтобы пустой экран не врал «ничего нет» |
+| `reports[]` | индекс интерактивных отчётов комнаты (`reports.list_reports`, без путей) |
+| `without_delo[]` | запросы, из которых ещё не сделали дело |
+| `counts` | `requests`, `results`, `pending`, `reports`, `without_delo` — один источник для подписей и счётчиков |
+| `room_title` | название комнаты |
+
+«Коротко» — первый непустой `summary` запуска корневой карточки, сжатый до одного-двух
+предложений без разметки (`results.short_text`, ≤ 240 знаков). Файлы запроса не копируются в
+ответ (это дерево + артефакты): строка результата ведёт на страницу запроса, где лежат все
+файлы и решения, а собранные отчёты открываются прямо из строки.
+
+### `POST /api/rooms/{id}/delos/from-request`
+
+`{request_id}` или `{request_ids: [...]}` (до 30). «Сделать делом»: открывает дело штатным
+`delo.create` — одно дело на запрос, повтор → `skipped` (`409` внутри `delo.create`), а не
+дубль. Этапы дела: «Запрос выполнен» (или «Запрос в работе») + «Итог и следующий шаг»;
+`status` — `waiting` у завершённого запроса, иначе `open`.
+
+Ответ: `{ok, created:[{request_id, delo}], skipped:[…], failed:[…], message}`; `201` — что-то
+создано, `200` — только отказы, `409` — ничего не создано.
+
+### `POST /api/rooms/{id}/phases/from-requests`
+
+«Предложить этапы по выполненным запросам» — одна дешёвая проверка без запуска модели:
+каждый завершённый запрос становится этапом (название + «Коротко» в описании), последний
+этап — «Итоги и следующий шаг». Результат кладётся обычным предложением этапов комнаты
+(`rooms.set_phases_state` → `phases_proposal`, `state="proposed"`), поэтому:
+
+* этапы человека (`phases`) не меняются — принимает/правит/отклоняет он сам;
+* предложение сразу видно на карте проекта и пунктом «Руководитель предлагает этапы» в
+  «От вас нужно» (тот же механизм `ingest._proposal_item`).
+
+Ошибки: `400` (`no_results` — нет завершённых запросов), `409` (`unchanged`,
+`same_as_phases`), `409` комната в архиве.
+
+### `POST /api/rooms/{id}/results/offer`
+
+Пункт «Предлагаю собрать карту проекта» живёт в ответе `GET /api/rooms/{id}/backlog`
+(`roadmap_offer`, `sections.roadmap_offer`) и показывается один раз: карта не собрана, ждущего
+предложения нет, есть хотя бы один завершённый запрос, человек не сказал «Не сейчас».
+
+| Действие | Что делает |
+|---|---|
+| `build` | то же, что `phases/from-requests`: собрать этапы по готовым запросам |
+| `later` | отложить на 14 дней (`data/state/<комната>/roadmap_offer.json`) |
+
+Поле `phases_proposal`/`phases` комнаты меняется только действием `build`; файл бэклога не
+меняется никогда.
+
+---
+
+## W29-P8 — хранилище и Obsidian без дублей (v1.6.0-dev, WAVE29 §P8)
+
+Модули: `server/storage.py` (правила), `server/routes_storage.py` (маршруты),
+экран `web/js/views/storage.js` + `web/css/view-storage.css`
+(`#/settings/storage`, раздел «Хранилище» в «Настройках»).
+
+Границы, которые держит сервер:
+
+* удаление — только внутри перечисленных корней (`voice`, `logs`, `backups`, `tmp`,
+  `builds`, `accept`); путь, пришедший снаружи, отклоняется с причиной;
+* Vault (Obsidian), папка Hermes и папка приложения не удаляются никогда — по ним только
+  цифры и предложение;
+* ссылки/junction не разворачиваются: путь со ссылкой в цепочке не принимается;
+* `clean` по умолчанию — сухой прогон; настоящее удаление требует `dry_run:false` **и**
+  `confirm:true`.
+
+### `GET /api/storage`
+
+```json
+{"ok": true, "generated_at": 1763700000, "total_bytes": 1200000000, "total_text": "1,1 ГБ",
+ "free_bytes": 389000000000, "free_text": "362 ГБ", "root": "…\TeamRoom\data",
+ "warning": null,
+ "categories": [{"id": "logs", "title": "Логи приложения", "path": "…\data\logs",
+   "exists": true, "bytes": 3100000, "size_text": "3 МБ", "files": 9,
+   "foreign": false, "cleanable": true, "policy": "старше 30 дн.",
+   "why": "Журнал app.log и его ротации…",
+   "will_remove": {"files": 1, "bytes": 2100000, "size_text": "2 МБ", "count": 3,
+                   "preview": [{"name": "app.log.3", "size": 700000, "size_text": "684 КБ",
+                                "path": "…"}]},
+   "truncated": false}],
+ "policy": {"voice_hours": 72, "logs_days": 30, "backups_keep": 5, "backups_per_release": 1,
+            "build_cache_days": 7, "tmp_hours": 24, "accept_immediately": 1,
+            "copy_max_bytes": 2097152}}
+```
+
+`foreign: true` — только показ (Vault, `hermes cache/scratch`, `hermes logs`); у строки Vault
+есть `proposal` — сколько копий можно заменить ссылками (`files`, `bytes`, `sample[]`), ничего
+не удаляется. `truncated` — слишком много файлов, размер посчитан частично.
+
+### `POST /api/storage/clean`
+
+`{dry_run?: true, confirm?: false, categories?: ["voice","logs"]}`. Без `dry_run:false`
+ничего не удаляет и возвращает тот же отчёт, что удалил бы. `404`-подобных «пустых» ответов
+нет: `categories` без кандидатов — просто пустой список.
+
+```json
+{"dry_run": true, "removed": [], "would_remove": [{"path": "…", "bytes": 2100000,
+  "size_text": "2 МБ", "files": 1}], "refused": [{"path": "…", "reason": "Путь вне разрешённых…"}],
+ "errors": [], "bytes": 2100000, "files": 1, "categories": ["voice","logs"],
+ "by_category": {"logs": 3}, "policy": {…}, "message": "Сухой прогон: ничего не удалено…"}
+```
+
+Ошибки: `400` (`bad_request` — неизвестная категория; `confirm_required` — удаление без
+подтверждения), `400` — запрошены `vault`/`hermes_*` («эти данные не удаляются приложением»).
+
+### `GET`/`PUT /api/storage/policy`
+
+`GET` → `{ok, policy, limits, defaults}`. `PUT` принимает `{voice_hours, voice_max, logs_days,
+backups_keep, backups_per_release, build_cache_days, tmp_hours, accept_immediately,
+copy_max_bytes}` (или `{policy: {…}}`); неизвестный ключ или значение вне границ — `400` с
+именем поля. Файл — `data/state/storage.json`.
+
+### `GET /api/storage/materials-policy?path=…`
+
+Что делать с материалом: `{material: {path, name, exists, size, size_text, text, copy, link,
+limit, kind, sha256, sha256_short, reason, note}}`. Правило: маленький текстовый файл
+(≤ `copy_max_bytes`, по умолчанию 2 МБ) — копия в Vault как раньше; крупный или нетекстовый —
+заметка-ссылка (путь, размер, хэш, «что это»), оригинал остаётся на месте. Этой же формой
+пользуется зеркало: вложения в заметке запроса описываются ссылкой (`server/vault_mirror.py`).
+
+### `GET`/`POST /api/rooms/{id}/materials-link`
+
+Один дом: папка проекта комнаты по умолчанию — её зеркало в Vault. Если человек выбрал другую
+папку, ссылку ставят кнопкой.
+
+| Метод | Что делает |
+|---|---|
+| `GET` | состояние ссылки: `{ok, path, target, exists, is_link, proposal: {default, current, same, suggest, hint}}` |
+| `POST {action:"create"}` | junction `Материалы` в зеркале комнаты + заметка `Проект.md` (путь). Данные не копируются и не переносятся |
+| `POST {action:"remove"}` | снимает только ссылку (`rmdir` junction); файлы в папке проекта остаются |
+
+Ошибки: `409` (`vault_off` — зеркало выключено, `exists` — в Vault уже лежит обычная папка,
+`not_link` — удалять обычную папку нельзя), `400` (`no_target` — нет папки проекта / действие
+не `create`/`remove`), `502` (`link_failed` — Windows не дал создать ссылку).
+
+## W29-P2 — заблокированные карточки без тупика (v1.6.0, WAVE29 §P2)
+
+Новых ручек нет: все кнопки шлют действия, которые сервер уже принимает
+(`ACTION_ALLOWED`, `docs/API.md` §W27). Добавлены только ПОЛЯ ответа
+`GET /api/requests/{id}` — их читают правая колонка, вкладка «От вас нужно»,
+нижнее поле страницы запроса и `tools/check_dead_ends.py`.
+
+### Дерево: `tree[].actions[]` и `tree[].hold`
+
+У узла со `status = "blocked"` сервер проставляет кнопки (`server/stale.py`,
+`mark_blocked_actions`). Интерфейс рисует их как есть, своих списков не выдумывает.
+
+```json
+{"id": "t_2f6c1b93", "status": "blocked", "title": "Сверить цены",
+ "assignee": "team-buyer", "needs_you": true,
+ "actions": [{"id": "resume"}, {"id": "instruct"}, {"id": "model"},
+             {"id": "reassign"}, {"id": "dismiss"}]}
+```
+
+| `actions[].id` | что значит | действие `POST /api/requests/{id}/actions` |
+|---|---|---|
+| `resume` | «Продолжить» | `{"action":"unblock","task_id"}` |
+| `instruct` | «Дать указание / ответить» (диктовка) | `comment` + `unblock` (текст уходит в карточку) |
+| `model` | «Сменить модель…» | `{"action":"card_model","task_id","model"}` |
+| `reassign` | «Переназначить» | `{"action":"reassign","task_id","profile"}` |
+| `dismiss` | «Не актуально» (карточка в архив) | `{"action":"archive","task_id"}` |
+
+Системная пауза сторожа моделей (карточку остановил контроль моделей, а не человек)
+получает поле `hold` и ОДНУ кнопку — снять паузу сейчас:
+
+```json
+{"id": "t_pause", "status": "blocked", "needs_you": false,
+ "hold": {"by": "guard", "auto": true, "at": 1793171700,
+          "reason": "модель не подтверждена — жду простановки модели",
+          "label": "Снимаю автоматически"},
+ "actions": [{"id": "resume", "label": "Снять паузу сейчас", "kind": "system"}]}
+```
+
+`hold` означает: сторож снимет паузу сам (потолок 60 с). Такая карточка НЕ входит
+в число «ждёт вашего решения» ни на вкладке, ни в `/api/today`, ни в правой колонке;
+снять её вручную можно кнопкой (`card_resume`).
+
+### Число и список «ждёт решения» по запросу
+
+```json
+{"needs_you_count": {"questions": 2, "decisions": 1, "approvals": 0, "steps": 0, "total": 3},
+ "needs_you_blocked": 1,
+ "blocked_waiting": [{"id": "t_2f6c1b93", "title": "Сверить цены",
+                      "assignee": "team-buyer",
+                      "actions": ["resume","instruct","model","reassign","dismiss"]}]}
+```
+
+* `needs_you_count` — прежний контракт §W27 (вопросы / решения / разрешения / шаги);
+  его ключи не менялись;
+* `needs_you_blocked` — число заблокированных карточек БЕЗ системной паузы: это и есть
+  число пунктов «Ждёт вашего решения» вида «блокировка» (клиент его не пересчитывает);
+* `blocked_waiting[]` — тот же список по id и с кнопками. `tools/check_dead_ends.py`
+  сверяет число со списком и требует у каждой карточки непустой `actions[]`.
+
+Пустое поле (старый сервер) — клиент считает по дереву, как раньше.
+
+## W29-P5 — дежурства: смысл, масштаб, расписание, доставка (v1.6.0-dev, WAVE29 §P5)
+
+Развитие §W24-DUTIES / §W26-DUTIES / §W27-DUTIES. Ничего нового в Hermes не пишется:
+чтение `cron/jobs.json` + `executions.db` (`mode=ro`), запись — только реестр комнат и
+штатный `hermes cron …` по подтверждению.
+
+### W29-P5.1 `GET /api/duties?room=<id|all>&start=YYYY-MM-DD`
+
+Ответ прежний плюс:
+
+| поле | смысл |
+|---|---|
+| `items[].scope` | `"room"` — задание привязано к комнате; `"system"` — общая задача Hermes (в комнате не создавалась) |
+| `items[].deliver` | `{where:"inbox"|"local", label, room, href, target, text}` — куда придёт результат; для комнаты `href = "#/room/<id>/inbox"` |
+| `items[].model`, `.provider` | модель и провайдер задания (`null` в `jobs.json` → пустая строка = «по умолчанию») |
+| `items[].workdir`, `.skills`, `.script`, `.monitor_url` | что именно выполняется — для правки без догадок |
+| `system[]` | тот же элемент, но `scope:"system"`, в выборке комнаты тоже (свёрнутый блок «только чтение») |
+| `counts` | `{room, system, total, bound_here}` — числа считает сервер, клиент их не пересчитывает |
+| `week.prev`, `week.next`, `week.today` | даты для стрелок ‹ › и «Сегодня» |
+| `week.days[].planned_jobs[]` | `{job_id, name, runs}` — что запустится в этот день по расписанию (в т.ч. будущий день) |
+| `week.days[].planned_more` | сколько плановых заданий не влезло в список (потолок 12) |
+
+`start` — любой день нужной недели; окно всегда выравнивается на понедельник. Кривая
+дата → `400 bad_request` с полем `start` (а не тихий переход на текущую неделю).
+
+`items` при `room=<id>` содержит только привязанные к комнате задания (`scope:"room"`),
+поэтому «11 дежурств» из общих крон-задач Hermes в комнате больше не появиться: они
+приходят в `system[]` и показываются отдельным свёрнутым блоком.
+
+### W29-P5.2 `POST /api/folders/pick`
+
+Окно Windows «Выбрать папку» (или файл) для мастера дежурства — сервер открывает диалог
+на машине человека, потому что браузер полный путь не отдаёт.
+
+```
+{ "title": "Рабочая папка дежурства «…»", "mode": "folder"|"file" }   // mode по умолчанию folder
+→ 200 { "ok": true, "path": str, "paths": [str], "cancelled": bool,
+        "mode": "folder"|"file", "kind": "folder"|"file"|"",
+        "exists": true|false|null, "message": str }
+```
+
+* закрытое окно — не ошибка: `cancelled:true`, `path:""` (человек впишет путь вручную);
+* `exists:false` + `message` — выбранного пути больше нет (переименовали/удалили):
+  клиент показывает причину рядом с полем;
+* `cancelled` и `mode` приходят всегда; `title` — строка, иначе `400`;
+* песочница, демо и тесты: `TEAMROOM_PICK_FAKE="C:/Work/Rooms/cafe"` (JSON-массив тоже
+  понимается; пустая строка = «окно закрыли»), `TEAMROOM_PICK_TIMEOUT` — сколько ждать.
+
+Реализация: `server/folder_pick.py` (`FolderBrowserDialog`/`OpenFileDialog` через
+`server/proc.py`, `CREATE_NO_WINDOW` + невидимое окно-владелец `TopMost`), обработчик —
+`DutiesRoutes.h_folder_pick` в `server/routes_duties.py`, строка маршрута — в его `ROUTES`.
+
+### W29-P5.3 Клиент
+
+`web/js/views/duties.js`: стрелки недели и «Сегодня», плашка «N с замечаниями» — кнопка
+(фильтрует список и прокручивает к нему; второе нажатие возвращает все), панель дня с
+фактическими и плановыми запусками, блок «Системные задачи Hermes — N задач» (только
+чтение), строка «Результат: Входящие комнаты — открыть входящие» и «модель: …». Мастер
+(`duty-wizard.js`, модель — `duty-model.js`): «Кто выполняет и на какой модели» (каталог
+`GET /api/models`, вариант «как в комнате», «своя модель…»), кнопка «Выбрать…» у рабочей
+папки и у слежения, три готовых скрипта без модели с полным текстом и именем файла,
+пустой выбор дела — «взять запрос комнаты» или «создать с нуля».
+
+Проверки: `tests/test_duties_room_scope.py` (python), `tests/duties-w29.test.mjs` (node),
+`tools/check_w29_p5.py` + `tools/check_w29_p5_bottom.py` (Chromium на моке 8859,
+снимки в `docs/shots/w29-duties/`).
+
+## W29-P4 — архив запросов: «не актуально → в архив», раздел «Архив», возврат (v1.6.0-dev, WAVE29 §P4)
+
+Запрос «в архиве» — это корневая карточка в статусе `archived` (единственный источник,
+`engine_read` отдаёт флаг `archived` в `RequestSummary`/`RequestDetail`). Архив — полная
+остановка работы: сторож (`watcher.tick_once`) пропускает такой запрос целиком, поэтому
+не идут ни цикл критика, ни живой свод, ни переименование (модель), ни ingest; счётчики
+«Сегодня»/меню/«От вас нужно» его не считают. Пункты запроса (вопросы, решения, шаги,
+разрешения) закрываются с `closed_reason: request_archived` и снова открываются после
+возврата — без записи в карточки.
+
+### `POST /api/requests/{rid}/actions {action:"archive"|"unarchive"}`
+
+* `archive` — штатный глагол канбана `hermes kanban archive` (Hermes сам завершает воркер
+  идущей карточки); в реестр комнаты пишутся `archived_at`, `archive_prev` (прежние статусы).
+  Повторный вызов → `{already:true, archived:[]}`.
+* `unarchive` — «Вернуть из архива». Завершённые карточки возвращаются в `done`,
+  незавершённые — в `blocked` («Приостановлено»: сами не запускаются, человек нажимает
+  «Продолжить»). Модели не запускаются. Ответ:
+  `{ok, action, restored:[id], count, paused:[id], at, message, request}`.
+* Любое другое действие у архивного запроса → `409 request_archived` («сначала верните»).
+  Сообщение `POST /api/requests/{rid}/messages` — тоже `409`.
+* Штатного «unarchive» у Hermes нет: возврат выполняет `kanban_atomic.py --op restore`
+  (функции библиотеки канбана в одном процессе, как `stop`/`resume`), не прямая запись сервера.
+
+### `GET /api/rooms/{id}/archive?q=&from=&to=`
+
+Список архивных запросов комнаты (чтение). `q` — поиск по названию/тексту; `from`/`to` —
+unix-секунды или `YYYY-MM-DD`; `to` включает день целиком. Ответ:
+`{items:[RequestSummary + archived_at + archive_prev], total, has_more, room, at}`.
+Сортировка — по времени архивации. В `items` попадают только корни, реально имеющие
+статус `archived` на доске.
+
+### `POST /api/rooms/{id}/archive/requests {root_ids:[…]}`
+
+Массово в архив (≤ 100 за раз). Ответ: `{ok, action:"archive", done, failed,
+results:[{root_id, ok, count, message, code?}], room, at}`. Частичный сбой не отменяет
+остальные; `ok:false` — хотя бы один не удался, причина в `message`.
+
+### `POST /api/rooms/{id}/archive/restore {root_ids:[…]}`
+
+Массово из архива. Ответ той же формы с `action:"restore"`.
+
+Путь `/api/rooms/{id}/archive` (POST) занят архивацией КОМНАТЫ, поэтому массовые действия
+запросов живут на `/archive/requests` и `/archive/restore` — дубли `(метод, шаблон)` запрещены.
+
+Клиент: вкладка «Архив» (`web/js/views/archive.js`, `web/css/view-archive.css`, маршрут
+`#/room/<id>/archive`), кнопка «Не актуально» в шапке запроса и пункт «Не актуально — в архив»
+в меню строки списка, массовый выбор в ленте («Выбрать» → «В архив (N)»), отмена 10 с
+(«Вернуть») после ухода в архив. На странице архивного запроса — плашка «Запрос в архиве —
+работа остановлена» с кнопками «Вернуть из архива» и «Все в архиве»; «Доработать»,
+«Обновить свод», «Разрешения», диалог и поле ответа скрыты.
+
+Проверки: `tests/test_archive.py` (жизненный цикл на песочнице, счётчик вызовов сторожа,
+ручки списка/массовых действий), `tests/test_stale.py` (причина `request_archived`),
+`tests/test_contract_w27.py` (маршруты без дублей), Chromium на моке 8858: `ui_audit`
+без проблем на 1366/1026/683 × светлая/тёмная, снимки `docs/shots/w29-p4/`.
+
+### W29-P4.1 «Пора в архив» и «Скопировать итог в заметку» (доделано в W29-I1)
+
+* `GET /api/rooms/{id}/archive` дополнительно отдаёт `suggest` и `auto_archive`:
+  `suggest: {items:[{root_id,title,finished_at,days}], total, after_days:14, auto:false}` —
+  запросы, **завершённые ≥ 14 дней назад и с тех пор без событий**. Подсказка мягкая:
+  ни одна карточка не архивируется сама; автоархив по умолчанию выключен
+  (`archive.auto_enabled(room)` → поле комнаты `archive_auto`, по умолчанию `false`).
+  `archive.suggestions(records, states, now=…)` — та же функция для тестов и сторожей.
+* На экране «Архив» над списком — блок «Пора в архив: N запросов» с кнопкой «В архив» у
+  каждого и «Оставить как есть» (скрыть на этот раз); ничего не уходит в архив без нажатия.
+* Кнопка «Итог в заметку» в строке архивного запроса копирует итог записью в заметки
+  руководителя комнаты (`POST /api/rooms/{r}/agents/{p}/notes/entries {text, source:"request",
+  origin:<root_id>}`). Нет участников — итог уходит в буфер обмена с пояснением.
+
+## W29-P1 — сторож моделей, мост к Hermes, запись модели участника (v1.6.0-dev, WAVE29 §P1)
+
+Пакет закрывает три дефекта корня выбора модели (Vault `RootCause-2026-11-20-model-selection.md`,
+`Defects-2026-11-20-model-catalog.md`, `Defects-2026-11-20-model-dialog-validation.md`).
+Новых маршрутов нет: расширены существующие ответы.
+
+### W29-P1.1 Сторож: пауза только по модели, любая пауза снимается сама
+
+* `model_guard._outdated()` сравнивает ТОЛЬКО пару «провайдер + модель». Расхождение по
+  `reasoning_effort` никогда не ставит карточку на паузу и не держит её: мышление пишется
+  вместе с моделью (мост `--set --effort`), а ошибка записи мышления — предупреждение
+  (`preflight.warnings[]`), не ошибка.
+* Пауза сторожа (`block` с причиной «модель не подтверждена — карточка ждёт простановки
+  модели») снимается на любом следующем проходе, как только модель верна. Признаки своей
+  паузы: карточка в `model_guard.json → holds` ИЛИ последнее событие `blocked` карточки с
+  нашей причиной (маркер `OUR_PAUSE_MARKERS`). Пауза человека не снимается никогда.
+* Потолок паузы — `HOLD_MAX_S = 60` с: если модель так и не встала, сторож снимает паузу и
+  пишет инцидент `released_by_ceiling`. Навсегда остановленных карточек больше нет.
+* Причина паузы уходит в CLI ПОЗИЦИОННО (`block <id> <причина> --kind needs_input`):
+  `--reason=` у `block`/`promote` не флаг, и раньше этот токен попадал в доску как сама
+  причина (реальная карточка `t_b48b4883`: `"--reason=модель не подтверждена …"`).
+
+Ответ `model_guard.preflight()` (внутренний, для `/api/health` и тестов) получил поле
+`warnings[]` — предупреждения по мышлению; `errors[]` — только настоящие сбои записи модели.
+
+### W29-P1.2 Инциденты сторожа: журнал и счётчик за 7 дней
+
+Каждое вмешательство — запись в `data/state/<room>/model_guard.json → incidents[]`:
+
+```json
+{"at": 1795208154, "kind": "pinned|fixed|stopped|parked|held|released|released_by_ceiling|reclaimed",
+ "path": "preflight|tick", "card_id": "t_…", "profile": "team-ops", "root_id": "t_…",
+ "created_by": "Комната команды", "age_s": 37,
+ "expected": {"provider": "…", "model": "…"}, "actual": {"provider": "…", "model": "…"},
+ "text": "…"}
+```
+
+Функции: `incident()`, `incidents(days=7)`, `incidents_count()`, `incidents_count_all(rooms)`,
+`incidents_text(count)`. Кольцо хранит до 500 записей.
+
+`GET /api/health` → `guard.incidents_7d` (число) и `guard.incidents_text`
+(«Вмешательств контроля моделей за 7 дней: N»). Пункт «Контроль моделей» в
+`GET /api/diagnostics` получил `incidents_7d` и первую строку `details[]` с тем же счётчиком.
+
+### W29-P1.3 Каталог моделей: интерпретатор моста по пробе, видимая причина
+
+* `agent_models.python_candidates(cfg)` — порядок: `TEAMROOM_HERMES_PYTHON` (если задан —
+  без перебора), затем `installs/*/environments/*/venv/Scripts/python.exe` (новые первыми),
+  затем `sys.executable`.
+* `agent_models._python(cfg, refresh=False, probe=None)` — кандидат годится только если
+  реально импортирует `hermes_cli` И `ruamel.yaml` (`PROBE_CODE`, таймаут `PROBE_TIMEOUT`).
+  Результат кэшируется по `hermes_home`; исчез — ищется заново. Та же функция обслуживает все
+  операции моста (`--catalog`, `--set`, запись мышления). `reset_python_cache()` — сброс.
+* `agent_models.catalog_line(cfg)` → `{ok, text, source, providers, models, reason, warnings}`;
+  текст: «Каталог моделей: Hermes (6 провайдеров, 212 моделей)» либо
+  «Каталог моделей: из профилей — <причина>». Неответ Hermes кешируется на 300 с
+  (`CACHE_TTL_FAIL`), полный каталог — 60 с (`CACHE_TTL`).
+* `GET /api/health` → `models` (тот же объект). Если `models.ok == false`, в `warnings[]`
+  добавляется `{"code": "model_catalog_incomplete", "message": "Список моделей неполный: …"}`.
+* Диалог модели (`web/js/agent-model-ui.js`): `catalogNotice(catalog)` и плашка
+  «Список моделей неполный: Hermes не ответил (причина)» с кнопкой «Обновить»
+  (`GET /api/models?refresh=1`). `override` (тесты/демо) плашку не показывает.
+
+### W29-P1.4 Запись модели участника: проверяется только изменённый
+
+`PUT /api/rooms/{id}/agents/{profile}/model` и `PATCH /api/rooms/{id}` (`agent_models`):
+
+* `rooms.update_room(..., warnings=[…])` → `validate_map(previous=<текущая карта>)`:
+  у профиля не менялись провайдер и модель (например, правят только мышление) — каталог
+  заново не спрашивается, запись сохраняется как есть; остальные участники не проверяются.
+* Сравнение модели — по буквам (`Model-A` ≠ `model-a`).
+* Модель не из каталога, но уже работающая в комнате или стоящая в профиле Hermes,
+  принимается с предупреждением «Модели «…» нет в каталоге Hermes — она уже работает в
+  комнате/в профилях, используется как выбрано» (поле `warnings[]` ответа PUT/PATCH).
+* Ошибка всегда называет участника: `для «team-cfo»: …` (`detail.profile`).
+
+Проверки: `tests/test_model_guard.py`, `tests/test_model_guard_preflight.py` (в т.ч.
+`ScenarioTests`: triage → specified+promoted → claim → пин позже; мышление не блокирует;
+пауза снимается; потолок 60 с; инциденты и счётчик), `tests/test_agent_models.py`
+(`Wave29Tests`: интерпретатор по пробе, запись одного участника при чужой некаталожной
+модели, ошибка с именем), `tests/test_rooms.py`, `tests/test_health.py`
+(`CatalogLineTests`), `tests/test_contract*.py`, `tests/agent-model-catalog.test.mjs`.
+
+### W29B-Q6 Уведомления Windows: по умолчанию выключены, тихие часы, дедупликация
+
+Модули: `server/notify.py` (правила и канал), `server/routes_notify.py` (HTTP),
+`web/js/views/notify-settings.js` + `web/css/view-notify.css` (раздел Настроек).
+Один вызов за проход сторожа — `server/watcher.py::_notify_tick` (факты собираются по
+ходу тика: состояние корня, «ждёт ваш ответ: N» на комнату, карточка-результат дежурства).
+
+* `GET /api/notify` → `{settings, warnings[], channel{name,available,reason}, quiet_now,
+  sent_today, pending, history[], kinds[{id,title}], platform, generated_at}`.
+  `settings`: `{enabled, kinds{waiting,finished,error,duty}, quiet_hours{enabled,from,to},
+  min_interval_s, updated_at}`. Файла нет — `enabled: false` (по умолчанию ВЫКЛЮЧЕНО).
+* `PUT /api/notify/settings {enabled?, kinds?, quiet_hours?, min_interval_s?}` → тот же ответ
+  (`200`), плюс `warnings[]` с причинами: время только `ЧЧ:ММ`, интервал не меньше 60 с,
+  неизвестные виды отбрасываются. Пустое тело → `400`, `missing:["enabled"]`.
+* `POST /api/notify/test` → `{ok, channel, sent, reason}`; канал недоступен → `503`
+  `notify_unavailable` с причиной (кнопка «Проверить» обязана её показать).
+* Канал: `TEAMROOM_NOTIFY_FAKE=<путь>` — строка JSONL в файл (песочница/тесты);
+  в песочнице без переменной — тишина; иначе значок в области уведомлений
+  (`NotifyIcon` в скрытом процессе PowerShell): клик по уведомлению и двойной клик по
+  значку открывают `http://127.0.0.1:<порт>/#/room/<комната>/request/<запрос>`.
+  Скрипт постоянный (`NOTIFYICON_SCRIPT`, `-EncodedCommand`), текст идёт через переменные
+  окружения `TEAMROOM_NOTIFY_TITLE/BODY/URL`; ссылка принимается только `http://127.0.0.1:`.
+* Правила (`notify.plan` — чистая функция): дедупликация «вид+комната+карточка+подпись»
+  на 7 дней; не чаще одного раза в `min_interval_s` (по умолчанию 300 с) на вид;
+  тихие часы через полночь (`from == to` — весь день); события тихих часов и лимита не
+  теряются, а ждут в отложенных (≤ 6 ч, ≤ 20 штук) и уходят, когда можно. Пока
+  уведомления выключены, события только запоминаются — пачки старых после включения не будет.
+* Хранилище: `data/state/notify.json` (настройки), `data/state/notify-state.json`
+  (где видели запросы, что показано, отложенные, журнал ≤ 50).
+* Проверки: `tests/test_notify.py` (по умолчанию выключено, проверка значений, тихие часы
+  через полночь, дедупликация, лимит частоты, отложенные, песочный канал без PowerShell,
+  безопасность аргументов, ручки через `App.dispatch`).
+
+### W29B-Q3 Вложения с пониманием: предпросмотр, расшифровка голосовых, OCR
+
+Модули: `server/attach_preview.py` (чтение и разбор), `server/routes_attach_preview.py`
+(HTTP), `web/js/views/attach-preview.js` + `web/css/attach-preview.css` (панель).
+
+Чтение, без записи на диск и без сети. Путь проверяет `attach_preview.resolve_file`:
+`Path.resolve(strict=True)`, отказ на NUL/ADS-потоки, секретные имена (`.env`, `*.pem`,
+`*token*`), служебные каталоги (конфиги Hermes, каталог программы, журналы, состояние,
+системные каталоги Windows). Символическая ссылка из разрешённого корня наружу не
+разворачивается (`symlink_escape`). Архивы docx/xlsx/pptx читаются В ПАМЯТИ, записи с `..`
+и абсолютными именами пропускаются.
+
+* `GET /api/attach/preview?path=…&room=…` → разбор файла для правой панели:
+  `{ok, path, name, ext, kind, size, mtime, mime, room, truncated, caps}` плюс по виду:
+  `image`/`pdf`/`audio` — `url` (`/api/attach/file`), у аудио `duration_s` и `stt{fake}`,
+  у картинки `ocr{available}`; `text` — `text, encoding, chars, lines`; `table` —
+  `table{columns, rows, delimiter, total_rows, truncated}`; `docx` — `text, paragraphs`;
+  `xlsx` — `table{…, sheet}`; `pptx` — `slides[{number,text}], text, count`.
+  Слишком большой файл — `{unavailable:"too_big", note}` (показ без разбора).
+  `caps` = `{ocr{available,engine,reason}, stt{available,mode}}` — по ним интерфейс
+  решает, показывать ли кнопки.
+* `GET /api/attach/file?path=…&room=…` → байты с правильным Content-Type
+  (картинка, PDF для просмотра, аудио для плеера), `nosniff`, `Cache-Control: no-store`.
+  Пределы: 32 МБ (PDF — 50 МБ); больше — `413`.
+* `POST /api/attach/transcribe {path, room?}` → `202 {job_id, state:"running", progress,
+  duration_s}`; `GET /api/attach/transcribe?job=…` → `{state: running|done|error, progress
+  0..1, text, chars, model, duration_s, message?}`. Расшифровка — штатный STT приложения
+  (`server/stt.py`, faster-whisper в отдельном процессе). В песочнице и тестах
+  `TEAMROOM_STT_FAKE=<файл с текстом>|1` — настоящий STT не запускается. Лимит 64 МБ,
+  пустое аудио — `400 audio_empty`, не аудио — `400 not_audio`.
+* `POST /api/attach/ocr {path, room?, lang?}` → `{text, engine:"tesseract", lang, chars,
+  seconds}`. Только если `shutil.which("tesseract")` нашёл программу: иначе
+  `503 ocr_unavailable` с причиной «tesseract не найден», и кнопки в интерфейсе нет
+  (ничего не устанавливаем). В песочнице `TEAMROOM_OCR_FAKE=<файл с текстом>`.
+  Язык — только `^[a-zA-Z+_]{2,40}$` (никаких аргументов командной строки), таймаут 90 с,
+  картинка ≤ 16 МБ.
+* Интерфейс: кнопка «Просмотр» у чипа вложения в поле запроса и у файла в блоке «Файлы»
+  на странице запроса открывает панель постоянного размера (880 px × 82vh, на узких
+  экранах `100vw/100dvh` минус отступы). «Открыть», «Открыть в папке» — прежние
+  серверные действия. У голосового «Расшифровать» → прогресс → текст → «Добавить
+  расшифровку в запрос» (в поле запроса — вставкой, на странице запроса — сообщением
+  `POST /api/requests/{rid}/messages`). У картинки — «Распознать текст», если сервер
+  нашёл tesseract, и «Добавить текст в запрос».
+* Проверки: `tests/test_attach_preview.py` (текст utf-8/cp1251, окно текста, CSV-таблица,
+  docx/xlsx/pptx на фикстурах, битый Office, картинка/PDF без чтения, расшифровка через
+  `TEAMROOM_STT_FAKE`, отказ не-аудио, OCR без tesseract и с fake, отказ на опасные пути,
+  секреты и служебные каталоги, симлинк наружу, предел размера, однократность маршрутов),
+  `tests/attach-preview-fe.test.mjs`, `tests/files-launch.test.mjs`,
+  `tests/artifacts-block.test.mjs`. Живая проверка: сервер песочницы на порту 8864
+  (`C:\TeamRoom\Team\w29b-q3\smoke.py`) — предпросмотр четырёх типов 200, `file` 200,
+  расшифровка `202 → done`, OCR 503 без tesseract, служебный и системный путь 403.
+
+## §W29-RECIPES — рецепты комнаты (W29B-Q1)
+
+Рецепт — заготовка повторяющегося процесса: имя, описание, поля ввода и
+заранее заданный граф шагов. Живёт в реестре приложения:
+`data/state/<room>/recipes.json` (рецепты и корзина),
+`data/state/<room>/recipe-runs.json` (история запусков, ≤ 50). Hermes и профили
+не меняются; модель шага берётся из выбора комнаты (`agent_models`), как у любой
+карточки.
+
+* `GET /api/rooms/{id}/recipes` → `{items[], trash[], runs[], roles[], field_kinds[],
+  max_fields, max_steps}`. `item = {id, name, description, fields[], steps[], topic,
+  builtin, source: builtin|user|request, created_at, updated_at, runs, last_run}`;
+  `field = {id, label, kind: text|file|due, required, hint}`;
+  `step = {id, role, assignee, title, instruction, critic, depends_on[]}`;
+  `run = {id, recipe_id, recipe_name, request_id, at, state: launching|running|done|
+  failed|archived, values, steps[{step_id, title, assignee, role, card_id, status:
+  pending|created|running|done|blocked|failed, depends_on[], error}]}`.
+  При первом чтении в комнату сеются встроенные примеры по её теме (химчистка —
+  «Ответ клиенту на претензию», грузоперевозки — «Сверка накладных», кофейня —
+  «Меню на неделю»; тема не узнана → все три).
+* `POST /api/rooms/{id}/recipes` `{name, description, fields, steps}` → `201` рецепт.
+  Проверки: название 3–120, ≤ 8 полей и ≤ 10 шагов, вид поля только `text|file|due`,
+  роль или исполнитель у шага, зависимости существуют и без циклов, исполнитель —
+  участник комнаты. Ошибка называет поле и шаг по-русски.
+* `PATCH /api/rooms/{id}/recipes/{rid}` — та же проверка; правка встроенного примера
+  делает его своим (`builtin: false`).
+* `DELETE /api/rooms/{id}/recipes/{rid}` — в корзину (не удаление):
+  `{ok, id, message}`; `POST /api/rooms/{id}/recipes/{rid}/restore` — вернуть.
+* `POST /api/rooms/{id}/recipes/{rid}/launch` `{values:{field_id: text}}` → `201`
+  `{ok, run, request_id, created[], warnings[], message}`. Что происходит:
+  1) проверка обязательных полей (`400` с названием поля), срок — `ГГГГ-ММ-ДД`,
+     файл/папка должны существовать;
+  2) `engine_write.create_request` — корень запроса в `triage` с телом «ПЛАН ГОТОВ —
+     РАЗБИРАТЬ НЕ НУЖНО» (поля человека + граф шагов + зависимости);
+  3) карточки шагов БЕЗ зависимостей создаются сразу через
+     `engine_write.create_child_card` (модель/провайдер/мышление комнаты внутри);
+     шаги с зависимостями создаёт `recipes.tick` из сторожа, когда предшественники
+     `done`; порядок задаёт `depends_on` рецепта;
+  4) роли сопоставляются с участниками комнаты по подписи («юрист» → профиль с
+     «юрист» в подписи); если роль не нашлась — запуск идёт, но в `warnings`
+     сказано, кому отдан шаг.
+* `POST /api/rooms/{id}/recipes/from-request` `{request_id, name?}` → `201` рецепт
+  (`source: request`, `from_request`), шаги — карточки запроса по порядку, поля —
+  одно «Что нужно».
+* Интерфейс: вкладка «Рецепты» (`#/room/<id>/recipes`, `web/js/views/recipes.js`,
+  `web/css/view-recipes.css`): карточки с графом шагов слоями, «Запустить» (диалог
+  полей), «Изменить» (редактор полей и шагов), «В корзину», корзина с «Вернуть»,
+  история запусков со ссылкой на запрос. Пустой экран объясняет смысл и даёт
+  «Создать из запроса» / «Создать с нуля».
+* Проверки: `tests/test_recipes.py` (примеры по теме, роли, правка/корзина/возврат,
+  проверки рецепта, запуск → запрос + карточки первого слоя с моделью комнаты,
+  `tick` → следующий слой по зависимостям, обязательные поля, рецепт из запроса),
+  `tests/recipes-view.test.mjs` (слои графа, подписи, пустое состояние, вкладка,
+  одна форма у мока и сервера).
+
+## W29B-Q2 — совместимость с Hermes: экран «Совместимость», сеансы карточек, навык отправки (v1.6.0-dev)
+
+Цель: комната — продолжение Hermes, а не надстройка. Видно, что у участника
+взято из профиля Hermes, что из общих настроек, а что задала комната; у карточки
+известен сеанс Hermes её запуска; из обычного чата Hermes можно отправить запрос
+в комнату навыком `team-room-submit`.
+
+### `GET /api/rooms/{id}/parity` — совместимость участников (только чтение)
+
+Отдаёт по каждому участнику комнаты (`server/parity.py`):
+
+```
+{room, room_title, level, level_label,
+ members: [{profile, role, label, description, profile_dir, read_by, status,
+            model:{provider, model, reasoning, source},        // source: room | agent
+            profile_model:{provider, model, reasoning, source}, // profile | global | none
+            tools:{names[], count, disabled[], source},
+            skills:{own, shared, total, source},
+            mcp:{names[], count, source},
+            permissions:{mode, single_query_mode, allowlist[], allowlist_count,
+                         deny_count, level, level_label, source},
+            diffs:[{code, severity, text, fix:{kind, profile, label}}],
+            differences:[строка]}],
+ summary:{ok, warn, fail, off, total}, fixable:[…], notes:[…], at}
+```
+
+* `status`: `ok` — совпадает с обычным запуском; `warn` — отличия/неполные данные;
+  `fail` — расхождение, меняющее запуск; `off` — профиль не прочитан.
+* Коды расхождений: `model_mismatch` (комната задаёт одну модель, профиль — другую,
+  красное), `model_unknown` (в профиле модели нет), `autonomy_gap` (уровень комнаты
+  обещает больше, чем профиль разрешает без человека), `no_profile`, `config_unreadable`.
+* Источник каждого значения честный: `profile` (свой `config.yaml`), `global`
+  (общие настройки Hermes), `none` (не задано). Модель — одна пара провайдер+модель,
+  как в `agent_models`.
+* Пути наружу не отдаются: `profile_dir` = `profiles/<имя>` или «корень Hermes».
+  Профили, общие настройки и реестр комнаты не меняются; `Cache-Control: no-store`.
+
+### `POST /api/rooms/{id}/parity/fix {profile, action:"reset_model"}`
+
+Единственное «Исправить»: вернуть участнику модель профиля — снимает замену модели
+в реестре комнаты штатным `agent_models.clear` (тот же путь, что кнопка «как в профиле»).
+Профили Hermes не меняются, агенты не запускаются. Ответ — тот же отчёт `parity`.
+Неизвестное `action` → `400` со списком допустимых; чужой участник → `400`; комната
+в архиве → `409`.
+
+### Сеанс Hermes у карточки запроса
+
+* `attempts[].session_id` в деталях запроса (`read_view.attempts` +
+  `engine_read._attempt_facts` ← `agent_models.actual_model`): id сессии
+  КОНКРЕТНОЙ попытки из `task_runs.metadata` или события `owner_admitted`.
+* В дереве работ у карточки — кнопка «Сеанс в Hermes» (копирует id; Hermes Desktop
+  deep-link на сеанс не объявляет, поэтому кнопки-обманки нет). Нет id — нет кнопки.
+
+### Клиент
+
+`web/js/views/parity.js` + `web/css/view-parity.css`, маршрут `#/settings/parity`
+(`router.js`), кнопка «Совместимость с Hermes» в шапке «Проверки системы»
+(`views/diagnostics.js`). Выбор комнаты — в шапке экрана (`?room=<id>`).
+
+### Навык `team-room-submit` (файлами в docs, не в профили)
+
+`docs/hermes-skill/team-room-submit/SKILL.md` + `scripts/submit_request.py`:
+из обычного чата Hermes — «в комнату cafe: сверстать меню на неделю» →
+`POST /api/rooms/{id}/requests` локального приложения. Установка — инструкцией в
+`docs/PARITY.md`; реальные профили Hermes пакет не трогает.
+
+Проверки: `tests/test_parity.py` (11), `tests/parity-view.test.mjs` (8),
+`tests/test_contract_w27.py` (20 — маршруты без дублей).
+
+
+---
+
+## W29B-Q4. Второе мнение и версии свода с различиями
+
+Новый модуль: `server/second_opinion.py` (+ `web/js/svod-diff.js`,
+`web/js/views/second-opinion.js`, `web/css/svod-diff.css`).
+
+### `GET /api/requests/{id}/second-opinion`
+
+Только чтение. Выбор модели для проверки, оценка расхода и уже заданные проверки.
+
+```json
+{
+  "ok": true, "version": 3,
+  "author": {"profile": "lead-profile", "provider": "oblako-a", "model": "d-pro",
+             "label": "oblako-a · d-pro", "source": "room"},
+  "models": [{"provider": "oblako-a", "provider_label": "Облако-А",
+              "model": "d-mini", "label": "Мини", "value": "oblako-a|d-mini"}],
+  "warning": "",
+  "default": {"provider": "lokal", "model": "home", "value": "lokal|home"},
+  "estimate": {"input_tokens": 18000, "output_tokens": 700, "chars": 9000,
+               "base_tokens": 4200, "source": "state.db",
+               "text": "≈ 18 тыс. токенов на входе и 0,7 тыс. на выходе — одна проверка."},
+  "checks": [{"card_id": "t_1a2b3c4d", "title": "Второе мнение · Домашний",
+              "model": "Локальный · home", "assignee": "critic-profile",
+              "status": "done", "running": false, "failed": false,
+              "at": 1763700000, "finished_at": 1763700120,
+              "counts": {"agree": 0, "disagree": 2, "missing": 1},
+              "counts_text": "2 не согласна · 1 не хватает",
+              "items": [{"verdict": "disagree", "label": "не согласна",
+                         "quote": "вернём стоимость за 3 дня", "note": "в договоре 5 дней"}],
+              "source": "card", "text": "…", "error": ""}],
+  "can_run": true, "why_not": "", "running": false
+}
+```
+
+* `models` — каталог Hermes (`agent_models.catalog`), тот же, что в диалоге модели
+  участника: своей таблицы моделей у пакета нет.
+* `default` — первая модель каталога, которая НЕ писала свод (правило пакета).
+* `estimate` — токены, а не доллары: вход = медиана базы запроса (`usage.base_estimate`)
+  + текст свода + задание; выход — короткий список (700 токенов).
+* `checks` — карточки с названием `Второе мнение` из дерева запроса; ответ
+  разобран в пункты `agree|disagree|missing` с цитатой. Ответ не по формату не
+  теряется: `source: "raw"` и текст целиком.
+* `can_run=false` + `why_not`: свода нет / каталог пуст / проверка уже идёт.
+
+### Действие `second_opinion` (`POST /api/requests/{id}/actions`)
+
+Тело: `{action: "second_opinion", model, provider?}`. Создаёт карточку-проверку
+**сразу с выбранной моделью** тем же путём, что остальные карточки
+(`engine_write.create_child_card`): настройка комнаты для исполнителя на время
+создания подменяется парой человека, а выбор записывается в
+`model_guard.set_user_model` — иначе сторож моделей вернул бы модель комнаты.
+Исполнитель — критик комнаты, иначе руководитель.
+
+Ответ: `{ok, action, card_id, title, provider, model, label, assignee, version,
+same_model, estimate, message}`.
+
+Отказы: `400` — нет `model` / модели нет в каталоге; `409` — свода нет
+(`reason=no_svod`), проверка уже идёт (`reason=running`), запрос в архиве
+(`reason=archived`, общая проверка `/actions`); `503` — движок не создал карточку.
+
+### Клиент
+
+* `web/js/svod-diff.js` — diff по абзацам и словам, счётчики, `nextChange`,
+  `findQuote`. Чистые функции, без DOM: `tests/svod-diff.test.mjs`.
+* `web/js/views/second-opinion.js` — блок под сводом (кнопка, список проверок с
+  цитатами, «к фрагменту» — подсветка в тексте), окно выбора модели с оценкой
+  расхода и предупреждением, если каталог неполный. Пока идёт проверка — блок
+  перечитывает состояние раз в 6 с.
+* `web/js/views/request-answer.js` — «сравнить с версией N» теперь показывает
+  различия по словам с счётчиками и переходом «‹ ›» между правками
+  (`web/css/svod-diff.css`).
+* `web/js/shell-svod-bar.js` — тот же запуск в меню «Ещё ▾» («Второе мнение…»).
+
+Проверки: `tests/test_second_opinion.py` (13), `tests/svod-diff.test.mjs` (10),
+`tests/test_contract_w27.py` (маршруты без дублей), `tests/test_contract.py`.
+
+## W29B-Q5 — доска дел колонками и таймлайн (v1.6.0-dev, WAVE29B §Q5)
+
+Экран «Дела» (`#/delos`, `#/room/<id>/delos`) получил переключатель вида
+**«Список / Доска / Время»**; выбор запоминается (`localStorage: teamroom.delos.mode`,
+`teamroom.delos.scale`).
+
+### Сервер: одно новое действие
+
+`POST /api/delos/{id}/actions` — добавлено `action: "reopen"` (`server/delo.py:ACTIONS`).
+
+* Смысл: вернуть дело из «Закрыто»/«Отменено» в работу (перенос карточки на доске
+  из правой колонки в «В работе»). Тело: `{action: "reopen"}`.
+* Ответ: `{ok, action, delo}` — `delo.status` = `open` (или `waiting`, если у дела
+  есть ожидания: `derived_status`). В ленту «Ход дела» пишется `kind="status"`,
+  «Дело возвращено в работу».
+* Отказ: `409 conflict` с `detail.status`, если дело не закрыто и не отменено.
+* Других ручек пакет не заводит: перенос по доске = существующие `pause`, `resume`,
+  `done`, `reopen`; «+ Дело» = `POST /api/rooms/{id}/delos` (существующая ручка,
+  тело `{title, status}`).
+
+### Клиент
+
+* `web/js/views/delo-board.js` — колонки по статусам (`open`, `waiting`, `paused`,
+  `done`, `cancelled`), счётчики, порядок как в списке (`sortDelos`: «ждёт вас» →
+  ближний срок → свежее обновление), перетаскивание указателем (Pointer Events,
+  порог 4 px) и с клавиатуры: `ArrowLeft`/`ArrowRight` на карточке, `Enter` —
+  открыть дело. Чистые функции: `boardColumns`, `boardSummary`, `dragOutcome`,
+  `keyboardTarget`, `createStatusFor`.
+* Колонка «+ Дело» создаёт дело сразу в статусе колонки; «Ждёт ответа» и
+  «Отменено» переносом не наполняются — колонка объясняет, почему (ожидание
+  ставится в карточке дела, отмена — только при создании).
+* `web/js/views/delo-timeline.js` — «Время»: неделя/месяц, ‹ › и «Сегодня»,
+  просроченные дела отдельной панелью («Просрочено: N»), дела без срока и дела
+  вне периода перечислены под сеткой, сегодняшний день подсвечен,
+  «ещё N» раскрывает остальные дела дня. Чистые функции: `buildTimeline`,
+  `gridDays`, `gridWeeks`, `shiftAnchor`, `periodTitle`, `isoDate`, `weekStart`.
+* `web/css/view-delo-board.css` — стили обоих видов (только токены темы);
+  узкий вид: колонки стопкой, неделя в одну колонку.
+* `web/js/views/delo.js` — переключатель видов в шапке, перенос карточки
+  (`moveDelo`: действие → тост с названием колонки), создание дела
+  (`createDelo`); на общей странице «Дела» (все комнаты) «+ Дело» не показывается —
+  дело живёт в комнате, и колонка об этом говорит.
+
+### Про календарь Google
+
+Интеграции нет и в этом пакете не делалось (токен недействителен). Заготовка
+состояния — в отчёте `docs/status/w29-q5.md`: «подключить после переавторизации».
+
+Проверки: `tests/delo-board.test.mjs` (17), `tests/test_delo.py` (87, включая
+`reopen`), `tests/test_contract_actions.py`, `tests/test_contract_w27.py`,
+живой прогон в Chromium на моке (порт 8868, `C:\TeamRoom\Team\w29b-q5`).
+
+## W29-Q9 — токены, часть 2: рутина дешевле, подтверждения без запуска
+
+Новых маршрутов нет; расширены существующие ответы.
+
+### Поле комнаты `routine_model`
+
+| Поле | Тип | По умолчанию | Допустимо |
+|---|---|---|---|
+| `routine_model` | object `{provider, model, reasoning?}` или `{}` | `{}` — модель руководителя | пара из каталога `GET /api/models`; пустое — сброс |
+
+Принимается в `PATCH /api/rooms/{id}` (неизвестная модель/провайдер → `400 bad_request`
+с `field`; профили Hermes не меняются), возвращается в карточке комнаты. Дополнительно
+`GET /api/rooms/{id}` отдаёт:
+
+```json
+{"routine_model": {"provider": "llamacpp", "model": "gemma4", "reasoning": "low", "updated_at": 1793164900},
+ "routine": {"provider": "llamacpp", "model": "gemma4", "reasoning": "low", "source": "routine",
+             "is_custom": true, "label": "LlamaCPP · gemma4 · низкие",
+             "lead": {"provider": "anthropic", "model": "claude-sonnet-5-5", "reasoning": "high", "source": "agent"}},
+ "routine_estimate": {"savings_pct": 87, "lead_usd": 0.031, "routine_usd": 0.004,
+                      "source": "state.db", "text": "≈ 87% дешевле за вызов по вашим сессиям ($0.031 → $0.004)."}}
+```
+
+Что это значит для карточек:
+
+* **автообновление свода** (`POST /api/requests/{id}/svod` и тик) и **карточка
+  «Уточнение от Михаила»** создаются сразу с `routine_model` (`--model/--provider`);
+* пусто → работает прежний путь — модель руководителя (замена комнаты или профиль);
+* `routine_estimate` считается по `sessions.estimated_cost_usd / api_call_count` из
+  `state.db` профилей (**только чтение**, кэш 10 минут). Нет данных по одной из моделей —
+  `savings_pct: null`, честный текст «оценка появится после первых запусков».
+
+### Короткое подтверждение в ответе на вопрос
+
+`POST /api/requests/{id}/actions {action:"answer", question_id, text}`:
+
+* текст — короткое подтверждение (`answers.is_simple_ack`: «спасибо», «понял», «принято»,
+  «ок», до 6 слов, без «да/нет» и отрицаний) и план не меняется → карточка «Уточнение»
+  **не создаётся**, сессия руководителя не запускается;
+* запись реестра получает `status:"no_change"`, `answered:true`, `quick:true`; вопрос
+  сразу «учтено: менять ничего не нужно», `leader_pending:false`, `can_remind:false`
+  (тупика «напомнить» нет);
+* в ленту добавляется ровно одна запись `[Михаил · учтено] Учёл ответ на вопрос q_x —
+  работа не меняется. «…»`; метка ответа `[Михаил · ответ на вопрос …]` остаётся как была;
+* «нет/не нужно» и любые содержательные ответы идут прежним путём — карточка
+  руководителю с контрактом реакции (они меняют план).
+
+### Расход: по карточкам и «потрачено зря»
+
+`GET /api/requests/{id}/usage` дополнен полями:
+
+```json
+{"by_card": [{"task_id": "t_1000aaaa", "calls": 8, "cost_usd": 0.31, "tokens": 155100,
+              "models": ["claude-sonnet-5-5"]}],
+ "wasted": {"attempts": 1, "cards": ["t_3000cccc"], "cost_usd": 0.05, "tokens": 46020,
+            "text": "Потрачено зря: 1 попытка на 1 карточке ≈ $0.050."}}
+```
+
+`by_card` — карточки по убыванию стоимости; `wasted` — попытки `reclaimed` и карточки,
+ушедшие не на первую модель запроса. Цена «зря» — только реально записанные сессии
+попыток; если Hermes сессию не сохранил, стоимость 0, а не выдуманная. Строка `line`
+получает хвост `· зря $0.05`, когда такие деньги есть.
+
+
+## W29B-Q8 — «Итог дня» и поиск по памяти комнат (v1.6.0-dev, WAVE29B §Q8)
+
+Два чтения и один платный шаг: `GET /api/daily`, `GET /api/memory/search`,
+`POST /api/daily/shorten`. Модели по умолчанию не вызываются.
+
+### `GET /api/daily?room=<id>` — что прошло за сутки
+
+Сутки начинаются в 04:00 местного времени (ночная работа относится к прошлому
+дню). Без `room` — по всем комнатам, с `room` — по одной. Ничего не пишет.
+
+```json
+{"generated_at": 1795239506, "day": "2026-11-21", "day_start": 1795158000,
+ "period": "morning", "period_title": "Утро",
+ "counters": {"done": 1, "decisions": 2, "files": 1, "waiting": 1, "stopped": 1,
+              "all": 6, "spent_calls": 187, "spent_tokens": 2969400, "spent_usd": 4.62},
+ "done":      [{"room": "cafe", "room_title": "Кофейня", "request_id": "t_cafe1",
+                "request_title": "Меню на неделю", "at": 1795237705}],
+ "decisions": [{"room": "cafe", "id": "t_cafe1:d_2", "title": "Букеты собираем сами",
+                "status": "accepted", "request_id": "t_cafe1", "at": 1795237705}],
+ "files":     [{"room": "cafe", "name": "меню-на-неделю.md", "at": 1795239505}],
+ "waiting":   [{"room": "cafe", "kind": "question", "text": "Какой объём зерна брать?",
+                "request_id": "t_cafe1", "since": 1795238305,
+                "recommended": "Ответить на вопрос"}],
+ "waiting_total": 1,
+ "stopped":   [{"room": "cafe", "request_id": "t_cafe2", "request_title": "Заказ зерна",
+                "reason": "не нашлась папка", "kind": "failed", "at": 1795235000}],
+ "spent": {"calls": 187, "tokens": 2969400, "cost_usd": 4.62, "source": "state.db",
+           "note": ""},
+ "rooms": [{"id": "cafe", "title": "Кофейня", "done": 1, "decisions": 2, "waiting": 1}],
+ "estimate": {"input_tokens": 130, "output_tokens": 400, "cost_usd": null,
+              "model": "gpt-…", "note": "Стоимость неизвестна: по этой модели ещё не было сессий в state.db."},
+ "short": {"text": "…", "at": 1795239527, "fake": false},
+ "empty": false}
+```
+
+Источники: реестр запросов, состояние корней на доске (`engine_read.today_states`),
+пункты «ждёт вас» тем же расчётом, что страница запроса и вкладка «От вас нужно»
+(`routes_today.waiting_items`), реестр решений (`memory/registry.jsonl`), архив
+(`archive.archive_info`), файлы отчётов комнаты (имя и время, без путей),
+расход Hermes за сутки (`limits.panel`, окно `day`, `state.db` только чтение).
+
+Правила: `counters.X` = длина списка `X`; строка «ждёт вас» всегда с `request_id`
+(есть куда нажать); «failed» и «archived» — в `stopped`, а не в `done`; путей с
+диска в ответе нет. `estimate` и `short` приходят только при `?room=`.
+
+### `POST /api/daily/shorten {room}` — «Короче»
+
+Один вызов дешёвой модели: модель комнаты (`routine_model`/`svod_model`, иначе
+модель руководителя), задание — пять строк по сводке (`daily.short_prompt`).
+Стоимость оценивается ДО запуска по медиане `estimated_cost_usd / токены` в
+`state.db`; если цены нет — `cost_usd: null` и честная приписка, а не выдуманное
+число. Ответ:
+
+```json
+{"ok": true, "text": "Сделано: … Ждёт вас: …", "at": 1795239527,
+ "estimate": {"input_tokens": 130, "output_tokens": 400, "cost_usd": null, "model": null},
+ "fake": false, "saved": true}
+```
+
+`409 nothing_to_shorten` — за сутки событий нет (сжимать нечего), `400
+room_required` — не указана комната, `503 shorten_failed` — модель не ответила
+(в `error.detail.estimate` — та же оценка; готовый итог на экране остаётся).
+Результат хранится в `data/state/<room>/daily/short.json`. Песочница:
+`TEAMROOM_DAILY_FAKE=1` (или путь к файлу с текстом) — настоящий Hermes не
+вызывается.
+
+### `GET /api/memory/search?q=&room=&limit=&kinds=` — «почему мы так решили»
+
+Поиск по памяти комнаты: реестр решений (`memory/registry.jsonl`, последняя строка
+каждого решения), своды и отчёты (`.md` в `data/state/<room>` и `data/reports/<room>`),
+ответы и журнал из `state.json`, заметки зеркала Vault
+(`…/Vault/Projects/Rooms/<room>/**.md`). Только чтение; модель не вызывается.
+
+```json
+{"q": "доставка", "total": 5, "count": 5, "by_kind": {"decision": 2, "answer": 1, "svod": 1},
+ "items": [{"kind": "decision", "title": "Доставка цветов только по вторникам",
+            "snippet": "Доставка цветов только по вторникам …", "ranges": [[0, 8]],
+            "citation": "Решение · 21.11.2026 · accepted", "source": "реестр решений",
+            "room": "cafe", "id": "t_cafe1:d_1", "request_id": "t_cafe1",
+            "route": "#/room/cafe/request/t_cafe1", "at": 1795235905, "score": 8.35}],
+ "note": ""}
+```
+
+`kinds` — `decision|svod|answer|journal|note` через запятую или пробел. Пустой
+запрос ничего не ищет (`items: []`, `note` с подсказкой). Нормализация, токены и
+сниппеты — те же, что в `/api/search` (`server/search.py`), вес вида — в
+`memory_search.WEIGHTS`. Путей с диска в выдаче нет.
+
+### Клиент
+
+* «Сегодня»: карточка «Итог дня» (`web/js/views/daily.js`, `daily-model.js`,
+  `web/css/view-daily.css`) — период, счётчики, разделы «Сделано / Решено /
+  Ждёт вас / Файлы / Остановлено», строка расхода, кнопка «Короче» с ценой на
+  самой кнопке, поле поиска по памяти внизу;
+* палитра Ctrl+K (`palette.js`): находки памяти идут разделом «Память»
+  (`palette-model.sectionForKind('memory')`) и ведут в запрос.
+
+
+## W29-I1 — «песочница не пишет на реальную доску» (v1.6.0-dev, общая защита)
+
+Одна проверка для всех путей записи в доску: `server/board_guard.py`.
+Если сервер работает как песочница/мок/демо (`cfg.sandbox` — `TEAMROOM_HERMES_HOME`,
+`TEAMROOM_SANDBOX=1`, `cfg.mock`/`cfg.demo`, `data_dir` вне каталога приложения) **и**
+доска ведёт в реальный дом Hermes (`%LOCALAPPDATA%/hermes`, `HERMES_HOME`,
+`HERMES_KANBAN_HOME`, `cfg.hermes_home`, найденный дом), любая запись отклоняется с
+кодом `sandbox_real_board` (HTTP 409) и текстом, в котором есть причина и действие
+(`TEAMROOM_ALLOW_REAL_BOARD=1` — единственный обход).
+
+| Путь записи | Где проверка |
+|---|---|
+| CLI канбана (`engine_write`, `model_guard`, `archive`, `thread`, `engine_write_guard`) | `engine_cli._run` → `_board_guard` (глаголы чтения `show/ls/…` не блокируются) |
+| Библиотека канбана в процессе (`stop`/`resume`/`restore`/`launch`) | `kanban_atomic.run` (до разбора запроса) и `kanban_atomic.launch` |
+| Мост к Hermes (`--set`, `--clear-model`, `--clear-effort`) | `tools/kb_bridge.main` → JSON `{ok:false, code:"sandbox_real_board"}`; `agent_models._bridge` — отказ до запуска процесса (`ModelError`, код `sandbox_real_board`) |
+| Сторож моделей | `model_guard.tick`/`preflight` → `skipped_reason:"sandbox_real_board"`, ни пинов, ни пауз |
+| Сторож комнаты, свод, критик | `watcher.tick_once`/`preflight_tick_once` (`skipped_reason`), `svod_live.tick`/`refresh_now` (`reason`/`SvodError`), `critic_loop.run_step` (пустой отчёт) |
+
+`board_guard.check(cfg, board=None, db=…)` → `None` или `{code, message, detail}`;
+`blocked()`, `reason()`, `ensure()` (бросает `BoardWriteBlocked`), `status(cfg)` —
+строка для «Проверки»/лога. Признаки песочницы: `sandbox_signs(cfg)`; реальные корни:
+`real_roots(cfg)` (без корней самой песочницы).
+
+Сторож моделей, кроме того, снимает **только свои** паузы: карточка в `holds` комнаты с
+ТОЧНЫМ `PARK_REASON` (или последнее событие `blocked` с той же причиной дословно — пауза
+до W29). Пауза человека не снимается никогда. Пин не снимается, если в реестре комнаты
+нет записей `agent_models` (`skipped_reason:"no_agent_models"`) или если выбора нет у
+конкретного участника. Пауза ставится один раз за жизнь карточки (`park_once`), поэтому
+цикла «блок ↔ снять» (и `block_loop_detected` → `triage`) больше нет.
+
+Проверки: `tests/test_board_guard.py` (13), `tests/test_model_guard_safety.py` (6),
+`tests/test_model_guard_preflight.py`, `tests/test_contract_actions.py` (действие
+`later` пункта карты проекта принимается своей ручкой), `tests/test_contract_w27.py`
+(подписи причин закрытия совпадают с интерфейсом буквально).
+
+## W29-AC5 — три маршрута, которых не было в документе (v1.6.0)
+
+Сверка таблицы `ROUTES` (`server/app.py` + `install_*_routes`) с этим документом: раздел есть у
+каждого маршрута. Ниже — три, которых не хватало; поведение снято живыми запросами.
+
+### `GET /api/docs?name=<документ>` — текст документа из установки
+
+Белый список — только два документа поставки: `INSTALL.md` (по умолчанию) и `USER-GUIDE.md`.
+`200` → markdown (`text/markdown; charset=utf-8`), заголовок `Cache-Control: no-cache`.
+`400 bad_request` — имени нет в списке (`detail.field: "name"`, `detail.allowed: [...]`);
+`404 not_found` — файла нет в `docs/` этой установки. Отдаётся ровно `docs/<name>` внутри
+папки приложения: произвольные пути с диска этим маршрутом не читаются.
+
+```json
+GET /api/docs?name=INSTALL.md
+→ 200, text/markdown; charset=utf-8
+
+GET /api/docs?name=notes.txt
+→ 400 {"error": {"code": "bad_request", "message": "Этот документ приложению недоступен",
+                 "detail": {"field": "name", "allowed": ["INSTALL.md", "USER-GUIDE.md"]}}}
+```
+
+### `GET /api/rooms/{id}/dismiss_stale?scope=finished_requests` — предпросмотр
+
+**Чтение**, а не действие: сколько пунктов завершённых запросов (`done`/`archived`) закроется
+кнопкой «Закрыть все неактуальные (N)». Ничего не пишет — то же вычисление, что у `POST` с
+`preview: true`; экраны «Сегодня» и «От вас нужно» спрашивают число здесь, чтобы проверка
+интерфейса не видела `POST` на экране чтения. Само действие — `POST` (§W27.4).
+
+`200` → `{ok, scope, room, closed{questions, decisions, approvals, steps}, errors[], total, at,
+message, preview: true}`; в предпросмотре **нет** полей `requests` и `already_closed` (они
+бывают только у `POST`). `scope` кроме `finished_requests` — `400` (`detail.allowed`).
+
+```json
+GET /api/rooms/cafe/dismiss_stale?scope=finished_requests
+→ 200 {"ok": true, "scope": "finished_requests", "room": "cafe",
+       "closed": {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0},
+       "errors": [], "total": 0, "at": 1795314615,
+       "message": "Неактуальных пунктов у завершённых запросов: 0.",
+       "preview": true}
+```
+
+### `GET /reports/{room}/{key}/{rel}` — файл внутри папки отчёта
+
+Отдаёт файл из папки отчёта: тот же обработчик (`h_report_file` → `reports.serve_report_file`),
+что и у `GET /reports/{room}/{key}`, только с относительным путём внутри отчёта. Пустой `rel`
+означает `report.json`, поэтому `GET /reports/{room}/{key}` и `GET /reports/{room}/{key}/report.json`
+дают одно и то же тело. `Content-Type` берётся из типа файла, `Cache-Control: no-cache`.
+
+`403 forbidden` — абсолютный путь, `..` или сегмент/тип вне белого списка (в том числе когда
+файл существует, но показывать его нельзя: это не «не найдено»); `404 not_found` — файла нет.
+
+```json
+GET /reports/cafe/r-20261027-1815-e5f6/report.json
+→ 200, application/json; charset=utf-8, 11 740 байт
+
+GET /reports/cafe/r-20261027-1815-e5f6/../x
+→ 403 {"error": {"code": "forbidden",
+                 "message": "Путь внутри отчёта содержит запрещённые элементы."}}
+```

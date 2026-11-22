@@ -286,6 +286,13 @@ class Base(unittest.TestCase):
     def room(self) -> dict:
         return self.app.call("rooms", "get_room", ((self.cfg, ROOM), {}))
 
+    def select_worker_model(self, provider: str = CHEAP[0], model: str = CHEAP[1]) -> None:
+        """Выбор комнаты для исполнителя (W29-I1: пин правится только по выбору комнаты)."""
+        status, body, _h = self.app.dispatch(
+            "PUT", "/api/rooms/%s/agents/%s/model" % (ROOM, WORKER), {},
+            {"provider": provider, "model": model})
+        self.assertEqual(status, 200, body)
+
     def new_root(self, title: str = "Запрос") -> str:
         root = self.sa.card(title=title, assignee="", status="triage", tenant=TENANT)
         self.app.call("registry", "add_request",
@@ -418,26 +425,35 @@ class CreationTests(Base):
 
 class GuardTests(Base):
     def test_fixes_override_before_start(self):
-        """Карточка с чужой моделью исправляется ДО запуска (модель профиля, override снят)."""
+        """Карточка с чужой моделью исправляется ДО запуска — по выбору КОМНАТЫ.
+
+        W29-I1: раньше сторож «приводил карточку к модели профиля» и просто СНИМАЛ
+        переопределение. После инцидента 21.11 (снятые пины у восьми боевых карточек)
+        пин без выбора комнаты не трогается вообще: единственный законный источник —
+        `agent_models` комнаты. Поэтому тест выбирает модель комнате, а проверка та же:
+        чужая модель исправлена ДО старта, карточку не остановили, событие одно.
+        """
+        self.select_worker_model()
         root = self.new_root("До запуска")
         card_id = self.card("Собери факты", WORKER, "ready", parent=root,
                             model=EXPENSIVE[1], provider=EXPENSIVE[0])
         res = self.tick()
         self.assertIn(card_id, res["fixed"], res)
         row = self.row(card_id)
-        self.assertFalse(row.get("model_override"), row)
-        self.assertFalse(row.get("provider_override"), row)
+        self.assertEqual(row.get("model_override"), CHEAP[1], row)
+        self.assertEqual(row.get("provider_override"), CHEAP[0], row)
         self.assertEqual(row.get("status"), "ready", "до запуска карточку не останавливаем")
         kinds = self.kinds(card_id)
         self.assertEqual(kinds.count("fixed"), 1, kinds)
         event = [e for e in self.events() if e.get("kind") == "fixed"][-1]
-        self.assertIn("claude-sonnet-5-5", event["text"])
-        self.assertIn("qwen36v", event["text"].replace("модель профиля (", ""))
+        self.assertIn(EXPENSIVE[1], event["text"])
+        self.assertIn(CHEAP[1], event["text"])
         journal = (Path(self.cfg.state_dir) / ROOM / "journal.jsonl").read_text("utf-8")
         self.assertIn("исправлена до запуска", journal)
 
     def test_idempotent_tick_ten_times(self):
         """Десять проходов подряд — одно исправление (нет петли и перезаписи)."""
+        self.select_worker_model()          # W29-I1: пин правится только по выбору комнаты
         root = self.new_root("Идемпотентность")
         card_id = self.card("Собери факты", WORKER, "ready", parent=root,
                             model=EXPENSIVE[1], provider=EXPENSIVE[0])
@@ -602,6 +618,7 @@ class ApiTests(Base):
 
     def test_request_details_show_guard(self):
         """Лента `model_guard[]` в деталях запроса: готовый русский текст."""
+        self.select_worker_model()          # W29-I1: пин правится только по выбору комнаты
         root = self.new_root("Лента контроля")
         card_id = self.card("Собери факты", WORKER, "ready", parent=root,
                             model=EXPENSIVE[1], provider=EXPENSIVE[0])

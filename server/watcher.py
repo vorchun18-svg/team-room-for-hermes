@@ -58,6 +58,23 @@ def _module_missing(exc: BaseException) -> bool:
     return isinstance(exc, (KeyError, AttributeError)) or getattr(exc, "status", None) == 501
 
 
+def board_block_reason(cfg) -> str:
+    """W29-I1: почему проходы сторожа не должны писать в доску (пусто — можно).
+
+    Песочница с реальной доской Hermes — это не «прочитать и поправить», это чужие
+    карточки: 21.11.2026 такой проход снял пины и паузы у восьми боевых карточек.
+    """
+    try:
+        try:
+            from . import board_guard as guard
+        except ImportError:                               # pragma: no cover
+            import board_guard as guard                   # type: ignore
+        found = guard.check(cfg, getattr(cfg, "board", None))
+    except Exception:                                     # noqa: BLE001 - защита вторична
+        return ""
+    return str((found or {}).get("message") or "")
+
+
 def local_midnight(ts: int | None = None) -> int:
     """Начало текущих суток по поясу сервера (для счётчика done_today)."""
     lt = time.localtime(ts or time.time())
@@ -128,6 +145,8 @@ class Watcher:
         self.wd_running = False
         #: B-35: с какого момента напоминаем об оценке работы (без ретро-рассылки)
         self._duty_since = int(time.time())
+        #: W29B-Q6: итог последнего прохода уведомлений (канал/показано/пропущено)
+        self.notify_stats: dict | None = None
 
     # --- публичное ---
     def start(self) -> None:
@@ -302,6 +321,13 @@ class Watcher:
         stats = {"rooms": 0, "checked": 0, "pinned": 0, "reclaimed": 0, "held": 0,
                  "released": 0, "errors": 0, "at": stamp}
         self.preflight_last_error = None
+        blocked = board_block_reason(self.cfg)
+        if blocked:
+            stats["skipped_reason"] = "sandbox_real_board"
+            stats["skipped_text"] = blocked
+            self.preflight_stats = stats
+            self.preflight_last_run_at = stamp
+            return stats
         try:
             rooms = self._rooms()
         except Exception as exc:                 # noqa: BLE001 - реестр может быть занят
@@ -467,6 +493,17 @@ class Watcher:
         tick_deadline = time.monotonic() + TICK_BUDGET
         stats = {"rooms": 0, "requests": 0, "ingested": 0, "steps": 0, "errors": 0,
                  "active": False, "at": now}
+        blocked = board_block_reason(self.cfg)
+        if blocked:
+            # W29-I1: песочница с реальной доской — ни карточек, ни моделей, ни записей.
+            stats["skipped_reason"] = "sandbox_real_board"
+            stats["skipped_text"] = blocked
+            self.last_stats = stats
+            self.last_run_at = now
+            return stats
+        # W29B-Q6: факты для уведомлений собираем по ходу прохода и отдаём в
+        # ``notify.tick`` ОДНИМ вызовом в конце тика (правила и канал — там).
+        facts: list = []
         self.last_stats = stats
         self.last_error = None
         try:
@@ -482,6 +519,7 @@ class Watcher:
             stats["rooms"] += 1
             room_id = room.get("id")
             counters: dict = {"working": 0, "needs_you": 0, "done_today": 0}
+            need_roots: list = []          # W29B-Q6: какие запросы комнаты ждут человека
             phase = None
             changed = False
             # 0) модель участников комнаты (WAVE10/13): ДО чтения запросов и до диспетчера.
@@ -512,6 +550,14 @@ class Watcher:
                         detail = self._detail(room, root_id, rec)
                     status = detail.get("status") or "queued"
                     needs_you = bool(detail.get("needs_you"))
+                    # W29-P4: архивный запрос — ПОЛНАЯ остановка. Ни цикла критика,
+                    # ни свода, ни названий, ни «Хода работы», ни ingest: ни одного
+                    # вызова модели и никаких новых карточек. Счётчики его не считают.
+                    # Проверка именно по флагу: статус архивного корня вычисляется
+                    # отдельно и не обязан быть `archived`.
+                    if detail.get("archived") or status == "archived":
+                        stats["archived"] = int(stats.get("archived") or 0) + 1
+                        continue
                     if status in ("working", "reviewing", "synthesizing"):
                         counters["working"] += 1
                         stats["active"] = True
@@ -525,6 +571,16 @@ class Watcher:
                             counters["done_today"] += 1
                     if phase is None:
                         phase = phase_of(detail)
+                    # W29B-Q6: факт для уведомлений — состояние корня на этом проходе.
+                    # Новые события (завершён, ошибка) вычисляет `notify` сравнением
+                    # с прошлым проходом: здесь только снимок, никакой логики.
+                    facts.append({"kind": "root", "room": room_id, "room_name": room.get("name") or "",
+                                  "root": root_id, "status": status,
+                                  "error": detail.get("error") or rec.get("last_error") or "",
+                                  "title": detail.get("title_short") or detail.get("title") or "",
+                                  "needs_you": needs_you})
+                    if needs_you:
+                        need_roots.append(str(root_id))
                     # 1) цикл критика — ДЛЯ ВСЕХ запросов (иначе пост-синтезный критик
                     #    не стартует на завершённом корне); ошибки не валят тик
                     try:
@@ -599,7 +655,17 @@ class Watcher:
             # 3.6) W27-E7 §3: результаты дежурств комнаты — тихая строка в журнале или
             #      карточка «Что выполнено / Что обнаружено / Предлагаю» (лимит ≤ 5 за тик,
             #      идемпотентность по run_id, наружу ничего не уходит).
-            self._duties_tick(room, stats)
+            duty_res = self._duties_tick(room, stats)
+            if isinstance(duty_res, dict) and int(duty_res.get("cards") or 0):
+                # W29B-Q6: дежурство нашло изменения (создана карточка-результат)
+                facts.append({"kind": "duty", "room": room_id, "room_name": room.get("name") or "",
+                              "job": duty_res.get("job_id") or "", "run": duty_res.get("run_id") or "",
+                              "title": "найдены изменения", "count": int(duty_res.get("cards") or 0)})
+            # W29B-Q6: «ждёт ваш ответ: N» — одним фактом на комнату (счётчик из прохода)
+            if counters["needs_you"]:
+                facts.append({"kind": "waiting", "room": room_id, "room_name": room.get("name") or "",
+                              "count": int(counters["needs_you"]), "roots": need_roots,
+                              "title": ""})
             # 4) карта проекта (WAVE 9): очередь направлений — одна строка, ошибки не валят тик
             try:
                 self.app.call("plan", "tick", ((self.cfg, room_id), {"room": room}))
@@ -607,9 +673,45 @@ class Watcher:
                 if not _module_missing(exc):
                     stats["errors"] += 1
                     self._fail("карта проекта %s" % room_id, exc)
+            # 4.5) W29B-Q1: рецепты — шаги, которые ждали предшественника, создаются,
+            #      когда тот готов. Без запусков в работе ничего не делает.
+            try:
+                stats["recipe_cards"] = int(stats.get("recipe_cards") or 0) + int(
+                    (self.app.fn("recipes", "tick")(self.cfg, room) or {}).get("created") or 0)
+            except Exception as exc:  # noqa: BLE001 - рецепты не должны ронять тик
+                if not _module_missing(exc):
+                    stats["errors"] += 1
+                    self._fail("рецепты %s" % room_id, exc)
             self.cache[room_id] = {"counters": counters, "phase": phase, "updated_at": now}
+        # W29B-Q6: ОДИН вызов уведомлений за проход (правила, тихие часы, дедупликация,
+        # канал — server/notify.py). Ошибка канала не валит тик и не мешает счётчикам.
+        self._notify_tick(facts, stats)
         self.last_run_at = now
         return stats
+
+    def _notify_tick(self, facts: list, stats: dict) -> None:
+        """Отдать факты прохода в ``server/notify.tick`` (W29B-Q6).
+
+        Модуля нет — молча пропускаем: уведомления необязательны и не должны
+        ломать основной проход. В песочнице канал — ``TEAMROOM_NOTIFY_FAKE``.
+        """
+        try:
+            func = self.app.fn("notify", "tick")
+        except Exception:                       # noqa: BLE001 - модуль может быть не готов
+            return
+        try:
+            res = func(self.cfg, facts, port=getattr(self.app, "port", None),
+                       log=getattr(self.app, "log", None))
+        except Exception as exc:                # noqa: BLE001 - уведомления вторичны
+            stats["errors"] += 1
+            self._fail("уведомления", exc)
+            return
+        if isinstance(res, dict):
+            if res.get("sent"):
+                stats["notified"] = int(stats.get("notified") or 0) + int(res["sent"])
+            self.notify_stats = {"at": int(time.time()), "channel": res.get("channel"),
+                                 "sent": int(res.get("sent") or 0),
+                                 "skipped": dict(res.get("skipped") or {})}
 
     # --- шаги ---
     def _deadline(self, seconds: float):
@@ -863,12 +965,13 @@ class Watcher:
         if int(res.get("revoked") or 0):
             stats["approvals_revoked"] = int(stats.get("approvals_revoked") or 0) + int(res["revoked"])
 
-    def _duties_tick(self, room: dict, stats: dict) -> None:
+    def _duties_tick(self, room: dict, stats: dict) -> dict:
         """Результаты дежурств комнаты → журнал / «Входящие» / Дело (W27-E7 §3).
 
         Дешёвая операция без моделей: читаем свежие выводы привязанных заданий,
         разбираем блок `результат` и по правилу комнаты кладём карточку. Лимит
         и идемпотентность — внутри `duty_rules.process_runs`; ошибка шага тик не валит.
+        Возвращает сводку прохода (``cards`` — дежурство нашло изменения; W29B-Q6).
         """
         try:
             func = self.app.fn("duty_rules", "process_runs")
@@ -876,17 +979,18 @@ class Watcher:
             if not _module_missing(exc):
                 stats["errors"] += 1
                 self._fail("дежурства комнаты %s" % (room or {}).get("id"), exc)
-            return
+            return {}
         try:
             res = func(self.cfg, room) or {}
         except Exception as exc:                        # noqa: BLE001 - дежурства вторичны
             stats["errors"] += 1
             self._fail("результаты дежурств %s" % (room or {}).get("id"), exc)
-            return
+            return {}
         for key, name in (("processed", "duty_runs"), ("cards", "duty_cards"),
                           ("self", "duty_self")):
             if int(res.get(key) or 0):
                 stats[name] = int(stats.get(name) or 0) + int(res[key])
+        return res
 
     def _agent_models_room(self, room: dict, stats: dict) -> None:
         """Модель комнаты на ВСЕ её карточки + сверка факта (WAVE10, WAVE13 пакет A).

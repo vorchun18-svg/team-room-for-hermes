@@ -61,7 +61,7 @@ ACTIONS = (
     "approve", "reject", "answer",
     "set_stage", "add_part", "set_part",
     "approve_outbox", "edit_outbox", "cancel_outbox", "mark_sent",
-    "pause", "resume", "done",
+    "pause", "resume", "done", "reopen",
     "add_waiting", "clear_waiting",
 )
 #: Действия по пункту «ждёт вашего решения»: уходят в существующий механизм запроса.
@@ -859,6 +859,15 @@ def act(cfg, room_id, delo_id: str, payload: dict, sources: Sources | None = Non
         _tl(delo, now, WHO_YOU, "Дело продолжено", "status")
     elif action == "done":
         _set_status(delo, "done", now, "Дело закрыто")
+    elif action == "reopen":
+        # W29B-Q5: «вернуть в работу» — перенос карточки из «Закрыто»/«Отменено»
+        # в колонку «В работе». Закрытое дело не теряется: лента помнит закрытие.
+        status = derived_status(delo)
+        if status not in ("done", "cancelled"):
+            raise DeloError("Вернуть в работу можно только закрытое или отменённое дело",
+                            http=409, code="conflict", detail={"status": status})
+        delo["status"] = "open"
+        _tl(delo, now, WHO_YOU, "Дело возвращено в работу", "status")
     elif action == "add_waiting":
         who = _need_text(payload.get("who"), "who", WHO_MAX)
         what = _need_text(payload.get("what"), "what", TEXT_MAX)

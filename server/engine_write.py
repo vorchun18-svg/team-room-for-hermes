@@ -420,6 +420,32 @@ def _model_args(cfg, room: dict, profile: str) -> tuple[list, dict]:
     return args, settings
 
 
+def _routine_args(cfg, room: dict, profile: str) -> tuple[list, dict]:
+    """`--model/--provider` для РУТИННОЙ карточки (свод, «Уточнение») — W29-Q9.
+
+    По умолчанию рутина идёт на модели руководителя (тот же путь, что у остальных
+    карточек). Если комната выбрала «модель для рутинного сведения»
+    (``room["routine_model"]``), карточка создаётся сразу с ней — через общий
+    механизм модели карточки, без правок профилей Hermes.
+    """
+    try:
+        try:
+            from . import agent_models as models_mod
+        except ImportError:  # pragma: no cover - плоский импорт
+            import agent_models as models_mod  # type: ignore
+        spec = models_mod.routine_model(room)
+    except Exception:  # noqa: BLE001 - выбор модели не должен мешать создать карточку
+        return _model_args(cfg, room, profile)
+    if not (spec.get("provider") and spec.get("model")):
+        return _model_args(cfg, room, profile)
+    args: list = [opt("model", spec["model"])]
+    if spec.get("provider"):
+        args.append(opt("provider", spec["provider"]))
+    settings = dict(spec)
+    settings.update({"source": "routine", "profile": str(profile or "")})
+    return args, settings
+
+
 def _push_reasoning(cfg, board: str, card_id: str, reasoning: str) -> list:
     """Уровень мышления карточки через мост (в CLI `create` такого флага нет)."""
     if not reasoning:
@@ -530,13 +556,17 @@ def _with_models_block(cfg, room: dict, body: str) -> str:
 
 
 def create_child_card(cfg, room: dict, board: str, parent_id: str, assignee: str,
-                      title: str, body: str, kind: str, idem_key: str | None = None) -> str:
+                      title: str, body: str, kind: str, idem_key: str | None = None,
+                      routine: bool = False) -> str:
     """Создать карточку-ребёнка (критик/доработка/подзадача) и вернуть её id.
 
     Модель/провайдер участника передаются сразу в `create` (W13-A): раньше карточка
     создавалась без них и стартовала на модели профиля, если сторож не успевал
     проставить переопределение до допуска запуска. Уровень мышления ставится мостом
     сразу после создания — в CLI `create` для него флага нет.
+
+    ``routine=True`` — рутинная карточка (автообновление свода): модель комнаты для
+    рутинного сведения, если выбрана, иначе модель исполнителя (W29-Q9).
     """
     if not (assignee or "").strip():
         raise EngineWriteError("bad_request", "Не указан исполнитель новой карточки.")
@@ -547,7 +577,8 @@ def create_child_card(cfg, room: dict, board: str, parent_id: str, assignee: str
     tenant = (room.get("tenant") or f"{TENANT_PREFIX}{room.get('id') or ''}").strip()
     body = body if isinstance(body, str) else str(body or "")
     key = idem_key or f"tr-{kind}-{parent_id}-{hashlib.sha1(body.encode('utf-8')).hexdigest()[:10]}"
-    model_args, settings = _model_args(cfg, room, assignee)
+    model_args, settings = (_routine_args(cfg, room, assignee) if routine
+                            else _model_args(cfg, room, assignee))
     path = _write_body(cfg, body, f"{kind}-{parent_id}")
     try:
         args = ["create", _title(title, body), opt("assignee", assignee), opt("parent", parent_id),
@@ -591,12 +622,20 @@ def card_reclaim(cfg, board: str, task_id: str, *, reason: str = "") -> dict:
 
 def card_block(cfg, board: str, task_id: str, *, reason: str = "",
                kind: str = "needs_input") -> dict:
-    """Поставить карточку на паузу (`block <id> --kind needs_input`)."""
+    """Поставить карточку на паузу (`block <id> <причина> --kind needs_input`).
+
+    Причина у `block` — ПОЗИЦИОННЫЙ аргумент (`reason` с `nargs="*"` в CLI Hermes), а не
+    флаг `--reason`. Раньше мы передавали `--reason=<текст>`, CLI писал этот токен в доску
+    как саму причину, и человек видел в паузе «--reason=модель не подтверждена…». Поэтому
+    причина идёт после `--` (значение с ведущим дефисом не станет флагом).
+    """
     task_id = assert_task_id(task_id, "task_id")
     text = _reason(reason or "остановлено пользователем")
-    args = ["block", task_id, opt("reason", text)]
+    args = ["block", task_id]
     if kind:
         args.append(opt("kind", str(kind)))
+    if text:
+        args += positional(text)
     _out, ms = _run(cfg, board, args)
     return {"ok": True, "detail": f"Карточка {task_id} остановлена.", "cmd_ms": ms,
             "task_id": task_id}
@@ -639,11 +678,16 @@ def card_set_model(cfg, board: str, task_id: str, *, model=None, provider=None) 
 
 
 def _reason(text) -> str:
-    """Причина действия для CLI: одна строка, без NUL, до 200 знаков."""
+    """Причина действия для CLI: одна строка, без NUL, до 200 знаков.
+
+    Ведущие дефисы снимаем: `block`/`promote` принимают причину ПОЗИЦИОННО, и текст,
+    начинающийся с «-», CLI принял бы за флаг (так в доску когда-то попал токен
+    «--reason=…»).
+    """
     clean = " ".join(str(text or "").split())
     if "\x00" in clean:
         raise EngineWriteError("bad_request", "В причине есть NUL-байт.", detail={"field": "reason"})
-    return clean[:200]
+    return clean.lstrip("-").strip()[:200]
 
 
 # ---------------------------------------------------------------- атомарные остановка/продолжение
@@ -779,9 +823,11 @@ def _stop_cli(cfg, board: str, task_id: str, *, reason: str, kind=None) -> dict:
             total += _cli_run(cfg, board, ["reclaim", task_id, opt("reason", text)], steps)
         row = _card_worker(cfg, board, task_id) or row
         if str(row.get("status") or "") in ("running", "ready"):
-            args = ["block", task_id, opt("reason", text)]
+            args = ["block", task_id]
             if kind:
                 args.append(opt("kind", str(kind)))
+            if text:
+                args += positional(text)          # причина у `block` — позиционная
             total += _cli_run(cfg, board, args, steps)
         row = _card_worker(cfg, board, task_id) or row
         alive = bool(pid) and _pid_alive(pid)
@@ -826,7 +872,9 @@ def _move_cli(cfg, board: str, task_id: str, *, mode: str, model=KEEP_MODEL,
             total += _cli_run(cfg, board, ["unblock", task_id, opt("reason", text)], steps)
         row = _card_worker(cfg, board, task_id) or row
         if str(row.get("status") or "") == "todo":
-            total += _cli_run(cfg, board, ["promote", task_id, opt("reason", text)], steps)
+            promo = ["promote", task_id]          # причина у `promote` — тоже позиционная
+            promo += positional(text) if text else []
+            total += _cli_run(cfg, board, promo, steps)
         row = _card_worker(cfg, board, task_id) or row
         status = str(row.get("status") or "")
         alive = bool(pid) and _pid_alive(pid)

@@ -19,7 +19,7 @@ from server import config, export  # noqa: E402
 
 SPEC = {
     "version": 1,
-    "title": "Юнит-экономика моти",
+    "title": "Юнит-экономика суфле",
     "summary": "Маржа 48,8 %.",
     "blocks": [{"type": "stats", "items": [{"label": "Маржа", "value": "48,8 %"}]},
                {"type": "text", "md": "Цена 220 ₽ даёт 48,8 % маржи."},
@@ -29,8 +29,8 @@ SPEC = {
 
 def make_detail(report_path=None, answer="## Вывод\n\nМаржа **48,8 %** при цене 220 ₽."):
     return {
-        "id": "t_a1b2c3d4", "room": "cafe", "title": "Себестоимость моти", "status": "done",
-        "created_at": 1761700000, "duration_s": 5400, "text": "Посчитай себестоимость моти",
+        "id": "t_a1b2c3d4", "room": "cafe", "title": "Себестоимость суфле", "status": "done",
+        "created_at": 1761700000, "duration_s": 5400, "text": "Посчитай себестоимость суфле",
         "synthesis": {"state": "ready", "text_md": answer, "author": "team-director",
                       "at": 1761701000, "version": 1, "legacy": False},
         "next_steps": [
@@ -58,7 +58,7 @@ def make_detail(report_path=None, answer="## Вывод\n\nМаржа **48,8 %**
                       {"path": "C:/TeamRoom/Vault/Projects/Лето/нет.md", "title": "Нет файла",
                        "exists": False}],
         "tree": [
-            {"id": "t_a1b2c3d4", "parent_ids": [], "title": "Себестоимость моти",
+            {"id": "t_a1b2c3d4", "parent_ids": [], "title": "Себестоимость суфле",
              "assignee": "team-director", "role": "root", "status": "done", "duration_s": 5400},
             {"id": "t_child0001", "parent_ids": ["t_a1b2c3d4"], "title": "Юнит-экономика",
              "assignee": "team-cfo", "role": "worker", "status": "done",
@@ -68,7 +68,7 @@ def make_detail(report_path=None, answer="## Вывод\n\nМаржа **48,8 %**
         ],
         "progress": {"done": 2, "total": 2, "percent": 100},
         "report": ({"available": True, "kind": "spec", "path": str(report_path),
-                    "title": "Юнит-экономика моти"} if report_path else
+                    "title": "Юнит-экономика суфле"} if report_path else
                    {"available": False, "kind": None, "path": None, "title": None}),
         "warnings": [{"code": "legacy_metadata", "message": "Metadata старого формата"}],
     }
@@ -79,7 +79,7 @@ class MarkdownTest(unittest.TestCase):
         self.md = export.export_request_md(make_detail())
 
     def test_header_and_meta(self):
-        self.assertTrue(self.md.startswith("# Себестоимость моти"))
+        self.assertTrue(self.md.startswith("# Себестоимость суфле"))
         self.assertIn("**Статус:** готово", self.md)
         self.assertIn("**Комната:** cafe", self.md)
         self.assertIn("**Длительность:** 1 ч 30 мин", self.md)
@@ -118,7 +118,7 @@ class MarkdownTest(unittest.TestCase):
         self.assertIn("`C:/TeamRoom/Vault/Projects/Лето/смета.xlsx`", self.md)
         self.assertIn("(не найден)", self.md)
         self.assertIn("## Дерево работ", self.md)
-        self.assertIn("- **Себестоимость моти** (team-director, корень, done", self.md)
+        self.assertIn("- **Себестоимость суфле** (team-director, корень, done", self.md)
         self.assertIn("  - **Юнит-экономика** (team-cfo, исполнитель, done", self.md)
         self.assertIn("    - **Проверка цифр** (team-critic, критик, done)", self.md)
         self.assertIn("Маржа 48,8 %.", self.md)
@@ -227,18 +227,18 @@ class HtmlTest(unittest.TestCase):
         self.assertIn('id="rk-spec"', html)
         payload = json.loads(re.search(r'<script type="application/json" id="rk-spec">(.*?)</script>',
                                        html, re.S).group(1))
-        self.assertEqual(payload["title"], "Себестоимость моти")
+        self.assertEqual(payload["title"], "Себестоимость суфле")
         self.assertIn("комната cafe", payload["subtitle"])
         self.assertIn("## Ответ", payload["md"])
 
     def test_report_spec_embedded(self):
         html = self.html(make_detail(self.spec_path))
         self.assertIn('data-module="/js/report/index.js"', html)
-        self.assertIn("Юнит-экономика моти", html)
+        self.assertIn("Юнит-экономика суфле", html)
         payload = json.loads(re.search(r'<script type="application/json" id="rk-spec">(.*?)</script>',
                                        html, re.S).group(1))
         self.assertIsNotNone(payload["report"])
-        self.assertEqual(payload["report"]["spec"]["title"], "Юнит-экономика моти")
+        self.assertEqual(payload["report"]["spec"]["title"], "Юнит-экономика суфле")
         self.assertEqual(len(payload["report"]["spec"]["blocks"]), 3)
         self.assertIn("data:image/png;base64", payload["report"]["spec"]["blocks"][2]["images"][0]["src"])
 

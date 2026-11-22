@@ -306,7 +306,10 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     }
     for (const panel of panels.values()) {
       const on = panel.dataset.panel === activeTab;
-      panel.classList.toggle('hidden', !on);
+      // Класс `hidden` (display: none) не трогаем: панели лежат в одной ячейке
+      // grid и неактивные только невидимы — иначе высота окна = высота вкладки
+      // и «Настройки комнаты» прыгают при переключении (дефект 12, W29-P3).
+      panel.classList.toggle('roomdlg__panel--off', !on);
       if (on) panel.removeAttribute('hidden');
       else panel.setAttribute('hidden', '');
     }
@@ -315,6 +318,9 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   function showTab(id, focusTab = false) {
     activeTab = panels.has(String(id)) ? String(id) : 'main';
     syncTabs();
+    // Каждый раздел открывается с начала: прокрутка одной вкладки не «съедает»
+    // верх другой (окно при этом не двигается).
+    if (body && typeof body.scrollTop === 'number') body.scrollTop = 0;
     if (focusTab) {
       const btn = tabButtons.get(activeTab);
       if (btn && typeof btn.focus === 'function') btn.focus();
@@ -347,6 +353,10 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
 
   const formId = 'roomdlg-form';
   const form = h('form', { class: 'roomdlg', id: formId, novalidate: true });
+  // Все разделы — в одной ячейке grid (W29-P3, дефект 12): окно имеет постоянную
+  // высоту по самому высокому разделу, а не «подстраивается» под активную вкладку.
+  const panelsStack = h('div', { class: 'roomdlg__panels' });
+  form.appendChild(panelsStack);
   body.appendChild(form);
   dialog.appendChild(body);
 
@@ -357,7 +367,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       'data-panel': tab.id, tabindex: '-1',
     });
     panels.set(tab.id, panel);
-    form.appendChild(panel);
+    panelsStack.appendChild(panel);
   }
   const mainPanel = panels.get('main');
   const membersPanel = panels.get('members');
@@ -591,7 +601,10 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
           h('span', { class: 'roomdlg__person-role' }, roleLabelOf(person.role)),
         ),
       );
-      if (model) row.appendChild(h('div', { class: 'roomdlg__person-model small muted' }, model));
+      // Строка модели обрезается по ширине колонки — подсказка несёт полный текст
+      // (иначе на «Составе» читается «…: Дилиж…» и непонятно, что за модель).
+      if (model) row.appendChild(h('div', { class: 'roomdlg__person-model small muted', title: model }, model));
+
 
       const actions = h('div', { class: 'roomdlg__person-actions' });
       if (full && full.id) {
@@ -728,6 +741,47 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   for (const sec of GAP_CHOICES) gapSelect.appendChild(h('option', { value: String(sec) }, minutesRu(sec)));
   gapSelect.value = String(pickSeconds((full && full.auto_svod_min_gap_s) || 600, GAP_CHOICES, 600));
 
+  /** W29-Q9: «Модель для рутинного сведения» — автосвод и «Уточнение» на лёгкой модели. */
+  const routineSelect = h('select', {
+    class: 'select', id: 'roomdlg-routine-model',
+    'aria-label': 'Модель для рутинного сведения',
+  });
+  routineSelect.appendChild(h('option', { value: '' }, 'Как у руководителя (по умолчанию)'));
+  for (const provider of (catalog && Array.isArray(catalog.providers) ? catalog.providers : [])) {
+    const pid = String((provider && provider.id) || '');
+    if (!pid) continue;
+    for (const model of (Array.isArray(provider.models) ? provider.models : [])) {
+      const mid = String((model && model.id) || '');
+      if (!mid) continue;
+      routineSelect.appendChild(h('option', { value: pid + '\u0001' + mid },
+        String(provider.label || pid) + ' · ' + String(model.label || mid)));
+    }
+  }
+  const routineSaved = (full && full.routine_model) || {};
+  if (routineSaved.provider && routineSaved.model) {
+    const desired = String(routineSaved.provider) + '\u0001' + String(routineSaved.model);
+    routineSelect.value = desired;
+    // Каталог мог не ответить или модель уже убрали: выбор комнаты всё равно виден,
+    // иначе поле выглядело бы пустым (W29-Q9).
+    if (routineSelect.selectedIndex < 0) {
+      routineSelect.appendChild(h('option', { value: desired, selected: true },
+        String(routineSaved.provider) + ' · ' + String(routineSaved.model) + ' (нет в каталоге)'));
+    }
+  } else {
+    routineSelect.value = '';
+  }
+
+  const routineEstimate = (full && full.routine_estimate) || null;
+  const routineNote = h('div', { class: 'roomdlg__hint small' },
+    (routineEstimate && routineEstimate.text)
+      || 'По умолчанию свод и «Уточнение» идут на модели руководителя.');
+  routineSelect.addEventListener('change', () => {
+    routineNote.textContent = routineSelect.value
+      ? 'Выбрана лёгкая модель. Оценка экономии обновится после сохранения — считается по вашим сессиям, без выдуманных цифр.'
+      : 'Рутинные карточки вернутся на модель руководителя.';
+    markDirty();
+  });
+
   /** Выключили автообновление — настройки частоты не к чему применять. */
   function renderSvodState() {
     const on = Boolean(autoSvodInput.checked);
@@ -750,6 +804,10 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       h('div', { class: 'roomdlg__field-mini' },
         h('span', { class: 'field__label' }, 'И не чаще раза в'),
         gapSelect)),
+    h('div', { class: 'roomdlg__field-mini' },
+      h('span', { class: 'field__label' }, 'Модель для рутинного сведения'),
+      routineSelect,
+      routineNote),
     h('div', { class: 'roomdlg__hint small' },
       '«Тишина» — сколько подождать после последнего изменения, чтобы не пересобирать свод '
       + 'после каждого шага. «Не чаще раза в» — потолок частоты: свод не будет обновляться '
@@ -1435,6 +1493,14 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
       auto_svod: Boolean(autoSvodInput.checked),
       auto_svod_quiet_s: Number(quietSelect.value) || 180,
       auto_svod_min_gap_s: Number(gapSelect.value) || 600,
+      // W29-Q9: модель для рутинного сведения; пусто — «как у руководителя».
+      routine_model: (() => {
+        const raw = String(routineSelect.value || '');
+        if (!raw) return {};
+        const cut = raw.indexOf('\u0001');
+        if (cut <= 0) return {};
+        return { provider: raw.slice(0, cut), model: raw.slice(cut + 1) };
+      })(),
       // W23-MG2: контроль моделей — «строго» (по умолчанию) или «только предупреждать».
       model_guard: guardField.value(),
     };

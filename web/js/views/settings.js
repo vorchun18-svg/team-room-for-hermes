@@ -136,7 +136,7 @@ const FAQ = [
   { q: 'Кто что делает сейчас?', a: 'Вкладка «Команда»: у каждого профиля живой статус, текущая задача и последняя работа. Если все простаивают — смотрите группу «Статус» выше.', tab: 'team', link: 'Команда' },
   { q: 'Почему ничего не происходит?', a: 'Чаще всего остановился движок команды — он раздаёт задачи исполнителям. В группе «Статус» видно его состояние и есть кнопка «Проверить доску сейчас»: она один раз запускает готовые задачи, не дожидаясь минутного таймера, и показывает, что именно запустилось. Второй вариант — запрос ещё не разобран на работы: нажмите «Разложить сейчас» на странице запроса (это обращение к модели, только по вашему клику).', tab: 'team', link: 'Кто чем занят' },
   { q: 'Что сказал критик? Можно переделать?', a: 'На странице запроса есть блок «Проверка критика»: вердикт и замечания «где / в чём проблема / что исправить». Кнопка «На доработку» отправляет ответ руководителю комнаты с вашим замечанием — получится новая версия.', tab: 'composer', link: 'К запросам' },
-  { q: 'Как попросить интерактивный отчёт?', a: 'Скажите в запросе прямо: «сделай интерактивный отчёт с таблицей и графиком». Команда соберёт страницу отчёта — она появится во вкладке «Отчёты» и откроется на весь экран.', tab: 'reports', link: 'Отчёты' },
+  { q: 'Как попросить интерактивный отчёт?', a: 'Скажите в запросе прямо: «сделай интерактивный отчёт с таблицей и графиком». Команда соберёт страницу отчёта — она появится во вкладке «Результаты» и откроется на весь экран.', tab: 'reports', link: 'Результаты' },
   { q: 'Как добавить агента?', a: 'Вкладка «Команда» → «Добавить»: список профилей Hermes с описаниями. Можно добавить, например, программиста на постоянку — состав комнаты меняется в любой момент.', tab: 'team', link: 'Добавить агента' },
   { q: 'Как завести комнату?', a: 'Блок «Новая комната» ниже: название, руководитель комнаты и, если нужно, критик. После создания откройте блок «Команда» и добавьте исполнителей.', anchor: '#set-newroom', link: 'Новая комната' },
   { q: 'Что было раньше по теме?', a: 'Поиск по всему приложению — Ctrl+K, а также вкладки «Журнал» (хронология событий) и «Карта проекта» (решения).', tab: 'journal', link: 'Журнал' },
@@ -782,6 +782,13 @@ async function mountSettings(el, ctx) {
   renderPerm();
   renderSaveState();
 
+  /* ------------------------------------ расход и лимиты (W29-P9) */
+
+  // Панель живёт отдельным файлом (views/limits.js): экран настроек не
+  // разрастается, а панель можно открыть и из шапки (чип «5 ч: …»).
+  const limitsHost = h('div', { class: 'set-section', id: 'set-limits' });
+  root.appendChild(limitsHost);
+
   /* --------------------------------------------------------------- FAQ */
 
   const faq = h('section', { class: 'set-section', id: 'set-faq' });
@@ -959,6 +966,50 @@ async function mountSettings(el, ctx) {
     }
   })();
 
+  /* --------------------------------------- уведомления Windows (W29B-Q6) */
+
+  // Раздел «Уведомления»: по умолчанию выключены, включаются здесь; виды событий,
+  // тихие часы, частота, кнопка «Проверить» и журнал последних уведомлений.
+  const notifyHost = h('div', { class: 'set-section', id: 'set-notify' });
+  root.appendChild(notifyHost);
+  (async () => {
+    try {
+      const m = await import('./notify-settings.js');
+      if (stopped || !m || typeof m.mountNotifySettings !== 'function') {
+        notifyHost.remove();
+        return;
+      }
+      const inst = await m.mountNotifySettings(notifyHost, ctx);
+      if (stopped && inst && typeof inst.unmount === 'function') inst.unmount();
+    } catch (err) {
+      console.warn('[settings] уведомления недоступны', err);
+      notifyHost.remove();
+    }
+  })();
+
+  /* ------------------------------------------- диктовка и словарь (DICT-UI) */
+
+  /* ------------------------------------------------ хранилище (W29-P8) */
+
+  // Раздел «Хранилище»: сколько занято чем и что уберётся. Полный экран —
+  // #/settings/storage (views/storage.js), здесь — короткая сводка и переход.
+  const storageHost = h('div', { class: 'set-section', id: 'set-storage' });
+  root.appendChild(storageHost);
+  (async () => {
+    try {
+      const m = await import('./storage.js');
+      if (stopped || !m || typeof m.mountStorageSection !== 'function') {
+        storageHost.remove();
+        return;
+      }
+      const inst = await m.mountStorageSection(storageHost, ctx);
+      if (stopped && inst && typeof inst.unmount === 'function') inst.unmount();
+    } catch (err) {
+      console.warn('[settings] хранилище недоступно', err);
+      storageHost.remove();
+    }
+  })();
+
   /* ------------------------------------------- диктовка и словарь (DICT-UI) */
 
   // Раздел пишет другой исполнитель: если файла ещё нет — просто не показываем
@@ -985,6 +1036,18 @@ async function mountSettings(el, ctx) {
 
   /* -------------------------------------------------------- старт и уборка */
 
+  let limitsUi = null;
+  (async () => {
+    try {
+      const m = await import('./limits.js');
+      if (stopped || !m || typeof m.mountLimits !== 'function') { limitsHost.remove(); return; }
+      limitsUi = await m.mountLimits(limitsHost, ctx);
+    } catch (err) {
+      console.warn('[settings] расход и лимиты недоступны', err);
+      limitsHost.remove();
+    }
+  })();
+
   loadHealth();
   loadProfiles();
   loadDiag();
@@ -1004,6 +1067,7 @@ async function mountSettings(el, ctx) {
     unmount() {
       stopped = true;
       if (timer && typeof timer.stop === 'function') timer.stop();
+      if (limitsUi && typeof limitsUi.destroy === 'function') limitsUi.destroy();
       root.remove();
     },
   };

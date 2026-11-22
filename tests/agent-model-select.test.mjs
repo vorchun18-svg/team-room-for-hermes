@@ -407,6 +407,70 @@ test('обычное текстовое поле микрофон по-преж�
   assert.equal(byClass(host, 'mic-btn').length, 1);
 });
 
+/* ─────────────────── «Своя модель»: использовать введённое (W29-FIX1) ──── */
+
+test('«Своя модель»: введённое имя уходит в комнату с пометкой custom', async () => {
+  const { api, row } = await mountLive(TWINS);
+  row.setProvider('ollama-cloud');
+  row.setQuery('deepseek-v4-pro:0901');        // такого id в каталоге нет
+  const own = optionsOf(row).find((n) => n.dataset.custom === '1');
+  assert.ok(own, 'пункт «Своя модель» есть в списке');
+  assert.match(row.customOption(), /deepseek-v4-pro:0901/, 'в пункте видно введённое название');
+  assert.match(String(own.textContent), /Своя модель/);
+  own.dispatch('click', { type: 'click', target: own });
+  assert.equal(row.model(), 'deepseek-v4-pro:0901', 'сохранено ровно введённое');
+  assert.equal(row.isCustom(), true);
+  await row.save();
+  assert.deepEqual(lastPut(api)[2],
+    { provider: 'ollama-cloud', model: 'deepseek-v4-pro:0901', reasoning: 'high', custom: true },
+    'сервер получает пометку «своя модель» и проверит имя по каталогу');
+});
+
+test('«Своя модель» не предлагается, когда введённое точно есть в каталоге', async () => {
+  const { row } = await mountLive(TWINS);
+  row.setProvider('anthropic');
+  row.setQuery('claude-fable-5-1');
+  assert.equal(optionsOf(row).filter((n) => n.dataset.custom === '1').length, 0);
+  assert.equal(row.customOption(), '');
+  // Подстрока — это не точное совпадение: введённое можно взять как своё имя.
+  row.setQuery('claude-fable');
+  assert.equal(row.customOption(), 'Своя модель: «claude-fable»');
+  row.setQuery('claude-fable-9');               // а такого нет — снова «своя»
+  assert.match(row.customOption(), /claude-fable-9/);
+});
+
+test('«Своя модель»: клавиатура выбирает последний пункт списка', async () => {
+  const { row } = await mountLive(TWINS);
+  row.setProvider('ollama-cloud');
+  row.setQuery('qwen-own:42');
+  row.key('Escape');                             // свернуть и начать с чистого листа
+  row.searchInput().dispatch('focus', { type: 'focus' });
+  row.setQuery('qwen-own:42');
+  for (let i = 0; i < 12; i += 1) row.key('ArrowDown');
+  row.key('Enter');
+  assert.equal(row.model(), 'qwen-own:42');
+  assert.equal(row.isCustom(), true);
+});
+
+test('«Своя модель»: предупреждение сервера видно строкой, а не только в ответе', async () => {
+  installDom();
+  const api = fakeApi();
+  api.put = async (path, body) => {
+    api.calls.push(['PUT', path, body]);
+    return { member: {}, applied: { cards_updated: 0, pending_running: 0, cards_failed: [] },
+      warnings: ['Модели «qwen-own:42» нет в каталоге Hermes — сохранена как ваш выбор.'] };
+  };
+  const host = new FakeElement('div');
+  const ui = await mountAgentModel(host, { api }, {
+    room: ROOM, catalog: TWINS, mode: 'live', profile: 'team-director',
+  });
+  const row = ui.rowFor('team-director');
+  row.setProvider('ollama-cloud');
+  row.chooseModel('ollama-cloud', 'qwen-own:42', { custom: true });
+  await row.save();
+  assert.match(row.warnText(), /нет в каталоге/, 'человек видит предупреждение после сохранения');
+});
+
 /* ─────────────────────────── CSS: место только под стрелку ────────────── */
 
 test('CSS: справа в поле — стрелка списка, а не микрофон', () => {

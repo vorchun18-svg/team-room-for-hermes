@@ -36,6 +36,7 @@ import mock_versions
 from mock_core import (ALLOWED_HOSTS, CRITIC_STATES, FIX_DIR, MAX_BODY, MIME, PHASES, PHASES_PLAIN,  # noqa: F401
                        WEB_DIR, ApiError, Raw, allowed_methods, inside)
 import mock_stt
+import mock_storage
 
 
 # --- HTTP ------------------------------------------------------------------
@@ -82,8 +83,21 @@ class Handler(BaseHTTPRequestHandler):
                                {"method": method, "allowed": list(allowed)})
             if method == "POST" and path == "/api/stt/transcribe":
                 return self._respond(self._stt_transcribe(query))
+            # W29-P8: хранилище — свои ответы и память (реальные папки не трогаем).
+            if path.startswith("/api/storage"):
+                return self._respond(self._storage(method, path, query))
+            m_link = re.fullmatch(r"/api/rooms/[a-z0-9-]{2,32}/materials-link", path)
+            if m_link:
+                payload = self._read_json() if method == "POST" else {}
+                if method == "GET":
+                    return self._respond((200, mock_storage.materials_link()))
+                return self._respond((200, mock_storage.materials_link_set(payload)))
             # W24-N3: отметка захода на «Сегодня» — только в памяти демо.
             if method == "POST" and path == "/api/today/seen":
+                # W29-AC1: тело читаем всегда. Иначе неразобранные байты остаются
+                # в keep-alive соединении, и следующий запрос (например, CSS)
+                # приходит как «{}GET …» — сервер отвечает 501 и ломает страницу.
+                self._read_json()
                 return self._respond((200, app.today_seen()))
             m = re.fullmatch(r"/api/stt/recordings/([a-z0-9][a-z0-9_-]{5,40})/parts/(\d{1,3})", path)
             if m and method in ("PUT", "POST"):
@@ -171,6 +185,38 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "audio_empty", "Аудио не получено", {"got": len(audio), "length": length})
         language = (query.get("language", [""])[0] or "").strip() or None
         return 200, mock_stt.transcribe(audio, ctype, language)
+
+    def _storage(self, method: str, path: str, query: dict) -> tuple:
+        """`/api/storage*` демо: ответы из памяти, диск не читается и не чистится."""
+        if path == "/api/storage":
+            return 200, mock_storage.overview()
+        if path == "/api/storage/policy":
+            if method == "PUT":
+                payload = self._read_json() if method == "PUT" else {}
+                try:
+                    return 200, mock_storage.policy_put(payload)
+                except ValueError as exc:
+                    code = str(exc)
+                    raise ApiError(400, "bad_request",
+                                   "Настройка хранения не сохранена" if code.startswith(("unknown", "range"))
+                                   else code, {"error": code})
+            return 200, mock_storage.policy_get()
+        if path == "/api/storage/materials-policy":
+            file_path = (query.get("path") or [""])[0]
+            if not file_path:
+                raise ApiError(400, "bad_request", "Не указан путь файла (path)", {"field": "path"})
+            return 200, mock_storage.material_policy(file_path)
+        if path == "/api/storage/clean":
+            payload = self._read_json()
+            try:
+                return 200, mock_storage.clean(payload)
+            except ValueError as exc:
+                if str(exc) == "confirm_required":
+                    raise ApiError(400, "confirm_required",
+                                   "Удаление без подтверждения не выполняется: покажите список "
+                                   "и нажмите «Удалить» ещё раз", {})
+                raise ApiError(400, "bad_request", str(exc), {})
+        raise ApiError(404, "not_found", "Неизвестный эндпоинт хранилища", {"path": path})
 
     def _stt_part_save(self, rid: str, part: int) -> tuple:
         """PUT/POST /api/stt/recordings/{rid}/parts/{n}: тело — байты части.

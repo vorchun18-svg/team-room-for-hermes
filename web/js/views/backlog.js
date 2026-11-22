@@ -15,13 +15,15 @@ import {
   segmented, dueBadge, statusChip, lsGet, lsSet, confirmDialog,
 } from '../ui.js';
 import {
-  partitionBacklog, blockedCards, inboxCount, inboxSummary, backlogQuestionId,
+  partitionBacklog, blockedCards, inboxCount, inboxSummary, backlogQuestionId, systemPauses,
   groupSteps, buildAgenda, agendaRange, icsAllUrl,
   kindLabel, STEP_GROUP_MODES, filterByRequest,
   requestFilterMode, setRequestParam, REQUEST_FILTER_ALL, REQUEST_FILTER_ONE,
   // B-7 (фронт): близнецы, служебные вопросы, состояние из реестра ответов.
   questionIds, questionStateOf,
 } from './backlog-model.js';
+// W29-P2: кнопки заблокированной карточки — один список на все места экрана.
+import { blockedCardActions, roomModels, roomPeople } from './request-reply.js';
 import { buildQuestionForm } from './question-form.js';
 import { skeletonCards, skeletonRows, showSkeletonAfter } from '../shell-skeleton.js';
 import { setInboxCounts } from '../shell-inbox.js';
@@ -82,6 +84,21 @@ export async function mount(el, ctx) {
   }
 
   const api = ctx.api;
+  // W29-P2: модели и участники комнаты — для форм «Сменить модель…» и «Переназначить»
+  // на заблокированных карточках. Читаем лениво, один раз; сбой не мешает.
+  let roomInfo = null;
+  let roomAsked = false;
+  function roomData() {
+    if (!roomAsked && api && typeof api.get === 'function') {
+      roomAsked = true;
+      try {
+        Promise.resolve(api.get(`/api/rooms/${encodeURIComponent(roomId)}`))
+          .then((data) => { roomInfo = data || null; })
+          .catch(() => { roomInfo = null; });
+      } catch { /* старый мост */ }
+    }
+    return roomInfo || {};
+  }
   const toast = typeof ctx.toast === 'function' ? ctx.toast : () => {};
   const navigate = typeof ctx.navigate === 'function' ? ctx.navigate : (hash) => { location.hash = hash; };
   // ?request=<root_id> — вкладка открыта со страницы запроса: показываем только его дела.
@@ -98,6 +115,8 @@ export async function mount(el, ctx) {
     data: null,
     requests: [],
     blocked: [],
+    // W29-P2 п.2: системные паузы сторожа (в счётчик «ждёт вас» не входят).
+    pauses: [],
     // W22-AP2: запросы разрешений агентам (ждущие), из деталей запросов.
     approvals: [],
     needsKey: '',
@@ -351,6 +370,64 @@ export async function mount(el, ctx) {
   }
 
   /**
+   * W29-P6: «Предлагаю собрать карту проекта» — пункт в «От вас нужно», когда у
+   * комнаты есть завершённые запросы, а этапов нет. Кнопки: собрать (эвристика по
+   * выполненным запросам, без запуска модели) и «Не сейчас» (отложить на две недели).
+   */
+  function roadmapOfferRow(item) {
+    const busy = state.roadmapBusy;
+    const build = async () => {
+      if (state.roadmapBusy) return;
+      state.roadmapBusy = true;
+      try {
+        const res = await api.post(`/api/rooms/${encodeURIComponent(roomId)}/phases/from-requests`, {});
+        toast(String((res && res.message) || 'Этапы предложены'), 'ok');
+      } catch (err) {
+        toast('Этапы не собрались: ' + String((err && err.message) || 'сервер не ответил'), 'warn');
+      } finally {
+        state.roadmapBusy = false;
+        load({ silent: true });
+      }
+    };
+    const later = async () => {
+      if (state.roadmapBusy) return;
+      state.roadmapBusy = true;
+      try {
+        await api.post(`/api/rooms/${encodeURIComponent(roomId)}/results/offer`, { action: 'later' });
+        toast('Отложено — вернусь к этому через две недели', 'info');
+      } catch (err) {
+        toast('Не удалось отложить: ' + String((err && err.message) || 'сервер не ответил'), 'warn');
+      } finally {
+        state.roadmapBusy = false;
+        load({ silent: true });
+      }
+    };
+    return inboxRow({
+      kind: 'phases',
+      iconName: 'map',
+      title: 'Карта проекта не собрана',
+      text: item.text,
+      hint: item.why || 'Этапы соберу по названиям и итогам готовых запросов — без запуска модели.',
+      source: h('a', {
+        class: 'inbox-row__link small',
+        href: `#/room/${encodeURIComponent(roomId)}/roadmap`,
+        title: 'Открыть карту проекта',
+      }, 'Карта проекта'),
+      due: null,
+      actions: h('div', { class: 'row row--tight row--wrap' },
+        h('button', {
+          class: 'btn btn--primary btn--sm', type: 'button', disabled: busy,
+          'data-act': 'build-roadmap', onclick: build,
+        }, icon('map', { size: 12 }), 'Собрать карту'),
+        h('button', {
+          class: 'btn btn--ghost btn--sm', type: 'button', disabled: busy,
+          'data-act': 'later-roadmap', onclick: later,
+        }, 'Не сейчас')),
+      form: null,
+    });
+  }
+
+  /**
    * W22-AP2: решение по запросу разрешения прямо из «От вас нужно» —
    * то же действие `approval`, что на странице запроса. Строка убирается
    * сразу: ждущих разрешений по этому id больше нет.
@@ -370,13 +447,18 @@ export async function mount(el, ctx) {
     const decisions = parts.decisions.filter((d) => !state.answered.has(d.id));
     const blocked = state.blocked.filter((b) => !state.answered.has(b.task_id)
       && (!state.requestFilter || String(b.request_id) === state.requestFilter));
+    // W29-P2 п.2: системные паузы сторожа — спокойным блоком внизу, не в числе.
+    const pauses = (state.pauses || []).filter((p) => !state.answered.has(p.task_id)
+      && (!state.requestFilter || String(p.request_id) === state.requestFilter));
     // W22-AP2: запросы разрешений по этому охвату (все / только этот запрос).
     const approvals = state.approvals.filter((a) => !state.requestFilter
       || String(a.request_id) === state.requestFilter);
     // Строка предложения этапов видна и считается: иначе «Ждут вашего решения»
     // показал бы «ничего не ждёт», хотя решение как раз ждёт.
     const proposalItem = state.data && state.data.proposal_item;
-    const total = inboxCount({ questions, decisions, blocked, approvals }) + (proposalItem ? 1 : 0);
+    const roadmapOffer = state.data && state.data.roadmap_offer;
+    const total = inboxCount({ questions, decisions, blocked, approvals })
+      + (proposalItem ? 1 : 0) + (roadmapOffer ? 1 : 0);
 
     const rowsApprovals = approvals.map((a) => approvalCard(a, {
       roomId,
@@ -388,29 +470,57 @@ export async function mount(el, ctx) {
     const rowsBlocked = blocked.map((card) => inboxRow({
       kind: 'blocked',
       iconName: 'stop-circle',
-      title: 'Заблокированная задача',
+      title: 'Заблокированная задача — ждёт вашего решения',
       text: card.text,
       hint: card.hint || null,
       source: sourceLink(roomId, card.request_id, card.request_title),
-      actions: statusChip('blocked'),
-      form: inlineForm({
-        label: 'Ответ по заблокированной задаче',
-        placeholder: 'Что делать дальше…',
-        submit: 'Ответить',
-        onSubmit: async (text) => {
-          try {
-            await api.post(`/api/requests/${encodeURIComponent(card.request_id)}/actions`,
-              { action: 'unblock', task_id: card.task_id, text });
-            state.answered.add(card.task_id);
-            toast('Ответ отправлен, задача разблокирована', 'ok');
-          } catch (err) {
-            toast(err && err.message ? err.message : 'Не удалось отправить ответ', 'danger');
-          } finally {
-            await load({ silent: true });
-          }
-        },
-      }),
+      // W29-P2: те же кнопки, что в правой колонке запроса и в нижней панели —
+      // один список на все места. Раньше здесь было только поле ответа.
+      actions: h('div', { class: 'row row--tight row--wrap' },
+        statusChip('blocked'),
+        blockedCardActions({
+          card,
+          requestId: card.request_id,
+          api,
+          toast,
+          models: () => roomModels(roomData()),
+          people: () => roomPeople(roomData()),
+          onChange: () => { state.answered.add(card.task_id); load({ silent: true }); },
+        })),
+      form: null,
     }));
+
+    /** Системная пауза сторожа: спокойная строка + «Снять паузу сейчас» (W29-P2 п.2). */
+    const rowsPauses = pauses.map((p) => {
+      const btn = h('button', {
+        type: 'button', class: 'btn btn--ghost btn--sm', 'data-guard-resume': String(p.task_id || ''),
+        title: 'Не ждать сторожа: снять паузу и вернуть карточку в очередь',
+      }, icon('play', { size: 11 }), 'Снять паузу сейчас');
+      btn.addEventListener('click', async () => {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        try {
+          await api.post(`/api/requests/${encodeURIComponent(p.request_id)}/actions`,
+            { action: 'card_resume', task_id: String(p.task_id || '') });
+          toast('Пауза снята — задача продолжается', 'ok');
+          await load({ silent: true });
+        } catch (err) {
+          toast((err && err.message) || 'Не удалось снять паузу', 'danger');
+          btn.disabled = false;
+        }
+      });
+      return inboxRow({
+        kind: 'paused',
+        iconName: 'shield',
+        title: 'Контроль моделей — пауза снимется сама',
+        text: p.text,
+        hint: p.reason,
+        source: sourceLink(roomId, p.request_id, p.request_title),
+        actions: h('div', { class: 'row row--tight row--wrap' },
+          h('span', { class: 'chip chip--muted' }, p.label || 'Снимаю автоматически'), btn),
+        form: null,
+      });
+    });
 
     // B-7 (фронт): одна карточка на вопрос. Состояние — только из полей API
     // (`status`, `state_label`, `answer_state`), близнецы уже схлопнуты моделью.
@@ -501,15 +611,18 @@ export async function mount(el, ctx) {
 
     const groups = [
       inboxGroup('Этапы проекта', proposalItem ? [proposalRow(proposalItem)] : []),
+      inboxGroup('Карта проекта', roadmapOffer ? [roadmapOfferRow(roadmapOffer)] : []),
       // W22-AP2: разрешения — первыми: без них участник стоит.
       inboxGroup('Разрешения', rowsApprovals),
       inboxGroup('Заблокированные задачи', rowsBlocked),
       inboxGroup('Вопросы', rowsQuestions),
       inboxGroup('Предложения решений', rowsDecisions),
+      // W29-P2 п.2: системные паузы — внизу, спокойно, вне общего числа.
+      pauses.length ? inboxGroup('Снимаю паузу автоматически', rowsPauses) : null,
     ].filter(Boolean);
 
     const stepsCount = partitionBacklog(visibleItems()).steps.length;
-    const body = total === 0
+    const body = total === 0 && !pauses.length
       ? emptyState({
         icon: 'pass-filled',
         title: 'Ничего не ждёт вашего решения',
@@ -560,6 +673,7 @@ export async function mount(el, ctx) {
     const proposal = state.data && state.data.proposal_item;
     const signature = sigOf(parts.questions, 'q') + sigOf(parts.decisions, 'd')
       + sigOf(state.blocked, 'b') + sigOf(state.approvals, 'a')
+      + sigOf(state.pauses || [], 'g')
       + [...state.answered].sort().join(',') + [...state.busy].sort().join(',')
       + '#' + parts.steps.length + '|p' + (proposal ? String(proposal.updated_at || proposal.count || 1) : '')
       + String(state.proposalBusy);
@@ -881,6 +995,7 @@ export async function mount(el, ctx) {
         .map((s) => String(s.id));
       const key = needsIds.join(',');
       let blocked = state.blocked;
+      let pauses = state.pauses || [];
       let approvals = state.approvals;
       if (key !== state.needsKey || (needsIds.length && Date.now() - detailsAt > 15000)) {
         detailsAt = Date.now();
@@ -891,6 +1006,8 @@ export async function mount(el, ctx) {
           } catch { /* одна задача не должна ломать inbox */ }
         }
         blocked = blockedCards(details);
+        // W29-P2 п.2: системные паузы сторожа — отдельно, в счётчик не входят.
+        pauses = systemPauses(details);
         // W22-AP2: запросы разрешений — из тех же деталей (`detail.approvals`).
         approvals = collectApprovals(details);
       }
@@ -900,6 +1017,7 @@ export async function mount(el, ctx) {
       state.requests = requests;
       state.needsKey = key;
       state.blocked = blocked.filter((c) => !state.answered.has(c.task_id));
+      state.pauses = pauses.filter((p) => !state.answered.has(p.task_id));
       state.approvals = approvals;
       state.error = null;
       state.offline = false;

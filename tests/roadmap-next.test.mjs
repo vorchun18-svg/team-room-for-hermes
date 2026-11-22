@@ -98,9 +98,14 @@ test('пустая карта: одно объяснение и действия
   const on = emptyPlan({ modeOn: true });
   assert.match(on.title, /Карта ещё не собрана/);
   assert.ok(on.text.length > 180, 'объяснение длинное и человеческое');
-  assert.equal(on.primary.key, 'edit');
-  assert.equal(on.primary.label, 'Добавить этапы');
-  assert.equal(on.secondary.label, 'Попросить предложить этапы');
+  // W29-P6: главное действие пустой карты — «Собрать этапы по выполненным
+  // запросам» (эвристика по готовым запросам, без запуска модели): раньше тут
+  // была только просьба к руководителю, и карта оставалась пустой, пока человек
+  // не догадается. Ручное добавление этапов осталось вторым действием.
+  assert.equal(on.primary.key, 'build');
+  assert.equal(on.primary.label, 'Собрать этапы по выполненным запросам');
+  assert.equal(on.secondary.key, 'edit');
+  assert.equal(on.secondary.label, 'Добавить этапы вручную');
 
   // Пока предложение ждёт решения — второй карточки руководителю не предлагаем (409).
   assert.equal(emptyPlan({ modeOn: true, proposalPending: true }).secondary, null);

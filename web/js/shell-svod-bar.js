@@ -147,6 +147,18 @@ export function buildSvodBar(opts = {}) {
 
   /* Пункты меню «Ещё ▾»: те же версии и обновление свода — для узкого вида. */
   const extra = [];
+  // W29B-Q4: «Второе мнение» — та же кнопка, что в блоке под сводом (одна
+  // реализация на два места нажатия). Пока блока нет (страница ещё строится) —
+  // пункт просто ничего не делает, второй копии окна не заводим.
+  extra.push(h('button', {
+    type: 'button', class: 'btn btn--ghost btn--sm req-export__btn req-bar__so-item',
+    'data-bar': 'second-opinion',
+    title: 'Попросить другую модель проверить свод: только расхождения, свод не меняется',
+    onclick: () => {
+      const btn = root && root.querySelector ? root.querySelector('[data-action="second-opinion"]') : null;
+      if (btn && !btn.disabled) btn.click();
+    },
+  }, icon('shield', { size: 13 }), h('span', null, 'Второе мнение…')));
   if (versions.length > 1 && typeof opts.onVersion === 'function') {
     for (const v of versions) {
       extra.push(h('button', {

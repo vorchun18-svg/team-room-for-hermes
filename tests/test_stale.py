@@ -92,7 +92,8 @@ class StaleContractTests(unittest.TestCase):
                          ("pending", "granted_once", "granted_always", "denied",
                           "expired", "closed", "dismissed"))
         self.assertEqual(stale.CLOSED_REASONS,
-                         ("card_finished", "request_done", "dismissed", "superseded"))
+                         ("card_finished", "request_done", "request_archived",
+                          "dismissed", "superseded"))
 
     def test_only_open_waits_for_human(self):
         self.assertEqual(stale.question_state({"answer_state": "open"}), "open")
@@ -456,7 +457,9 @@ class FinishedRequestTests(_Base):
         self.assertGreaterEqual(detail["stale"]["auto_closed"], 1)
         for item in detail.get("open_questions") or []:
             if item.get("auto_closed"):
-                self.assertEqual(item["closed_reason"], "request_done")
+                # W29-P4: у архивного запроса своя причина — человек видит, почему
+                # пункт закрыт, и после «Вернуть из архива» он откроется снова сам.
+                self.assertEqual(item["closed_reason"], "request_archived")
                 self.assertFalse(item["needs_you"])
 
     def test_done_request_keeps_question_until_human_closes_it(self):

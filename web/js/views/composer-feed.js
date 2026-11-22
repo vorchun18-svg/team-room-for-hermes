@@ -12,6 +12,9 @@
 
 import { h, timeAgo, fmtDuration, debounce, plural, fromForm, plainTerms } from '../util.js';
 import { icon } from '../icons.js';
+// W29-Q7: «Не актуально — в архив» идёт через общую отмену (10 с): пока идёт
+// отсчёт, на сервере ничего не менялось, лента показывает запрос как был.
+import { undo } from '../undo.js';
 import { mdToText } from '../md.js';
 import {
   statusChip, emptyState, skeleton, errorBanner, sectionHeader, segmented,
@@ -33,7 +36,7 @@ const FILTERS = [
 /** Примеры формулировок для пустой ленты (по комнате). */
 const EXAMPLES = {
   cafe: [
-    'Собери себестоимость набора из 6 моти по каналам и предложи цену продажи',
+    'Собери себестоимость набора из 6 суфле по каналам и предложи цену продажи',
     'Что мешает запуску сейчас: разбери блокеры по этапам и скажи, что делать первым',
     'Сравни «Едок» и «Развоз» для первых 100 наборов: комиссии, охват, сроки',
   ],
@@ -107,6 +110,9 @@ export function createFeed(opts) {
     error: null,
     filter: 'all',
     query: '',
+    // W29-P4: выбор нескольких запросов для «В архив» (отмена — общая, в undo.js).
+    select: false,
+    picked: new Set(),
     candOpen: false,
     candLoaded: false,
     candItems: [],
@@ -128,8 +134,13 @@ export function createFeed(opts) {
     icon: 'refresh', size: 'sm', title: 'Обновить ленту',
     onclick: () => { loadFeed(); loadCandidates(true); },
   });
+  // W29-P4: «Выбрать» — массовый уход в архив. Вторая кнопка в шапке ленты.
+  const selectBtn = iconButton({
+    icon: 'check-all', size: 'sm', title: 'Выбрать несколько запросов',
+    onclick: () => toggleSelect(),
+  });
 
-  const feedHead = sectionHeader('Запросы', { count: 0, actions: [refreshBtn] });
+  const feedHead = sectionHeader('Запросы', { count: 0, actions: [selectBtn, refreshBtn] });
   const feedCount = feedHead.querySelector('.section-header__count');
   if (feedCount) {
     feedCount.classList.add('count-pill');
@@ -138,8 +149,12 @@ export function createFeed(opts) {
     feedCount.setAttribute('aria-label', 'Запросы комнаты: считаются все, кроме архива');
   }
   const toolbar = h('div', { class: 'cmp-toolbar' }, filtersHost, searchBox);
+  // W29-P4: строка массового выбора и строка отмены архивации (10 секунд).
+  const bulkHost = h('div', { class: 'cmp-bulk hidden' });
+  // Место под общий тост «Отмена» больше не нужно: тост живёт в #toasts,
+  // поэтому виден и тогда, когда ленту перерисовали.
 
-  const feed = h('section', { class: 'cmp-feedwrap' }, feedHead, toolbar, feedNote, listEl);
+  const feed = h('section', { class: 'cmp-feedwrap' }, feedHead, toolbar, bulkHost, feedNote, listEl);
 
   /* кандидаты */
   const candToggle = h('button', { class: 'cmp-cands__toggle', type: 'button', 'aria-expanded': 'false' },
@@ -177,7 +192,7 @@ export function createFeed(opts) {
         icon('copy', { size: 13 }), 'Клонировать'),
       h('div', { class: 'menu__sep' }),
       h('button', { class: 'menu__item menu__item--danger', type: 'button', role: 'menuitem', onclick: closeOnPick(() => archiveRequest(item)) },
-        icon('archive', { size: 13 }), 'Архивировать'),
+        icon('archive', { size: 13 }), 'Не актуально — в архив'),
     );
     btn.parentNode.appendChild(menu);
     menuEl = menu;
@@ -207,18 +222,81 @@ export function createFeed(opts) {
 
   async function archiveRequest(item) {
     const ok = await confirmDialog({
-      title: 'Архивировать запрос?',
-      text: '«' + String(item.title || item.id) + '» скроется из ленты. Задачи на доске сохранятся.',
-      confirmLabel: 'Архивировать', danger: true,
+      title: 'Убрать в архив?',
+      text: '«' + String(item.title || item.id) + '» скроется из ленты, работа по нему остановится. ' +
+        'Ответ и файлы сохранятся — 10 секунд можно будет вернуть.',
+      confirmLabel: 'В архив', cancelLabel: 'Отмена', danger: true,
     });
     if (!ok) return;
-    try {
-      await api.post('/api/requests/' + enc(item.id) + '/actions', { action: 'archive' });
-      toast('Запрос в архиве', 'ok');
-      await loadFeed();
-    } catch (err) {
-      toast(err && err.message ? err.message : 'Не удалось архивировать', 'danger');
-    }
+    await archiveMany([item]);
+  }
+
+  /**
+   * W29-P4 → W29-Q7: массовый уход в архив — один запрос на комнату, но
+   * отложенный: 10 секунд показывает общий тост «Отмена» (undo.js), и только
+   * после отсчёта уходит `POST …/archive/requests`. «Вернуть» — не откат, а
+   * отмена: запрос и не покидал ленту.
+   */
+  async function archiveMany(items) {
+    const ids = (items || []).map((i) => String(i && i.id || '')).filter(Boolean);
+    if (!ids.length) return;
+    state.picked.clear();
+    state.select = false;
+    renderBulk();
+    undo.offer({
+      // Один предмет — одна отмена: повтор по тем же запросам закрывает прежнюю.
+      key: 'archive:' + roomId + ':' + ids.slice().sort().join(','),
+      text: ids.length === 1 ? 'Запрос в архиве' : 'Запросы в архиве: ' + ids.length,
+      action: async () => {
+        try {
+          const res = await api.post('/api/rooms/' + enc(roomId) + '/archive/requests', { root_ids: ids });
+          if (res && res.failed) {
+            const first = (res.results || []).find((r) => r && !r.ok);
+            toast(first && first.message ? first.message : 'Не все запросы убраны в архив', 'danger');
+          } else {
+            toast(ids.length === 1 ? 'Запрос в архиве — вернуть можно в «Архиве»'
+              : 'Запросы в архиве: ' + ids.length, 'ok');
+          }
+        } catch (err) {
+          toast(err && err.message ? err.message : 'Не удалось убрать в архив', 'danger');
+        }
+        state.select = false;
+        await loadFeed();
+      },
+      onUndo: () => { toast('Запрос остался в ленте — ничего не изменилось', 'ok'); },
+    });
+  }
+
+  function toggleSelect() {
+    state.select = !state.select;
+    if (!state.select) state.picked.clear();
+    selectBtn.classList.toggle('is-active', state.select);
+    selectBtn.setAttribute('aria-pressed', state.select ? 'true' : 'false');
+    renderBulk();
+    renderFeed(true);
+  }
+
+  function renderBulk() {
+    bulkHost.replaceChildren();
+    bulkHost.classList.toggle('hidden', !state.select);
+    if (!state.select) return;
+    const n = state.picked.size;
+    const toArchive = h('button', { class: 'btn btn--secondary btn--sm', type: 'button', disabled: n ? null : true },
+      icon('archive', { size: 12 }), 'В архив' + (n ? ' (' + n + ')' : ''));
+    toArchive.addEventListener('click', async () => {
+      const items = state.requests.filter((i) => state.picked.has(String(i.id)));
+      if (!items.length) return;
+      const ok = await confirmDialog({
+        title: 'Убрать в архив ' + items.length + '?',
+        text: 'Работа по выбранным запросам остановится. Вернуть можно сразу после — 10 секунд.',
+        confirmLabel: 'В архив', cancelLabel: 'Отмена', danger: true,
+      });
+      if (ok) await archiveMany(items);
+    });
+    bulkHost.append(
+      h('span', { class: 'small muted' }, n ? 'Выбрано: ' + n : 'Отметьте запросы, которые не актуальны'),
+      h('div', { class: 'row row--tight' }, toArchive,
+        h('button', { class: 'btn btn--ghost btn--sm', type: 'button', onclick: () => toggleSelect() }, 'Отмена')));
   }
 
   /* ── данные ─────────────────────────────────────────────────────────── */
@@ -394,8 +472,33 @@ export function createFeed(opts) {
     }, icon('ellipsis', { size: 14 }));
     menuBtn.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); openMenu(menuBtn, item); });
 
-    return h('article', { class: 'cmp-card', role: 'listitem', dataset: { rid: String(item.id) } },
-      main, h('div', { class: 'cmp-menu-wrap' }, menuBtn));
+    // W29-P4: выбор нескольких запросов — отметка слева от карточки.
+    let box = null;
+    if (state.select) {
+      box = h('input', { type: 'checkbox', class: 'cmp-card__pick',
+        'aria-label': 'Выбрать «' + short + '»' });
+      box.checked = state.picked.has(String(item.id));
+      box.addEventListener('change', () => {
+        if (box.checked) state.picked.add(String(item.id));
+        else state.picked.delete(String(item.id));
+        cardEl.classList.toggle('is-picked', box.checked);
+        renderBulk();
+      });
+    }
+
+    const cardEl = h('article', {
+      class: 'cmp-card' + (state.picked.has(String(item.id)) ? ' is-picked' : ''),
+      role: 'listitem', dataset: { rid: String(item.id) },
+    }, box, main, h('div', { class: 'cmp-menu-wrap' }, state.select ? null : menuBtn));
+    if (state.select && box) {
+      cardEl.addEventListener('click', (ev) => {
+        if (ev.target === box) return;
+        ev.preventDefault();
+        box.checked = !box.checked;
+        box.dispatchEvent(new Event('change'));
+      });
+    }
+    return cardEl;
   }
 
   /* ── рендер ленты ───────────────────────────────────────────────────── */

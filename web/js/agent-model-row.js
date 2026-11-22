@@ -66,6 +66,8 @@ export function buildRow(person, env) {
   const st = {
     provider: initial.provider || defaults.provider || (providersOf(catalog)[0] || {}).id || '',
     model: initial.model || defaults.model || '',
+    // «Своя модель»: имя введено человеком и не подтверждено каталогом.
+    custom: false,
     reasoning: normalizeReasoning(initial.reasoning !== undefined && initial.reasoning !== null
       && initial.reasoning !== '' ? initial.reasoning : defaults.reasoning),
     source: String(initial.source || 'agent'),
@@ -81,6 +83,7 @@ export function buildRow(person, env) {
     pending: 0,
     restarted: 0,
     error: '',
+    warn: '',
   };
   // Источник «room» у участника = уже изменено для этой комнаты.
   if (st.source === 'room') remember(profile, st);
@@ -239,6 +242,9 @@ export function buildRow(person, env) {
   // role="alert" включаем только когда ошибка есть: пустой узел не должен
   // выглядеть как живое предупреждение на странице.
   const errorLine = h('div', { class: 'agent-model__error hidden' });
+  // Предупреждение сервера после сохранения (например, «модели нет в каталоге»):
+  // спокойная строка, не ошибка — выбор уже принят (W29-FIX1 п.2).
+  const warnLine = h('div', { class: 'agent-model__warn hidden' });
 
   const actions = h('div', { class: 'agent-model__actions' }, defaultLine,
     h('div', { class: 'agent-model__buttons' }, resetBtn, mode === 'live' ? applyBtn : null, restartBtn));
@@ -258,6 +264,7 @@ export function buildRow(person, env) {
   panel.appendChild(actions);
   panel.appendChild(status);
   panel.appendChild(errorLine);
+  panel.appendChild(warnLine);
 
   row.appendChild(summary);
   row.appendChild(panel);
@@ -302,6 +309,20 @@ export function buildRow(person, env) {
     return filterModels(catalog, { provider: st.provider, query: st.query });
   }
 
+  /**
+   * Введённое название, которого нет в списке: пункт «Своя модель» (W29-FIX1 п.2).
+   *
+   * Показываем его, когда человек что-то вписал и точного совпадения с каталогом нет
+   * (`deepseek-v4-pro:0813` при наличии `deepseek-v4-pro` — это именно «своя»).
+   * @returns {string} текст для модели или ''
+   */
+  function customText() {
+    const typed = String(st.query || '').trim();
+    if (!typed) return '';
+    const exact = flatModels(groups()).some((m) => String(m.id) === typed);
+    return exact ? '' : typed;
+  }
+
   function optionNodes() {
     return childEls(list).filter((n) => hasClass(n, 'agent-model__option'));
   }
@@ -309,12 +330,25 @@ export function buildRow(person, env) {
   function paintModels() {
     const gs = groups();
     const flat = flatModels(gs);
+    const custom = customText();
     list.replaceChildren();
+    const customNode = () => {
+      if (!custom) return null;
+      return h('button', {
+        class: 'agent-model__option agent-model__option--custom',
+        type: 'button',
+        role: 'option',
+        'aria-selected': 'false',
+        dataset: { index: String(flat.length), custom: '1' },
+        title: 'Модели «' + custom + '» нет в списке — сохранить как есть. Сервер проверит её по каталогу.',
+      }, h('span', { class: 'agent-model__option-label' }, 'Своя модель: «' + custom + '»'),
+      h('span', { class: 'agent-model__option-hint small muted' }, 'использовать введённое'));
+    };
     if (!flat.length) {
       const provider = providersOf(catalog).find((p) => p.id === st.provider);
       // Список остаётся «открытым» по состоянию: очистят поиск — он вернётся сам.
       if (st.query && String(st.query).trim()) {
-        listEmpty.textContent = 'Ничего не нашлось. Проверьте написание или выберите провайдера.';
+        listEmpty.textContent = 'Ничего не нашлось. Впишите полное название и выберите «Своя модель» — или проверьте провайдера.';
         listEmpty.classList.remove('hidden');
       } else if (provider && !provider.models.length) {
         listEmpty.textContent = 'У этого провайдера нет списка моделей — впишите название вручную и нажмите Enter.';
@@ -325,6 +359,8 @@ export function buildRow(person, env) {
       } else {
         listEmpty.classList.add('hidden');
       }
+      const own = customNode();
+      if (own) { own.addEventListener('click', () => { setModel(st.provider, custom, { custom: true }); }); list.appendChild(own); }
       paintList();
       return;
     }
@@ -352,6 +388,8 @@ export function buildRow(person, env) {
         list.appendChild(opt);
       }
     }
+    const own = customNode();
+    if (own) { own.addEventListener('click', () => { setModel(st.provider, custom, { custom: true }); }); list.appendChild(own); }
     paintList();
     // Список раскрыт — подкручиваем к действующей модели: у Ollama Cloud их 26,
     // иначе выбранная строка остаётся за пределами видимой части блока.
@@ -385,21 +423,29 @@ export function buildRow(person, env) {
 
   function moveActive(delta) {
     const flat = flatModels(groups());
-    if (!flat.length) { st.active = -1; paintList(); return; }
+    const total = flat.length + (customText() ? 1 : 0);
+    if (!total) { st.active = -1; paintList(); return; }
     const next = st.active < 0
-      ? (delta > 0 ? 0 : flat.length - 1)
-      : Math.max(0, Math.min(flat.length - 1, st.active + delta));
+      ? (delta > 0 ? 0 : total - 1)
+      : Math.max(0, Math.min(total - 1, st.active + delta));
     st.active = next;
     paintList();
   }
 
   function chooseIndex(index) {
     const flat = flatModels(groups());
-    const hit = flat[index];
+    const at = Number(index);
+    if (at >= flat.length) {
+      // Последний пункт — «Своя модель»: берём ВВЕДЁННОЕ название как есть.
+      const typed = customText();
+      if (typed) { setModel(st.provider, typed, { custom: true }); return true; }
+      return false;
+    }
+    const hit = flat[at];
     if (!hit) {
       // Свободный ввод: у провайдера нет списка моделей — берём введённое.
       const typed = String(st.query || '').trim();
-      if (typed) { setModel(st.provider, typed); }
+      if (typed) { setModel(st.provider, typed, { custom: true }); }
       return false;
     }
     setModel(hit.provider, hit.id);
@@ -411,9 +457,12 @@ export function buildRow(person, env) {
     return chooseIndex(st.active);
   }
 
-  function setModel(provider, model) {
+  function setModel(provider, model, opts2 = {}) {
     st.provider = String(provider || st.provider);
     st.model = String(model || '');
+    // «Своя модель»: имя введено человеком, каталог его не подтвердил (W29-FIX1 п.2).
+    // Флаг уходит на сервер вместе с выбором — он проверит и предупредит, но не откажет.
+    st.custom = opts2 && opts2.custom === true;
     st.query = '';
     search.value = '';
     st.active = -1;
@@ -488,6 +537,8 @@ export function buildRow(person, env) {
     restartBtn.classList.toggle('hidden', !st.pending);
     restartBtn.disabled = st.busy;
     paintCurrent();
+    warnLine.textContent = st.warn || '';
+    warnLine.classList.toggle('hidden', !st.warn);
     errorLine.textContent = st.error;
     errorLine.classList.toggle('hidden', !st.error);
     if (st.error) errorLine.setAttribute('role', 'alert');
@@ -537,8 +588,10 @@ export function buildRow(person, env) {
     st.active = -1;
     st.listOpen = true;
     st.dirty = false;
+    st.custom = false;
     st.saved = '';
     st.error = '';
+    st.warn = '';
     if (mode === 'live') {
       // «Вернуть по умолчанию» на вкладке «Команда» сразу возвращает настройку агента.
       st.pending = 0;
@@ -572,6 +625,10 @@ export function buildRow(person, env) {
       ? head + '; ' + countNoun(pending, ['задача', 'задачи', 'задач']) + ' в работе доделают на старой'
       : head + '.';
     if (cards) st.saved += ' Поправил ' + countNoun(cards, ['задачу', 'задачи', 'задач']) + ' в очереди.';
+    // Предупреждения сервера показываем отдельной строкой: «модели нет в каталоге —
+    // сохранена как ваш выбор» человек должен прочитать, а не искать в консоли.
+    st.warn = (Array.isArray(res && res.warnings) ? res.warnings : [])
+      .map((w) => String(w || '').trim()).filter(Boolean).join(' ');
     applyOverride(profile, wasDefault ? null : snapshot());
     if (wasDefault) remember(profile, null); else remember(profile, snapshot());
     if (typeof person.onSaved === 'function') person.onSaved(profile);
@@ -591,10 +648,11 @@ export function buildRow(person, env) {
       return null;
     }
     const asDefault = forceDefault === true || !changed();
-    const body = asDefault ? {} : snapshot();
+    const body = asDefault ? {} : Object.assign(snapshot(), st.custom ? { custom: true } : {});
     st.busy = true;
     st.error = '';
     st.saved = '';
+    st.warn = '';
     paint();
     try {
       const res = await api.put('/api/rooms/' + enc(roomId) + '/agents/' + enc(profile) + '/model', body);
@@ -683,6 +741,7 @@ export function buildRow(person, env) {
         model: st.model,
         reasoning: normalizeReasoning(st.reasoning),
         changed: changed(),
+        custom: st.custom === true,
         source: st.source,
         pending: st.pending,
         saved: st.saved,
@@ -719,7 +778,17 @@ export function buildRow(person, env) {
       .filter((n) => n && n.nodeType === 1 && String(n.className || '').includes('agent-model__group-label'))
       .map((n) => n.textContent); },
     choose(index) { return chooseIndex(Number(index)); },
-    chooseModel(provider, model) { setModel(provider, model); return st.model; },
+    chooseModel(provider, model, options) {
+      setModel(provider, model, options && typeof options === 'object' ? options : {});
+      return st.model;
+    },
+    /** Пункт «Своя модель» в списке: текст кнопки или '' (для тестов и диктовки). */
+    customOption() {
+      const typed = customText();
+      return typed ? 'Своя модель: «' + typed + '»' : '';
+    },
+    isCustom() { return st.custom === true; },
+    warnText() { return warnLine.textContent; },
     key(key) {
       // Клавиатура списка: ↑ ↓ Enter Esc — без настоящих событий (тесты).
       if (key === 'ArrowDown' || key === 'ArrowUp') { st.listOpen = true; moveActive(key === 'ArrowDown' ? 1 : -1); }

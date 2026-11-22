@@ -57,7 +57,7 @@ LEGACY = {
         "Q4 Утвердить kill-критерии D8 (<50 наборов/мес на 60-й день → ревизия)",
         "Q5 Бренд-пак: ник IG/TikTok, домен, финал лейаута, слоган — Михаил",
         "Q6 Шесть решений дайджеста 26.10 за Михаилом",
-        "Q7 Единица мощности моти vs наборы (разброс 4× — пересчёт у Анны)",
+        "Q7 Единица мощности суфле vs наборы (разброс 4× — пересчёт у Анны)",
     ],
     "spend": "0 R$, внешних сервисов нет",
     "stage": {
@@ -191,7 +191,7 @@ class NewContractTest(unittest.TestCase):
                 {"text": "Вопрос без адресата"},
             ],
             "decisions": [
-                {"text": "Старт с набора из 6 моти", "why": "упаковка дешевле", "status": "accepted"},
+                {"text": "Старт с набора из 6 суфле", "why": "упаковка дешевле", "status": "accepted"},
                 {"text": "Маржа не ниже 45%", "why": "доставка", "status": "proposed"},
                 {"text": "Не поднимать цену выше 45", "why": "тест", "status": "rejected"},
             ],
@@ -345,7 +345,7 @@ class MarkdownFallbackTest(unittest.TestCase):
 - Кто пишет поставщикам?
 
 ## Решения
-- Стартуем с набора из 6 моти
+- Стартуем с набора из 6 суфле
 **Будущее**
 """
 
@@ -357,7 +357,7 @@ class MarkdownFallbackTest(unittest.TestCase):
         self.assertEqual([q["text"] for q in out["open_questions"]],
                          ["Какой канал берём?", "Кто пишет поставщикам?"])
         self.assertEqual([d["text"] for d in out["decisions"]],
-                         ["Стартуем с набора из 6 моти"])
+                         ["Стартуем с набора из 6 суфле"])
         self.assertEqual(out["open_questions"][0]["for"], "mikhail")
         self.assertEqual(out["decisions"][0]["status"], "proposed")
 

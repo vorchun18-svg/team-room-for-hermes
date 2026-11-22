@@ -180,12 +180,42 @@ def _clean_attempts(value) -> int:
     return max(1, min(MAX_ATTEMPTS, number))
 
 
+#: Статусы, в которые разрешено возвращать карточку из архива. `archived` здесь нет:
+#: возврат из архива не оставляет карточку в архиве. `done` — работа была завершена,
+#: остальные — «приостановлено»: карточка удержана и сама не запустится (W29-P4).
+RESTORE_STATUSES = ("done", "blocked", "todo", "review", "triage")
+
+
+def _clean_items(value) -> list:
+    """Список ``[{task_id, status}]`` для возврата из архива: строгая проверка."""
+    if not isinstance(value, list) or not value:
+        raise AtomicError("Список карточек для возврата пуст", "bad_request", {"field": "items"})
+    out: list = []
+    seen: set = set()
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise AtomicError("Элемент списка карточек должен быть объектом", "bad_request",
+                              {"field": "items"})
+        task_id = _clean_task_id(raw.get("task_id"))
+        status = str(raw.get("status") or "").strip().lower()
+        if status not in RESTORE_STATUSES:
+            raise AtomicError("Недопустимый статус возврата: %s" % (status or "пусто"),
+                              "bad_request", {"field": "status", "allowed": list(RESTORE_STATUSES)})
+        if task_id in seen:
+            continue
+        seen.add(task_id)
+        out.append({"task_id": task_id, "status": status})
+    return out
+
+
 def _normalize(req: dict) -> dict:
     """Проверить запрос до импорта Hermes (быстрый отказ на мусоре)."""
     op = str(req.get("op") or "stop").strip().lower()
     if op not in OPS:
         raise AtomicError("Неизвестная операция: %s" % op, "bad_request")
-    out = {"op": op, "task_id": _clean_task_id(req.get("task_id")),
+    out = {"op": op,
+           # `restore` работает со списком карточек: одиночного id у него нет.
+           "task_id": "" if op == "restore" else _clean_task_id(req.get("task_id")),
            "db": _clean_db(req.get("db")), "home": _clean_home(req.get("home")),
            "tree": _clean_tree(req.get("tree")),
            "reason": _clean_reason(req.get("reason")), "attempts": _clean_attempts(req.get("attempts")),
@@ -193,6 +223,8 @@ def _normalize(req: dict) -> dict:
     if op in ("resume", "change_model_and_resume", "restart") and "model" in req:
         out["model"] = _clean_model(req.get("model"))
         out["provider"] = _clean_provider(req.get("provider"))
+    if op == "restore":
+        out["items"] = _clean_items(req.get("items"))
     return out
 
 
@@ -441,11 +473,53 @@ def _op_restart(kb, con, req: dict, steps: list) -> None:
         steps.append("queued")
 
 
+def _op_restore(kb, con, req: dict, steps: list) -> dict:
+    """Вернуть карточки из архива: `archived` → сохранённый статус, одним заходом.
+
+    Штатного глагола «разархивировать» у Hermes нет (архив терминален), поэтому
+    статус возвращаем функциями самой библиотеки канбана в ОДНОМ процессе — тем же
+    путём, что `stop`/`resume` (W23-AT1). Модели при этом не запускаются: карточки
+    возвращаются в `done` (работа была завершена) либо в `blocked`/`todo`
+    (приостановлено, поднимает человек кнопкой «Продолжить»).
+    """
+    items = req.get("items") or []
+    write_txn = getattr(kb, "write_txn", None)
+    append = getattr(kb, "_append_event", None)
+    restored: list = []
+
+    def apply() -> None:
+        for item in items:
+            cur = con.execute(
+                "UPDATE tasks SET status = ?, claim_lock = NULL, claim_expires = NULL, "
+                "worker_pid = NULL, worker_started_at = NULL, current_run_id = NULL "
+                "WHERE id = ? AND status = 'archived'",
+                (item["status"], item["task_id"]))
+            if not cur.rowcount:
+                continue
+            steps.append("restore:%s" % item["task_id"])
+            if callable(append):
+                append(con, item["task_id"], "status",
+                       {"status": item["status"], "previous_status": "archived",
+                        "reason": "restored_from_archive"})
+            restored.append(dict(item))
+
+    if callable(write_txn):
+        with write_txn(con):
+            apply()
+    else:                                   # pragma: no cover - старая библиотека
+        apply()
+        con.commit()
+    return {"ok": bool(restored), "op": "restore", "restored": restored,
+            "count": len(restored), "status": ""}
+
+
 OPS = {
     "stop": _op_stop,
     "resume": _resume_core,
     "change_model_and_resume": _op_change_model_and_resume,
     "restart": _op_restart,
+    # W29-P4: возврат из архива — не одиночная карточка, а список (см. `run`).
+    "restore": _op_restore,
 }
 
 
@@ -459,6 +533,17 @@ def _verdict(op: str, snap: dict, worker_alive: bool) -> bool:
 
 # ---------------------------------------------------------------- одна операция целиком
 
+def _board_guard(cfg, db=None) -> None:
+    """W29-I1: песочница не пишет на реальную доску Hermes — и библиотекой тоже."""
+    try:
+        from . import board_guard as guard
+    except ImportError:                                       # pragma: no cover
+        import board_guard as guard                           # type: ignore
+    found = guard.check(cfg, db=db)
+    if found:
+        raise AtomicError(found["message"], guard.CODE, dict(found["detail"] or {}))
+
+
 def run(req: dict) -> dict:
     """Выполнить операцию из запроса. Ошибки — словарём с ``ok: false`` (не исключением)."""
     started = time.perf_counter()
@@ -467,12 +552,17 @@ def run(req: dict) -> dict:
     op = str(req.get("op") or "stop").strip().lower()
     steps: list = []
     try:
+        # W29-I1: проверка ДО разбора запроса — иначе отказ «нет hermes_cli» маскирует запрет.
+        _board_guard(None, str(req.get("db") or "") or None)
         out = _normalize(req)
         _prepare_env(out["home"], out["tree"])
         kb, kbc = _import_kb()
         con = _connect(kb, kbc, out["db"])
         try:
-            result = _perform(kb, con, out, steps)
+            if out["op"] == "restore":
+                result = _op_restore(kb, con, out, steps)
+            else:
+                result = _perform(kb, con, out, steps)
         finally:
             try:
                 con.close()
@@ -672,6 +762,7 @@ def request(cfg, board: str, op: str, task_id, **extra) -> dict:
 
 def launch(cfg, payload: dict, timeout: int = DEFAULT_TIMEOUT) -> dict:
     """Выполнить действие интерпретатором Hermes и разобрать ответ. Ошибки — AtomicError."""
+    _board_guard(cfg, (payload or {}).get("db") if isinstance(payload, dict) else None)
     python = find_python(cfg)
     tree = hermes_tree(cfg)
     if not python or tree is None:
@@ -758,9 +849,17 @@ def restart_on_model(cfg, board: str, task_id, *, model=KEEP, provider: str = ""
     return launch(cfg, request(cfg, board, "restart", task_id, **extra), timeout=timeout)
 
 
-__all__ = ["AtomicError", "HELD_STATUSES", "KEEP", "SPAWN_STATUSES", "STOP_REASON", "available",
-           "change_model_and_resume", "find_python", "hermes_tree", "launch", "main", "python_candidates",
-           "request", "reset_cache", "restart_on_model", "resume", "run", "stop", "worker_path"]
+def restore(cfg, board: str, items, *, timeout: int = DEFAULT_TIMEOUT) -> dict:
+    """Вернуть карточки из архива одним процессом Hermes (``items``: id → статус)."""
+    return launch(cfg, request(cfg, board, "restore", "", items=list(items or [])),
+                  timeout=timeout)
+
+
+__all__ = ["AtomicError", "HELD_STATUSES", "KEEP", "RESTORE_STATUSES", "SPAWN_STATUSES",
+           "STOP_REASON", "available",
+           "change_model_and_resume", "find_python", "hermes_tree", "launch", "main",
+           "python_candidates", "request", "reset_cache", "restart_on_model", "restore",
+           "resume", "run", "stop", "worker_path"]
 
 
 if __name__ == "__main__":

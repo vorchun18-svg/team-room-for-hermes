@@ -139,7 +139,7 @@ export function highlightSegments(text, query) {
 
 /** Запасной порядок вкладок, если палитре не передали TABS. Должен совпадать
     с router.TABS (это проверяет tests/vocab.test.mjs). */
-export const TAB_ORDER = ['composer', 'team', 'roadmap', 'backlog', 'delos', 'reports', 'journal', 'inbox', 'duties'];
+export const TAB_ORDER = ['composer', 'team', 'roadmap', 'backlog', 'delos', 'reports', 'journal', 'inbox', 'duties', 'recipes', 'archive'];
 
 /**
  * Постоянные команды палитры.
@@ -262,7 +262,10 @@ export function sectionForKind(kind) {
     case 'decision': return { id: 'hits:decision', title: 'Решения' };
     case 'backlog': return { id: 'hits:backlog', title: 'Бэклог' };
     case 'journal': return { id: 'hits:journal', title: 'Журнал' };
-    case 'report': return { id: 'hits:report', title: 'Отчёты' };
+    case 'report': return { id: 'hits:report', title: 'Результаты' };
+    // W29B-Q8: память комнаты — решения, своды, ответы, журнал, заметки Vault.
+    // Отдельный раздел, потому что человек ищет причину, а не совпадение слова.
+    case 'memory': return { id: 'hits:memory', title: 'Память' };
     default: return { id: 'hits:other', title: 'Найдено' };
   }
 }
@@ -284,6 +287,12 @@ export function routeForHit(hit) {
     case 'backlog': return base + '/backlog';
     case 'journal': return base + '/journal';
     case 'report': return id ? base + '/reports/' + encodeURIComponent(id) : base + '/reports';
+    case 'memory':
+      // Находка памяти живёт в запросе (решение/ответ/журнал) — ведём туда;
+      // свод и заметка ведут на карту/«От вас нужно» своим route.
+      return hit && hit.request_id
+        ? base + '/request/' + encodeURIComponent(String(hit.request_id))
+        : ((hit && hit.route) || base + '/roadmap');
     default: return (hit && hit.route) || base + '/composer';
   }
 }

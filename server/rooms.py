@@ -52,6 +52,9 @@ UPDATABLE = ("title", "icon", "orchestrator", "critic", "context_files", "projec
              "agent_notes_log",
              # Модель/провайдер/мышление участника ТОЛЬКО в этой комнате (WAVE10 §«Интерфейсы»).
              "agent_models",
+             # W29-Q9: модель для рутинного сведения (автосвод и «Уточнение»); пусто —
+             # модель руководителя. Хранится в реестре комнаты, профили не меняются.
+             "routine_model",
              # W20-S1 §1.1: живой свод — автообновление, «тишина» и потолок частоты.
              "auto_svod", "auto_svod_quiet_s", "auto_svod_min_gap_s",
              # «Ход работы» (W20 §1.6): подробность ленты и частота промежуточного итога.
@@ -84,6 +87,86 @@ DEFAULT_DIGEST_MIN = 2
 #: Дежурства комнаты (W24 §3.2): сколько id заданий можно привязать и как они выглядят.
 MAX_ROOM_DUTIES = 40
 _DUTY_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+# --- порядок комнат в меню (W29-P7) ----------------------------------------
+# Порядок, закрепление и группы живут в реестре комнат (`data/rooms.json`), а не
+# в профилях Hermes: это личное устройство меню, а не настройка агентов.
+#   * `order`  — целое ≥ 1: место комнаты в общем списке (0 — «ещё не задавали»);
+#   * `pinned` — флаг «закрепить наверху» (📌);
+#   * `group`  — id группы из `groups` реестра ("" — без группы).
+# Список групп лежит рядом с комнатами: `{"rooms": [...], "groups": [...]}`.
+MAX_GROUPS = 20
+MAX_GROUP_TITLE = 60
+_GROUP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,23}$")
+
+
+def _norm_group(value) -> str:
+    """Чтение поля `group`: мусор в файле — «без группы», список не падает."""
+    text = str(value or "").strip().lower()
+    return text if _GROUP_ID_RE.match(text) else ""
+
+
+def _norm_order(value) -> int:
+    """Чтение поля `order`: только целое ≥ 1, иначе 0 («не задавали»)."""
+    if isinstance(value, bool):
+        return 0
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return number if number >= 1 else 0
+
+
+def _check_group_title(value) -> str:
+    """Название группы: одна строка 1…60 знаков (ошибка — RoomsError)."""
+    text = " ".join(str(value or "").split())
+    if not text:
+        raise RoomsError("У группы должно быть название", "bad_request", {"field": "groups.title"})
+    if len(text) > MAX_GROUP_TITLE:
+        raise RoomsError("Название группы длиннее %d знаков" % MAX_GROUP_TITLE, "bad_request",
+                         {"field": "groups.title", "length": len(text), "max": MAX_GROUP_TITLE})
+    return text
+
+
+def _check_groups(value) -> list[dict]:
+    """Проверить список групп `[{id, title, collapsed}]` (порядок сохраняем)."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise RoomsError("Группы комнат — список", "bad_request", {"field": "groups"})
+    if len(value) > MAX_GROUPS:
+        raise RoomsError("Слишком много групп (не больше %d)" % MAX_GROUPS, "bad_request",
+                         {"field": "groups", "limit": MAX_GROUPS})
+    out: list[dict] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise RoomsError("Группа комнат — объект с id и названием", "bad_request",
+                             {"field": "groups", "value": str(raw)[:40]})
+        group_id = str(raw.get("id") or "").strip().lower()
+        if not _GROUP_ID_RE.match(group_id):
+            raise RoomsError("id группы: латиница, цифры, - и _, до 24 знаков",
+                             "bad_request", {"field": "groups.id", "value": group_id[:40]})
+        if group_id in seen:
+            raise RoomsError("Группа «%s» уже есть" % group_id, "bad_request",
+                             {"field": "groups.id", "value": group_id, "reason": "duplicate"})
+        seen.add(group_id)
+        out.append({"id": group_id, "title": _check_group_title(raw.get("title")),
+                    "collapsed": bool(raw.get("collapsed"))})
+    return out
+
+
+def _norm_groups(value) -> list[dict]:
+    """Чтение реестра: битая группа не роняет меню — просто не показываем её."""
+    try:
+        return _check_groups(value)
+    except RoomsError:
+        return []
+
+
+def _groups_doc(data: dict) -> list[dict]:
+    return _norm_groups(data.get("groups")) if isinstance(data, dict) else []
+
 
 # --- транслитерация (id комнаты из русского названия) ----------------------
 
@@ -653,15 +736,19 @@ def _agent_models_mod():
     return mod
 
 
-def _check_agent_models(cfg, value, members) -> dict:
+def _check_agent_models(cfg, value, members, *, previous=None, warnings=None) -> dict:
     """Модель/провайдер/мышление участников (WAVE10): только настроенный провайдер.
 
     Профиль — из состава комнаты, пара «провайдер+модель» обязательна, уровень мышления —
     из списка движка. Ошибки — RoomsError (роут отдаст 400 по-русски).
+
+    Дефект 10: `previous` — текущая карта комнаты. Проверяется только изменённый участник,
+    остальные пишутся как есть; предупреждения складываются в `warnings` (не отказ).
     """
     mod = _agent_models_mod()
     try:
-        return mod.validate_map(cfg, value, members=members)
+        return mod.validate_map(cfg, value, members=members, previous=previous,
+                                warnings=warnings)
     except mod.ModelError as exc:
         raise RoomsError(exc.message, "bad_request", dict(exc.detail or {})) from exc
 
@@ -671,6 +758,41 @@ def _norm_agent_models(value) -> dict:
     try:
         return _agent_models_mod().normalize(value)
     except Exception:  # noqa: BLE001 - реестр комнат важнее моделей
+        return {}
+
+
+def _check_routine_model(cfg, value, *, warnings=None) -> dict:
+    """«Модель для рутинного сведения» (W29-Q9): пара из каталога или пусто.
+
+    Пустое значение — «как у руководителя» (поведение по умолчанию). Модель
+    проверяется тем же `agent_models.validate`, что и модели участников: чужой
+    провайдер/несуществующая модель — ошибка с полем, а не тихая подмена.
+    """
+    if value in (None, "", {}):
+        return {}
+    if not isinstance(value, dict):
+        raise RoomsError("routine_model должен быть объектом {provider, model}",
+                         "bad_request", {"field": "routine_model"})
+    mod = _agent_models_mod()
+    try:
+        clean, warns = mod.validate(cfg, value.get("provider"), value.get("model"),
+                                    value.get("reasoning"))
+    except mod.ModelError as exc:
+        raise RoomsError(exc.message, "bad_request", dict(exc.detail or {})) from exc
+    for text in warns or []:
+        if warnings is not None:
+            warnings.append(text)
+    if not (clean.get("provider") and clean.get("model")):
+        return {}
+    clean["updated_at"] = _now()
+    return clean
+
+
+def _norm_routine_model(value) -> dict:
+    """Мягкое чтение поля: мусор в файле — «как у руководителя», список не падает."""
+    try:
+        return _agent_models_mod().routine_model({"routine_model": value})
+    except Exception:  # noqa: BLE001 - реестр комнат важнее модели рутины
         return {}
 
 
@@ -866,6 +988,8 @@ def _norm_room(room: dict) -> dict:
         "agent_notes_log": _norm_notes_log(room.get("agent_notes_log")),
         # Модель/провайдер/мышление участников (WAVE10): нет записи — «как у агента».
         "agent_models": _norm_agent_models(room.get("agent_models")),
+        # W29-Q9: модель рутинного сведения — нет поля/пусто → модель руководителя.
+        "routine_model": _norm_routine_model(room.get("routine_model")),
         # «Ход работы» (W20 §1.6): у старых комнат полей нет — «подробно» и раз в 2 минуты.
         "worklog_mode": _norm_worklog_mode(room.get("worklog_mode")),
         "digest_every_min": _norm_digest_min(room.get("digest_every_min")),
@@ -888,6 +1012,10 @@ def _norm_room(room: dict) -> dict:
         # но профили НЕ меняются: уровень применяется только по действию человека.
         "autonomy": _norm_autonomy(room.get("autonomy")),
         "created_at": int(room.get("created_at") or 0),
+        # Порядок комнат в меню (W29-P7): порядок, закрепление и группа — поля реестра.
+        "order": _norm_order(room.get("order")),
+        "pinned": bool(room.get("pinned")),
+        "group": _norm_group(room.get("group")),
         "archived": bool(room.get("archived")),
         "seeded": bool(room.get("seeded")),
     }
@@ -904,13 +1032,154 @@ def _check_mode(value) -> str:
     return mode
 
 
+def _menu_key(room: dict) -> tuple:
+    """Ключ порядка меню (W29-P7): закреплённые сверху, затем `order`, затем создание.
+
+    Комнаты, у которых порядок ещё не задавали (`order` = 0), встают по времени
+    создания — как было до волны 29. Один и тот же порядок на сервере и в меню:
+    интерфейс не пересортировывает список по-своему.
+    """
+    order = _norm_order(room.get("order"))
+    return (0 if room.get("pinned") else 1,
+            order if order else 10 ** 9,
+            int(room.get("created_at") or 0),
+            str(room.get("id") or ""))
+
+
 def list_rooms(cfg, include_archived: bool = False) -> list[dict]:
-    """Все комнаты (полные Room), по порядку создания."""
+    """Все комнаты (полные Room) в порядке меню: закреплённые, затем `order`."""
     rooms = [_norm_room(r) for r in _load(cfg)["rooms"] if isinstance(r, dict)]
     if not include_archived:
         rooms = [r for r in rooms if not r["archived"]]
-    rooms.sort(key=lambda r: (r["created_at"], r["id"]))
+    rooms.sort(key=_menu_key)
     return rooms
+
+
+def list_groups(cfg) -> list[dict]:
+    """Группы комнат из реестра (W29-P7): `[{id, title, collapsed}]`."""
+    return _groups_doc(_load(cfg))
+
+
+def order_sequence(rooms: list[dict], ids: list[str]) -> list[str]:
+    """Полная последовательность id: сначала присланные, затем остальные как были.
+
+    Нужна, чтобы «перетащили одну комнату» не сбрасывало места остальных: порядок
+    всегда остаётся полным и без дыр, даже если клиент прислал часть списка.
+    """
+    known = [str(r.get("id")) for r in rooms]
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in ids or []:
+        rid = str(raw or "").strip()
+        if rid and rid not in seen:
+            out.append(rid)
+            seen.add(rid)
+    for rid in known:
+        if rid not in seen:
+            out.append(rid)
+            seen.add(rid)
+    return out
+
+
+def check_layout(cfg, payload) -> tuple[dict, list[dict]]:
+    """Проверить раскладку меню ДО записи: `(порядок_и_флаги, группы)`.
+
+    Формат тела `PUT /api/rooms/order`:
+        {"order": ["cafe", "laundry", …],          # необязательно
+         "groups": [{"id","title","collapsed"}],   # необязательно, полная замена
+         "rooms": {"cafe": {"pinned": true, "group": "g1"}}}   # необязательно
+
+    Возвращает `({room_id: {…поля…}}, группы)`; ошибки — RoomsError по-русски.
+    Ничего не пишет: запись делает `apply_layout` под замком.
+    """
+    if not isinstance(payload, dict):
+        raise RoomsError("Раскладка меню — объект", "bad_request", {"field": "body"})
+    data = _load(cfg)
+    known = [str(r.get("id")) for r in data["rooms"] if isinstance(r, dict)]
+    groups = _check_groups(payload["groups"]) if "groups" in payload else _groups_doc(data)
+    group_ids = {g["id"] for g in groups}
+
+    fields: dict[str, dict] = {}
+    if "order" in payload:
+        raw_order = payload.get("order")
+        if not isinstance(raw_order, list):
+            raise RoomsError("Порядок комнат — список id", "bad_request", {"field": "order"})
+        seen: set[str] = set()
+        for raw in raw_order:
+            rid = str(raw or "").strip()
+            if not rid:
+                raise RoomsError("В порядке комнат пустой id", "bad_request", {"field": "order"})
+            if rid not in known:
+                raise RoomsError("Комнаты «%s» нет — порядок не сохранён" % rid, "bad_request",
+                                 {"field": "order", "value": rid, "known": known[:20]})
+            if rid in seen:
+                raise RoomsError("Комната «%s» в списке дважды" % rid, "bad_request",
+                                 {"field": "order", "value": rid, "reason": "duplicate"})
+            seen.add(rid)
+        for pos, rid in enumerate(order_sequence(data["rooms"], raw_order)):
+            fields.setdefault(rid, {})["order"] = pos + 1
+
+    raw_rooms = payload.get("rooms")
+    if raw_rooms is not None:
+        if not isinstance(raw_rooms, dict):
+            raise RoomsError("Правки комнат — объект {id: {pinned, group}}", "bad_request",
+                             {"field": "rooms"})
+        for rid, patch in raw_rooms.items():
+            rid = str(rid or "").strip()
+            if rid not in known:
+                raise RoomsError("Комнаты «%s» нет" % rid, "bad_request",
+                                 {"field": "rooms", "value": rid})
+            if not isinstance(patch, dict):
+                raise RoomsError("Правка комнаты — объект", "bad_request",
+                                 {"field": "rooms." + rid})
+            extra = sorted(set(patch) - {"pinned", "group"})
+            if extra:
+                raise RoomsError("В раскладке меняются только закрепление и группа",
+                                 "bad_request", {"fields": extra, "allowed": ["pinned", "group"]})
+            target = fields.setdefault(rid, {})
+            if "pinned" in patch:
+                target["pinned"] = _check_bool(patch["pinned"], "pinned")
+            if "group" in patch:
+                group = _norm_group(patch["group"])
+                if group and group not in group_ids:
+                    raise RoomsError("Группы «%s» нет — комната осталась на месте" % group,
+                                     "bad_request", {"field": "rooms." + rid + ".group",
+                                                     "value": group})
+                target["group"] = group
+    return fields, groups
+
+
+def apply_layout(cfg, payload) -> dict:
+    """Сохранить порядок/закрепление/группы комнат одним движением (W29-P7).
+
+    Чтение-проверка-запись под замком реестра: два окна не затрут друг друга.
+    Возвращает `{changed, rooms, groups}` — комнаты уже в порядке меню.
+    """
+    path = _rooms_path(cfg)
+    with sf.lock_for(path):
+        fields, groups = check_layout(cfg, payload)
+        data = _load(cfg)
+        changed = data.get("groups") != groups
+        data["groups"] = groups
+        valid_groups = {g["id"] for g in groups}
+        for room in data["rooms"]:
+            if not isinstance(room, dict):
+                continue
+            rid = str(room.get("id"))
+            patch = fields.get(rid) or {}
+            for key, value in patch.items():
+                if room.get(key) != value:
+                    room[key] = value
+                    changed = True
+            # Группу удалили — комната остаётся в меню, просто без группы.
+            if _norm_group(room.get("group")) not in valid_groups and room.get("group"):
+                room["group"] = ""
+                changed = True
+        if changed:
+            _save(cfg, data)
+        rooms = [_norm_room(r) for r in data["rooms"] if isinstance(r, dict) and not r.get("archived")]
+        rooms.sort(key=_menu_key)
+        return {"changed": changed, "rooms": rooms, "groups": groups}
 
 
 def get_room(cfg, room_id: str) -> dict | None:
@@ -987,6 +1256,9 @@ def create_room(cfg, data: dict) -> dict:
             [orchestrator] + [str(m.get("profile") or "").strip() for m in members]
             + ([str(data.get("critic") or "").strip()] if data.get("critic") else []),
         ),
+        # W29-Q9: модель для рутинного сведения (автосвод, «Уточнение»). При создании
+        # обычно пусто — «как у руководителя»; выбор делается в настройках комнаты.
+        "routine_model": _check_routine_model(cfg, data.get("routine_model")),
         # «Ход работы» (W20 §1.6): по умолчанию подробно, промежуточный итог раз в 2 минуты.
         "worklog_mode": _check_worklog_mode(data.get("worklog_mode")),
         "digest_every_min": (_check_digest_min(data["digest_every_min"])
@@ -1004,6 +1276,10 @@ def create_room(cfg, data: dict) -> dict:
         # Дежурства (W24 §3.2): при создании обычно пусто — привязка идёт отдельным PUT.
         "duties": _check_duties(data.get("duties")),
         "created_at": now,
+        # W29-P7: новая комната встаёт в конец меню, без закрепления и без группы.
+        "order": 0,
+        "pinned": False,
+        "group": "",
         "archived": False,
         "seeded": bool(data.get("seeded")),
     }
@@ -1014,13 +1290,21 @@ def create_room(cfg, data: dict) -> dict:
             raise RoomsError(f"Комната «{room_id}» уже есть", "conflict", {"room": room_id})
         # папка проекта создаётся ДО записи реестра: нет папки — нет комнаты
         _warm_project_dir(cfg, room)
+        # W29-P7: порядок — «после всех», чтобы новая комната не влезла в середину.
+        room["order"] = max([_norm_order(r.get("order")) for r in current["rooms"]
+                             if isinstance(r, dict)] or [0]) + 1
         current["rooms"].append(room)
         _save(cfg, current)
     return room
 
 
-def update_room(cfg, room_id: str, patch: dict) -> dict:
-    """Частичное обновление; id/board/tenant менять нельзя."""
+def update_room(cfg, room_id: str, patch: dict, *, warnings=None) -> dict:
+    """Частичное обновление; id/board/tenant менять нельзя.
+
+    `warnings` — необязательный список: сюда складываются предупреждения о записях, которые
+    приняты без проверки каталога (дефект 10: «модель не в каталоге — используется как
+    выбрано»). Отказом они не становятся.
+    """
     if not isinstance(patch, dict):
         raise RoomsError("patch должен быть объектом", "bad_request")
     bad = [k for k in patch if k in IMMUTABLE]
@@ -1105,8 +1389,14 @@ def update_room(cfg, room_id: str, patch: dict) -> dict:
                     members = [lead, critic] + [str(m.get("profile") or "").strip()
                                                 for m in (room.get("members") or [])
                                                 if isinstance(m, dict)]
+                    # Дефект 10: каталогом проверяем ТОЛЬКО изменённых участников; записи
+                    # без изменений (например, у кого поменяли лишь мышление) идут как есть.
                     room["agent_models"] = _check_agent_models(
-                        cfg, value, [m for m in members if m])
+                        cfg, value, [m for m in members if m],
+                        previous=room.get("agent_models"), warnings=warnings)
+                elif key == "routine_model":
+                    # W29-Q9: модель рутинного сведения; пусто — «как у руководителя».
+                    room["routine_model"] = _check_routine_model(cfg, value, warnings=warnings)
                 elif key == "worklog_mode":
                     room["worklog_mode"] = _check_worklog_mode(value)
                 elif key == "digest_every_min":
@@ -1134,6 +1424,15 @@ def update_room(cfg, room_id: str, patch: dict) -> dict:
                 _warm_project_dir(cfg, room)  # папка создаётся до записи реестра
             data["rooms"][idx] = room
             _save(cfg, data)
+            # W29-P10: выбор модели комнаты — в служебную таблицу доски (только если защита
+            # установлена человеком). Ошибка синхронизации не мешает сохранить выбор.
+            if "agent_models" in patch:
+                try:                               # noqa: SIM105 - вторичный шаг
+                    from . import model_trigger as trigger_mod
+                except ImportError:                # pragma: no cover - плоский импорт
+                    trigger_mod = None             # type: ignore
+                if trigger_mod is not None:
+                    trigger_mod.sync_room(cfg, room)
             return _norm_room(room)
     raise RoomsError("Комната не найдена", "not_found", {"room": str(room_id)})
 

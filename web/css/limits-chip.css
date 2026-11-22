@@ -1,0 +1,27 @@
+/* ============================================================================
+   limits-chip.css — компактный индикатор расхода в шапке (W29-P9).
+
+   Одна строка в шапке: «5 ч: 645 тыс. · 84 %». Стили живут отдельно от
+   view-limits.css, потому что чип виден на КАЖДОМ экране, а панель грузится
+   только в настройках.
+   ========================================================================== */
+
+.lim-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  max-width: 220px; min-width: 0;
+  text-decoration: none; color: inherit; cursor: pointer;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.lim-chip__text { overflow: hidden; text-overflow: ellipsis; }
+.lim-chip--warn {
+  color: var(--warn-ink);
+  background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+}
+.lim-chip--alert {
+  color: var(--danger-ink);
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+.lim-chip:hover { border-color: currentColor; }
+.lim-chip:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 1px; }

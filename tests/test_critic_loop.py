@@ -263,7 +263,7 @@ class FakeEngine:
         self.fail = fail
 
     def create_child_card(self, cfg, room, board, parent_id, assignee, title, body, kind,
-                          idem_key=None):
+                          idem_key=None, routine=False):
         self.calls.append({"fn": "create_child_card", "parent_id": parent_id,
                            "assignee": assignee, "title": title, "body": body,
                            "kind": kind, "idem_key": idem_key})

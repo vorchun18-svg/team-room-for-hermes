@@ -54,7 +54,7 @@ def make_detail(root_id: str = "t_a1", title: str = "Дорожная карта
                         "due": "2026-11-01", "state": "open"}],
         "open_questions": [{"id": "q_1", "text": "Класс 30 или 30+43?", "for": "mikhail",
                            "answered": False, "answer": None}],
-        "decisions": [{"id": "d_1", "text": "Старт с набора 6 моти", "why": "дешевле",
+        "decisions": [{"id": "d_1", "text": "Старт с набора 6 суфле", "why": "дешевле",
                       "status": "accepted"}],
         "future_questions": [],
         "artifacts": [],

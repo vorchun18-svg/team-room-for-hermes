@@ -126,6 +126,49 @@ function reportCard(item, roomId, titles = {}) {
   return card;
 }
 
+/* --------------------------------------------------- итоги запросов (P6) */
+
+/**
+ * Одна строка «Результаты»: итог завершённого запроса.
+ *
+ * Смысл вкладки — не только страницы-отчёты: это ВСЕ итоги комнаты. Поэтому у
+ * строки всегда есть: название (ссылка на запрос), «Коротко» из свода, дата
+ * завершения, отчёты этого запроса (если команда их собрала) и переход на
+ * страницу запроса, где лежат файлы и решения.
+ */
+function resultRow(item, roomId) {
+  const href = '#/room/' + encodeURIComponent(roomId) + '/request/' + encodeURIComponent(item.id);
+  const reports = Array.isArray(item.reports) ? item.reports : [];
+  const meta = h('div', { class: 'result-row__meta small muted' },
+    h('span', { title: 'Когда запрос завершён' },
+      item.finished_at ? 'Завершён ' + fmtDate(item.finished_at) : 'Завершён'),
+    reports.length ? h('span', null, ' · отчётов: ' + reports.length) : null,
+    item.delo ? h('span', null, ' · дело: ' + String(item.delo.title || item.delo.id)) : null,
+    item.short ? null : h('span', null, ' · итог — на странице запроса'));
+  return h('article', { class: 'result-row', dataset: { request: String(item.id || '') } },
+    h('div', { class: 'result-row__main' },
+      h('a', { class: 'result-row__title', href, title: item.title || item.id },
+        item.title_short || item.title || item.id),
+      item.short
+        ? h('p', { class: 'result-row__short' }, String(item.short))
+        : null,
+      meta),
+    h('div', { class: 'result-row__foot' },
+      ...reports.slice(0, 4).map((rep) => h('a', {
+        class: 'chip chip--info',
+        href: reportsHash(roomId, rep.key),
+        title: (rep.kind === 'html' ? 'Страница-отчёт: ' : 'Интерактивный отчёт: ') + String(rep.title || rep.key),
+      }, icon(rep.kind === 'html' ? 'globe' : 'graph', { size: 11 }), String(rep.title || rep.key))),
+      h('span', { class: 'spacer' }),
+      h('a', { class: 'btn btn--ghost btn--sm', href }, 'Открыть запрос', icon('arrow-right', { size: 11 }))));
+}
+
+/** Заголовок подраздела внутри «Результатов». */
+function subHeader(text, count) {
+  return h('h2', { class: 'rep__sub' }, text, count === undefined ? null
+    : h('span', { class: 'rep__sub-count muted' }, ' · ' + String(count)));
+}
+
 /* --------------------------------------------------------------- галерея */
 
 async function mountGallery(el, ctx, roomId) {
@@ -142,6 +185,7 @@ async function mountGallery(el, ctx, roomId) {
 
   let items = [];
   let titles = {};
+  let results = null;            // итоги завершённых запросов (W29-P6)
   let signature = '';
   let stopped = false;
   let loading = true;
@@ -179,8 +223,9 @@ async function mountGallery(el, ctx, roomId) {
       onclick: () => load({ force: true }),
     }, icon('refresh', { size: 12 }), 'Обновить');
     const shown = shownItems();
-    const head_box = sectionHeader('Отчёты', {
-      count: loading ? undefined : shown.length,
+    const finished = results ? (filterByRequest(results.items || [], requestId) || []) : [];
+    const head_box = sectionHeader('Результаты', {
+      count: loading ? undefined : finished.length + shown.length,
       actions: refresh,
     });
     head.replaceChildren(head_box);
@@ -194,8 +239,9 @@ async function mountGallery(el, ctx, roomId) {
     if (!loading && !error) {
       head.appendChild(h('p', { class: 'rep__hint small muted' },
         requestId
-          ? 'Здесь только отчёты этого запроса. Чип выше снимает фильтр — тогда видны отчёты всей комнаты.'
-          : 'Интерактивные страницы, которые команда собрала по запросам: таблицы, графики, схемы. Открываются на весь экран.'));
+          ? 'Здесь только итоги этого запроса. Чип выше снимает фильтр — тогда видны результаты всей комнаты.'
+          : 'Итоги всех завершённых запросов комнаты: короткий вывод, файлы и отчёты. '
+            + 'Страницы-отчёты команды открываются на весь экран отдельным блоком.'));
     }
   }
 
@@ -210,30 +256,60 @@ async function mountGallery(el, ctx, roomId) {
       return;
     }
     const shown = shownItems();
-    if (!shown.length) {
-      body.appendChild(requestId
-        ? emptyState({
-          icon: 'report',
-          title: 'У этого запроса отчётов нет',
-          text: 'Отчёт появляется, когда команда присылает интерактивную страницу. Снимите фильтр, чтобы увидеть отчёты всей комнаты.',
-          action: { label: 'Показать все отчёты', onclick: clearFilter },
-        })
-        : emptyState({
-          icon: 'report',
-          title: 'Пока ни одного отчёта',
-          text: 'Отчёт появляется, когда команда присылает интерактивную страницу. Попросите в запросе: '
-            + '«сделай интерактивный отчёт с таблицей и графиком». Команда соберёт страницу — '
-            + 'и она появится здесь.',
-        }));
+    const finished = results ? (filterByRequest(results.items || [], requestId) || []) : [];
+    const pending = results ? (results.pending || []).length : 0;
+
+    // 1) Итоги завершённых запросов — главное содержимое вкладки.
+    if (finished.length) {
+      body.appendChild(subHeader('Итоги запросов', finished.length));
+      const list = h('div', { class: 'result-list', role: 'list' });
+      for (const item of finished) {
+        const row = resultRow(item, roomId);
+        row.setAttribute('role', 'listitem');
+        list.appendChild(row);
+      }
+      body.appendChild(list);
+    }
+
+    // 2) Интерактивное страницы-отчёты, которые собрала команда (если есть).
+    if (shown.length) {
+      body.appendChild(subHeader('Страницы-отчёты', shown.length));
+      const grid = h('div', { class: 'rep-grid', role: 'list' });
+      for (const item of shown) {
+        const card = reportCard(item, roomId, titles);
+        card.setAttribute('role', 'listitem');
+        grid.appendChild(card);
+      }
+      body.appendChild(grid);
+    }
+
+    // 3) Пустое состояние по правилу «зачем экран + что сделать сейчас».
+    if (finished.length || shown.length) return;
+    if (requestId) {
+      body.appendChild(emptyState({
+        icon: 'report',
+        title: 'У этого запроса итогов пока нет',
+        text: 'Запрос ещё не завершён — результат появится здесь, когда команда закончит. '
+          + 'Снимите фильтр, чтобы увидеть результаты всей комнаты.',
+        action: { label: 'Все результаты комнаты', onclick: clearFilter },
+      }));
       return;
     }
-    const grid = h('div', { class: 'rep-grid', role: 'list' });
-    for (const item of shown) {
-      const card = reportCard(item, roomId, titles);
-      card.setAttribute('role', 'listitem');
-      grid.appendChild(card);
-    }
-    body.appendChild(grid);
+    body.appendChild(emptyState({
+      icon: 'report',
+      title: pending ? 'Результаты появятся после первого завершённого запроса' : 'Результатов пока нет',
+      text: pending
+        ? 'В работе запросов: ' + pending + '. Как только команда закончит, итог — короткий вывод, '
+          + 'файлы и отчёты — появится здесь сам, без ваших действий.'
+        : 'Здесь собираются итоги ВСЕХ завершённых запросов комнаты: короткий вывод, файлы, '
+          + 'страницы-отчёты. Начните с запроса — результат придёт сюда сам.',
+      action: {
+        label: pending ? 'Открыть текущие запросы' : 'Создать запрос',
+        onclick: () => {
+          location.hash = '#/room/' + encodeURIComponent(roomId) + '/composer';
+        },
+      },
+    }));
   }
 
   async function load({ force = false, silent = false } = {}) {
@@ -242,9 +318,18 @@ async function mountGallery(el, ctx, roomId) {
       // Условный GET — только когда уже есть с чем сравнивать (иначе 304
       // от чужого запроса оставит галерею пустой).
       const conditional = !force && Boolean(signature);
-      const payload = await api.get(path, conditional ? { etag: true } : undefined);
+      const resultsPath = '/api/rooms/' + encodeURIComponent(roomId) + '/results';
+      const [payload, resPayload] = await Promise.all([
+        api.get(path, conditional ? { etag: true } : undefined),
+        api.get(resultsPath).catch(() => null),
+      ]);
       if (stopped) return;
-      if (payload && payload.notModified) { loading = false; return; }
+      if (resPayload) results = resPayload;
+      if (payload && payload.notModified) {
+        loading = false;
+        renderHead();
+        return;
+      }
       const next = Array.isArray(payload && payload.items) ? payload.items : [];
       const nextSig = JSON.stringify(next);
       loading = false;
@@ -253,9 +338,11 @@ async function mountGallery(el, ctx, roomId) {
         signature = nextSig;
         items = next;
         titles = await loadTitles(items);
-        renderHead();
-        renderBody();
       }
+      // W29-P6: итоги запросов приходят другим ответом — перерисовываем всегда,
+      // иначе новый итог не появится, пока не изменится список отчётов.
+      renderHead();
+      renderBody();
     } catch (err) {
       if (stopped) return;
       loading = false;

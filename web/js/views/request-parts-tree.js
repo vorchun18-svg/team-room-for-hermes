@@ -11,11 +11,11 @@ import { h, fmtDuration, timeAgo, fmtDateTime, plainTerms } from '../util.js';
 import { fileUrl } from '../api.js';
 import { icon } from '../icons.js';
 import {
-  statusChip, roleChip, mdBlock, emptyState, promptDialog,
+  statusChip, roleChip, mdBlock, emptyState, promptDialog, copyText,
 } from '../ui.js';
 import { buildTree, nodeActions, errorReason,
          failureStamp, attemptRows, cardFailed, failureMessage,
-         guardAttempts, attemptTotal } from './request-parts-model.js';
+         guardAttempts, attemptTotal, sessionOf } from './request-parts-model.js';
 import { createTreeState, problemSignature } from './request-tree-state.js';
 import { createNotices, createMarks } from './notice-state.js';
 import { createRetryButton } from './retry-button.js';
@@ -359,9 +359,25 @@ export function runStatusRu(run) {
   return RUN_STATUS_RU[key] || '';
 }
 
+function hermesSessionButton(node, ctx) {
+  const sid = sessionOf(node);
+  if (!sid) return null;
+  return h('button', {
+    type: 'button', class: 'btn btn--link btn--sm rp-node__session',
+    title: 'Сеанс Hermes этого запуска: id ' + sid + '. Нажмите, чтобы скопировать id.',
+    onclick: async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const ok = await copyText(sid);
+      toast(ok ? 'ID сеанса скопирован — откройте Hermes → Сеансы и найдите его'
+        : 'Не удалось скопировать ID сеанса: ' + sid, ok ? 'ok' : 'warn');
+      if (typeof ctx === 'object' && ctx && typeof ctx.onSession === 'function') ctx.onSession(sid);
+    },
+  }, icon('history', { size: 11 }), 'Сеанс в Hermes');
+}
+
 function runsBlock(node, ctx) {
   const rows = attemptRows(node);
-  if (!rows.length) return null;
   const box = h('div', { class: 'rp-runs' });
   box.appendChild(h('div', { class: 'rp-block__label small muted' }, `Попытки · ${rows.length}`));
   for (const row of rows) {
@@ -467,6 +483,10 @@ function nodeRow(row, ctx, detail, onChanged, ui) {
     // исправляет сторож моделей, а человеку показывается результат (лента
     // «Контроль моделей» на странице и строка «Остановлено…» у карточки).
   }
+  // W29B-Q2: «запрос ↔ сеансы Hermes» — у карточки id сеанса её запуска
+  // (копируется; deep-link Hermes Desktop на сеанс не объявляет).
+  const sessionBtn = hermesSessionButton(node, ctx);
+  if (sessionBtn) sub.appendChild(sessionBtn);
   main.appendChild(sub);
 
   // W28-C2: убитые контролем моделей попытки — спокойной строкой (не красное и не

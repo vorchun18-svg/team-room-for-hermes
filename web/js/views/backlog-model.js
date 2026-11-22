@@ -299,7 +299,9 @@ export function inboxSummary({ questions = [], decisions = [], blocked = [], app
     return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
   };
   const q = fromServer(server && server.questions, questions);
-  const b = Array.isArray(blocked) ? blocked.length : 0;
+  // W29-P2 п.5: число заблокированных карточек тоже берём у сервера, если он его
+  // прислал (`needs_you_blocked` → `counts.blocked`): число и список — один источник.
+  const b = fromServer(server && server.blocked, blocked);
   const d = fromServer(server && server.decisions, decisions);
   // W22-AP2: запрос разрешения агенту — такое же дело, ждущее человека.
   // W27-E2 §1: защита от повторения дефекта — даже если сюда положили все строки
@@ -348,17 +350,42 @@ function pluralWord(n, forms) {
 /* --------------------------------------------------------- blocked-карточки */
 
 /**
+ * Системная пауза сторожа моделей (W29-P2): карточку остановил не человек, а
+ * контроль моделей — сторож снимет её сам. Такая пауза НЕ входит в «ждёт вашего
+ * решения»: иначе человек видел число «1 задача ждёт вас», а разблокировать
+ * нечего (ответ от него не требуется).
+ *
+ * Признак — поле `hold` узла дерева (`model_guard.attach`): `by: 'guard'`,
+ * `auto: true`. Старые серверы поля не присылают — тогда пауза считается обычной.
+ *
+ * @param {object} node TaskNode
+ * @returns {boolean}
+ */
+export function isSystemPause(node) {
+  const hold = node && node.hold;
+  if (!hold || typeof hold !== 'object') return false;
+  return hold.by === 'guard' || hold.auto === true;
+}
+
+/**
  * Достать заблокированные карточки из деталей запросов.
+ *
+ * Системные паузы сторожа по умолчанию НЕ попадают в список «ждёт вас» — они
+ * живут отдельной, спокойной строкой (`systemPauses`).
+ *
  * @param {Array} details RequestDetail[]
+ * @param {{includeSystem?:boolean}} [o]
  * @returns {Array<{task_id,text,hint,request_id,request_title,assignee,since}>}
  */
-export function blockedCards(details) {
+export function blockedCards(details, o = {}) {
+  const includeSystem = Boolean(o && o.includeSystem);
   const out = [];
   const seen = new Set();
   for (const detail of Array.isArray(details) ? details : []) {
     if (!detail || !Array.isArray(detail.tree)) continue;
     for (const node of detail.tree) {
       if (!node || node.status !== 'blocked' || seen.has(node.id)) continue;
+      if (!includeSystem && isSystemPause(node)) continue;
       seen.add(node.id);
       out.push({
         task_id: node.id,
@@ -372,6 +399,38 @@ export function blockedCards(details) {
     }
   }
   return out.sort((a, b) => (Number(a.since) || 0) - (Number(b.since) || 0));
+}
+
+/**
+ * Системные паузы сторожа: «снимаю автоматически», кнопка «Снять паузу сейчас».
+ * В счётчик «ждёт вас» не входят (WAVE29 P2 п.2).
+ *
+ * @param {Array} details RequestDetail[]
+ * @returns {Array<{task_id,text,reason,request_id,request_title,assignee,since,label}>}
+ */
+export function systemPauses(details) {
+  const out = [];
+  const seen = new Set();
+  for (const detail of Array.isArray(details) ? details : []) {
+    if (!detail || !Array.isArray(detail.tree)) continue;
+    for (const node of detail.tree) {
+      if (!node || node.status !== 'blocked' || seen.has(node.id)) continue;
+      if (!isSystemPause(node)) continue;
+      seen.add(node.id);
+      const hold = node.hold || {};
+      out.push({
+        task_id: node.id,
+        text: String(node.title || 'Задача'),
+        reason: String(hold.reason || 'модель не подтверждена — жду простановки модели'),
+        request_id: detail.id || null,
+        request_title: String(detail.title || ''),
+        assignee: node.assignee || null,
+        since: hold.at || node.started_at || null,
+        label: String(hold.label || 'Снимаю автоматически'),
+      });
+    }
+  }
+  return out;
 }
 
 /** id вопросов внутри запроса: 'q_1' (для actions.answer). */

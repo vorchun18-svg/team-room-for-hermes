@@ -19,20 +19,39 @@ import { termHelp } from '../term-help.js';
 // (`teamroom.focus`, `teamroom.density`) и в атрибутах `#app` — оболочку L1 не трогаем.
 import { applyDensity, densityLabel, nextDensity, readDensity } from '../density.js';
 import { routeKeyOf, readFocusMap, writeFocus } from '../focus-mode.js';
+// W29-Q7: «в архив» выполняется через общую отмену (10 с), а ★ — та же закладка,
+// что видна в меню приложения.
+import { undo } from '../undo.js';
+import { setBookmark } from '../recents.js';
 
 export function createHeader(R) {
   const { rid, ctx, state, render, runAction, cloneRequest, decompose } = R;
 
   async function archive() {
     const ok = await confirmDialog({
-      title: 'Архивировать запрос?',
-      text: 'Запрос и все его задачи уйдут в архив. Ответ останется в экспорте и журнале комнаты.',
-      confirmLabel: 'Архивировать',
+      title: 'Убрать запрос в архив?',
+      text: 'Работа по запросу остановится: идущие задачи встанут, новые вопросы и обновления ответа не появятся. ' +
+        'Ответ, решения и файлы сохранятся — 10 секунд можно передумать, потом запрос вернётся кнопкой «Вернуть из архива».',
+      confirmLabel: 'В архив',
       cancelLabel: 'Отмена',
       danger: true,
     });
     if (!ok) return;
-    await runAction('archive', {}, { toast: 'Запрос в архиве' });
+    // W29-Q7: необратимое действие отложено на 10 секунд. Пока идёт отсчёт,
+    // запрос жив как был — «Вернуть» ничего не откатывает, потому что нечего.
+    undo.offer({
+      key: 'archive:' + rid,
+      text: 'Запрос в архиве',
+      action: async () => {
+        await runAction('archive', {}, { toast: 'Запрос в архиве — вернуть можно в «Архиве»' });
+      },
+      onUndo: () => { if (typeof ctx.toast === 'function') ctx.toast('Запрос остался как был — ничего не изменилось', 'ok'); },
+    });
+  }
+
+  /** W29-P4: вернуть запрос из архива — данные целы, модели не запускаются. */
+  async function restore() {
+    await runAction('unarchive', {}, { toast: 'Запрос возвращён — он снова в списке запросов' });
   }
 
   /* ── меню действий ─────────────────────────────────────────── */
@@ -84,9 +103,20 @@ export function createHeader(R) {
   async function togglePin() {
     const want = !(R.detail && R.detail.pinned);
     try {
-      await ctx.api.patch(`/api/requests/${encodeURIComponent(rid)}`, { pinned: want });
+      const res = await ctx.api.patch(`/api/requests/${encodeURIComponent(rid)}`, { pinned: want });
+      // W29-Q7: ★ в меню («Закладки») — тот же флаг `pinned`, что и на сервере:
+      // одна звезда, одно место хранения, никаких двух списков.
+      const saved = res && res.pinned !== undefined ? res.pinned === true : want;
+      setBookmark({
+        id: rid,
+        roomId: R.roomId || '',
+        title: (R.detail && (R.detail.title_short || R.detail.title)) || '',
+      }, saved);
+      window.dispatchEvent(new CustomEvent('teamroom:bookmarks', { detail: { id: rid, on: saved } }));
       if (typeof ctx.toast === 'function') {
-        ctx.toast(want ? 'Запрос закреплён — он будет сверху в «Недавнем»' : 'Закрепление снято', 'ok');
+        ctx.toast(saved
+          ? 'Запрос в закладках — он сверху в меню и в «Недавнем»'
+          : 'Закладка снята', 'ok');
       }
       await R.refresh({ force: true });
       render();
@@ -102,6 +132,22 @@ export function createHeader(R) {
     const c = criticOf(R.detail);
     const ready = s.state === 'ready' && Boolean(s.text_md || s.version);
     const canCritique = c.enabled && ready;
+    // W29-P4: у архивного запроса действия, которые будят агентов, недоступны.
+    // В меню остаётся только «Вернуть из архива» и чтение (экспорт, печать).
+    if (R.detail.archived) {
+      const only = [
+        menuItem({ iconName: 'debug-restart', label: 'Вернуть из архива',
+          onclick: () => { closeMenu(); restore(); } }),
+        h('div', { class: 'menu__sep' }),
+      ];
+      const md = `/api/export/request/${encodeURIComponent(rid)}.md`;
+      const html = `/api/export/request/${encodeURIComponent(rid)}.html`;
+      only.push(menuItem({ iconName: 'markdown', label: 'Экспорт .md', href: md, download: '' }));
+      only.push(menuItem({ iconName: 'globe', label: 'Экспорт .html', href: html, download: '' }));
+      only.push(menuItem({ iconName: 'output', label: 'Печать', onclick: () => { closeMenu(); window.print(); } }));
+      return h('div', { class: 'popover req-menu__pop', role: 'menu', 'aria-label': 'Действия с запросом' },
+        h('div', { class: 'menu' }, only));
+    }
     const kick = kickUsefulness(kickStateFromTree(R.detail.tree));
     // W25-L2: «Фокус» и плотность. Одним нажатием каждое (R5 §9 пп. 15, 18):
     // фокус переключается, плотность идёт по кругу компактно → обычно → просторно.
@@ -223,11 +269,27 @@ export function createHeader(R) {
     return h('span', { class: 'req__meta-item' }, iconName ? icon(iconName, { size: 11 }) : null, text);
   }
 
+  /** W29-P4: заметная кнопка архива/возврата в шапке (не только в меню «…»). */
+  function archiveButton() {
+    if (R.detail && R.detail.archived) {
+      return h('button', {
+        type: 'button', class: 'btn btn--primary btn--sm req__archive-btn',
+        title: 'Вернуть запрос в обычный список — без запуска моделей',
+        onclick: () => restore(),
+      }, icon('debug-restart', { size: 13 }), 'Вернуть из архива');
+    }
+    return h('button', {
+      type: 'button', class: 'btn btn--secondary btn--sm req__archive-btn',
+      title: 'Не актуально → в архив: работа остановится, запрос можно вернуть',
+      onclick: () => archive(),
+    }, icon('archive', { size: 13 }), 'Не актуально');
+  }
+
   function buildHeader() {
     const d = R.detail;
     const meta = h('div', { class: 'req__meta' });
     // Статус в шапке — ровно один раз. Архив — тихая пометка, не второй чип.
-    const items = [statusChip(d.status)];
+    const items = [statusChip(d.archived ? 'archived' : d.status)];
     if (d.archived) items.push(metaItem('archive', 'в архиве'));
     items.push(metaItem('clock', 'Создан ' + fmtDateTime(d.created_at)));
 
@@ -284,7 +346,7 @@ export function createHeader(R) {
             render();
           },
         }),
-        h('div', { class: 'req__headactions' }, actionsMenu())),
+        h('div', { class: 'req__headactions' }, archiveButton(), actionsMenu())),
       meta);
   }
 

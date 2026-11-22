@@ -410,6 +410,8 @@ export function attemptList(node) {
       calls: Number.isFinite(Number(item.calls)) && item.calls !== null && item.calls !== ''
         ? Number(item.calls) : null,
       profile: String(item.profile || n.assignee || ''),
+      // W29B-Q2: id сеанса Hermes этой попытки — «Сеанс в Hermes» у карточки.
+      session_id: String(item.session_id || ''),
       at: Number(item.started_at || item.ended_at || 0) || 0,
       duration_s: Number(item.duration_s) || null,
       guard,
@@ -429,6 +431,24 @@ export function guardAttempts(node) {
 /** Сколько попыток было у карточки (для «Попытки · N»). */
 export function attemptTotal(node) {
   return attemptList(node).length;
+}
+
+/**
+ * Сеанс Hermes карточки (W29B-Q2): id сессии ПОСЛЕДНЕЙ попытки, где он известен.
+ *
+ * Hermes Desktop не объявляет deep-link на сеанс, поэтому человеку даётся
+ * копируемый id и подсказка, где его открыть, — а не кнопка-обманка.
+ *
+ * @param {object} node TaskNode
+ * @returns {string} id сессии или пустая строка
+ */
+export function sessionOf(node) {
+  const rows = attemptList(node);
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const sid = String((rows[i] && rows[i].session_id) || '').trim();
+    if (sid) return sid;
+  }
+  return '';
 }
 
 /**

@@ -202,10 +202,33 @@ def _parse(argv: list[str]) -> dict:
     return opts
 
 
+def _board_guard(db_path: str) -> None:
+    """W29-I1: песочница не пишет на реальную доску Hermes — и мостом тоже.
+
+    Мост вызывается из песочного сервера с ``--db <реальная kanban.db>``; это запись
+    прямо в боевую базу, мимо CLI. Та же единая проверка, что у CLI и библиотеки.
+    """
+    root = Path(__file__).resolve().parent.parent
+    for path in (str(root), str(root / "server")):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    try:
+        from server import board_guard as guard
+    except ImportError:                                       # pragma: no cover
+        import board_guard as guard                           # type: ignore
+    found = guard.check(None, db=db_path)
+    if found:
+        raise SystemExit(json.dumps({"ok": False, "code": guard.CODE,
+                                     "error": found["message"],
+                                     "detail": found["detail"]}, ensure_ascii=False))
+
+
 def main(argv: list[str]) -> int:
     opts = _parse(argv)
     _clean_env()
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    if opts["set"] and opts["db"]:
+        _board_guard(opts["db"])
     _import_hermes(opts["agent_home"] or None)
     if opts["catalog"]:
         print(json.dumps(catalog_payload(), ensure_ascii=False))

@@ -226,6 +226,31 @@
 .cmp-cand__main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .cmp-cand__title { font-size: var(--text-base); font-weight: 500; color: var(--foreground); }
 
+/* ── W29-P4: массовый архив и отмена ───────────────────────────────────────── */
+.cmp-bulk {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-quinary);
+}
+.cmp-undo {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-quinary);
+  font-size: var(--text-sm);
+}
+.cmp-undo__text { flex: 1 1 auto; min-width: 0; font-variant-numeric: tabular-nums; }
+.cmp-card__pick { flex: 0 0 auto; margin-top: 4px; }
+.cmp-card.is-picked {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  background: color-mix(in srgb, var(--primary) 6%, var(--card));
+}
+.section-header .btn.is-active { color: var(--primary); }
+
 /* ── Адаптив ─────────────────────────────────────────────────────────────── */
 @media (max-width: 899px) {
   .cmp { gap: var(--space-5); }

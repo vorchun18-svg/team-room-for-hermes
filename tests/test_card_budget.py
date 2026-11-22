@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from server import card_budget, contract  # noqa: E402
+from server import thread  # noqa: E402
 
 
 class FakeCfg:
@@ -247,6 +248,56 @@ class W28BodyTest(unittest.TestCase):
         digest = contract.revision_digest(detail, make_room(), {}, None)
         self.assertEqual(digest["text"].count("Добавь сроки"), 1,
                          "шесть одинаковых сообщений — одна строка в дайджесте")
+
+
+class W29NoteBodyTest(unittest.TestCase):
+    """W29-Q9: «Уточнение» — краткая инструкция + файл-контракт, правила на месте."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="tr-budget-q9-")
+        self.cfg = FakeCfg(Path(self.tmp.name))
+        self.project = Path(self.tmp.name) / "Проект"
+        self.project.mkdir(parents=True, exist_ok=True)
+        self.room = make_room(project_dir=str(self.project), project_mode=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_instruction_is_short_and_rules_survive(self):
+        text = thread.build_note_instruction(self.cfg, self.room, "t_1000aaaa", "lead")
+        self.assertLessEqual(len(text), card_budget.NOTE_INSTRUCTION_MAX,
+                             "инструкция «Уточнения» в бюджете: %d" % len(text))
+        for rule in ("kanban_show", "[Руководитель → <роль>]", "kanban_block",
+                     "не останавливай", "Учтено из уточнений", "plan_patch", "kanban_complete"):
+            self.assertIn(rule, text, "смысловое правило потеряно: %s" % rule)
+
+    def test_urgent_instruction_fits_its_own_budget(self):
+        text = thread.build_note_instruction(self.cfg, self.room, "t_1000aaaa", "lead", True)
+        self.assertLessEqual(len(text), card_budget.NOTE_URGENT_INSTRUCTION_MAX,
+                             "срочная инструкция в бюджете: %d" % len(text))
+        self.assertIn("СРОЧНО", text)
+
+    def test_contract_file_holds_the_details_and_body_links_it(self):
+        body = thread.build_note_body(self.cfg, self.room, "t_1000aaaa",
+                                      {"title": "Меню на неделю", "status": "done"},
+                                      "Сдвиньте срок на неделю", None, "lead", False)
+        path = thread.note_contract_path(self.cfg, self.room, "t_1000aaaa")
+        self.assertTrue(Path(path).is_file(), "подробная инструкция ложится файлом")
+        self.assertIn(path, body, "карточка ссылается на файл")
+        self.assertIn("Сдвиньте срок на неделю", body)
+        details = Path(path).read_text(encoding="utf-8")
+        self.assertGreater(len(details), len(thread.build_note_instruction(
+            self.cfg, self.room, "t_1000aaaa", "lead")), "файл подробнее карточки")
+        self.assertIn("Состав комнаты", details)
+
+    def test_no_project_folder_means_no_file_and_short_body(self):
+        room = make_room(project_dir="")
+        self.assertEqual(thread.ensure_note_contract_file(self.cfg, room, "t_1000aaaa", "lead"), "")
+        body = thread.build_note_body(self.cfg, room, "t_1000aaaa",
+                                      {"title": "Меню", "status": "todo"},
+                                      "Добавьте вариант", None, "lead", False)
+        self.assertNotIn("Подробная инструкция", body)
+        self.assertIn("Учтено из уточнений", body)
 
 
 if __name__ == "__main__":

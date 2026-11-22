@@ -88,7 +88,7 @@ META_V1 = {
         {"id": "idea", "status": "done", "note": "VISION и брифы утверждены"},
         {"id": "legal", "status": "done", "note": "ИП подан"},
         {"id": "packaging", "status": "done", "note": "котировки собраны"},
-        {"id": "production", "status": "active", "note": "тестовая кухня 150 моти в неделю"},
+        {"id": "production", "status": "active", "note": "тестовая кухня 150 суфле в неделю"},
     ]},
     "future_questions": ["Когда нанимать второго повара?"],
     "artifacts": [],

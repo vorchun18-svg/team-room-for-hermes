@@ -398,7 +398,7 @@ class FakeEngine:
         self.counter = 0
 
     def create_child_card(self, cfg, room, board, parent_id, assignee, title, body, kind,
-                          idem_key=None):
+                          idem_key=None, routine=False):
         self.counter += 1
         card_id = "t_auto%03d" % self.counter
         self.calls.append({"fn": "create_child_card", "kind": kind, "assignee": assignee,

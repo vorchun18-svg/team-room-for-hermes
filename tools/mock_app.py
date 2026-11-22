@@ -60,10 +60,22 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
                 with open(os.path.join(self.fixtures_dir, name), encoding="utf-8") as fh:
                     self.fx[name] = json.load(fh)
         self.rooms = copy.deepcopy(self.fx["rooms.json"]["rooms"])
+        # W29-P7: порядок, закрепление и группы левого меню — как поля реестра комнат.
+        self.groups = copy.deepcopy(self.fx["rooms.json"].get("groups") or [])
+        # W29-P9: лимиты в демо живут в памяти — PUT /api/limits/settings их меняет.
+        self.demo_limits = copy.deepcopy((self.fx.get("limits.json") or {}).get("limits") or {})
         self.room_details = {r["id"]: copy.deepcopy(self.fx["room_%s.json" % r["id"]])
                              for r in self.rooms if "room_%s.json" % r["id"] in self.fx}
         # W20-S1 §1.1 (B-36): у комнат демо есть поля живого свода и готовые
         # подписи — вкладка «Работа» показывает то же, что отдаёт боевой сервер.
+        # W29-P7: порядок/закрепление/группа лежат в rooms.json, а карточка комнаты —
+        # в room_<id>.json: переносим устройство меню в карточку, иначе демо его не знает.
+        for row in self.rooms:
+            detail = self.room_details.get(row.get("id"))
+            if isinstance(detail, dict):
+                detail.setdefault("order", int(row.get("order") or 0))
+                detail.setdefault("pinned", bool(row.get("pinned")))
+                detail.setdefault("group", str(row.get("group") or ""))
         for room in self.room_details.values():
             svod_defaults(room)
         self.requests = {rid: copy.deepcopy(self.fx[name]) for rid, name in FIXTURE_BY_RID.items()}
@@ -103,6 +115,63 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
     def fixture(self, name: str) -> dict:
         return copy.deepcopy(self.fx[name])
 
+    # --- W29-P4: архив запросов в демо (память, без доски) ------------------
+
+    def _archived_details(self, room_id: str) -> list:
+        out, seen = [], set()
+        for source in (self.requests, self.live):
+            for rid, raw in list(source.items()):
+                if rid in seen:
+                    continue
+                seen.add(rid)
+                data = normalize_v2(copy.deepcopy(raw))
+                if data.get("room") != room_id or not data.get("archived"):
+                    continue
+                out.append(data)
+        return out
+
+    def archive_list(self, room_id: str, query: dict) -> dict:
+        """`GET /api/rooms/{id}/archive` демо: список убранных запросов."""
+        needle = ((query.get("q") or [""])[0] or "").strip().lower()
+        items = []
+        for data in self._archived_details(room_id):
+            title = str(data.get("title") or "")
+            text = str(data.get("text") or "")
+            if needle and needle not in (title + " " + text).lower():
+                continue
+            summary = detail_to_summary(data)
+            summary["archived"] = True
+            summary["archived_at"] = int(data.get("archived_at") or data.get("finished_at")
+                                         or data.get("created_at") or now())
+            summary["archive_prev"] = {str(summary.get("id")): "done"}
+            items.append(summary)
+        items.sort(key=lambda i: int(i.get("archived_at") or 0), reverse=True)
+        return {"items": items, "total": len(items), "has_more": False,
+                "room": room_id, "at": now()}
+
+    def archive_many(self, room_id: str, body: dict, restore: bool = False) -> dict:
+        """Массово в архив / из архива в демо — тем же действием, что одиночное."""
+        ids = body.get("root_ids") if isinstance(body.get("root_ids"), list) else []
+        results, done, failed = [], 0, 0
+        for rid in [str(x) for x in ids if isinstance(x, str) and x.strip()]:
+            try:
+                status, payload = self.action(rid, {"action": "unarchive" if restore else "archive"})
+                entry = {"root_id": rid, "ok": bool(payload.get("ok")), "count": 1,
+                         "message": "Запрос возвращён" if restore else "Запрос в архиве"}
+                if not payload.get("ok"):
+                    entry["ok"] = False
+                if entry["ok"]:
+                    done += 1
+                else:
+                    failed += 1
+            except ApiError as exc:
+                entry = {"root_id": rid, "ok": False, "message": exc.message, "code": exc.code}
+                failed += 1
+            results.append(entry)
+        return {"ok": failed == 0, "action": "restore" if restore else "archive",
+                "results": results, "done": done, "failed": failed,
+                "room": room_id, "at": now()}
+
     def room(self, room_id: str) -> dict:
         for room in self.room_details.values():
             if room["id"] == room_id:
@@ -123,6 +192,9 @@ class App(MockRead, MockWrite, MockThread, MockPlan, MockNotes, MockModels):
                              "needs_you": sum(1 for s in live if counts_as_waiting(s)),
                              "done_today": sum(1 for s in live if s["status"] == "done"
                                                and (s.get("finished_at") or 0) >= midnight)},
+                # W29-P7: устройство меню — порядок, закрепление, группа.
+                "order": int(room.get("order") or 0), "pinned": bool(room.get("pinned")),
+                "group": str(room.get("group") or ""),
                 "phase": room.get("phase"), "updated_at": now()}
 
     def summaries(self, room_id: str) -> list:

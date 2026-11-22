@@ -524,7 +524,15 @@ class FallbackTests(unittest.TestCase):
         self.assertEqual(res["status"], "blocked")
         self.assertEqual(res["path"], "cli")
         self.assertEqual(res["attempts"], 1)
-        self.assertTrue(any("--reason=" in token for token in cli.calls[1]))
+        # W29-P1: у `block` причина — ПОЗИЦИОННЫЙ аргумент (после `--`), а не `--reason=…`;
+        # флаг раньше попадал в доску как сама причина. W29-I1: проверка приведена к
+        # фактическому контракту CLI (тест устарел вместе с дефектом, не ослаблен).
+        block_call = cli.calls[1]
+        self.assertIn("--", block_call)
+        self.assertFalse([t for t in block_call if t.startswith("--reason")],
+                         "причина ушла флагом — CLI запишет флаг в доску как причину")
+        self.assertTrue(block_call[block_call.index("--") + 1:],
+                        "причины после `--` нет")
 
     def test_stop_repeats_when_the_card_comes_back(self):
         """Первый `block` не удержал — повтор (до 3 раз), карточка всё равно на паузе."""

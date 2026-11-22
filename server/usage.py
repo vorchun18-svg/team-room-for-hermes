@@ -39,6 +39,7 @@ import re as _re
 import sqlite3
 import statistics
 import time
+from pathlib import Path
 
 try:                                    # пакетный и «плоский» импорт
     from .http_util import ApiError
@@ -66,6 +67,8 @@ STATE_KINDS = ("owner_admitted",)
 
 _FIXTURE_NAME = "request-usage.json"
 _BASE_CACHE: dict = {}
+#: средняя цена вызова по моделям: путь state_dir → {at, data} (W29-Q9)
+_RATE_CACHE: dict = {}
 
 
 # ---------------------------------------------------------------- доступ к данным
@@ -283,6 +286,9 @@ def fixture_usage(cfg, rid: str) -> dict | None:
     payload["rid"] = rid
     payload["source"] = "fixtures"
     payload.setdefault("warnings", [])
+    payload.setdefault("by_card", [])
+    payload.setdefault("wasted", {"attempts": 0, "cards": [], "cost_usd": 0.0, "tokens": 0,
+                                  "text": ""})
     payload["line"] = line_of(payload)
     return payload
 
@@ -310,7 +316,11 @@ def line_of(payload: dict) -> str:
     if _int(split.get("tools")):
         parts.append("инструменты %d" % int(round(_int(split.get("tools")) / 1000.0)))
     tail = " (%s тыс.)" % " / ".join(parts) if parts else ""
-    return "Расход: %d выз. / %d тыс. токенов%s" % (calls, thousands, tail)
+    text = "Расход: %d выз. / %d тыс. токенов%s" % (calls, thousands, tail)
+    wasted = (payload or {}).get("wasted") or {}
+    if _num(wasted.get("cost_usd")) > 0:
+        text += " · зря $%.2f" % _num(wasted.get("cost_usd"))
+    return text
 
 
 def usage(cfg, room, rid: str, detail=None, rec=None, state_dir=None) -> dict:
@@ -327,18 +337,31 @@ def usage(cfg, room, rid: str, detail=None, rec=None, state_dir=None) -> dict:
     ids = card_ids(detail, rec)
     payload = _empty()
     payload.update({"rid": rid, "cards": len(ids), "warnings": [], "models": [],
-                    "mismatched": {"attempts": 0, "cards": []}})
+                    "mismatched": {"attempts": 0, "cards": []},
+                    "by_card": [], "wasted": {"attempts": 0, "cards": [], "cost_usd": 0.0,
+                                              "tokens": 0, "text": ""}})
     base = base_estimate(state_dir or _default_state_dir())
     payload["base_estimate"] = base
     db_path = _board_db(cfg, board) if board else None
     events = sessions_of(db_path, ids) if db_path else []
     seen: set = set()
+    per_card: dict = {}
+    wasted = payload["wasted"]
     totals = {"input": 0, "cache_read": 0, "cache_write": 0, "output": 0, "reasoning": 0}
     for event in events:
         if event["kind"] in RECLAIMED_KINDS:
             payload["mismatched"]["attempts"] += 1
             if event["task_id"] not in payload["mismatched"]["cards"]:
                 payload["mismatched"]["cards"].append(event["task_id"])
+            wasted["attempts"] += 1
+            if event["task_id"] not in wasted["cards"]:
+                wasted["cards"].append(event["task_id"])
+            # Цена «зря» — только реальная сессия попытки, если Hermes её записал.
+            row = session_usage(event["db"], event["session_id"]) if event["session_id"] else None
+            if row:
+                wasted["cost_usd"] = round(wasted["cost_usd"] + float(row["cost_usd"] or 0), 6)
+                wasted["tokens"] += sum(int(row[k] or 0) for k in
+                                        ("input", "cache_read", "cache_write", "output"))
             continue
         session_id = event["session_id"]
         if not session_id or session_id in seen:
@@ -360,6 +383,15 @@ def usage(cfg, room, rid: str, detail=None, rec=None, state_dir=None) -> dict:
         item["calls"] += row["calls"]
         item["cost_usd"] = round(item["cost_usd"] + row["cost_usd"], 6)
         item["sessions"] += 1
+        card = per_card.setdefault(event["task_id"], {
+            "task_id": event["task_id"], "calls": 0, "cost_usd": 0.0,
+            "tokens": 0, "models": []})
+        card["calls"] += row["calls"]
+        card["cost_usd"] = round(card["cost_usd"] + row["cost_usd"], 6)
+        card["tokens"] += sum(int(row[k] or 0) for k in
+                              ("input", "cache_read", "cache_write", "output"))
+        if model not in card["models"]:
+            card["models"].append(model)
         # «не та модель»: попытка шла на модели, отличной от первой в запросе
         first = payload["models"][0]["model"] if payload["models"] else model
         if model != first and event["task_id"] not in payload["mismatched"]["cards"]:
@@ -377,6 +409,25 @@ def usage(cfg, room, rid: str, detail=None, rec=None, state_dir=None) -> dict:
         body = max(0, grand - base_total)
         payload["split"] = {"base": int(base_total - tools_total), "tools": int(tools_total),
                             "body": int(body)}
+        # W29-Q9 п.5: расход по КАРТОЧКАМ и «потрачено зря» — отдельными полями.
+        payload["by_card"] = sorted(per_card.values(),
+                                    key=lambda c: (-float(c.get("cost_usd") or 0),
+                                                   str(c.get("task_id") or "")))
+        # Счётчик «зря» = все попытки «не на той модели» (reclaimed и смена модели),
+        # а цена — только у тех, чью сессию Hermes реально записал.
+        for cid in payload["mismatched"]["cards"]:
+            if cid not in wasted["cards"]:
+                wasted["cards"].append(cid)
+        wasted["attempts"] = max(int(wasted["attempts"] or 0),
+                                 int(payload["mismatched"]["attempts"] or 0))
+        wasted["cost_usd"] = round(float(wasted["cost_usd"] or 0), 6)
+        if wasted["attempts"]:
+            wasted["text"] = ("Потрачено зря: %d %s на %d %s ≈ $%.3f."
+                              % (wasted["attempts"],
+                                 _plural(wasted["attempts"], "попытка", "попытки", "попыток"),
+                                 len(wasted["cards"]),
+                                 _plural(len(wasted["cards"]), "карточке", "карточках", "карточках"),
+                                 float(wasted["cost_usd"] or 0)))
         payload["source"] = "state.db"
         payload["line"] = line_of(payload)
         payload["models"].sort(key=lambda m: (-m["cost_usd"], m["model"]))
@@ -392,6 +443,73 @@ def usage(cfg, room, rid: str, detail=None, rec=None, state_dir=None) -> dict:
     payload["source"] = "none"
     payload["line"] = "Расход: нет данных (карточки ещё не запускались)"
     return payload
+
+
+def model_rates(state_dir=None) -> dict:
+    """Средняя цена вызова по моделям из `state.db` профилей (W29-Q9, п.2).
+
+    Нужна оценке «сколько сэкономит лёгкая модель для рутинного сведения»: берём
+    реальные `estimated_cost_usd / api_call_count` из сессий, а не придуманный
+    прайс. Только чтение (`mode=ro`), кэш 10 минут. ``{model: {calls, cost, sessions,
+    usd_per_call}}``; пустой словарь — данных нет (тогда интерфейс честно молчит).
+    """
+    root = Path(state_dir or _default_state_dir())
+    key = str(root)
+    now = time.time()
+    cached = _RATE_CACHE.get(key)
+    if cached and now - float(cached.get("at") or 0) < 600:
+        return dict(cached.get("data") or {})
+    dbs: list[Path] = []
+    try:
+        main = root / "state.db"
+        if main.is_file():
+            dbs.append(main)
+        dbs.extend(sorted((root / "profiles").glob("*/state.db")))
+    except OSError:
+        dbs = []
+    totals: dict = {}
+    for path in dbs:
+        try:
+            con = _ro(path)
+        except sqlite3.Error:
+            continue
+        try:
+            rows = con.execute("SELECT model, api_call_count, estimated_cost_usd "
+                               "FROM sessions WHERE model IS NOT NULL").fetchall()
+        except sqlite3.Error:
+            rows = []
+        finally:
+            con.close()
+        for model, calls, cost in rows:
+            name = str(model or "").strip()
+            if not name:
+                continue
+            item = totals.setdefault(name, {"calls": 0, "cost": 0.0, "sessions": 0})
+            item["calls"] += _int(calls)
+            item["cost"] += _num(cost)
+            item["sessions"] += 1
+    out: dict = {}
+    for name, item in totals.items():
+        calls = _int(item["calls"])
+        if calls <= 0 or item["cost"] <= 0:
+            continue
+        out[name] = dict(item, cost=round(item["cost"], 6),
+                         usd_per_call=round(item["cost"] / calls, 8))
+    _RATE_CACHE[key] = {"at": now, "data": out}
+    return dict(out)
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    """Русская форма числа (для строки «потрачено зря»)."""
+    count = abs(int(n or 0)) % 100
+    if 11 <= count <= 14:
+        return many
+    tail = count % 10
+    if tail == 1:
+        return one
+    if 2 <= tail <= 4:
+        return few
+    return many
 
 
 def _default_state_dir():

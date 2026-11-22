@@ -255,6 +255,31 @@ class AnswerLinkTests(_Base):
         self.assertIn("ничего менять не нужно", body)
         self.assertEqual(payload["note"]["task_id"], "t_0000cafe")
 
+    def test_short_ack_does_not_start_leader_session(self):
+        """W29-Q9 §3: «Спасибо, понял» — запись в реестре и один «Учёл», без карточки."""
+        rid = self.rid()
+        qid = self.question_of(rid)["id"]
+        status, payload, _ = self.answer(rid, qid, "Спасибо, понял!")
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(self.shim.creates(), [], "сессия руководителя не поднимается")
+        self.assertEqual(payload["question"]["answer_state"], "no_change")
+        self.assertFalse(payload["question"]["leader_pending"])
+        self.assertFalse(payload["question"]["can_remind"], "напоминать некому — тупика нет")
+        acks = [t for t in self.shim.comment_texts() if t.startswith(thread_mod.ACK_MARK)]
+        self.assertEqual(len(acks), 1, self.shim.comment_texts())
+        self.assertIn(qid, acks[0])
+        # ответ по-прежнему виден в ленте меткой «ответ на вопрос»
+        marks = [t for t in self.shim.comment_texts() if t.startswith(answers_mod.ANSWER_MARK)]
+        self.assertEqual(len(marks), 1, self.shim.comment_texts())
+
+    def test_negation_still_goes_to_leader(self):
+        """«Нет» меняет план (снимает шаги) — это не подтверждение, карточка обязательна."""
+        rid = self.rid()
+        qid = self.question_of(rid)["id"]
+        status, payload, _ = self.answer(rid, qid, ANSWER_NO)
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(len(self.shim.creates()), 1, self.shim.calls)
+
     def test_answer_to_unknown_question_is_404(self):
         rid = self.rid()
         status, payload, _ = self.answer(rid, "q_нет_такого", "Нет")
@@ -512,7 +537,7 @@ class StepLinkTests(_Base):
         self.assertEqual(status, 404, payload)
 
     def test_answer_no_does_not_cancel_without_link(self):
-        rid = self.rid(question="Какой цвет упаковки выбрать для набора из 6 моти?")
+        rid = self.rid(question="Какой цвет упаковки выбрать для набора из 6 суфле?")
         qid = self.question_of(rid)["id"]
         status, payload, _ = self.answer(rid, qid, "Нет, не нужно")
         self.assertEqual(status, 200, payload)

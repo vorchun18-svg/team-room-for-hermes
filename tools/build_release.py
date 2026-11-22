@@ -85,6 +85,11 @@ COPY_ROOT_OPTIONAL = ("install.ps1", "install.sh")
 #: рабочие инструменты; отладочные (probe_*, mic_*, seed_*, shot, cdp, stt_stub) не публикуем
 COPY_TOOLS = (
     "install_desktop_plugin.py",
+    "install_model_trigger.py",      # server/model_trigger.py импортирует его
+    "check_dead_ends.py",            # server/stale.py и тесты «без тупиков»
+    "check_card_budgets.py",         # server/card_budget.py
+    "check_room_memory.py",          # tests/test_decisions_registry.py
+    "mock_ac1.py", "mock_batchb.py", "mock_recipes.py", "mock_storage.py",   # части мока (mock_read/mock_write/mock_server импортируют)
     "team_room_guard.py",
     "stop_team_room.py",
     "e2e_ui.py",
@@ -156,10 +161,11 @@ COPY_DOCS = (
 )
 
 #: скриншоты для README: только из docs/shots/final, только без бренда на картинке
+#: снимок карты проекта (roadmap-1280-dark.png) из релиза исключён: на нём
+#: остались подписи прошлого демо-стенда, которых нет в текущих данных
 SHOT_CANDIDATES = (
     "backlog-1280.png",
     "request-1280.png",
-    "roadmap-1280-dark.png",
     "team-780.png",
     "composer-1280.png",
     "notes-editor-1280.png",
@@ -367,11 +373,23 @@ def _paths_ok(rel: str | None, globs) -> bool:
     return any(fnmatch.fnmatch(rel, glob) for glob in globs)
 
 
+_WORD_CACHE: dict[str, re.Pattern] = {}
+
+
 def _word_pattern(old: str) -> re.Pattern:
-    """Целое слово: границы слова, но «\\n»/«\\t» в JSON — тоже граница (это escape, не буква n)."""
+    """Целое слово: границы слова, но «\\n»/«\\t» в JSON — тоже граница (это escape, не буква n).
+
+    Шаблоны кешируются: при 1200+ парах замен кеш `re` (512 записей) постоянно
+    прокручивался, и сборка релиза уходила в минуты на одних перекомпиляциях.
+    """
+    cached = _WORD_CACHE.get(old)
+    if cached is not None:
+        return cached
     letter = "0-9A-Za-zА-Яа-яЁё_"
     left = r"(?:(?<![%s])|(?<=\\n)|(?<=\\t))" % letter
-    return re.compile(left + re.escape(old) + r"(?![%s])" % letter)
+    pattern = re.compile(left + re.escape(old) + r"(?![%s])" % letter)
+    _WORD_CACHE[old] = pattern
+    return pattern
 
 
 def apply_table(text: str, table: dict, counts: dict, rel: str | None = None) -> str:
@@ -628,7 +646,7 @@ python tools/install_desktop_plugin.py --help
 | | |
 |---|---|
 | ![Дальше и вопросы](docs/shots/backlog-1280.png) | ![Запрос: свод и правая колонка](docs/shots/request-1280.png) |
-| ![Карта проекта](docs/shots/roadmap-1280-dark.png) | ![Команда](docs/shots/team-780.png) |
+| **Карта проекта** — части работы и зависимости между ними | ![Команда](docs/shots/team-780.png) |
 | ![Запрос команде](docs/shots/composer-1280.png) | ![Особенности комнаты](docs/shots/notes-editor-1280.png) |
 | ![Модель участника](docs/shots/room-model-dialog.png) | Диалог комнаты: провайдер, модель и уровень мышления участника — только для этой комнаты. |
 
@@ -1064,6 +1082,12 @@ def build(args) -> int:
         else:
             docs_missing.append(name)
     print("  %-14s %4d файлов" % ("docs/", len(COPY_DOCS) - len(docs_missing)))
+    # навык Hermes «отправить запрос в комнату» — часть продукта, а не заметки:
+    # docs/hermes-skill/** уезжает в релиз целиком
+    if (ROOT / "docs" / "hermes-skill").is_dir():
+        n = copy_tree(ROOT / "docs" / "hermes-skill", pkg / "docs" / "hermes-skill")
+        print("  %-14s %4d файлов" % ("docs/hermes-skill/", n))
+        copied += n
     for name in ("start-demo-room.cmd", "start-team-room.cmd", "stop-team-room.cmd"):
         if copy_file(ROOT / name, pkg / name):
             copied += 1

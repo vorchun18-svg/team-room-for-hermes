@@ -21,7 +21,7 @@ import {
   normalizeDraft, draftFromTemplate, draftFromProposal, draftFromDelo, draftFromRequest,
   draftFromDuty, templatesFrom, outcomeLine, historyRow, historyLine, trashModel, trashTitle,
   proposalModel, createBody, patchBody, previewModel, dryRunText, scheduleHuman, draftSummary,
-  SOURCE_LABELS, localCommand,
+  SOURCE_LABELS, localCommand, modelLine, folderPickBody,
 } from './duty-model.js';
 import { createWizard, WIZARD_TITLES } from './duty-wizard.js';
 
@@ -132,6 +132,9 @@ export function weekModel(week) {
   return {
     start: doc.start || '',
     end: doc.end || '',
+    prev: doc.prev || '',
+    next: doc.next || '',
+    today: doc.today || '',
     runs: Number(doc.runs) || 0,
     failed: Number(doc.failed) || 0,
     missed: Number(doc.missed) || 0,
@@ -149,10 +152,29 @@ export function weekModel(week) {
       failed: Number(day.failed) || 0,
       missed: Number(day.missed) || 0,
       planned: Number(day.planned) || 0,
+      plannedMore: Number(day.planned_more) || 0,
       more: Number(day.more) || 0,
       jobs: Array.isArray(day.jobs) ? day.jobs.filter((j) => j && typeof j === 'object') : [],
+      // W29-P5: плановые запуски дня — для панели будущего дня.
+      plannedJobs: Array.isArray(day.planned_jobs)
+        ? day.planned_jobs.filter((j) => j && typeof j === 'object') : [],
     })),
   };
+}
+
+/** Подпись недели: «16–22 ноября 2026» (для стрелок ‹ › и «Сегодня»). */
+export function weekRangeText(week) {
+  const doc = weekModel(week);
+  if (!doc.days.length) return '';
+  const first = doc.days[0];
+  const last = doc.days[doc.days.length - 1];
+  const from = Number(first.day) || 0;
+  const to = Number(last.day) || 0;
+  const fromMonth = MONTHS_GEN[Math.max(0, Math.min(11, Number(first.month || 1) - 1))];
+  const toMonth = MONTHS_GEN[Math.max(0, Math.min(11, Number(last.month || 1) - 1))];
+  const year = String(doc.start || '').slice(0, 4);
+  if (fromMonth === toMonth) return from + '–' + to + ' ' + fromMonth + (year ? ' ' + year : '');
+  return from + ' ' + fromMonth + ' – ' + to + ' ' + toMonth + (year ? ' ' + year : '');
 }
 
 /** Сводка по списку дежурств: сколько всего, с замечаниями, выключено, идёт. */
@@ -438,6 +460,30 @@ export function renderDuty(item, opts = {}) {
       ? [h('span', { class: 'duty__missed' }, '· пропущено за неделю: ' + Number(item.missed_recent))]
       : [])));
 
+  // W29-P5: «Куда придёт результат» — ссылка в «Входящие» комнаты, а не догадка.
+  const deliver = item && item.deliver && typeof item.deliver === 'object' ? item.deliver : null;
+  if (deliver) {
+    const line = h('p', { class: 'duty__deliver small', 'data-role': 'duty-deliver' },
+      icon(deliver.where === 'inbox' ? 'inbox' : 'info', { size: 12 }),
+      ' Результат: ' + (deliver.label || 'не в комнату'));
+    if (deliver.href) {
+      line.appendChild(h('a', {
+        class: 'duty__deliver-link', href: deliver.href,
+        title: deliver.text || 'Открыть «Входящие» комнаты',
+      }, ' — открыть входящие'));
+    } else if (deliver.text) {
+      line.appendChild(h('span', { class: 'muted' }, ' — ' + deliver.text));
+    }
+    card.appendChild(line);
+  }
+
+  // W29-P5: кто выполняет и на какой модели — «дешёвая по умолчанию» больше не загадка.
+  card.appendChild(h('p', { class: 'duty__model small muted', 'data-role': 'duty-model' },
+    icon('hubot', { size: 12 }),
+    ' ' + modelLine(item && item.kind === 'monitor' ? { ...item, kind: 'watch' } : item,
+      opts.catalog),
+    h('span', { class: 'duty__model-hint' }, ' · сменить — кнопкой «Править»')));
+
   if (problem && problem.text) {
     card.appendChild(h('p', {
       class: 'duty__problem' + (problem.kind === 'disabled_but_due' ? ' duty__problem--off' : ''),
@@ -639,26 +685,52 @@ export function trashPanel(items, opts = {}) {
 /** Выбор Дела для «Сделать регулярным». */
 export function deloPicker(delos, opts = {}) {
   const list = Array.isArray(delos) ? delos.filter((one) => one && typeof one === 'object') : [];
+  const requests = Array.isArray(opts.requests)
+    ? opts.requests.filter((one) => one && typeof one === 'object') : [];
   const box = h('section', { class: 'picker', 'data-role': 'delo-picker' });
   box.appendChild(h('h3', { class: 'picker__title' }, 'Сделать регулярным из дела'));
   box.appendChild(h('p', { class: 'small muted' },
     'Выберите дело — мастер заполнится его названием. Ничего не создаётся до подтверждения.'));
   if (!list.length) {
+    // W29-P5: пустой список — не тупик: предлагаем запрос комнаты или своё дежурство.
     box.appendChild(h('p', { class: 'small muted' },
-      'В этой комнате дел нет — тогда проще создать дежурство с нуля.'));
-  } else {
-    const rows = h('ul', { class: 'picker__list' });
-    for (const delo of list.slice(0, 12)) {
-      rows.appendChild(h('li', { class: 'picker__row' },
-        h('button', {
-          class: 'picker__btn', type: 'button', 'data-delo': String(delo.id || ''),
-          onclick: () => { if (typeof opts.onPick === 'function') opts.onPick(delo); },
-        },
-        h('span', { class: 'picker__name' }, String(delo.title || delo.name || 'дело')),
-        h('span', { class: 'small muted' }, ' · ' + String(delo.status_label || delo.status || '')))));
+      'Дел в этой комнате пока нет. Можно взять недавний запрос — из него получится '
+        + 'такая же регулярная проверка — или создать дежурство с нуля.'));
+    if (requests.length) {
+      const rows = h('ul', { class: 'picker__list' });
+      for (const request of requests.slice(0, 10)) {
+        rows.appendChild(h('li', { class: 'picker__row' },
+          h('button', {
+            class: 'picker__btn', type: 'button', 'data-request': String(request.id || ''),
+            onclick: () => { if (typeof opts.onPickRequest === 'function') opts.onPickRequest(request); },
+          },
+          h('span', { class: 'picker__name' }, String(request.title || 'запрос комнаты')),
+          h('span', { class: 'small muted' }, ' · запрос'))));
+      }
+      box.appendChild(rows);
     }
-    box.appendChild(rows);
+    box.appendChild(h('div', { class: 'picker__actions' },
+      h('button', {
+        class: 'btn btn--primary btn--sm', type: 'button', 'data-action': 'duty-create',
+        onclick: () => { if (typeof opts.onCreate === 'function') opts.onCreate(); },
+      }, 'Создать дежурство с нуля'),
+      h('button', {
+        class: 'btn btn--ghost btn--sm', type: 'button', 'data-action': 'picker-cancel',
+        onclick: () => { if (typeof opts.onCancel === 'function') opts.onCancel(); },
+      }, 'Отмена')));
+    return box;
   }
+  const rows = h('ul', { class: 'picker__list' });
+  for (const delo of list.slice(0, 12)) {
+    rows.appendChild(h('li', { class: 'picker__row' },
+      h('button', {
+        class: 'picker__btn', type: 'button', 'data-delo': String(delo.id || ''),
+        onclick: () => { if (typeof opts.onPick === 'function') opts.onPick(delo); },
+      },
+      h('span', { class: 'picker__name' }, String(delo.title || delo.name || 'дело')),
+      h('span', { class: 'small muted' }, ' · ' + String(delo.status_label || delo.status || '')))));
+  }
+  box.appendChild(rows);
   box.appendChild(h('button', {
     class: 'btn btn--ghost btn--sm', type: 'button', 'data-action': 'picker-cancel',
     onclick: () => { if (typeof opts.onCancel === 'function') opts.onCancel(); },
@@ -696,7 +768,12 @@ export async function mount(el, ctx) {
   const historyCache = {};           // job_id → {items, loading, error}
   const dryCache = {};               // job_id → ответ сухого прогона
   let pickerDelos = null;
+  let pickerRequests = [];
   let proposalBusy = '';
+  // W29-P5: каталог моделей (только чтение), листание недель и «только замечания».
+  let catalog = null;
+  let weekStart = '';
+  let onlyProblems = false;
 
   const title = h('h1', { class: 'duties__title' }, 'Дежурства');
   const lead = h('p', { class: 'duties__lead muted' },
@@ -739,6 +816,23 @@ export async function mount(el, ctx) {
 
   const summaryEl = h('div', { class: 'duties__summary', role: 'status', 'aria-live': 'polite' });
   const proposalsEl = h('div', { class: 'duties__proposals', 'data-role': 'duties-proposals' });
+  // W29-P5: стрелки ‹ › и «Сегодня» — неделю можно листать, как календарь.
+  const weekPrev = h('button', {
+    class: 'btn btn--secondary btn--sm', type: 'button', 'data-action': 'duties-week-prev',
+    'aria-label': 'Предыдущая неделя', title: 'Предыдущая неделя',
+    onclick: () => goWeek((data && data.week && data.week.prev) || ''),
+  }, '‹');
+  const weekToday = h('button', {
+    class: 'btn btn--secondary btn--sm', type: 'button', 'data-action': 'duties-week-today',
+    title: 'Показать текущую неделю',
+    onclick: () => { weekStart = ''; expanded = ''; load(); },
+  }, 'Сегодня');
+  const weekNext = h('button', {
+    class: 'btn btn--secondary btn--sm', type: 'button', 'data-action': 'duties-week-next',
+    'aria-label': 'Следующая неделя', title: 'Следующая неделя',
+    onclick: () => goWeek((data && data.week && data.week.next) || ''),
+  }, '›');
+  const weekLabel = h('span', { class: 'duties__week-label small', 'data-role': 'duties-week-label' }, '');
   const weekEl = h('div', { class: 'duties__week' });
   const detailEl = h('div', { class: 'duties__day', 'data-role': 'duties-day' });
   const templatesEl = h('div', { class: 'duties__templates', hidden: true });
@@ -757,14 +851,17 @@ export async function mount(el, ctx) {
 
   const weekHead = h('div', { class: 'duties__section-head' },
     h('h2', { class: 'duties__section-title' }, 'Неделя'),
-    h('span', { class: 'duties__section-hint small muted' }, 'запуски по дням, как в Mission Control'));
+    h('span', { class: 'duties__section-hint small muted' }, 'запуски по дням, как в Mission Control'),
+    h('div', { class: 'duties__week-nav' }, weekPrev, weekLabel, weekNext, weekToday));
 
   const listHead = h('h2', { class: 'duties__section-title duties__section-title--list' }, 'Список дежурств');
 
+  // W29-P5: системные задачи Hermes — свёрнутый блок «только чтение», не дежурства комнаты.
+  const systemEl = h('details', { class: 'duties__system', 'data-role': 'duties-system', hidden: true });
   const weekBlocks = h('div', { class: 'duties__weekblock' }, weekHead, weekEl, detailEl);
   const root = h('div', { class: 'view__inner duties' },
     head, proposalsEl, summaryEl, weekBlocks,
-    wizardEl, templatesEl, pickerEl, listHead, listEl, trashEl, noteEl);
+    wizardEl, templatesEl, pickerEl, listHead, listEl, systemEl, trashEl, noteEl);
   el.appendChild(root);
 
   function renderFilter() {
@@ -782,18 +879,37 @@ export async function mount(el, ctx) {
   }
 
   function renderSummary() {
-    const items = (data && data.items) || [];
+    const all = (data && data.items) || [];
+    // W29-P5: счётчики — по дежурствам комнат; системные задачи Hermes считаются отдельно.
+    const items = all.filter((one) => one && one.scope !== 'system');
     const summary = dutiesSummary(items);
     const week = weekModel(data && data.week);
     const trashCount = Array.isArray(data && data.trash) ? data.trash.length : 0;
+    // W29-P5: «N с замечаниями» — кнопка: нажал → список показывает только их.
+    const problemsChip = summary.problems
+      ? h('button', {
+        class: 'duty-sum duty-sum--fail duty-sum--button'
+          + (onlyProblems ? ' duty-sum--on' : ''),
+        type: 'button', 'data-action': 'duties-problems',
+        'aria-pressed': onlyProblems ? 'true' : 'false',
+        title: onlyProblems ? 'Показать все дежурства' : 'Показать только дежурства с замечаниями',
+        onclick: () => {
+          onlyProblems = !onlyProblems;
+          renderAll();
+          if (onlyProblems && typeof listEl.scrollIntoView === 'function') {
+            listEl.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          }
+        },
+      }, countText(summary.problems, ['дежурство', 'дежурства', 'дежурств']) + ' с замечаниями',
+      onlyProblems ? ' · показать все' : '')
+      : null;
     summaryEl.replaceChildren(
       summaryChip(countText(summary.total, ['дежурство', 'дежурства', 'дежурств']), 'plain',
         'Всего дежурств в этом списке'),
-      ...(summary.problems ? [summaryChip(summary.problems + ' с замечаниями', 'fail',
-        'Красные пометки: ошибка запуска, просрочка, ни разу не запускалось')] : []),
+      ...(problemsChip ? [problemsChip] : []),
       ...(summary.off ? [summaryChip(summary.off + ' выключено', 'off', 'Дежурства на паузе')] : []),
       ...(summary.running ? [summaryChip(summary.running + ' идёт сейчас', 'run', 'Запуск в работе')] : []),
-      summaryChip(weekTotalsText(week), 'muted', 'Запуски за текущую неделю'),
+      summaryChip(weekTotalsText(week), 'muted', 'Запуски за эту неделю'),
       ...(week.error ? [summaryChip('неделя не посчитана', 'fail', week.error)] : []));
     summaryEl.appendChild(h('p', { class: 'duties__verdict' }, verdictText(summary, week)));
     trashBtn.replaceChildren(icon('trash', { size: 13 }), trashTitle(data && data.trash));
@@ -801,6 +917,44 @@ export async function mount(el, ctx) {
     templatesBtn.setAttribute('aria-pressed', mode === 'templates' ? 'true' : 'false');
     if (trashCount) trashBtn.classList.add('btn--has-count');
     else trashBtn.classList.remove('btn--has-count');
+  }
+
+  /** W29-P5: листание недель — стрелки ‹ › берут дату из ответа сервера. */
+  function goWeek(iso) {
+    if (!iso) return;
+    weekStart = String(iso).slice(0, 10);
+    expanded = '';
+    load();
+  }
+
+  /** W29-P5: системные задачи Hermes — отдельно, свёрнуто, без кнопок действий. */
+  function renderSystem() {
+    const list = Array.isArray(data && data.system) ? data.system : [];
+    systemEl.hidden = !list.length;
+    if (!list.length) {
+      systemEl.replaceChildren();
+      return;
+    }
+    const rows = list.map((item) => {
+      // Одно состояние, без «на паузе · выключено»: у системных задач это одно и то же.
+      let state = item.enabled === false ? { text: 'на паузе', cls: 'duties__system-problem' }
+        : item.problem ? { text: PROBLEM_LABELS[item.problem.kind] || 'замечание',
+          cls: 'duties__system-problem' }
+          : { text: 'включено', cls: 'muted' };
+      return h('li', { class: 'duties__system-row', 'data-job-id': item.job_id },
+        h('span', { class: 'duties__system-name' }, item.name || item.job_id),
+        h('span', { class: 'small muted' }, ' · ' + (item.schedule_human || item.schedule || 'по расписанию')),
+        h('span', { class: 'small ' + state.cls }, ' · ' + state.text));
+    });
+    systemEl.replaceChildren(
+      h('summary', { class: 'duties__system-summary' },
+        'Системные задачи Hermes — ' + countText(list.length, ['задача', 'задачи', 'задач']),
+        h('span', { class: 'small muted' }, ' · не относятся к комнатам, только чтение')),
+      h('p', { class: 'small muted duties__system-note' },
+        'Это общие задания Hermes на этой машине: обслуживание, копии, напоминания. '
+          + 'Они не созданы вами в комнате и в календарь комнаты не входят. '
+          + 'Показаны для полноты — действий здесь нет.'),
+      h('ul', { class: 'duties__system-list' }, ...rows));
   }
 
   function renderProposals() {
@@ -816,6 +970,11 @@ export async function mount(el, ctx) {
   }
 
   function renderWeekGrid() {
+    const week = weekModel(data && data.week);
+    weekLabel.textContent = weekRangeText(week);
+    weekPrev.disabled = !week.prev;
+    weekNext.disabled = !week.next;
+    weekToday.hidden = !weekStart;
     weekEl.replaceChildren(weekGrid((data && data.week) || {}, (day) => {
       expanded = expanded === day.date ? '' : day.date;
       renderWeekGrid();
@@ -833,23 +992,53 @@ export async function mount(el, ctx) {
     }
     detailEl.hidden = false;
     const items = (data && data.items) || [];
+    const scrollToDuty = (jobId) => {
+      const target = root.querySelector('[data-job-id="' + String(jobId) + '"]');
+      if (target && typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        target.classList.add('duty--picked');
+        setTimeout(() => target.classList.remove('duty--picked'), 1600);
+      }
+    };
     const lines = day.jobs.map((job) => {
       const duty = items.find((one) => String(one.job_id) === String(job.job_id));
       return h('li', { class: 'duties__day-line' },
         h('button', {
-          class: 'linkish', type: 'button',
-          onclick: () => {
-            const target = root.querySelector('[data-job-id="' + String(job.job_id) + '"]');
-            if (target && typeof target.scrollIntoView === 'function') {
-              target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            }
-          },
+          class: 'linkish', type: 'button', 'data-action': 'duties-day-open',
+          'data-job-id': String(job.job_id),
+          onclick: () => scrollToDuty(job.job_id),
         }, job.name || job.job_id),
         h('span', { class: 'small muted' }, ' — ' + countText(Number(job.runs) || 1,
           ['запуск', 'запуска', 'запусков'])),
         ...(duty ? [h('span', { class: 'small muted' },
           ' · ' + ((duty.schedule_human) || 'по расписанию'))] : []));
     });
+    // W29-P5: в будущем дне запусков нет — показываем ПЛАНОВЫЕ запуски по расписанию.
+    const plannedLines = day.plannedJobs.map((job) => h('li', {
+      class: 'duties__day-line duties__day-line--planned', 'data-job-id': String(job.job_id),
+    },
+    h('button', {
+      class: 'linkish', type: 'button', 'data-action': 'duties-day-open',
+      'data-job-id': String(job.job_id),
+      onclick: () => scrollToDuty(job.job_id),
+    }, job.name || job.job_id),
+    h('span', { class: 'small muted' }, ' — план: ' + countText(Number(job.runs) || 1,
+      ['запуск', 'запуска', 'запусков'])),
+    day.plannedMore ? h('span', { class: 'small muted' }, ' · и ещё ' + day.plannedMore) : null));
+    const body = [];
+    if (lines.length) {
+      body.push(h('h4', { class: 'duties__day-subtitle small' }, day.future ? 'Запусков ещё не было' : 'Что запускалось'),
+        h('ul', { class: 'duties__day-list' }, ...lines));
+    }
+    if (plannedLines.length) {
+      body.push(h('h4', { class: 'duties__day-subtitle small' }, 'По расписанию в этот день'),
+        h('ul', { class: 'duties__day-list duties__day-list--planned' }, ...plannedLines));
+    }
+    if (!body.length) {
+      body.push(h('p', { class: 'small muted' },
+        day.future ? 'Этот день ещё не наступил: по расписанию запусков нет.'
+          : 'В этот день запусков не было.'));
+    }
     detailEl.replaceChildren(h('div', { class: 'duties__day-card' },
       h('div', { class: 'duties__day-head' },
         h('strong', {}, dayTitle(day)),
@@ -859,10 +1048,7 @@ export async function mount(el, ctx) {
           'data-action': 'duties-day-close',
           onclick: () => { expanded = ''; renderDayDetail(); },
         }, 'Свернуть')),
-      lines.length ? h('ul', { class: 'duties__day-list' }, ...lines)
-        : h('p', { class: 'small muted' },
-          day.future ? 'Этот день ещё не наступил: запусков пока нет, план — ' + day.planned + '.'
-            : 'В этот день запусков не было.')));
+      ...body));
   }
 
   function renderTemplates() {
@@ -888,25 +1074,48 @@ export async function mount(el, ctx) {
     pickerEl.hidden = mode !== 'picker';
     if (pickerEl.hidden) return;
     pickerEl.replaceChildren(deloPicker(pickerDelos || [], {
+      requests: pickerRequests || [],
       onPick: (delo) => openWizard(draftFromDelo(delo, roomId), WIZARD_TITLES.delo),
+      onPickRequest: (request) => openWizard(draftFromRequest(request, roomId), WIZARD_TITLES.request),
+      onCreate: () => openWizard(normalizeDraft({ mode: 'create', room: roomId }), WIZARD_TITLES.create),
       onCancel: () => { mode = 'list'; renderAll(); },
     }));
   }
 
   function renderList() {
-    const items = (data && data.items) || [];
+    const all = (data && data.items) || [];
+    // W29-P5: системные задачи Hermes — отдельным блоком, не в списке дежурств комнаты.
+    const roomItems = all.filter((one) => one && one.scope !== 'system');
+    const items = onlyProblems
+      ? roomItems.filter((one) => dutyState(one).kind === 'fail')
+      : roomItems;
     listEl.replaceChildren();
     listHead.hidden = mode !== 'list';
     listEl.hidden = mode !== 'list';
     if (mode !== 'list') return;
+    if (!items.length && onlyProblems) {
+      listEl.appendChild(h('div', { class: 'card duties__empty' },
+        icon('check', { size: 22 }),
+        h('div', { class: 'empty__title' }, 'Замечаний нет'),
+        h('p', { class: 'empty__text' },
+          'Ни одно дежурство комнаты не жалуется: запуски идут по расписанию.'),
+        h('div', { class: 'empty__actions' },
+          h('button', {
+            class: 'btn btn--primary', type: 'button', 'data-action': 'duties-problems',
+            onclick: () => { onlyProblems = false; renderAll(); },
+          }, 'Показать все дежурства'))));
+      return;
+    }
     if (!items.length) {
       listEl.appendChild(h('div', { class: 'card duties__empty' },
         icon('clock', { size: 22 }),
         h('div', { class: 'empty__title' }, onlyRoom && roomId
           ? 'К этой комнате дежурства ещё не привязаны' : 'Дежурств пока нет'),
         h('p', { class: 'empty__text' },
-          'Дежурство — это регулярная проверка: «следи за ящиком и скажи, если появилось новое». '
-            + 'Создайте своё (четыре шага) или возьмите готовый шаблон.'),
+          'Дежурство — это регулярная проверка: «каждое утро проверять, что нового в ящике», '
+            + '«следить за папкой выгрузок», «проверять, не изменилась ли страница с ценами». '
+            + 'Результат придёт во «Входящие» комнаты — только если что-то изменилось. '
+            + 'Начните с готового шаблона: поля уже заполнены, останется поправить.'),
         h('div', { class: 'empty__actions' },
           h('button', {
             class: 'btn btn--primary', type: 'button', 'data-action': 'duty-create',
@@ -940,6 +1149,7 @@ export async function mount(el, ctx) {
         listEl.appendChild(renderDuty(item, {
           roomId,
           now: nowSec,
+          catalog,
           actions: fullActionList(item, roomId),
           onAction: doAction,
           history: openJob === jobId ? (cache.items || []) : null,
@@ -965,6 +1175,7 @@ export async function mount(el, ctx) {
     renderTemplates();
     renderTrash();
     renderPicker();
+    renderSystem();
     wizardEl.hidden = !wizardOpen;
     if (!wizardOpen) wizardEl.replaceChildren();
     renderList();
@@ -974,15 +1185,21 @@ export async function mount(el, ctx) {
     if (!api) return;
     listEl.replaceChildren(skeleton(3));
     try {
-      const params = onlyRoom && roomId ? '?room=' + encodeURIComponent(roomId) : '?room=all';
+      let params = onlyRoom && roomId ? '?room=' + encodeURIComponent(roomId) : '?room=all';
+      if (weekStart) params += '&start=' + encodeURIComponent(weekStart);
       const jobs = [api.get('/api/duties' + params)];
       if (!templates.length) {
         jobs.push(api.get('/api/duty-templates').catch(() => ({ items: [] })));
       }
-      const [fresh, tpl] = await Promise.all(jobs);
+      // W29-P5: каталог моделей для выбора в мастере — только чтение, отказ не мешает.
+      if (!catalog) {
+        jobs.push(api.get('/api/models').catch(() => null));
+      }
+      const [fresh, tpl, models] = await Promise.all(jobs);
       if (stopped) return;
       data = fresh && typeof fresh === 'object' ? fresh : { items: [], week: {} };
       if (tpl) templates = templatesFrom(tpl);
+      if (models) catalog = models;
       error = null;
       renderAll();
     } catch (err) {
@@ -1004,6 +1221,8 @@ export async function mount(el, ctx) {
     wizard = createWizard({
       draft,
       title: heading || WIZARD_TITLES[draft && draft.jobId ? 'edit' : 'create'],
+      catalog,
+      onPickFolder: (what, current) => pickFolder(what, current),
       onCancel: () => closeWizard(),
       onPreview: (current) => previewDraft(current),
       onSubmit: (current) => submitDraft(current),
@@ -1023,6 +1242,15 @@ export async function mount(el, ctx) {
     mode = 'list';
     wizardEl.replaceChildren();
     renderAll();
+  }
+
+  /** W29-P5: окно Windows «Выбрать…» для рабочей папки и файла слежения. */
+  async function pickFolder(what, draft) {
+    if (!api) return '';
+    const answer = await api.post('/api/folders/pick', folderPickBody(what, draft));
+    if (!answer || answer.cancelled) return '';
+    const first = Array.isArray(answer.paths) ? answer.paths[0] : '';
+    return String(answer.path || first || '');
   }
 
   /** Предпросмотр: сервер присылает точную команду; локальная копия — запасной путь. */
@@ -1278,6 +1506,7 @@ export async function mount(el, ctx) {
   async function openPicker() {
     mode = 'picker';
     pickerDelos = null;
+    pickerRequests = [];
     renderAll();
     if (!roomId) return;
     try {
@@ -1286,6 +1515,16 @@ export async function mount(el, ctx) {
       pickerDelos = Array.isArray(res && res.items) ? res.items : [];
     } catch {
       pickerDelos = [];
+    }
+    if (!pickerDelos.length) {
+      // W29-P5: дел нет — не пустой список, а выбор «запрос комнаты» или своё дежурство.
+      try {
+        const reqs = await api.get('/api/rooms/' + encodeURIComponent(roomId) + '/requests?limit=10');
+        if (stopped) return;
+        pickerRequests = Array.isArray(reqs && reqs.items) ? reqs.items : [];
+      } catch {
+        pickerRequests = [];
+      }
     }
     renderPicker();
   }

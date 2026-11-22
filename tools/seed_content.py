@@ -94,11 +94,11 @@ def vault_files(vault: Path) -> dict[str, Path]:
         "# Лето — состояние проекта\n\n"
         "Этап: упаковка. Бренд «Лето», проверка в Роспатенте: по классам 30/43/35.\n"
         "Заявление на ИП подано 27.10.2026, ждём свидетельство о регистрации.\n"
-        "Кухня во Заозёрье, тестовая мощность 150 моти в неделю.\n", encoding="utf-8")
+        "Кухня во Заозёрье, тестовая мощность 150 суфле в неделю.\n", encoding="utf-8")
     files["unit"].parent.mkdir(parents=True, exist_ok=True)
     files["unit"].write_text(
-        "# Юнит-экономика набора из 6 моти\n\n"
-        "- Себестоимость набора: 214 ₽ (моти 121 ₽ + упаковка 73 ₽ + наклейка 20 ₽)\n"
+        "# Юнит-экономика набора из 6 суфле\n\n"
+        "- Себестоимость набора: 214 ₽ (суфле 121 ₽ + упаковка 73 ₽ + наклейка 20 ₽)\n"
         "- Цена набора: 420 ₽, маржа 49%\n"
         "- Доставка по Заозёрью: 90 ₽, забирает 21% маржи\n", encoding="utf-8")
     files["packaging"].parent.mkdir(parents=True, exist_ok=True)
@@ -111,7 +111,7 @@ def vault_files(vault: Path) -> dict[str, Path]:
     files["decisions"].write_text(
         "# Решения Михаила\n\n"
         "- 24.09.2026 — название бренда «Лето» (принято)\n"
-        "- 26.10.2026 — старт с набора из 6 моти, не поштучно (принято)\n"
+        "- 26.10.2026 — старт с набора из 6 суфле, не поштучно (принято)\n"
         "- 27.10.2026 — подавать в Роспатент после подтверждения ИП (принято)\n", encoding="utf-8")
     files["svod"].parent.mkdir(parents=True, exist_ok=True)
     files["svod"].write_text(
@@ -132,7 +132,7 @@ def report_spec(title: str) -> dict:
         except (ValueError, OSError):
             pass
     return {"version": 1, "title": title,
-            "summary": "Себестоимость и маржа набора из 6 моти",
+            "summary": "Себестоимость и маржа набора из 6 суфле",
             "blocks": [{"type": "text", "text": "Отчёт не скопирован: reportkit/examples недоступен."}]}
 
 
@@ -141,7 +141,7 @@ def report_spec(title: str) -> dict:
 
 def _tree_queued() -> dict:
     slug = "r-20261028-0931-a1b2"
-    request = ("Разбери, стоит ли Лето ставить витрину с моти на фестивале Sabores de Заозёрье "
+    request = ("Разбери, стоит ли Лето ставить витрину с суфле на фестивале Sabores de Заозёрье "
                "14–16 ноября. Нужны смета участия, прогноз продаж на три дня, кто из команды нужен "
                "на месте и что это даёт запуску. Если выгодно — план на две недели.")
     return {
@@ -157,10 +157,10 @@ def _tree_queued() -> dict:
 
 def _tree_working() -> dict:
     slug = "r-20261028-0940-b2c3"
-    request = ("Собери варианты упаковки набора из 6 моти и смету: лоток, крафт-коробка, наклейка. "
+    request = ("Собери варианты упаковки набора из 6 суфле и смету: лоток, крафт-коробка, наклейка. "
                "Ограничение — себестоимость упаковки не выше 80 ₽ на набор, тираж от 100 штук. "
                "Проверь, что писать на этикетке по СанПиН.")
-    root = _card(slug, "root", "Лето: упаковка набора из 6 моти — варианты и смета",
+    root = _card(slug, "root", "Лето: упаковка набора из 6 суфле — варианты и смета",
                  status="todo", assignee="team-director", created_at=_ts(10), request=request,
                  idempotency_key=slug,
                  events=(_event("created", {"status": "triage"}, _ts(10)),
@@ -170,7 +170,7 @@ def _tree_working() -> dict:
                              "root_assignee": "team-director"}, _ts(14))))
     cards = {
         "root": root,
-        "legal": _card(slug, "legal", "Срез 01-Legal: что писать на этикетке набора моти по СанПиН",
+        "legal": _card(slug, "legal", "Срез 01-Legal: что писать на этикетке набора суфле по СанПиН",
                        assignee="team-lawyer", created_by="auto-decomposer", created_at=_ts(15),
                        completed_at=_ts(44),
                        runs=(_run("team-lawyer", "done", "completed",
@@ -184,13 +184,13 @@ def _tree_working() -> dict:
                      created_at=_ts(15), started_at=_ts(18),
                      runs=(_run("team-ops", "running", None, "", None, at=_ts(18), ended=_ts(18)),),
                      events=(_event("claimed", {"profile": "team-ops"}, _ts(17)),)),
-        "marketing": _card(slug, "marketing", "Срез 04-Marketing: как набор из 6 моти выглядит на витрине",
+        "marketing": _card(slug, "marketing", "Срез 04-Marketing: как набор из 6 суфле выглядит на витрине",
                            status="running", assignee="team-marketing", created_by="auto-decomposer",
                            created_at=_ts(15), started_at=_ts(19),
                            runs=(_run("team-marketing", "running", None, "", None,
                                       at=_ts(19), ended=_ts(19)),),
                            events=(_event("claimed", {"profile": "team-marketing"}, _ts(19)),)),
-        "strategy": _card(slug, "strategy", "Срез 05-Strategy: цена набора из 6 моти и маржа",
+        "strategy": _card(slug, "strategy", "Срез 05-Strategy: цена набора из 6 суфле и маржа",
                           status="ready", assignee="team-strategy", created_by="auto-decomposer",
                           created_at=_ts(15)),
     }
@@ -204,9 +204,9 @@ def _tree_working() -> dict:
 
 def _tree_reviewing() -> dict:
     slug = "r-20261028-0952-c3d4"
-    request = ("Предложи имя для линейки моти со вкусом кайпириньи и проверь его по Роспатент. "
+    request = ("Предложи имя для линейки суфле со вкусом кайпириньи и проверь его по Роспатент. "
                "Нужно 3 варианта с обоснованием, проверка классов 30/43/35 и рекомендация.")
-    root = _card(slug, "root", "Лето: имя для линейки моти с кайпириньей",
+    root = _card(slug, "root", "Лето: имя для линейки суфле с кайпириньей",
                  status="done", assignee="team-director", created_at=_ts(20), request=request,
                  started_at=_ts(26), completed_at=_ts(88), idempotency_key=slug,
                  runs=(_run("team-director", "done", "completed",
@@ -248,7 +248,7 @@ def _tree_reviewing() -> dict:
                      completed_at=_ts(56),
                      runs=(_run("team-cfo", "done", "completed",
                                 "Линейка из 3 вкусов даёт +8% к среднему чеку, но требует "
-                                "отдельной партии 60 моти в неделю.",
+                                "отдельной партии 60 суфле в неделю.",
                                 {"spend": "0 ₽"}, at=_ts(26)),)),
         "critic": _card(slug, "critic", "Критика: имя «Caipi Лето» — проверить риски Роспатент кл. 35",
                         status="running", assignee="team-critic", created_at=_ts(90),
@@ -312,14 +312,14 @@ def _tree_needs_you() -> dict:
 def _tree_done_modern() -> dict:
     """Современный контракт ARCH §5 + интерактивный отчёт + критик и доработка."""
     slug = "r-20261027-1815-e5f6"
-    request = ("Посчитай юнит-экономику набора из 6 моти: себестоимость, цену, маржу и точку "
+    request = ("Посчитай юнит-экономику набора из 6 суфле: себестоимость, цену, маржу и точку "
                "безубыточности на месяц. Учти упаковку, доставку и налоги ИП. Нужен отчёт с "
                "таблицами по сценариям цены.")
-    root = _card(slug, "root", "Лето: юнит-экономика набора из 6 моти — сходится ли",
+    root = _card(slug, "root", "Лето: юнит-экономика набора из 6 суфле — сходится ли",
                  status="done", assignee="team-director", created_at=_ts(100), request=request,
                  started_at=_ts(140), completed_at=_ts(196), idempotency_key=slug,
                  runs=(_run("team-director", "done", "completed",
-                            "Набор из 6 моти сходится при цене от 390 ₽: себестоимость 214 ₽, "
+                            "Набор из 6 суфле сходится при цене от 390 ₽: себестоимость 214 ₽, "
                             "маржа 45–49%. При цене 420 ₽ и доставке за счёт клиента точка "
                             "безубыточности — 68 наборов в месяц. Ниже 360 ₽ набор уходит в ноль.",
                             {"next_steps": [{"text": "Свести финальную спеку упаковки набора (лоток 18×12, крафт, наклейка)",
@@ -329,7 +329,7 @@ def _tree_done_modern() -> dict:
                             at=_ts(180), ended=_ts(182)),
                            _run("team-director", "done", "completed",
                                 "Версия 2 после критики: маржа пересчитана с учётом роста какао "
-                                "на 7% — набор из 6 моти держит 46% при цене 420 ₽, "
+                                "на 7% — набор из 6 суфле держит 46% при цене 420 ₽, "
                                 "точка безубыточности 71 набор в месяц.",
                                 _modern_metadata(slug), at=_ts(190), ended=_ts(196)),),
                  events=(_event("created", {"status": "triage"}, _ts(100)),
@@ -340,11 +340,11 @@ def _tree_done_modern() -> dict:
                          _event("completed", {"status": "done"}, _ts(196))))
     cards = {
         "root": root,
-        "cfo": _card(slug, "cfo", "Срез 02-CFO: себестоимость и маржа набора из 6 моти",
+        "cfo": _card(slug, "cfo", "Срез 02-CFO: себестоимость и маржа набора из 6 суфле",
                      assignee="team-cfo", created_by="auto-decomposer", created_at=_ts(105),
                      completed_at=_ts(150),
                      runs=(_run("team-cfo", "done", "completed",
-                                "Себестоимость набора 214 ₽: моти 121 ₽, упаковка 73 ₽, "
+                                "Себестоимость набора 214 ₽: суфле 121 ₽, упаковка 73 ₽, "
                                 "наклейка 20 ₽. При цене 420 ₽ маржа 49%, после налога ИП — 46%.",
                                 {"stage": {"production": "готов: калькуляция себестоимости"}},
                                 at=_ts(106)),)),
@@ -380,12 +380,12 @@ def _tree_done_modern() -> dict:
                         assignee="team-critic", created_at=_ts(198), completed_at=_ts(212),
                         runs=(_run("team-critic", "done", "completed",
                                    "Вердикт: доработать. Какао подорожало на 7% с 20.10, "
-                                   "себестоимость моти пересчитана не была; точка безубыточности "
+                                   "себестоимость суфле пересчитана не была; точка безубыточности "
                                    "занижена на 3 набора.",
                                    {"verdict": "revise",
                                     "issues": [{"where": "Срез 02-CFO",
                                                 "problem": "Себестоимость без роста какао",
-                                                "fix": "Пересчитать моти с ценой какао от 20.10"},
+                                                "fix": "Пересчитать суфле с ценой какао от 20.10"},
                                                {"where": "Ответ корня",
                                                 "problem": "Точка безубыточности 68 наборов",
                                                 "fix": "Поднять до 71 с учётом новой себестоимости"}]},
@@ -394,7 +394,7 @@ def _tree_done_modern() -> dict:
                           status="done", assignee="team-director", created_at=_ts(214),
                           started_at=_ts(220), completed_at=_ts(238),
                           runs=(_run("team-director", "done", "completed",
-                                     "Пересчитал: моти 128,5 ₽, набор 221,5 ₽, маржа 46% при "
+                                     "Пересчитал: суфле 128,5 ₽, набор 221,5 ₽, маржа 46% при "
                                      "цене 420 ₽, точка безубыточности 71 набор в месяц.",
                                      {"verdict": "approve"},
                                      at=_ts(222), ended=_ts(238)),)),
@@ -416,7 +416,7 @@ def _modern_metadata(slug: str) -> dict:
     """Полный metadata нового контракта (ARCH §5) — эталон для engine_read/ingest."""
     return {
         "next_steps": [
-            {"text": "Согласовать с Асей финальную спеку упаковки набора из 6 моти (лоток 18×12, крафт, наклейка)",
+            {"text": "Согласовать с Асей финальную спеку упаковки набора из 6 суфле (лоток 18×12, крафт, наклейка)",
              "owner": "team-ops", "due": "2026-10-31"},
             {"text": "Запросить котировки у трёх поставщиков упаковки в Заозёрье по готовой спеке",
              "owner": "team-ops", "due": "2026-11-04"},
@@ -433,7 +433,7 @@ def _modern_metadata(slug: str) -> dict:
             {"text": "Кто пишет поставщикам упаковки: Илья или Вера?", "for": "team-director"},
         ],
         "decisions": [
-            {"text": "Стартовать с набора из 6 моти, не с поштучной продажи",
+            {"text": "Стартовать с набора из 6 суфле, не с поштучной продажи",
              "why": "упаковка на набор дешевле на 18%, средний чек выше", "status": "accepted"},
             {"text": "Подавать в Роспатент после подтверждения ИП",
              "why": "ИП даёт скидку около 50% на таксу", "status": "accepted"},
@@ -472,7 +472,7 @@ def _modern_metadata(slug: str) -> dict:
 
 
 def _tree_done_legacy() -> dict:
-    """Старый формат metadata — как у реального t_605613e0, но про Лето и моти."""
+    """Старый формат metadata — как у реального t_605613e0, но про Лето и суфле."""
     slug = "r-20261027-1402-f6a7"
     request = ("Дай картину по проекту Лето: где мы сейчас, что мешает и пять следующих шагов. "
                "Без общих слов — по фактам из Vault.")
@@ -505,7 +505,7 @@ def _tree_done_legacy() -> dict:
                      completed_at=_ts(118),
                      runs=(_run("team-ops", "done", "completed",
                                 "Котировки упаковки собраны, MOQ 100 не подтверждён; "
-                                "замер смены 150 моти в неделю (18.09).",
+                                "замер смены 150 суфле в неделю (18.09).",
                                 {"stage": {"ops": "исследования готовы, закупок нет"}},
                                 at=_ts(66)),)),
         "strategy": _card(slug, "strategy", "Срез 05-Strategy: каналы, B2B и цены",
@@ -587,12 +587,12 @@ def _legacy_metadata() -> dict:
 
 def _tree_failed() -> dict:
     slug = "r-20261028-1018-a7b8"
-    request = ("Замерь тестовую партию 30 моти на домашней кухне: время на партию, выход, "
+    request = ("Замерь тестовую партию 30 суфле на домашней кухне: время на партию, выход, "
                "себестоимость одной штуки. Отчёт — таблицей.")
-    root = _card(slug, "root", "Лето: тестовая партия 30 моти на домашней кухне",
+    root = _card(slug, "root", "Лето: тестовая партия 30 суфле на домашней кухне",
                  status="blocked", assignee="team-director", created_at=_ts(70), request=request,
                  idempotency_key=slug, consecutive_failures=2,
-                 last_failure_error="дочерняя карточка «Пробный прогон 30 моти» упала 2 раза: "
+                 last_failure_error="дочерняя карточка «Пробный прогон 30 суфле» упала 2 раза: "
                                     "timeout after 1800s",
                  comments=(_comment("system", "Воркер упал 2 раза подряд: превышено время "
                                      "выполнения 1800 с. Нужен перезапуск или разбиение задачи.",
@@ -603,10 +603,10 @@ def _tree_failed() -> dict:
                          _event("blocked", {"reason": "воркер упал 2 раза"}, _ts(92))))
     cards = {
         "root": root,
-        "batch": _card(slug, "batch", "Пробный прогон 30 моти: время, выход и себестоимость",
+        "batch": _card(slug, "batch", "Пробный прогон 30 суфле: время, выход и себестоимость",
                        status="blocked", assignee="team-runner", created_by="auto-decomposer",
                        created_at=_ts(75), consecutive_failures=2,
-                       last_failure_error="worker crashed: timeout after 1800s (партия 30 моти)",
+                       last_failure_error="worker crashed: timeout after 1800s (партия 30 суфле)",
                        runs=(_run("team-runner", "crashed", "crashed", "",
                                   None, at=_ts(76), ended=_ts(80),
                                   error="timeout after 1800s"),
@@ -625,9 +625,9 @@ def _tree_failed() -> dict:
 def _tree_candidate() -> dict:
     """Карточка с событием `decomposed`, которой нет в реестре комнаты."""
     slug = "ext-20261026-1200-cand"
-    request = ("Сравни поставщиков заморозки для моти в Заозёрье: цена, срок, "
+    request = ("Сравни поставщиков заморозки для суфле в Заозёрье: цена, срок, "
                "минимальная партия. Кто надёжнее для первых 200 наборов?")
-    root = _card(slug, "root", "Лето: поставщик заморозки для моти — кто надёжнее",
+    root = _card(slug, "root", "Лето: поставщик заморозки для суфле — кто надёжнее",
                  status="todo", assignee="team-director", tenant=None, created_by="auto-decomposer",
                  created_at=_ts(-600), request=request,
                  events=(_event("created", {"status": "triage"}, _ts(-600)),

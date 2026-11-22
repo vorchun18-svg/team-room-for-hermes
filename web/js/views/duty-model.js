@@ -87,6 +87,198 @@ export const NOTIFY = [
   { id: 'messenger', label: 'Внешний мессенджер' },
 ];
 
+/* ───────────────────────────────── W29-P5: кто выполняет, папки, скрипты */
+
+/** Вариант «модель не выбрана»: дежурство идёт на модели по умолчанию. */
+export const MODEL_DEFAULT = {
+  id: 'default', provider: '', model: '',
+  label: 'Как в комнате (по умолчанию)',
+  hint: 'Дешёвая модель профиля Hermes: та же, что у остальных заданий по расписанию.',
+};
+
+/** Плоский список моделей из каталога Hermes: одна строка — один выбор. */
+export function modelOptions(catalog) {
+  const doc = catalog && typeof catalog === 'object' ? catalog : {};
+  const providers = Array.isArray(doc.providers) ? doc.providers : [];
+  const out = [MODEL_DEFAULT];
+  for (const provider of providers) {
+    if (!provider || typeof provider !== 'object') continue;
+    const providerId = String(provider.id || '');
+    const models = Array.isArray(provider.models) ? provider.models : [];
+    for (const model of models) {
+      const modelId = String((model && model.id) || model || '');
+      if (!modelId) continue;
+      out.push({
+        id: providerId + '|' + modelId,
+        provider: providerId,
+        model: modelId,
+        label: (provider.title || providerId) + ' · ' + ((model && model.title) || modelId),
+        hint: String((model && (model.hint || model.note)) || ''),
+      });
+    }
+  }
+  return out;
+}
+
+/** Текущий выбор модели в виде id каталога (`провайдер|модель` или `default`). */
+export function modelChoice(draft) {
+  const doc = normalizeDraft(draft);
+  if (!doc.model) return 'default';
+  return doc.provider ? doc.provider + '|' + doc.model : doc.model;
+}
+
+/**
+ * Строка «Кто выполняет и на какой модели» — явно, без «дешёвая по умолчанию».
+ * @param {object} draft черновик
+ * @param {object} [catalog] каталог (`GET /api/models`), чтобы назвать провайдера
+ */
+export function modelLine(draft, catalog) {
+  const doc = normalizeDraft(draft);
+  const who = doc.profile
+    ? 'Hermes, профиль «' + doc.profile + '»'
+    : 'Hermes, профиль по умолчанию';
+  if (doc.kind === 'script') return who + ' · без модели: выполняется скрипт';
+  if (doc.kind === 'watch') return who + ' · без модели: Hermes сравнивает состояние сам';
+  if (!doc.model) {
+    return who + ' · модель по умолчанию (как в комнате)';
+  }
+  const found = modelOptions(catalog).find((one) => one.provider === doc.provider && one.model === doc.model);
+  const label = found ? found.label : (doc.provider ? doc.provider + ' · ' : '') + doc.model;
+  return who + ' · модель: ' + label;
+}
+
+/** Имя файла скрипта без путей: сервер принимает только имя из каталога Hermes. */
+export function scriptName(value) {
+  const text = String(value == null ? '' : value).trim().replace(/\\/g, '/');
+  if (!text) return '';
+  const parts = text.split('/');
+  return parts[parts.length - 1] || '';
+}
+
+/**
+ * Готовые «скрипты без модели»: человек выбирает словами, скрипт показывается
+ * целиком и его можно скопировать в каталог скриптов Hermes.
+ */
+export const SCRIPT_TEMPLATES = [
+  {
+    id: 'page',
+    label: 'изменилась веб-страница',
+    hint: 'Сохраняет текст страницы и сравнивает с прошлым разом.',
+    schedule: '0 9 * * *',
+    file: 'room-page-diff.ps1',
+    script: [
+      '# Проверить, изменился ли текст веб-страницы с прошлого запуска.',
+      'param([string]$Url = "https://example.com/page")',
+      '$dir = Join-Path $env:LOCALAPPDATA "hermes\\duty-state"',
+      'New-Item -ItemType Directory -Force -Path $dir | Out-Null',
+      '$name = ($Url -replace "[^A-Za-z0-9]", "_") + ".txt"',
+      '$prev = Join-Path $dir $name',
+      '$html = (Invoke-WebRequest -UseBasicParsing -Uri $Url).Content',
+      '$text = ($html -replace "<[^>]+>", " " -replace "\\s+", " ").Trim()',
+      'if (Test-Path $prev) {',
+      '  $old = Get-Content -Raw -Encoding UTF8 $prev',
+      '  if ($old -eq $text) { Write-Output "изменилось: нет"; exit 0 }',
+      '}',
+      'Set-Content -Path $prev -Value $text -Encoding UTF8',
+      'Write-Output "изменилось: да"',
+      'Write-Output "обнаружено: текст страницы отличается от прошлого запуска"',
+    ].join('\n'),
+  },
+  {
+    id: 'folder',
+    label: 'появились новые файлы в папке',
+    hint: 'Сравнивает список файлов папки с прошлым запуском.',
+    schedule: 'every 2h',
+    file: 'room-folder-new.ps1',
+    script: [
+      '# Проверить, появились ли новые файлы в папке с прошлого запуска.',
+      'param([string]$Path = "C:/Work/Rooms/demo/exports")',
+      '$dir = Join-Path $env:LOCALAPPDATA "hermes\\duty-state"',
+      'New-Item -ItemType Directory -Force -Path $dir | Out-Null',
+      '$name = ($Path -replace "[^A-Za-z0-9]", "_") + ".txt"',
+      '$prev = Join-Path $dir $name',
+      '$now = Get-ChildItem -LiteralPath $Path -File | Sort-Object Name | ForEach-Object { $_.Name }',
+      'if (Test-Path $prev) {',
+      '  $old = Get-Content -Encoding UTF8 $prev',
+      '  $fresh = $now | Where-Object { $old -notcontains $_ }',
+      '  if (-not $fresh) { Write-Output "изменилось: нет"; exit 0 }',
+      '  Write-Output "изменилось: да"',
+      '  Write-Output ("обнаружено: новые файлы — " + ($fresh -join ", "))',
+      '}',
+      '$now | Set-Content -Path $prev -Encoding UTF8',
+    ].join('\n'),
+  },
+  {
+    id: 'file',
+    label: 'изменился файл',
+    hint: 'Сравнивает отпечаток файла с прошлым запуском.',
+    schedule: '0 9 * * 1-5',
+    file: 'room-file-diff.ps1',
+    script: [
+      '# Проверить, изменился ли файл с прошлого запуска.',
+      'param([string]$File = "C:/Work/Rooms/demo/report.xlsx")',
+      '$dir = Join-Path $env:LOCALAPPDATA "hermes\\duty-state"',
+      'New-Item -ItemType Directory -Force -Path $dir | Out-Null',
+      '$name = ((Split-Path $File -Leaf) -replace "[^A-Za-z0-9.]", "_") + ".txt"',
+      '$prev = Join-Path $dir $name',
+      '$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $File).Hash',
+      'if (Test-Path $prev) {',
+      '  $old = (Get-Content -Raw -Encoding UTF8 $prev).Trim()',
+      '  if ($old -eq $hash) { Write-Output "изменилось: нет"; exit 0 }',
+      '}',
+      'Set-Content -Path $prev -Value $hash -Encoding UTF8',
+      'Write-Output "изменилось: да"',
+      'Write-Output "обнаружено: файл изменился с прошлого запуска"',
+    ].join('\n'),
+  },
+];
+
+/** Применить готовый скрипт к черновику: имя файла, расписание, слежение. */
+export function applyScriptTemplate(draft, templateId) {
+  const doc = normalizeDraft(draft);
+  const found = SCRIPT_TEMPLATES.find((one) => one.id === templateId);
+  if (!found) return doc;
+  return normalizeDraft({
+    ...doc, kind: 'script', task: found.file,
+    schedule: doc.schedule && doc.schedule !== emptyDraft().schedule ? doc.schedule : found.schedule,
+    script_template: found.id,
+  });
+}
+
+/** Шаблон для предпросмотра скрипта ('' — ручной ввод). */
+export function scriptTemplateOf(draft) {
+  const id = String((draft && draft.script_template) || '');
+  return SCRIPT_TEMPLATES.find((one) => one.id === id) || null;
+}
+
+/**
+ * Куда положить выбранный путь: рабочая папка, адрес страницы или скрипт.
+ * @param {string} what `workdir` | `task`
+ */
+export function folderPickBody(what, draft) {
+  const doc = normalizeDraft(draft);
+  if (what === 'workdir') {
+    return { title: 'Рабочая папка дежурства «' + (doc.title || 'без названия') + '»', mode: 'folder' };
+  }
+  if (doc.kind === 'watch') {
+    return { title: 'Следить за файлом или адресом', mode: 'file' };
+  }
+  if (doc.kind === 'script') {
+    return { title: 'Скрипт дежурства', mode: 'file' };
+  }
+  return { title: 'Выбрать папку задания', mode: 'folder' };
+}
+
+/** Подставить выбранный путь в черновик (что именно выбрали — по виду и полю). */
+export function setPickedPath(draft, what, path) {
+  const doc = normalizeDraft(draft);
+  const value = String(path || '').trim();
+  if (!value) return doc;
+  if (what === 'workdir') return normalizeDraft({ ...doc, workdir: value });
+  if (doc.kind === 'script') return normalizeDraft({ ...doc, task: scriptName(value) });
+  return normalizeDraft({ ...doc, task: value });
+}
+
 /** Откуда дежурство взялось (`source`). */
 export const SOURCE_LABELS = {
   manual: 'создано вручную',
@@ -240,6 +432,11 @@ export function emptyDraft(opts = {}) {
     source: 'manual',
     jobId: '',
     from: null,
+    // W29-P5: кто выполняет и на какой модели + выбранный готовый скрипт.
+    model: '',
+    provider: '',
+    profile: '',
+    script_template: '',
   };
 }
 
@@ -272,6 +469,10 @@ export function normalizeDraft(input) {
     source: String(doc.source || base.source),
     jobId: String(doc.jobId || doc.job_id || ''),
     template: String(doc.template || ''),
+    model: String(doc.model || ''),
+    provider: String(doc.provider || ''),
+    profile: String(doc.profile || ''),
+    script_template: String(doc.script_template || ''),
     from: doc.from && typeof doc.from === 'object' ? doc.from : null,
   };
 }
@@ -284,9 +485,17 @@ export function stepProblems(draft, stepId) {
     if (!doc.title.trim()) out.push('название — одной строкой, чтобы узнавать дежурство в списке');
     if (doc.title.trim().length > 90) out.push('название короче 90 знаков');
     if (!doc.task.trim()) {
-      out.push(doc.kind === 'script' ? 'что запускать: путь к скрипту или команду'
-        : doc.kind === 'watch' ? 'за чем следить: адрес страницы, папка или ящик'
+      out.push(doc.kind === 'script' ? 'что запускать: скрипт из каталога Hermes (выберите готовый)'
+        : doc.kind === 'watch' ? 'за чем следить: адрес страницы https://…'
           : 'задание: что именно проверить и по каким признакам');
+    } else if (doc.kind === 'script' && !/^[A-Za-z0-9_.-]{1,64}$/.test(scriptName(doc.task))) {
+      out.push('скрипт: только имя файла из каталога скриптов Hermes, без путей');
+    } else if (doc.kind === 'watch' && !/^https?:\/\/\S+$/.test(doc.task.trim())) {
+      out.push('слежение без модели работает по адресу https://…; папку и файл проверяйте '
+        + 'видом «Скрипт без модели»');
+    }
+    if (doc.workdir && !/^([A-Za-z]:[\\/]|\/)/.test(doc.workdir.trim())) {
+      out.push('рабочая папка: полный путь, например C:/Work/Rooms/demo');
     }
   }
   if (stepId === 'when') {
@@ -351,13 +560,19 @@ export function localCommand(draft) {
     ? ['hermes', 'cron', 'edit', String(doc.jobId)]
     : ['hermes', 'cron', 'create', quote(doc.title || 'дежурство')];
   if (doc.schedule) argv.push('--schedule', quote(doc.schedule));
-  if (doc.kind === 'script') argv.push('--script', quote(doc.task));
-  else argv.push('--prompt', quote(doc.task));
+  if (doc.kind === 'script') {
+    argv.push('--script', quote(scriptName(doc.task)), '--no-agent');
+  } else if (doc.kind === 'watch') {
+    argv.push('--prompt', quote(doc.task), '--monitor-url', quote(doc.task));
+  } else {
+    argv.push('--prompt', quote(doc.task));
+  }
   if (doc.workdir) argv.push('--workdir', quote(doc.workdir));
-  if (doc.kind === 'watch') argv.push('--monitor-url', quote(doc.task));
   if (doc.catch_up) argv.push('--catch-up');
   if (doc.started_paused) argv.push('--paused');
   if (doc.room) argv.push('--deliver', quote('room:' + doc.room));
+  if (doc.model) argv.push('--model', quote(doc.model));
+  if (doc.provider) argv.push('--provider', quote(doc.provider));
   return argv.join(' ');
 }
 
@@ -397,6 +612,9 @@ export function localChanges(draft) {
   }
   out.push('Изменением считается: ' + (changeText(doc.change) || 'не задано'));
   out.push('При изменении: ' + onChangeLabel(doc.onChange).toLowerCase() + ', ' + levelLabel(doc.level).toLowerCase());
+  // W29-P5: «какая модель, кем задаётся» — в предпросмотре, а не только в мастере.
+  out.push(doc.model ? 'Модель: ' + (doc.provider ? doc.provider + ' · ' : '') + doc.model
+    : 'Модель: по умолчанию (как в комнате)');
   if (doc.notify.length) out.push('Сообщить: ' + doc.notify.map(notifyLabel).join(', '));
   return out;
 }
@@ -413,7 +631,7 @@ export function createBody(draft, opts = {}) {
   const preview = !!(opts && opts.preview);
   const body = {
     title: doc.title.trim(),
-    kind: doc.kind,
+    kind: doc.kind === 'watch' ? 'monitor' : doc.kind,
     task: doc.task.trim(),
     workdir: doc.workdir.trim(),
     skills: doc.skills,
@@ -428,6 +646,17 @@ export function createBody(draft, opts = {}) {
     template: doc.template || undefined,
     preview,
   };
+  // W29-P5: вид задания разворачивается в те поля, которые понимает сервер.
+  if (doc.kind === 'script') {
+    body.script = scriptName(doc.task);
+    body.no_agent = true;
+  }
+  if (doc.kind === 'watch') {
+    body.monitor_url = doc.task.trim();
+    body.prompt = doc.task.trim();
+  }
+  if (doc.model) body.model = doc.model;
+  if (doc.provider) body.provider = doc.provider;
   if (!preview) body.confirm = true;
   return body;
 }
@@ -445,6 +674,8 @@ export function patchBody(draft) {
     on_change: doc.onChange,
     level: doc.level,
     notify: doc.notify,
+    ...(doc.model ? { model: doc.model } : {}),
+    ...(doc.provider ? { provider: doc.provider } : {}),
   };
 }
 
@@ -659,11 +890,15 @@ export function draftFromDuty(item, room) {
     jobId: String(doc.job_id || doc.id || ''),
     title: String(doc.name || doc.title || 'дежурство'),
     kind: KINDS.some((one) => one.id === doc.kind) ? doc.kind : 'model',
-    task: String(doc.task || doc.prompt || doc.excerpt || ''),
+    task: String(doc.task || doc.prompt || doc.excerpt || doc.script || doc.monitor_url || ''),
     workdir: String(doc.workdir || draft.workdir),
     schedule: String(doc.schedule || draft.schedule),
     catch_up: doc.catch_up === undefined ? true : !!doc.catch_up,
     started_paused: doc.enabled === false,
+    // W29-P5: модель и профиль — из ответа сервера, чтобы строка «кто выполняет» не врала.
+    model: String(doc.model || ''),
+    provider: String(doc.provider || ''),
+    profile: String(doc.profile || ''),
     change: doc.change && typeof doc.change === 'object'
       ? doc.change : { rule: 'new_items', threshold: 0 },
     onChange: String(doc.on_change || doc.onChange || 'inbox'),

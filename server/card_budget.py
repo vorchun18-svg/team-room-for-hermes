@@ -57,6 +57,11 @@ MIN_DIGEST = 600
 #: Запас до 4 400 — на длинные пути: путь папки проекта и отчётов входит в тело
 #: как есть, а обрезать путь нельзя (по нему сохраняют файлы).
 CONTRACT_SHORT_MAX = 4400
+#: Потолок КРАТКОЙ инструкции «Уточнения» (W29-Q9): было 1 583 знака (а–е с примерами),
+#: стало ≈1 059 на тех же правилах. Подробности — файлом в папке проекта.
+NOTE_INSTRUCTION_MAX = 1100
+#: С «СРОЧНО: пересмотри план целиком» инструкция длиннее — это осознанное исключение.
+NOTE_URGENT_INSTRUCTION_MAX = 1300
 #: Потолок абзаца «роль руководителя / правила комнаты» в коротком уставе.
 LEADER_ROLE_MAX = 900
 #: Сколько знаков оставляем от результата одного родителя и от «что появилось».
@@ -272,4 +277,5 @@ __all__ = ["BUDGETS", "KIND_RU", "DIGEST_MAX", "PREV_SUMMARY_MAX", "CONTRACT_FUL
            "CONTRACT_CORE_MAX", "MIN_PREV", "MIN_DIGEST", "SLUG_KIND", "kind_of", "limit",
            "size", "over", "summarize", "allowance", "audit",
            "CONTRACT_SHORT_MAX", "LEADER_ROLE_MAX", "PARENT_RESULT_MAX", "PARENTS_MAX",
-           "RECENT_MAX", "COMMENTS_MAX", "PREV_PREFIX_MAX", "recent_unique", "parent_digest"]
+           "RECENT_MAX", "COMMENTS_MAX", "PREV_PREFIX_MAX", "recent_unique", "parent_digest",
+           "NOTE_INSTRUCTION_MAX", "NOTE_URGENT_INSTRUCTION_MAX"]

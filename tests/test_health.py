@@ -360,6 +360,41 @@ class SttAndGuardTests(HealthBase):
         self.assertEqual(health_mod.model_guard(self.cfg)["status"], "unknown")
 
 
+class CatalogLineTests(unittest.TestCase):
+    """W29-P1 §4: строка «Каталог моделей: …» — откуда список и почему он неполный."""
+
+    def setUp(self):
+        from server import agent_models as models_mod
+        self.models = models_mod
+        self._real_catalog = models_mod.catalog
+
+    def tearDown(self):
+        self.models.catalog = self._real_catalog
+
+    def test_hermes_catalog_line(self):
+        self.models.catalog = lambda cfg, force=False: {
+            "providers": [{"id": "a", "label": "A", "configured": True,
+                           "models": [{"id": "m1"}, {"id": "m2"}]},
+                          {"id": "b", "label": "B", "configured": True,
+                           "models": [{"id": "m3"}]}],
+            "source": "hermes:inventory", "warnings": []}
+        line = self.models.catalog_line(object())
+        self.assertTrue(line["ok"])
+        self.assertEqual(line["providers"], 2)
+        self.assertEqual(line["models"], 3)
+        self.assertIn("Каталог моделей: Hermes (2 провайдера, 3 модели)", line["text"])
+
+    def test_profiles_catalog_line_names_reason(self):
+        self.models.catalog = lambda cfg, force=False: {
+            "providers": [{"id": "a", "label": "A", "configured": True, "models": [{"id": "m1"}]}],
+            "source": "profiles",
+            "warnings": ["No module named 'ruamel'"]}
+        line = self.models.catalog_line(object())
+        self.assertFalse(line["ok"])
+        self.assertIn("из профилей", line["text"])
+        self.assertIn("ruamel", line["text"])
+
+
 class ReadOnlyTests(HealthBase):
     def test_health_does_not_write_to_hermes(self):
         self.gateway_state()

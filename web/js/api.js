@@ -50,6 +50,11 @@ async function request(method, path, opts = {}) {
   if (body !== undefined && !(body instanceof FormData)) headers['Content-Type'] = 'application/json';
 
   let res;
+  // `keepalive`: отложенные действия («в архив» через отмену 10 с) доживают до
+  // сервера, даже если человек в эти секунды перезагрузил окно или закрыл вкладку.
+  // Без него fetch обрывается вместе с документом — тост сказал «в архиве», а
+  // запрос не ушёл. Только небольшие JSON-тела: у keepalive лимит 64 КБ.
+  const keepalive = method !== 'GET' && body !== undefined && !(body instanceof FormData);
   try {
     res = await fetch(path, {
       method,
@@ -57,6 +62,7 @@ async function request(method, path, opts = {}) {
       signal,
       credentials: 'same-origin',
       cache: 'no-store',
+      keepalive,
       body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
     });
   } catch (err) {
