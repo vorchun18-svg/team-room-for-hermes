@@ -209,7 +209,7 @@ export async function mountDictationSettings(container, ctx = {}) {
       return emptyState({
         icon: 'sparkle',
         title: 'Словарь пока пуст',
-        text: 'Добавьте имена и термины, в которых Whisper путается: «Гранит», «Атлас», «TaskFlow», «суфле», «ЕГРЮЛ», названия фирм. Дальше система предложит запоминать исправления сама.',
+        text: 'Добавьте имена и термины, в которых Whisper путается: «Гранит», «Атлас», «TaskFlow», «капучино», «ЕГРЮЛ», названия фирм. Дальше система предложит запоминать исправления сама.',
         action: state.focusTerm ? { label: 'Добавить первое слово', variant: 'primary', onclick: state.focusTerm } : null,
       });
     }
@@ -369,7 +369,7 @@ export async function mountDictationSettings(container, ctx = {}) {
   function previewBlock() {
     const area = h('textarea', {
       class: 'textarea dict-preview__input', rows: 3, 'data-mic': '',
-      placeholder: 'Например: отправь запрос недре по тескфло до пятницы',
+      placeholder: 'Например: отправь задачу недре по тескфло до пятницы',
       'aria-label': 'Фраза для проверки',
     });
     if (state.preview && state.preview.source) area.value = state.preview.source;
@@ -574,7 +574,7 @@ export async function mountDictationSettings(container, ctx = {}) {
         state.query.trim() ? counter : null),
       termsBox);
     return block('Слова и имена', '', inner,
-      'Имена, названия фирм, термины. Пишите так, как должно быть в тексте: «Гранит», «Атлас», «TaskFlow», «суфле», «ЕГРЮЛ».');
+      'Имена, названия фирм, термины. Пишите так, как должно быть в тексте: «Гранит», «Атлас», «TaskFlow», «капучино», «ЕГРЮЛ».');
   }
 
   function filesBlock() {

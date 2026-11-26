@@ -3,8 +3,8 @@
  *
  * Маршруты:
  *   #/                          — обзор комнат (views/rooms.js)
- *   #/room/<id>                 — комната, вкладка по умолчанию «Запрос»
- *   #/room/<id>/<tab>           — вкладка: composer|team|roadmap|backlog|delos|
+ *   #/room/<id>                 — комната, вкладка по умолчанию «Задачи» (доска)
+ *   #/room/<id>/<tab>           — вкладка: tasks|composer|team|roadmap|backlog|delos|
  *                                 reports|journal|inbox|duties (порядок — TABS)
  *   #/room/<id>/request/<root>  — страница запроса
  *   #/search?q=<текст>          — глобальный поиск
@@ -22,6 +22,9 @@ import { TAB_TITLES } from './text-ru.js';
 // крошки, палитра и подсказки называли одно и то же одинаково. Вкладка
 // Дальше переименована в «От вас нужно»: там вопросы и решения, которые ждут человека.
 export const TABS = [
+  // W30-D2: «Задачи» — первая вкладка комнаты: комната = проект, единица
+  // работы — задача. Вкладка «Запрос» (композер) остаётся на месте.
+  { id: 'tasks', title: TAB_TITLES.tasks, icon: 'project' },
   { id: 'composer', title: TAB_TITLES.composer, icon: 'comment-discussion' },
   { id: 'team', title: TAB_TITLES.team, icon: 'organization' },
   { id: 'roadmap', title: TAB_TITLES.roadmap, icon: 'map' },
@@ -81,7 +84,9 @@ export function parseHash(hash) {
   if (segments.length === 0) return base;
 
   if (segments[0] === 'room' && segments[1]) {
-    const tab = segments[2] || 'composer';
+    // W30-QA1: комната = проект, главный экран — доска «Задачи». Вход в комнату
+    // без явной вкладки ведёт на неё (раньше — композер «Новая задача»).
+    const tab = segments[2] || 'tasks';
     const route = {
       name: 'room',
       roomId: segments[1],
@@ -96,6 +101,9 @@ export function parseHash(hash) {
     // W26-D6: вкладка комнаты называется «delos», файл вида — views/delo.js
     // (один вид на список и карточку: различие — параметры маршрута).
     if (route.view === 'delos') route.view = 'delo';
+    // W30-D2: вкладка «tasks» — файл views/tasks-board.js (доска задач комнаты,
+    // там же модель доски — views/tasks-model.js).
+    if (route.view === 'tasks') route.view = 'tasks-board';
     return route;
   }
 
@@ -199,7 +207,7 @@ function notFoundView(route) {
       // (старая ссылка, опечатка), и человеку нужен выход, а не хеш.
       h('p', { class: 'empty__text' },
         'Адрес устарел или в нём опечатка. Ничего не потеряно: откройте комнату заново '
-        + 'или вернитесь на главную — работа и запросы на месте.'),
+        + 'или вернитесь на главную — работа и задачи на месте.'),
       h('div', { class: 'row' },
         h('a', { class: 'btn btn--primary', href: '#/' }, 'К комнатам'),
         h('a', { class: 'btn btn--secondary', href: '#/rooms' }, 'Все комнаты')),

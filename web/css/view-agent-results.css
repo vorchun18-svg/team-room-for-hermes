@@ -1,0 +1,359 @@
+/*
+ * view-agent-results.css — блок «Результаты агентов» в задаче (W30-E).
+ *
+ * Правила волны 30: без горизонтального скролла, ширина кнопок фиксированная,
+ * светлая и тёмная тема через токены (web/css/tokens.css).
+ * Строка результата: кто и статус → задача → вывод → «что осталось» → файлы.
+ */
+
+.agr-section .section__body {
+  padding-top: 4px;
+}
+
+.agr {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* --- фильтр строк ---------------------------------------------------------- */
+.agr__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agr__filter.is-active {
+  background: var(--ui-row-hover-background, rgba(127, 127, 127, 0.14));
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+/* --- строка результата ----------------------------------------------------- */
+.agr__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agr__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--card, var(--ui-base));
+  min-width: 0;
+}
+
+.agr__row[data-state="done"] { border-left-color: var(--ok, #3fa34d); }
+.agr__row[data-state="review"] { border-left-color: var(--info, #3b82f6); }
+.agr__row[data-state="running"] { border-left-color: var(--primary); }
+.agr__row[data-state="blocked"],
+.agr__row[data-state="failed"] { border-left-color: var(--warn-ink, #c98a00); }
+
+.agr__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.agr__person {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--foreground);
+  min-width: 0;
+}
+
+.agr__person-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 28ch;
+}
+
+.agr__role {
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+}
+
+.agr__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agr__task {
+  font-size: var(--text-xs);
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agr__verdict {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal, 1.5);
+  color: var(--foreground);
+  /* 2–3 строки: длинный вывод не занимает пол-экрана, но не обрезаем до точки */
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.agr__verdict--empty {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.agr__left {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: var(--text-xs);
+  color: var(--warn-ink, #9a6a00);
+  min-width: 0;
+}
+
+.agr__left-label { white-space: nowrap; }
+.agr__left-text { overflow-wrap: anywhere; }
+
+/* --- файлы результата ------------------------------------------------------ */
+.agr__files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agr__file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agr__file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--ui-bg-tertiary, rgba(127, 127, 127, 0.08));
+  min-width: 0;
+}
+
+.agr__file-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.agr__file-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agr__file-path {
+  font-size: 11px;
+  color: var(--ui-text-quaternary, var(--muted-foreground));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: ltr;
+}
+
+.agr__file--missing .agr__file-name,
+.agr__file--missing .agr__file-path {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* Плашка «файла нет на месте» — отдельным столбцом, по ширине текста. */
+.agr__file-flag {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.agr__file-acts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+/* Ширина кнопок постоянная: подписи разной длины не «прыгают» при наведении. */
+.agr__btn {
+  min-width: 88px;
+  justify-content: center;
+}
+
+.agr__file-acts .agr__btn {
+  min-width: 84px;
+}
+
+.agr__file-acts .agr__btn:last-child {
+  min-width: 128px;
+}
+
+.agr__files-note {
+  font-size: 11px;
+}
+
+/* --- пустое состояние ------------------------------------------------------ */
+.agr__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-tertiary, rgba(127, 127, 127, 0.05));
+}
+
+.agr__empty-title {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.agr__empty-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+/* --- подзадачи проекта ----------------------------------------------------- */
+.agr__project {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-soft);
+  background: var(--ui-bg-tertiary, rgba(127, 127, 127, 0.06));
+  min-width: 0;
+}
+
+.agr__project-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agr__project-title {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.agr__project-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agr__project-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.agr__project-link {
+  color: var(--primary);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 46ch;
+}
+
+.agr__project-agents {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 8px;
+  min-width: 0;
+}
+
+.agr__project-agents[hidden] { display: none; }
+
+.agr__mini {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--text-xs);
+  min-width: 0;
+}
+
+.agr__mini-who {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.agr__mini-text {
+  flex: 1 1 auto;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- узкий экран ----------------------------------------------------------- */
+@media (max-width: 720px) {
+  .agr__file {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .agr__file-acts {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .agr__file-path {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .agr__person-name,
+  .agr__project-link {
+    max-width: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}

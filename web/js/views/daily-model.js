@@ -33,7 +33,7 @@ export const KIND_LABELS = {
 
 /** Формы для чисел итога. */
 export const FORMS = {
-  request: ['запрос', 'запроса', 'запросов'],
+  request: ['задача', 'задачи', 'задач'],
   decision: ['решение', 'решения', 'решений'],
   file: ['файл', 'файла', 'файлов'],
   case: ['дело', 'дела', 'дел'],
@@ -107,7 +107,7 @@ export function doneRows(payload) {
     room: String(row.room || ''),
     roomTitle: String(row.room_title || row.room || ''),
     requestId: String(row.request_id || ''),
-    title: String(row.request_title || 'Запрос'),
+    title: String(row.request_title || 'Задача'),
     at: row.at || null,
     href: row.room && row.request_id
       ? '#/room/' + encodeURIComponent(row.room) + '/request/' + encodeURIComponent(row.request_id)
@@ -170,7 +170,7 @@ export function stoppedRows(payload) {
     room: String(row.room || ''),
     roomTitle: String(row.room_title || row.room || ''),
     requestId: String(row.request_id || ''),
-    title: String(row.request_title || 'Запрос'),
+    title: String(row.request_title || 'Задача'),
     reason: String(row.reason || ''),
     kind: String(row.kind || 'failed'),
     at: row.at || null,
@@ -248,7 +248,7 @@ export function emptyText(payload) {
   if (isEmptyDaily(p)) {
     return {
       title: 'За сутки в комнатах ничего не произошло',
-      text: 'Итог собирается сам: сюда попадут завершённые запросы, решения, файлы, '
+      text: 'Итог собирается сам: сюда попадут завершённые задачи, решения, файлы, '
         + 'то, что ждёт вас, и остановленное. Как только что-то случится — увидите здесь.',
     };
   }

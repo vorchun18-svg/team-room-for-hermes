@@ -265,10 +265,17 @@ def build(sources, now=None, room=None) -> dict:
                           "name": _text(item.get("name"), 120), "at": at})
 
         # 4) Что ждёт — с готовым действием (правило «без тупиков»).
+        #    W30-D1: у принятой задачи пунктов «ждёт вас» нет — она заморожена.
+        def accepted_root(root_id) -> bool:
+            state = states.get(str(root_id or ""))
+            return bool(isinstance(state, dict) and state.get("accepted"))
+
         for item in _dicts(_safe(lambda: sources.waiting(entry), [])):
             kind = str(item.get("kind") or "")
             text = _text(item.get("text"), 200)
             if not kind or not text:
+                continue
+            if accepted_root(item.get("request_id")):
                 continue
             waiting.append({"room": room_id, "room_title": room_title, "kind": kind,
                             "text": text,

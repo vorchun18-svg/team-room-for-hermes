@@ -53,6 +53,12 @@ import {
   CHAIN_HINT, decisionActions, decisionAnswerOf, decisionMutedActions, decisionNotice,
   decisionStatusOf, openDecisionDialog, postDecision,
 } from './decision-dialog.js';
+// W30-C: вопрос по-человечески — «зачем», «откуда», варианты с последствиями,
+// пояснение руководителя под вопросом (контракт §1).
+import {
+  Q_BLOCKING_HINT, Q_FACTS_RU, questionFacts, buildQuestionWhy, buildQuestionContext,
+  buildQuestionExplanation, buildQuestionOptions, buildPlainMark,
+} from './question-form.js';
 
 /**
  * Заменить содержимое узла (без `replaceChildren`: он есть не во всех местах,
@@ -72,6 +78,8 @@ function fill(node, ...nodes) {
 const Q_STATE_RU = {
   open: 'ждёт вашего ответа',
   waiting_explanation: 'ждёт вашего решения после пояснения',
+  // W30-C (контракт §1): руководитель объяснил — вопрос ждёт выбора варианта.
+  explained: 'пояснено — выберите ответ',
   sent: 'ответ отправлен',
   received: 'руководитель прочитал',
   applied: 'учтено: работа изменена',
@@ -79,21 +87,25 @@ const Q_STATE_RU = {
   // W20 §1.2 (B-41): ответ записан, руководитель ответил в ленте словами.
   replied_text: 'руководитель ответил текстом — посмотрите в ленте',
   dismissed: 'это не вопрос',
+  postponed: 'отложено — вернётся по кнопке «Вернуть»',
 };
 const Q_STATE_CHIP = {
   open: 'chip--muted',
   waiting_explanation: 'chip--warn',
+  explained: 'chip--info',
   sent: 'chip--warn',
   received: 'chip--info',
   applied: 'chip--ok',
   no_change: 'chip--muted',
   replied_text: 'chip--info',
   dismissed: 'chip--muted',
+  postponed: 'chip--muted',
 };
 /** «Что значит» для статуса ответа — одна подсказка на все вопросы, шаги, решения. */
 const Q_STATE_HINT = {
   open: 'Вопрос ждёт вашего ответа — руководитель не может двигаться дальше без него.',
   waiting_explanation: 'Вы попросили пояснение: вопрос остаётся открытым, пока руководитель не объяснит, о чём речь.',
+  explained: 'Руководитель объяснил вопрос — пояснение под вопросом. Выберите вариант или напишите свой.',
   sent: 'Ответ ушёл руководителю. Пока он его не открыл и не отметил исход — ждите или нажмите «Напомнить руководителю».',
   received: 'Руководитель прочитал ответ и взял его в работу. «Учтено» появится, когда он запишет, что именно изменил.',
   applied: 'Руководитель учёл ответ: работа пересмотрена, карточки изменены. Их список — рядом с реакцией.',
@@ -101,6 +113,7 @@ const Q_STATE_HINT = {
   replied_text: 'Руководитель ответил в ленте словами — ответа по формату реакции нет. '
     + 'Посмотрите диалог: там сказано, что решили.',
   dismissed: 'Вы отметили, что это не вопрос: он не ждёт ответа и не считается в счётчиках.',
+  postponed: 'Вы отложили вопрос: он не считается в счётчике «ждёт вас», вернуть можно в разделе «Отложенные».',
 };
 
 /** Откуда вопрос — простыми словами (W20 §1.2, B-38). */
@@ -114,6 +127,9 @@ const Q_SOURCE_RU = {
 export function createAside(R) {
   const { ctx, rid, keepValues, refresh } = R;
   ensureCss('css/view-backlog-extras.css');
+  // W30-C: человеческий вид вопроса (варианты, «зачем/откуда», пояснение) и
+  // карточка предложения живут в одном файле стилей.
+  ensureCss('css/view-proposal.css');
   // W20-U4 (P9): строка «Ответ учтён: …» у вопроса.
   ensureCss('css/reaction-notice.css');
   // W14-H §12: шаги — план руководителя с окном шага, не галочки.
@@ -153,8 +169,10 @@ export function createAside(R) {
     // W28-D7: замок снимается в `finally` (и по таймауту) — кнопка не «умирает».
     await locked(btn, async () => {
       try {
-        const body = { action: 'answer', question_id: q.id };
-        if (text) body.text = text;
+        const body = needExplanation
+          ? { action: 'answer', question_id: q.id }
+          : answerBodyFor(q, text);
+        if (needExplanation && text) body.text = text;
         if (needExplanation) body.need_explanation = true;
         await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, body);
         keepValues.delete('q:' + q.id);
@@ -167,7 +185,74 @@ export function createAside(R) {
     }, { label: 'Отправка ответа' });
   }
 
-  /** Реакция из тела ошибки 409 (сервер отдаёт её в `error.detail.reaction`). */
+  /**
+   * W30-C: «Свой ответ» с вариантами — действие контракта §1 `answer_custom`.
+   *
+   * Вопрос с вариантами (`options[]`) отвечают новым действием: сервер сам
+   * связывает ответ с выбранным путём и снимает блокировку. У старого вопроса
+   * без вариантов остаётся прежнее `answer` — интерфейс не ломает то, что уже
+   * работает в боевой комнате.
+   */
+  function answerBodyFor(q, text) {
+    const facts = questionFacts(q);
+    const base = { question_id: q.id };
+    if (facts.options.length) return Object.assign({ action: 'answer_custom' }, base, { text });
+    return Object.assign({ action: 'answer' }, base, { text });
+  }
+
+  /**
+   * Выбор варианта одним нажатием: `answer_option {option_id}` (контракт §1).
+   * @param {object} q вопрос
+   * @param {{id:string,label:string}} option вариант
+   * @param {HTMLElement} [btn]
+   */
+  async function answerOption(q, option, btn) {
+    if (!q || !q.id || !option || !option.id) return;
+    await locked(btn, async () => {
+      try {
+        if (storeRef && typeof storeRef.questionAction === 'function') {
+          await storeRef.questionAction(q, 'answer_option', { option_id: String(option.id) });
+        } else {
+          await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, {
+            action: 'answer_option', question_id: String(q.id), option_id: String(option.id),
+          });
+        }
+        keepValues.delete('q:' + q.id);
+        ctx.toast('Ответ отправлен: ' + option.label, 'ok');
+        await refresh({ force: true });
+      } catch (err) {
+        if (isAlreadyDecided(err)) return;
+        ctx.toast((err && err.message) || 'Не удалось выбрать вариант', 'danger');
+      }
+    }, { label: 'Выбор варианта' });
+  }
+
+  /**
+   * Общие действия вопроса (§1): `explain_more`, `postpone`, `restore`.
+   * «Не актуально» идёт отдельным путём (`staleQuestion`) — там своё тело действия.
+   */
+  async function questionAction(q, action, btn, okText) {
+    if (!q || !q.id) return;
+    await locked(btn, async () => {
+      try {
+        if (storeRef && typeof storeRef.questionAction === 'function') {
+          await storeRef.questionAction(q, String(action));
+        } else {
+          await ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`,
+            { action: String(action), question_id: String(q.id) });
+        }
+        ctx.toast(okText, 'ok');
+        await refresh({ force: true, quiet: true });
+      } catch (err) {
+        if (isAlreadyDecided(err)) return;
+        ctx.toast((err && err.message) || 'Не удалось выполнить действие', 'danger');
+      }
+    }, { label: 'Действие по вопросу' });
+  }
+
+  /**
+   * Реакция из тела ошибки 409 (сервер отдаёт её в `error.detail.reaction`).
+   */
   function reactionFromError(err) {
     const data = err && err.details;
     if (!data || typeof data !== 'object') return null;
@@ -225,13 +310,13 @@ export function createAside(R) {
       try {
         const res = await ctx.api.post(`/api/rooms/${encodeURIComponent(R.roomId)}/requests`, { text });
         const nextId = res?.root_id || res?.request?.id;
-        ctx.toast('Запрос создан', 'ok');
+        ctx.toast('Задача создана', 'ok');
         if (nextId) ctx.navigate(`#/room/${encodeURIComponent(R.roomId)}/request/${encodeURIComponent(nextId)}`);
         else await refresh({ force: true });
       } catch (err) {
-        ctx.toast((err && err.message) || 'Не удалось создать запрос', 'danger');
+        ctx.toast((err && err.message) || 'Не удалось создать задачу', 'danger');
       }
-    }, { label: 'Создание запроса' });
+    }, { label: 'Создание задачи' });
   }
 
   /** «Отправить руководителю накопленные ответы» — действие `answers_resend` (W17-B §3). */
@@ -271,9 +356,16 @@ export function createAside(R) {
   /** Вопрос ещё ждёт Михаила: не отвечен или просит пояснения. */
   function qOpen(q) {
     const state = qState(q);
-    if (state === 'dismissed' || state === 'replied_text') return false;
+    if (state === 'dismissed' || state === 'replied_text' || state === 'postponed') return false;
     if (state === 'waiting_explanation') return true;
     return !(q && q.answered);
+  }
+
+  /** W30-C: вопрос отложен человеком — живёт в «Отложенных» с возвратом. */
+  function qPostponed(q) {
+    const state = qState(q);
+    if (q && (q.dismissed === true || q.answered === true)) return false;
+    return state === 'postponed' || Boolean(q && q.postponed === true);
   }
 
   /**
@@ -295,12 +387,25 @@ export function createAside(R) {
       JSON.stringify((q && q.reaction) || null),
       // W20 §1.2 (B-38/B-41): откуда вопрос и снят ли он — строка пересобирается.
       String((q && q.source) || ''), Boolean(q && q.dismissed), Boolean(q && q.needs_answer),
+      // W30-C: «зачем», «откуда», варианты, пояснение и блокировка — часть подписи:
+      // пришло пояснение руководителя — строка пересобирается с ним под вопросом.
+      JSON.stringify(questionFacts(q)),
     ]);
   }
 
   function questionTop(q, isMaxim) {
+    const facts = questionFacts(q);
     return h('div', { class: 'req-q__top' },
       h('div', { class: 'req-q__text' }, q.text || ''),
+      // W30-C: блокирует ли вопрос работу — видно сразу, словами и цветом.
+      facts.blocking
+        ? h('span', { class: 'chip chip--warn req-q__blocking', title: Q_BLOCKING_HINT },
+          Q_FACTS_RU.blocking)
+        : null,
+      facts.explained && qOpen(q)
+        ? h('span', { class: 'chip chip--info req-q__explained', title: Q_STATE_HINT.explained },
+          Q_FACTS_RU.explained)
+        : null,
       isMaxim ? null : h('span', {
         class: 'chip chip--outline',
         title: 'Вопрос адресован: ' + (personName(q.for) || String(q.for)),
@@ -371,7 +476,9 @@ export function createAside(R) {
    */
   function questionStaleRow(q) {
     const state = qState(q);
-    const restore = state === 'dismissed' || q.dismissed === true;
+    // W30-C: отложенный вопрос возвращается той же кнопкой, что снятый.
+    const restore = state === 'dismissed' || state === 'postponed'
+      || q.dismissed === true || q.postponed === true;
     const btn = h('button', {
       type: 'button', class: 'btn btn--ghost btn--sm req-q__stale',
       'data-action': restore ? 'question-restore' : 'question-stale',
@@ -408,7 +515,7 @@ export function createAside(R) {
         class: 'chip chip--outline req-q__source',
         title: candidate
           ? 'Пункт списка из сообщения руководителя: приложение предлагает его как вопрос. Если это не вопрос — нажмите «Это не вопрос».'
-          : 'Вопрос взят из сообщения руководителя в диалоге запроса',
+          : 'Вопрос взят из сообщения руководителя в диалоге задачи',
       }, text) : null,
       dismiss);
   }
@@ -519,6 +626,10 @@ export function createAside(R) {
    * Поле ответа: как в composer — поле и отдельные кнопки «Надиктовать»
    * (её ставит dictation-auto.js перед «Отправить») и «Отправить». Компактно
    * (P3/B15): без повтора длинной подписи и лишних пояснений у каждого вопроса.
+   *
+   * W30-C: перед полем — «Зачем это нужно», «Откуда взялось» (раскрываемо),
+   * пояснение руководителя и варианты кнопками с последствиями. Всё это живёт
+   * ВНУТРИ `.req-q__form`, поэтому свёрнутый вопрос остаётся одной строкой.
    */
   function answerForm(q, state) {
     const key = 'q:' + q.id;
@@ -551,11 +662,52 @@ export function createAside(R) {
       'aria-label': 'Мне нужно пояснение к вопросу: ' + firstLine(q.text, 60),
     }, icon('comment-discussion', { size: 12 }), 'Пояснить…');
     explain.addEventListener('click', () => answerQuestion(q, ta, explain, { needExplanation: true }));
+    const options = buildQuestionOptions(q, {
+      onPick: (option, ev) => answerOption(q, option, ev && ev.currentTarget),
+    });
     return h('div', { class: 'req-q__form' },
+      buildQuestionWhy(q),
+      buildQuestionContext(q),
+      buildQuestionExplanation(q),
+      options,
+      // «Свой ответ» — подпись появляется только когда есть из чего выбирать:
+      // у вопроса без вариантов поле и так единственный путь.
+      options ? h('div', { class: 'req-q__custom-cap' },
+        h('span', { class: 'req-q__cap' }, waiting ? 'Свой ответ' : Q_FACTS_RU.custom),
+        h('span', { class: 'muted req-q__custom-hint' }, 'напишите или надиктуйте')) : null,
       h('div', { class: 'req-q__row' }, ta, send),
       h('div', { class: 'req-q__actions' }, explain,
         waiting ? h('span', { class: 'muted req-q__hint' },
           'ждём пояснения руководителя — вопрос открыт') : null));
+  }
+
+  /**
+   * W30-C: строка служебных действий под вопросом — «Пояснить ещё» и «Отложить».
+   * «Не актуально» живёт отдельной строкой (questionStaleRow) и доступна всегда.
+   */
+  function questionToolsRow(q, state) {
+    const box = h('div', { class: 'req-q__tools', 'data-key': 'qtools' });
+    // «Пояснить ещё» — когда руководитель уже объяснял: просьба понятна без текста.
+    if (state === 'explained' || state === 'waiting_explanation') {
+      const more = h('button', {
+        type: 'button', class: 'btn btn--ghost btn--sm req-q__explain-more',
+        'data-action': 'explain-more',
+        title: 'Попросить руководителя объяснить подробнее — вопрос останется открытым',
+      }, icon('comment-discussion', { size: 11 }), 'Пояснить ещё');
+      more.addEventListener('click', () => questionAction(q, 'explain_more', more,
+        'Просьба пояснить отправлена руководителю'));
+      box.appendChild(more);
+    }
+    // «Отложить» — убрать из «Нужен ваш ответ», не отвечая; вернуть можно в «Отложенных».
+    const later = h('button', {
+      type: 'button', class: 'btn btn--ghost btn--sm req-q__postpone',
+      'data-action': 'postpone',
+      title: 'Отложить вопрос: он уйдёт из «Нужен ваш ответ» и вернётся по кнопке «Вернуть»',
+    }, icon('clock', { size: 11 }), 'Отложить');
+    later.addEventListener('click', () => questionAction(q, 'postpone', later,
+      'Вопрос отложен — вернуть можно в «Отложенных»'));
+    box.appendChild(later);
+    return box.childNodes && box.childNodes.length ? box : null;
   }
 
   function questionRow(q, open) {
@@ -612,13 +764,19 @@ export function createAside(R) {
       src.setAttribute('data-key', 'qsrc');
       row.appendChild(src);
     }
-    // W27-E2 §1: «Не актуально» у каждого вопроса — убрать из «Нужен ваш ответ»,
-    // не отвечая (с возвратом из «Закрытые»). Встречный вопрос не снимаем: он
-    // ждёт пояснения, и это действие человека.
-    if (state !== 'waiting_explanation') {
-      const stale = questionStaleRow(q);
-      stale.setAttribute('data-key', 'qstale');
-      row.appendChild(stale);
+    // W30-C: вопрос не прошёл проверку «понятно человеку» — тихая служебная
+    // пометка (для отладки), человека не пугает и ничего не блокирует.
+    const plain = buildPlainMark(q);
+    if (plain) row.appendChild(plain);
+    // W30-C: «Не актуально» — в ЛЮБОМ состоянии, включая «пояснено» и встречный
+    // вопрос: это фильтр человека, а не ответ руководителю. Возврат — в «Закрытых».
+    const stale = questionStaleRow(q);
+    stale.setAttribute('data-key', 'qstale');
+    row.appendChild(stale);
+    // «Пояснить ещё» и «Отложить» — рядом с «Не актуально», без второго меню.
+    if (state !== 'dismissed') {
+      const tools = questionToolsRow(q, state);
+      if (tools) row.appendChild(tools);
     }
     if (answered) {
       const block = answerBlock(q, state);
@@ -755,7 +913,11 @@ export function createAside(R) {
   function answerHintLine() {
     return h('div', { class: 'req-side__hint req-q__common-hint small muted' },
       icon('comment-discussion', { size: 11 }),
-      h('span', null, ANSWERS_RU.explainHint));
+      h('span', null, ANSWERS_RU.explainHint),
+      // W30-C: что делают новые кнопки — одной строкой, без повтора у каждого вопроса.
+      h('span', { class: 'req-q__common-hint2' },
+        ' Варианты можно выбрать сразу; «Отложить» вернёт вопрос позже, '
+        + '«Не актуально» закроет без ответа — вернуть можно из «Закрытых».'));
   }
 
   /** Время ближайшего обновления свода «14:20» из unix-секунд ('' — времени нет). */
@@ -851,7 +1013,7 @@ export function createAside(R) {
     const btn = h('button', {
       type: 'button', class: 'btn btn--secondary btn--sm req-side__stale-btn',
       'data-action': 'dismiss-stale',
-      title: 'Закрыть неактуальное у всех завершённых запросов комнаты. '
+      title: 'Закрыть неактуальное у всех завершённых задач комнаты. '
         + 'Решённое человеком останется; закрытое можно вернуть',
     }, icon('circle-x', { size: 12 }), 'Закрыть все неактуальные (' + String(total) + ')');
     btn.addEventListener('click', async (ev) => {
@@ -883,7 +1045,7 @@ export function createAside(R) {
     return h('div', { class: 'req-side__stale', role: 'group', 'aria-label': 'Неактуальные пункты' },
       h('div', { class: 'req-side__stale-text small muted' },
         icon('history', { size: 12 }),
-        h('span', null, 'Работа по запросу закончена. Неактуальное можно закрыть разом: '
+        h('span', null, 'Работа по задаче закончена. Неактуальное можно закрыть разом: '
           + 'счётчик «ждёт вас» обнулится, решённое вами останется.')),
       btn);
   }
@@ -1018,6 +1180,55 @@ export function createAside(R) {
   }
 
   /**
+   * W30-C: «пакет решений» — неблокирующие вопросы одним компактным списком.
+   * Свёрнут: работу они не держат, но ответить можно здесь же (без тупика).
+   */
+  function packageBlock(questions) {
+    const body = h('div', {
+      class: 'req-side__body req-q__list req-q__packet-list',
+      'data-question-list': 'packet',
+      'data-scroll-key': 'questions-packet',
+    });
+    reconcileQuestions(body, questions);
+    const n = questions.length;
+    return h('details', {
+      class: 'req-side__packet', 'data-question-packet': String(n),
+      'data-key': 'blk-packet',
+    },
+    h('summary', { class: 'req-side__packet-sum small' },
+      icon('chevron-right', { size: 11 }),
+      h('span', null, 'Пакет решений: ' + countNoun(n, ['вопрос', 'вопроса', 'вопросов'])
+        + ' — работу не блокируют, можно ответить позже'),
+      h('span', { class: 'chip chip--muted tnum' }, String(n))),
+    body);
+  }
+
+  /**
+   * W30-C: отложенные вопросы — свёрнутый список с «Вернуть» у каждого.
+   *
+   * «Отложить» не должен превращаться в чёрную дыру: пункт уходит из счёта
+   * «ждёт вас», но остаётся здесь и возвращается одной кнопкой.
+   */
+  function postponedBlock(questions) {
+    const rows = questions.map((q) => h('div', {
+      class: 'req-side__closed-row', 'data-postponed-question': String(q.id || ''),
+    },
+    h('div', { class: 'req-side__closed-text' },
+      h('div', { class: 'req-side__closed-q' }, firstLine(q.text, 120)),
+      h('div', { class: 'small muted' }, 'отложено вами — вопрос открыт')),
+    questionStaleRow(Object.assign({}, q, { state: 'postponed', postponed: true }))));
+    const n = questions.length;
+    return h('details', {
+      class: 'req-side__postponed', 'data-postponed-questions': String(n),
+      'data-key': 'blk-postponed',
+    },
+    h('summary', { class: 'req-side__closed-sum small muted' },
+      icon('clock', { size: 11 }),
+      'Отложенные вопросы: ' + String(n)),
+    h('div', { class: 'req-side__closed-body' }, rows));
+  }
+
+  /**
    * Содержимое «Нужен ваш ответ»: только пункты с действием (W26 §1, T1).
    * Перерисовывается из стора, не дожидаясь опроса страницы.
    */
@@ -1073,19 +1284,41 @@ export function createAside(R) {
       }, approvalsUI.pendingCards(view.approvals)));
     }
 
-    if (view.openQs.length) {
+    // Одна общая подсказка блока — над вопросами, а не у каждого (B15).
+    if (view.openQs.length) box.appendChild(answerHintLine());
+
+    if (view.blockingQs.length) {
       // Первый вопрос списка открыт по умолчанию (R5 §7.2): пока человек не
-      // выбрал другой, `openQId` = null и раскрыт ровно первый.
-      if (openQId == null && view.openQs[0]) openQId = null;
-      box.appendChild(answerHintLine());
+      // выбрал другой, `openQId` = null и раскрыт ровно первый. W30-C: этот
+      // первый — БЛОКИРУЮЩИЙ: иначе форма оказывалась в свёрнутом «пакете
+      // решений», а список начинался с одних заголовков без поля ответа.
+      if (openQId == null && view.blockingQs[0] && view.blockingQs[0].id) {
+        openQId = String(view.blockingQs[0].id);
+      }
       const list = h('div', {
         class: 'req-side__body req-q__list', 'data-question-list': '',
         'data-hotkey-list': 'questions',
         title: 'J — следующий вопрос, K — предыдущий',
         'data-scroll-key': 'questions-open',
       });
-      reconcileQuestions(list, view.openQs);
+      reconcileQuestions(list, view.blockingQs);
       box.appendChild(list);
+    }
+
+    // W30-C (§1 п.3): «пакет решений» — неблокирующие вопросы компактным
+    // списком. Они не держат работу, поэтому не спорят с блокирующими за место
+    // на экране; каждый по-прежнему открывается и отвечается.
+    if (view.packetQs.length) box.appendChild(packageBlock(view.packetQs));
+
+    // W30-C: отложенные вопросы — свёрнуто, с возвратом (без тупиков).
+    if (view.postponedQs.length) box.appendChild(postponedBlock(view.postponedQs));
+
+    if (view.duplicates) {
+      box.appendChild(h('div', {
+        class: 'req-side__hint small muted', 'data-hidden-duplicates': String(view.duplicates),
+        title: 'Похожие по смыслу вопросы приложение показало одной темой — отвечать на каждый не нужно.',
+      }, icon('list-unordered', { size: 11 }),
+      h('span', null, 'Похожие вопросы скрыты как дубли: ' + String(view.duplicates))));
     }
 
     if (view.openDecisions.length) {
@@ -1111,7 +1344,7 @@ export function createAside(R) {
       box.appendChild(h('div', { class: 'req-side__blocked-foot' },
         h('a', {
           class: 'btn btn--ghost btn--sm', href: backlogHref(),
-          title: 'Открыть вкладку «От вас нужно»: все дела этого запроса списком',
+          title: 'Открыть вкладку «От вас нужно»: все дела этой задачи списком',
         }, icon('list-unordered', { size: 12 }), 'Все нужные ответы')));
     }
 
@@ -1353,7 +1586,7 @@ export function createAside(R) {
     for (const text of items) {
       const btn = h('button', {
         type: 'button', class: 'btn btn--ghost btn--sm',
-        title: 'Создать запрос из этого вопроса',
+        title: 'Создать задачу из этого вопроса',
       }, 'Задать');
       btn.addEventListener('click', () => askFuture(String(text), btn));
       body.append(h('div', { class: 'req-future' },
@@ -1365,7 +1598,7 @@ export function createAside(R) {
       name: 'future',
       title: 'Будущие вопросы',
       count: countNoun(items.length, ['вопрос', 'вопроса', 'вопросов']),
-      hint: 'То, что стоит спросить позже — можно превратить в отдельный запрос.',
+      hint: 'То, что стоит спросить позже — можно превратить в отдельную задачу.',
       defaultOpen: false,
       className: 'req-future-card',
       key: 'blk-future',
@@ -1424,7 +1657,7 @@ export function createAside(R) {
     const link = h('a', { class: 'req-stage', href: `#/room/${encodeURIComponent(R.roomId)}/roadmap` },
       row('Этап проекта', project || 'не выбран'),
       bar,
-      own && own !== project ? row('Этот запрос', own) : null,
+      own && own !== project ? row('Эта задача', own) : null,
       cur && cur.note ? h('div', { class: 'req-stage__note' }, cur.note) : null,
       h('div', { class: 'req-stage__map' }, 'Вся карта →'));
 
@@ -1451,7 +1684,17 @@ export function createAside(R) {
     const future = Array.isArray(detail.future_questions) ? detail.future_questions : [];
 
     const openQs = questions.filter((q) => q && qOpen(q));
-    const answeredQs = questions.filter((q) => q && !qOpen(q) && (q.answer || q.answered));
+    // W30-C (§1 п.3): блокирующие вопросы — первыми и полными карточками;
+    // неблокирующие — «пакетом решений» (компактный список, работу не держат).
+    // Если поле `blocking` не пришло вовсе (старый сервер), вопрос считается
+    // блокирующим: раньше любой открытый вопрос держал работу, и прятать его в
+    // свёрнутый пакет было бы враньём.
+    const blockingQs = openQs.filter((q) => q.blocking !== false);
+    const packetQs = openQs.filter((q) => q.blocking === false);
+    // W30-C: отложенные — отдельный свёрнутый список с «Вернуть».
+    const postponedQs = questions.filter((q) => q && qPostponed(q));
+    const answeredQs = questions.filter((q) => q && !qOpen(q) && !qPostponed(q)
+      && (q.answer || q.answered));
     // W27-E2 §1: снятые вопросы («Не актуально»/«Это не вопрос») — в «Закрытые»,
     // с причиной и кнопкой «Вернуть», а не молча мимо экрана.
     const dismissedQs = questions.filter((q) => q && !qOpen(q)
@@ -1479,11 +1722,14 @@ export function createAside(R) {
     const live = (detail.synthesis && detail.synthesis.live) || {};
     return {
       steps, questions, decisions, future,
-      openQs, answeredQs, dismissedQs, openDecisions, closedDecisions, blocked, inbox, approvals, pauses,
+      openQs, blockingQs, packetQs, postponedQs,
+      answeredQs, dismissedQs, openDecisions, closedDecisions, blocked, inbox, approvals, pauses,
       counts: needsYouCount(detail),
+      // W30-C: сколько похожих вопросов сервер скрыл как дубли темы (§1).
+      duplicates: Math.max(0, Number(detail.questions_summary && detail.questions_summary.hidden_duplicates) || 0),
       // W27-E2 §1: сколько пунктов можно закрыть разом у завершённого запроса.
       stale: staleSummary(detail, {
-        isOpenQuestion: (q) => Boolean(q) && !q.answered && !q.dismissed,
+        isOpenQuestion: (q) => Boolean(q) && !q.answered && !q.dismissed && !qPostponed(q),
         isOpenDecision: (d) => Boolean(d) && decisionOpen(d),
       }),
       resend: {
@@ -1558,7 +1804,7 @@ export function createAside(R) {
   function buildAside() {
     const wrap = h('aside', {
       class: 'req__aside',
-      'aria-label': 'От вас нужно по этому запросу',
+      'aria-label': 'От вас нужно по этой задаче',
       // WAVE17 §1: прокрутка колонки переживает точечное обновление страницы.
       'data-scroll-key': 'request-aside',
     });
@@ -1591,7 +1837,7 @@ export function createAside(R) {
           const details = (err && (err.details || err.detail)) || null;
           const id = String((details && ((details.detail && details.detail.id) || details.id)) || '');
           if (id) {
-            say('Дело по этому запросу уже есть — открываю его', 'info');
+            say('Дело по этой задаче уже есть — открываю его', 'info');
             if (go) go('#/delo/' + encodeURIComponent(id));
           } else {
             say((err && err.message) || 'Не удалось открыть дело', 'error');
@@ -1601,13 +1847,13 @@ export function createAside(R) {
     }
 
     wrap.append(h('div', { class: 'req-aside__scope row row--between row--wrap row--tight' },
-      h('span', { class: 'req-aside__scope-title' }, 'По этому запросу'),
+      h('span', { class: 'req-aside__scope-title' }, 'По этой задаче'),
       h('span', { class: 'req-aside__scope-acts row row--tight' },
         h('button', {
           class: 'btn btn--ghost btn--sm req-aside__delo', type: 'button',
-          title: 'Открыть дело по этому запросу: этапы, результат, письмо наружу',
+          title: 'Открыть дело по этой задаче: этапы, результат, письмо наружу',
           onclick: (e) => openDelo(e && e.currentTarget),
-        }, 'Дело из запроса'),
+        }, 'Дело из задачи'),
         h('a', { class: 'req-aside__scope-link', href: backlogHref, title: 'Все дела комнаты: шаги, вопросы, решения' },
           'Все дела комнаты →'))));
 

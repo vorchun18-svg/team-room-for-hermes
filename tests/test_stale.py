@@ -92,8 +92,10 @@ class StaleContractTests(unittest.TestCase):
                          ("pending", "granted_once", "granted_always", "denied",
                           "expired", "closed", "dismissed"))
         self.assertEqual(stale.CLOSED_REASONS,
+                         # W30-D1: у принятой задачи пункты закрываются своей причиной
+                         # (`request_accepted`), как у архивной — `request_archived`.
                          ("card_finished", "request_done", "request_archived",
-                          "dismissed", "superseded"))
+                          "request_accepted", "dismissed", "superseded"))
 
     def test_only_open_waits_for_human(self):
         self.assertEqual(stale.question_state({"answer_state": "open"}), "open")

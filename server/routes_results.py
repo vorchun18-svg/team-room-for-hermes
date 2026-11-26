@@ -90,7 +90,7 @@ class ResultsRoutes:
             raise err(400, "Нужен request_id или request_ids: [...]",
                       missing=["request_id"])
         if len(wanted) > BULK_MAX:
-            raise err(400, "За раз можно сделать дела из %d запросов" % BULK_MAX,
+            raise err(400, "За раз можно сделать дела из %d задач" % BULK_MAX,
                       max=BULK_MAX, requested=len(wanted))
         delo_mod = self.mod("delo")
         sources = self._delo_sources() if hasattr(self, "_delo_sources") else None
@@ -106,19 +106,19 @@ class ResultsRoutes:
             source = by_id.get(request_id)
             if source is None:
                 failed.append({"request_id": request_id,
-                               "message": "Такого запроса в комнате нет"})
+                               "message": "Такой задачи в комнате нет"})
                 continue
             if source.get("delo"):
                 skipped.append({"request_id": request_id,
                                 "delo_id": (source.get("delo") or {}).get("id"),
-                                "message": "Дело по этому запросу уже есть"})
+                                "message": "Дело по этой задаче уже есть"})
                 continue
             finished = str(source.get("status") or "") in done_states
-            stages = [{"title": ("Запрос выполнен" if finished else "Запрос в работе"),
+            stages = [{"title": ("Запрос выполнен" if finished else "Задача в работе"),
                        "state": ("done" if finished else "now")},
                       {"title": "Итог и следующий шаг", "state": ("now" if finished else "todo")}]
             if source.get("short"):
-                stages[0]["title"] = "Запрос выполнен: " + str(source.get("short"))[:60]
+                stages[0]["title"] = "Задача выполнена: " + str(source.get("short"))[:60]
             delo_payload = {"request_id": request_id,
                             "title": source.get("title") or source.get("title_short") or request_id,
                             "status": "waiting" if finished else "open",

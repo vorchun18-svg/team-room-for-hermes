@@ -168,7 +168,7 @@ class MapBodyTests(unittest.TestCase):
     def test_map_body_lists_existing_requests(self):
         body = contract.build_map_body(self.room, self.EXISTING, slug="map", cfg=self.cfg)
         self.assertIn("Собери карту проекта", body)
-        self.assertIn("Существующие запросы комнаты (2)", body)
+        self.assertIn("Существующие задачи комнаты (2)", body)
         self.assertIn("Легализация ИП", body)
         self.assertIn("готов", body)
         self.assertIn("ошибка", body)
@@ -183,7 +183,7 @@ class MapBodyTests(unittest.TestCase):
 
     def test_map_body_without_requests(self):
         body = contract.build_map_body(self.room, [], cfg=self.cfg)
-        self.assertIn("Существующих запросов в комнате пока нет", body)
+        self.assertIn("Существующих задач в комнате пока нет", body)
         self.assertIn(contract.BRIEF_OPEN, body)
 
     def test_map_body_visible_text_is_prompt(self):

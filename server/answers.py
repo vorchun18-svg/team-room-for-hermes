@@ -27,6 +27,11 @@ import time as _time
 ANSWER_MARK = "[Михаил · ответ на вопрос"
 EXPLAIN_MARK = "[Михаил · просит пояснить по вопросу"
 REACTION_MARK = "[Руководитель · реакция на ответ"
+#: W30-A §5: пояснение руководителя прямо под вопросом («пояснено — выберите ответ»)
+EXPLAINED_MARK = "[Руководитель · пояснение по вопросу"
+#: варианты написания метки пояснения, которые тоже считаем пояснением
+_EXPLAINED_ALIASES = (EXPLAINED_MARK, "[Руководитель · пояснение]",
+                      "[Руководитель · пояснение к вопросу")
 REMIND_MARK = "[Михаил · напоминание]"
 #: W27-E1 §1: «Не актуально» и «Вернуть» — один вид метки для всех пунктов.
 STALE_MARK = "[Михаил · закрыто как неактуальное"
@@ -40,11 +45,15 @@ DEFAULT_EXPLAIN_TEXT = ("Поясни вопрос подробнее: заче�
 
 #: статусы ответа по контракту (W14-D §2; W19-D2 §2 — понятная цепочка;
 #: W20-D1 §1.2 — «руководитель ответил текстом» вместо вечного «прочитал»)
-STATES = ("open", "waiting_explanation", "sent", "received", "applied", "no_change",
-          "replied_text", "dismissed")
+STATES = ("open", "waiting_explanation", "explained", "sent", "received", "applied", "no_change",
+          "replied_text", "dismissed", "postponed")
 STATE_RU = {
     "open": "ждёт вашего ответа",
     "waiting_explanation": "ждёт вашего решения после пояснения",
+    # W30-A §5: руководитель объяснил — вопрос тот же, но теперь понятно, что отвечать
+    "explained": "пояснено — выберите ответ",
+    # W30-A §1: «Отложить» — человек вернётся к вопросу позже
+    "postponed": "отложено — вернётся позже",
     # W19-D2 (B-21): «Ответ отправлен» → «Руководитель прочитал» → «Учтено».
     "sent": "ответ отправлен",
     "received": "руководитель прочитал",
@@ -60,6 +69,11 @@ STATE_HINT = {
     "open": "Вопрос ждёт вашего ответа — руководитель не может двигаться дальше без него.",
     "waiting_explanation": "Вы попросили пояснение: вопрос остаётся открытым, пока руководитель "
                            "не объяснит, о чём речь.",
+    # W30-A §5: подсказка «пока руководитель не объяснит» больше не нужна — он объяснил
+    "explained": "Руководитель объяснил вопрос — прочитайте пояснение под вопросом и выберите "
+                 "ответ. Сам вопрос не изменился.",
+    "postponed": "Вы отложили вопрос: он вернётся в список позже. Работа из-за него не стоит, "
+                 "если вопрос не был блокирующим.",
     "sent": "Ответ ушёл руководителю. Пока он его не открыл и не отметил исход — ждите "
             "или нажмите «Напомнить руководителю».",
     "received": "Руководитель прочитал ответ и взял его в работу. «Учтено» появится, когда он "
@@ -205,6 +219,58 @@ def explanation_comment(question_id, question_text, text) -> str:
     """
     body = norm(text) or DEFAULT_EXPLAIN_TEXT
     return "%s %s «%s»] %s" % (EXPLAIN_MARK, question_id, short(question_text, 120), body)
+
+
+def explain_comment(question_id, question_text, text) -> str:
+    """W30-A §5: метка ПОЯСНЕНИЯ руководителя — шаблон для контракта руководителя."""
+    return "%s %s] %s" % (EXPLAINED_MARK, question_id, norm(text))
+
+
+def explained_kind_of(text) -> bool:
+    """Комментарий — пояснение руководителя по вопросу (§5)."""
+    value = norm_start(text)
+    return any(value.startswith(mark) for mark in _EXPLAINED_ALIASES)
+
+
+def _explained_qid(text) -> str:
+    """id вопроса из метки пояснения (``… вопросу q_x] …``); пусто — не нашли."""
+    value = norm_start(text)
+    head = value.split("]", 1)[0]
+    match = _QID_RE.search(head)
+    return match.group(1) if match else ""
+
+
+def explained_text_of(text) -> str:
+    """Текст пояснения без метки: ``[… q_x] Вот что имеется в виду`` → ``Вот…``."""
+    value = norm_start(text)
+    return norm(value.split("]", 1)[1]) if "]" in value else norm(value)
+
+
+def explanations_from_thread(items) -> dict:
+    """Пояснения руководителя из ленты: ``{qid: {text, at, comment_id}}`` (W30-A §5).
+
+    Берём последнее пояснение по каждому вопросу: руководитель мог пояснить
+    дважды, и человеку нужен свежий текст. Метка явная — угадывать по словам не
+    нужно, поэтому «пояснение» не путается с обычным ответом в диалоге.
+    """
+    out: dict = {}
+    for item in items or []:
+        if not isinstance(item, dict) or item.get("author_kind") != "agent":
+            continue
+        raw = str(item.get("text") or "")
+        if not explained_kind_of(raw):
+            continue
+        qid = _explained_qid(raw)
+        body = explained_text_of(raw)
+        if not qid or not body:
+            continue
+        at = int(item.get("at") or 0)
+        prev = out.get(qid)
+        if prev and int(prev.get("at") or 0) > at:
+            continue
+        out[qid] = {"text": body, "at": at, "comment_id": str(item.get("id") or "") or None,
+                    "author": str(item.get("author") or "") or None}
+    return out
 
 
 #: метка одной карточки «накопленные ответы» (W17-B §3, B6)
@@ -903,6 +969,10 @@ def state_of(record: dict | None, reaction: dict | None = None) -> str:
     # W20-D1 (B-38): «Это не вопрос» — элемент не ждёт ответа и не считается в счётчиках.
     if record.get("dismissed") or str(record.get("status") or "") == "dismissed":
         return "dismissed"
+    # W30-A §1: «Отложить» — записи без ответа, но и не «ждёт сейчас».
+    if str(record.get("status") or "") == "postponed":
+        until = int(record.get("postpone_until") or 0) or 0
+        return "postponed" if until > int(_time.time()) else "open"
     if not text:
         return "open"
     if record.get("answered") is False or str(record.get("status") or "") == "waiting_explanation":
@@ -929,14 +999,45 @@ def explanation_hint(record: dict | None) -> bool:
     return is_counter_question(record.get("text"))
 
 
-def apply_question(question: dict, record, reaction=None, now: int | None = None) -> dict:
-    """Наложить запись ответа и реакцию на вопрос (мутирует и возвращает его)."""
+def apply_question(question: dict, record, reaction=None, now: int | None = None,
+                   explanation=None) -> dict:
+    """Наложить запись ответа и реакцию на вопрос (мутирует и возвращает его).
+
+    W30-A §5: ``explanation`` — пояснение руководителя (текст из метки
+    ``[Руководитель · пояснение по вопросу <id>]``). Пока ответа нет, вопрос
+    получает состояние ``explained`` («пояснено — выберите ответ»): текст вопроса
+    не меняется, но человек видит объяснение прямо под ним и кнопки вариантов
+    активны. С ответом пояснение остаётся полем — оно не перебивает статус.
+    """
     question = question if isinstance(question, dict) else {}
     record = record if isinstance(record, dict) else {}
     text = norm(record.get("text"))
     at = int(record.get("at") or 0) or None
     state = state_of(record, reaction)
-    answered = bool(text) and state not in ("waiting_explanation", "open", "dismissed")
+    explained = explanation if isinstance(explanation, dict) else {}
+    explained_text = norm(explained.get("text"))
+    if explained_text:
+        question["explanation"] = explained_text
+        question["explained_at"] = int(explained.get("at") or 0) or None
+        question["explained_by"] = str(explained.get("author") or "") or None
+    else:
+        question["explanation"] = None
+        question["explained_at"] = None
+        question["explained_by"] = None
+    # «Пояснено — выберите ответ» только пока вопрос реально ждёт ответа.
+    # W30-QA2: живой поток «Пояснить → пояснение руководителя» раньше застревал:
+    # просьба о пояснении записывается как запись со статусом
+    # `waiting_explanation`, и пояснение её не снимало — вопрос навсегда оставался
+    # «ждёт пояснения» с кнопкой «Напомнить», хотя руководитель уже объяснил.
+    # Пояснение СВЕЖЕЕ просьбы → вопрос пояснён и ждёт ответа человека.
+    explained_at = int(explained.get("at") or 0) or 0
+    if explained_text and state == "open":
+        state = "explained"
+    elif (explained_text and state == "waiting_explanation"
+          and (not explained_at or explained_at >= int(at or 0))):
+        state = "explained"
+    answered = bool(text) and state not in ("waiting_explanation", "open", "dismissed",
+                                            "postponed", "explained")
     question["answered"] = answered
     question["answer"] = text or None
     question["answered_at"] = at if answered else None
@@ -957,7 +1058,17 @@ def apply_question(question: dict, record, reaction=None, now: int | None = None
     question["dismissed"] = state == "dismissed"
     question["is_question"] = not question["dismissed"]
     question["answered_text_only"] = state == "replied_text"
-    question["needs_answer"] = bool(not answered and state not in ("dismissed", "replied_text"))
+    # W30-A §1: отложенный вопрос не «ждёт вас сейчас» — у него своё состояние,
+    # и в счётчики «нужен ответ» он не входит, пока срок не прошёл.
+    question["needs_answer"] = bool(not answered and state not in ("dismissed", "replied_text",
+                                                                  "postponed"))
+    # Срок «Отложить» живёт в записи реестра, а состояние читается по вопросу
+    # (`stale.question_state`) — иначе отложенный пункт снова считался бы «ждёт вас».
+    until = record.get("postpone_until")
+    question["postpone_until"] = (int(until) if state == "postponed"
+                                   and isinstance(until, (int, float)) and until > 0 else None)
+    question["postponed_at"] = (int(record.get("postponed_at") or 0) or None
+                                if state == "postponed" else None)
     # «за разумное время» реакции нет — подсвечиваем, что пора напомнить
     waited = max(0, int(now or _time.time()) - at) if (state == "sent" and at) else 0
     question["reaction_waited_s"] = waited if state == "sent" else None
@@ -2186,6 +2297,8 @@ __all__ = ["ANSWER_MARK", "EXPLAIN_MARK", "REACTION_MARK", "REMIND_MARK", "STATE
            "STALE_MARK", "RESTORE_MARK", "stale_comment",
            "norm", "short", "stems", "is_negation", "is_counter_question",
            "answer_comment", "explanation_comment", "reaction_comment", "remind_text",
+           "EXPLAINED_MARK", "explain_comment", "explained_kind_of", "explained_text_of",
+           "explanations_from_thread",
            "DIGEST_MARK", "digest_comment", "explanation_hint",
            "answer_kind_of", "answer_text_of", "question_id_of", "question_text_of",
            "reaction_state", "reactions_from_thread", "reaction_for_question", "reaction_lookup",

@@ -299,7 +299,7 @@ export function createAnswer(R) {
       syncNote();
 
       const rows = [
-        previewRow('Запрос', shortLine(d.text, 160) || '—'),
+        previewRow('Задача', shortLine(d.text, 160) || '—'),
         previewRow(cur ? `Свод версии ${cur}` : 'Свод',
           shortLine(String(curText || '').replace(/[#*|>-]/g, ' '), 160) || '—'),
         h('li', { class: 'req-revise__row' },
@@ -349,7 +349,7 @@ export function createAnswer(R) {
               h('ul', { class: 'req-revise__items' }, ...detailItems))
             : null,
           h('div', { class: 'req-revise__honest' },
-            'Весь диалог целиком не пересылается — руководитель получит запрос, свод, ваше замечание и перечисленное выше.')));
+            'Весь диалог целиком не пересылается — руководитель получит задачу, свод, ваше замечание и перечисленное выше.')));
 
       const cancelBtn = h('button', {
         class: 'btn btn--secondary', type: 'button',
@@ -796,7 +796,7 @@ export function createAnswer(R) {
         rid: String(d.id || ''),
         node: { id: d.id, status: d.status, started_at: d.started_at },
         marks: createMarks({ requestId: String(d.id || '') }),
-        title: 'Повторить запрос?',
+        title: 'Повторить задачу?',
         text: 'Руководитель запустит работу заново: это новый прогон агента. '
           + 'Результаты прошлых попыток останутся в дереве работ.',
         onSent: () => { if (typeof render === 'function') render(); },
@@ -893,7 +893,7 @@ export function createAnswer(R) {
         card.append(h('div', { class: 'req-answer__body' },
           h('div', { class: 'banner banner--warn' },
             icon('warning', { size: 14 }),
-            h('span', { class: 'banner__text' }, 'Текст этой версии не найден в задачах запроса — возможно, задача удалена.'))));
+            h('span', { class: 'banner__text' }, 'Текст этой версии не найден в работах задачи — возможно, задача удалена.'))));
       }
 
       // «Что изменилось» — под текстом: на первом экране остаётся свод (R5 §7.3).
@@ -935,7 +935,7 @@ export function createAnswer(R) {
           type: 'button',
           class: 'btn ' + (refreshFirst ? 'btn--secondary' : 'btn--primary'),
           disabled: Boolean(d.archived),
-          title: 'Руководитель получит запрос, этот свод, ваше замечание и ваши ответы после этой версии',
+          title: 'Руководитель получит задачу, этот свод, ваше замечание и ваши ответы после этой версии',
           'data-action': 'revise', onclick: () => revise(),
         }, icon('comment-draft', { size: 13 }), SVOD_RU.revise),
         h('button', {
@@ -961,7 +961,7 @@ export function createAnswer(R) {
       const body = h('div', { class: 'req-pending' },
         h('div', { class: 'req-pending__title' },
           h('span', { class: 'req-pending__dot', 'aria-hidden': 'true' }),
-          queued ? 'Запрос ждёт разбора' : waiting ? 'Ждёт твоего ответа' : 'Команда работает над ответом'));
+          queued ? 'Задача ждёт разбора' : waiting ? 'Ждёт твоего ответа' : 'Команда работает над ответом'));
       // Сам вопрос живёт в «Вопросах к тебе» — здесь только якорь к нему (D5).
       if (waiting && openCount) {
         body.append(h('a', {
@@ -983,7 +983,7 @@ export function createAnswer(R) {
       } else {
         // Прогресс уже показан в «Ходе работы» — здесь только то, чего там нет.
         body.append(h('div', { class: 'req-pending__line' }, queued
-          ? 'Руководитель комнаты ещё не разложил запрос по команде. Обычно это происходит само, когда движок запущен.'
+          ? 'Руководитель комнаты ещё не разложил задачу по команде. Обычно это происходит само, когда движок запущен.'
           : (who.length ? 'Сейчас: ' + who.join(', ') : 'Движок раздаёт задачи команде.')));
         body.append(h('div', { class: 'req-pending__skel' }, skeleton(4)));
         const kstate = kickStateFromTree(d.tree);
@@ -1005,7 +1005,7 @@ export function createAnswer(R) {
     card.append(h('div', { class: 'req-empty' }, emptyState({
       icon: 'comment-discussion',
       title: 'Ответа нет',
-      text: 'Запрос завершён, но текст ответа не сохранился. Можно повторить запрос тем же текстом или посмотреть задачи в дереве работ.',
+      text: 'Задача завершена, но текст ответа не сохранился. Можно повторить задачу тем же текстом или посмотреть задачи в дереве работ.',
       action: { label: 'Повторить', onclick: cloneRequest },
     })));
     return card;

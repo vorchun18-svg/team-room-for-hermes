@@ -261,7 +261,7 @@ export function createSteps(R) {
     const body = [];
     if (!parts.all.length) {
       body.push(h('div', { class: 'req-side__body' },
-        h('div', { class: 'small muted' }, 'Руководитель ещё не составил план по этому запросу.')));
+        h('div', { class: 'small muted' }, 'Руководитель ещё не составил план по этой задаче.')));
     } else {
       const current = group('Предстоит', parts.current, 'req-steps__group--next');
       if (current) body.push(current);

@@ -81,7 +81,7 @@ test('соседняя вкладка по кругу и выбор после �
 test('адрес и подпись вкладки', () => {
   assert.equal(tabHash({ roomId: 'cafe', id: 'r 1' }), '#/room/cafe/request/r%201');
   assert.equal(tabHash(null), '#/');
-  assert.equal(tabLabel({ title: '' }), 'Запрос');
+  assert.equal(tabLabel({ title: '' }), 'Новая задача');
   assert.equal(tabLabel({ title: 'Ответ клиенту на претензию по химчистке' }), 'Ответ клиенту на претензию по химчистке');
   assert.equal(tabLabel({ title: 'О'.repeat(60) }).length, 42);
 });

@@ -46,15 +46,15 @@ export function buildTitleBlock(opts = {}) {
     maxlength: '120',
     spellcheck: 'false',
     'data-keep': 'request-title',
-    'aria-label': 'Название запроса',
+    'aria-label': 'Название задачи',
   });
 
   const editBtn = h('button', {
     class: 'btn btn--ghost btn--icon btn--sm req__titlebtn',
     type: 'button',
     'data-act': 'rename',
-    title: 'Переименовать запрос',
-    'aria-label': 'Переименовать запрос',
+    title: 'Переименовать задачу',
+    'aria-label': 'Переименовать задачу',
   }, icon('edit', { size: 13 }));
 
   const okBtn = h('button', {
@@ -92,7 +92,7 @@ export function buildTitleBlock(opts = {}) {
 
   function paint() {
     const d = detail();
-    const short = titleShortOf(d) || 'Запрос';
+    const short = titleShortOf(d) || 'Задача';
     const hint = titleHint(d, o.roomTitle ? 'Комната: ' + o.roomTitle : '');
     titleEl.textContent = short;
     titleEl.setAttribute('title', hint || short);

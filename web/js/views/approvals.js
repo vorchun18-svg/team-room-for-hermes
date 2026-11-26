@@ -97,7 +97,7 @@ export const APPROVAL_STATE_HINTS = {
     + 'Отозвать можно в Настройках → Разрешения агентов.',
   denied: 'Вы запретили команду: участник будет искать другой способ.',
   expired: 'Время одноразового разрешения вышло — команда снова под вопросом.',
-  closed: 'Пункт закрыт сервером: работа карточки закончена (или запрос выполнен). '
+  closed: 'Пункт закрыт сервером: работа карточки закончена (или задача выполнена). '
     + 'Решать здесь нечего — строка только для памяти; её можно вернуть кнопкой «Вернуть», '
     + 'если пункт снова стал нужен.',
   hinted: 'Участнику отправлена подсказка в ветку карточки: сделать то же через файл и терминал. '
@@ -991,7 +991,7 @@ export function approvalCard(approval, opts = {}) {
     }
     if (!canAct) {
       actions.appendChild(h('div', { class: 'ap__hint small muted' },
-        'Действия доступны на странице запроса.'));
+        'Действия доступны на странице задачи.'));
       return;
     }
     for (const item of approvalActionsFor(a)) {
@@ -1417,7 +1417,7 @@ export function createApprovals(R = {}) {
           : extra.length
             ? 'Разрешить такие блокировки нельзя, но у вас есть рычаги: подсказать участнику другой '
               + 'способ, доверить запуск кода профилю на срок или закрыть пункт как неактуальный.'
-            : 'Запросы разрешений по этой карточке уже решены. Отозвать постоянные разрешения можно '
+            : 'Разрешения по этой карточке уже решены. Отозвать постоянные разрешения можно '
               + 'в Настройках → Разрешения агентов.')));
 
     // W27-E2 §1: массовое «Закрыть все неактуальные (N)» — только у завершённого
@@ -1458,7 +1458,7 @@ export function createApprovals(R = {}) {
       block.appendChild(h('details', { class: 'ap-block__done ap-block__closed', 'data-ap-closed': String(closed.length) },
         h('summary', { class: 'ap-block__done-sum small muted' },
           icon('chevron-right', { size: 11 }),
-          'Закрытые: ' + countNoun(closed.length, ['запрос', 'запроса', 'запросов']),
+          'Закрытые: ' + countNoun(closed.length, ['задача', 'задачи', 'задач']),
           why ? h('span', { class: 'ap-block__closed-why' }, ' · ' + why) : null),
         h('p', { class: 'ap-block__closed-hint small muted' },
           'Закрыто сервером: работа карточки закончена. У каждого пункта есть «Вернуть», '
@@ -1474,7 +1474,7 @@ export function createApprovals(R = {}) {
         block.appendChild(h('details', { class: 'ap-block__done' },
           h('summary', { class: 'ap-block__done-sum small muted' },
             icon('chevron-right', { size: 11 }),
-            'Решённые: ' + countNoun(done.length, ['запрос', 'запроса', 'запросов'])),
+            'Решённые: ' + countNoun(done.length, ['задача', 'задачи', 'задач'])),
           box));
       } else {
         block.appendChild(box);
@@ -1490,12 +1490,12 @@ export function createApprovals(R = {}) {
   function staleRow(total) {
     const text_ = h('div', { class: 'ap-block__stale-text small muted' },
       icon('history', { size: 12 }),
-      h('span', null, 'Работа по запросу закончена — неактуальные пункты можно закрыть разом: '
+      h('span', null, 'Работа по задаче закончена — неактуальные пункты можно закрыть разом: '
         + 'счётчик «ждёт вас» обнулится, решённое человеком останется.'));
     const btn = h('button', {
       type: 'button', class: 'btn btn--secondary btn--sm ap-block__stale-btn',
       'data-action': 'dismiss-stale',
-      title: 'Закрыть неактуальное у всех завершённых запросов комнаты (с возвратом)',
+      title: 'Закрыть неактуальное у всех завершённых задач комнаты (с возвратом)',
     }, icon('circle-x', { size: 12 }), 'Закрыть все неактуальные (' + String(total) + ')');
     btn.addEventListener('click', async () => {
       if (btn.disabled) return;

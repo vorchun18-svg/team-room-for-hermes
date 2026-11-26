@@ -589,9 +589,9 @@ export function agendaRange(days = 14) {
 /* -------------------------------------------------------------------- журнал */
 
 const JOURNAL_KINDS = {
-  request_created: { icon: 'comment-discussion', tone: 'info', label: 'Запрос создан', group: 'requests' },
-  request_status: { icon: 'pulse', tone: 'muted', label: 'Статус запроса', group: 'requests' },
-  request_done: { icon: 'pass-filled', tone: 'ok', label: 'Запрос завершён', group: 'requests' },
+  request_created: { icon: 'comment-discussion', tone: 'info', label: 'Задача создана', group: 'requests' },
+  request_status: { icon: 'pulse', tone: 'muted', label: 'Статус задачи', group: 'requests' },
+  request_done: { icon: 'pass-filled', tone: 'ok', label: 'Задача завершена', group: 'requests' },
   step_added: { icon: 'checklist', tone: 'muted', label: 'Шаг добавлен', group: 'steps' },
   step_done: { icon: 'check', tone: 'ok', label: 'Шаг выполнен', group: 'steps' },
   question_open: { icon: 'comment-draft', tone: 'warn', label: 'Вопрос', group: 'questions' },
@@ -633,7 +633,7 @@ export function journalKindInfo(kind) {
 
 export const JOURNAL_FILTERS = [
   { value: 'all', label: 'Всё' },
-  { value: 'requests', label: 'Запросы' },
+  { value: 'requests', label: 'Задачи' },
   { value: 'questions', label: 'Вопросы' },
   { value: 'decisions', label: 'Решения' },
   { value: 'steps', label: 'Шаги' },

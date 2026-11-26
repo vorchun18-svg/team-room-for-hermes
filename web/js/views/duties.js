@@ -694,7 +694,7 @@ export function deloPicker(delos, opts = {}) {
   if (!list.length) {
     // W29-P5: пустой список — не тупик: предлагаем запрос комнаты или своё дежурство.
     box.appendChild(h('p', { class: 'small muted' },
-      'Дел в этой комнате пока нет. Можно взять недавний запрос — из него получится '
+      'Дел в этой комнате пока нет. Можно взять недавнюю задачу — из неё получится '
         + 'такая же регулярная проверка — или создать дежурство с нуля.'));
     if (requests.length) {
       const rows = h('ul', { class: 'picker__list' });
@@ -704,8 +704,8 @@ export function deloPicker(delos, opts = {}) {
             class: 'picker__btn', type: 'button', 'data-request': String(request.id || ''),
             onclick: () => { if (typeof opts.onPickRequest === 'function') opts.onPickRequest(request); },
           },
-          h('span', { class: 'picker__name' }, String(request.title || 'запрос комнаты')),
-          h('span', { class: 'small muted' }, ' · запрос'))));
+          h('span', { class: 'picker__name' }, String(request.title || 'задача комнаты')),
+          h('span', { class: 'small muted' }, ' · задача'))));
       }
       box.appendChild(rows);
     }

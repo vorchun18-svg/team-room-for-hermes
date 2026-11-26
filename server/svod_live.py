@@ -514,18 +514,43 @@ def _thread_of(detail, thread=None) -> list:
     return []
 
 
-def _digest(detail, room, rec, thread, cutoff=None) -> dict:
-    """Дайджест «что появилось после версии» — тот же, что у кнопки «Доработать»."""
+def _digest(detail, room, rec, thread, cutoff=None, cfg=None) -> dict:
+    """Дайджест «что появилось после версии» — тот же, что у кнопки «Доработать».
+
+    W30-B §2: если у задачи есть подзадачи проекта, в контекст пересборки свода
+    добавляется блок «Итоги подзадач» (название, статус, вывод по каждой). Одна
+    добавка, без второго дайджеста: агент видит итоги там же, где остальные события.
+    """
     empty = {"version": 0, "count": 0, "answers": [], "notes": [], "decisions": [],
              "steps": [], "text": ""}
     fn = getattr(_contract, "revision_digest", None)
-    if not callable(fn):
-        return empty
+    data = dict(empty)
+    if callable(fn):
+        try:
+            data = dict(fn(detail if isinstance(detail, dict) else {}, room, rec or {},
+                           thread, cutoff) or empty)
+        except Exception:  # noqa: BLE001 - без дайджеста свод всё равно живёт
+            data = dict(empty)
+    extra = _child_results(cfg, room, rec)
+    if extra:
+        text = str(data.get("text") or "").strip()
+        data["text"] = (text + "\n\n" + extra).strip() if text else extra
+    return data
+
+
+def _child_results(cfg, room, rec) -> str:
+    """«Итоги подзадач» для свода родителя (W30-B, ленивый импорт; пусто — нет проекта)."""
+    root_id = str((rec or {}).get("root_id") or "")
+    if not cfg or not root_id:
+        return ""
     try:
-        return fn(detail if isinstance(detail, dict) else {}, room, rec or {},
-                  thread, cutoff) or empty
-    except Exception:  # noqa: BLE001 - без дайджеста свод всё равно живёт
-        return empty
+        try:
+            from . import projects as mod
+        except ImportError:                                   # pragma: no cover
+            import projects as mod                            # type: ignore
+        return mod.child_results_text(cfg, room, root_id) or ""
+    except Exception:  # noqa: BLE001 - итоги подзадач не должны ломать свод
+        return ""
 
 
 def _cards_after(detail, rec, cutoff: int) -> list:
@@ -1309,7 +1334,7 @@ def create_update_card(cfg, room, rec, detail, ev: dict, note: str = "", thread=
                         {"reason": "no_leader"})
     if not ready(detail):
         raise SvodError("conflict", "Свода ещё нет — обновлять нечего.", {"reason": "no_svod"})
-    digest = _digest(detail, room, rec, thread)
+    digest = _digest(detail, room, rec, thread, cfg=cfg)   # W30-B: + «Итоги подзадач»
     request_text = str(rec.get("text") or (detail or {}).get("text") or "")
     answer = _previous_answer(detail, rec)
     note = note or auto_note(ev)
@@ -1348,6 +1373,27 @@ def _remember(cfg, room, rec, ev: dict, key: str, now: int) -> None:
         pass
 
 
+def _accepted(cfg, room, rec, detail) -> bool:
+    """Принята ли задача (W30-D1): принятая заморожена, как архивная.
+
+    Принимаем и флаг детали (его ставит страница запроса), и файл отметки —
+    свод зовут и из сторожа, где деталь может быть собрана другим путём.
+    """
+    if isinstance(detail, dict) and detail.get("accepted"):
+        return True
+    root_id = str((rec or {}).get("root_id") or (detail or {}).get("id") or "")
+    if not root_id:
+        return False
+    try:
+        try:
+            from . import passports as _passports
+        except ImportError:  # pragma: no cover - плоский импорт
+            import passports as _passports   # type: ignore
+        return bool(_passports.is_accepted(cfg, room, root_id))
+    except Exception:  # noqa: BLE001 - отметка вторична для свода
+        return False
+
+
 def _board_blocked(cfg, room) -> str:
     """W29-I1: причина «писать в доску нельзя» (песочница + реальный дом Hermes)."""
     try:
@@ -1380,9 +1426,12 @@ def tick(cfg, room, rec, detail, thread=None, now=None, since=None, log=None) ->
     """
     now = _now(now)
     # W29-P4: архивный запрос — свод не обновляем (никаких карточек и моделей).
+    # W30-D1: принятая задача заморожена — то же самое, ни одной карточки свода.
     if (isinstance(room, dict) and room.get("archived")) or \
             (isinstance(detail, dict) and detail.get("archived")):
         return {"action": "none", "reason": "archived"}
+    if _accepted(cfg, room, rec, detail):
+        return {"action": "none", "reason": "accepted"}
     # W29-I1: песочница с реальной доской — свод не ставит карточек.
     blocked = _board_blocked(cfg, room)
     if blocked:

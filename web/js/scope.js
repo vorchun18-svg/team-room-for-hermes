@@ -104,7 +104,7 @@ export function crumbItems(opts = {}) {
 
   if (route.name === 'request') {
     const title = String(opts.requestTitle || '').trim();
-    const item = { text: title ? 'Запрос «' + title + '»' : 'Запрос', current: true };
+    const item = { text: title ? 'Задача «' + title + '»' : 'Задача', current: true };
     // Полный текст запроса — в подсказке: крошка показывает короткое название.
     const hint = String(opts.requestHint || '').trim();
     if (hint) item.hint = hint;
@@ -210,7 +210,7 @@ export function sourceTitle(title, requestId) {
   const text = String(title === null || title === undefined ? '' : title).trim();
   if (text && !looksLikeRequestId(text)) return text;
   const rid = String(requestId || '').trim();
-  return rid ? 'запрос-источник' : '';
+  return rid ? 'задача-источник' : '';
 }
 
 /**
@@ -222,7 +222,7 @@ export function sourceTitle(title, requestId) {
 export function sourceHint(title, requestId) {
   const text = sourceTitle(title, requestId);
   const rid = String(requestId || '').trim();
-  const head = text && text !== 'запрос-источник' ? 'Запрос-источник: ' + text : 'Открыть запрос-источник';
+  const head = text && text !== 'задача-источник' ? 'Задача-источник: ' + text : 'Открыть задачу-источник';
   return rid ? head + ' (' + rid + ')' : head;
 }
 

@@ -60,14 +60,14 @@ IS_WINDOWS = os.name == "nt"
 KINDS = ("waiting", "finished", "error", "duty")
 KIND_TITLES = {
     "waiting": "Ждёт ваш ответ",
-    "finished": "Запрос завершён",
+    "finished": "Задача завершена",
     "error": "Ошибка запуска",
     "duty": "Дежурство нашло изменения",
     "test": "Проверка уведомлений",
 }
 KIND_LABELS = {
     "waiting": "«Ждёт ваш ответ»: появились новые пункты",
-    "finished": "«Запрос завершён»",
+    "finished": "«Задача завершена»",
     "error": "«Ошибка запуска»",
     "duty": "«Дежурство нашло изменения»",
 }
@@ -339,6 +339,10 @@ def _candidates(facts, state: dict, now: int, port=None) -> list[dict]:
     for fact in facts or []:
         if not isinstance(fact, dict):
             continue
+        # W30-D1: принятая задача заморожена — о ней не уведомляем вообще
+        # (сторож её и не отдаёт; проверка страхует другие источники фактов).
+        if fact.get("accepted"):
+            continue
         kind = str(fact.get("kind") or "")
         room = _safe_id(fact.get("room"))
         room_name = _clean(fact.get("room_name"), 60) or room
@@ -353,7 +357,7 @@ def _candidates(facts, state: dict, now: int, port=None) -> list[dict]:
             prev = prev if isinstance(prev, dict) else {}
             status = str(fact.get("status") or "")
             error = _clean(fact.get("error"), 200)
-            title = _clean(fact.get("title"), 120) or "Запрос"
+            title = _clean(fact.get("title"), 120) or "Задача"
             first_seen = not prev
             if not first_seen:
                 if _is_done(status) and not _is_done(prev.get("status")):

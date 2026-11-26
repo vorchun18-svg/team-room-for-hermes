@@ -780,6 +780,23 @@ def _pin_assigned(cfg, room: dict, card_id: str) -> dict:
         return {}
 
 
+def _accepted(cfg, room, root_id, detail) -> bool:
+    """Принята ли задача (W30-D1): принятая заморожена, как архивная."""
+    if isinstance(detail, dict) and detail.get("accepted"):
+        return True
+    root_id = str(root_id or "")
+    if not root_id:
+        return False
+    try:
+        try:
+            from . import passports as _passports
+        except ImportError:  # pragma: no cover - плоский импорт
+            import passports as _passports   # type: ignore
+        return bool(_passports.is_accepted(cfg, room, root_id))
+    except Exception:  # noqa: BLE001 - отметка вторична для цикла
+        return False
+
+
 def _board_blocked(cfg, room) -> str:
     """W29-I1: причина «писать в доску нельзя» (песочница + реальный дом Hermes)."""
     try:
@@ -809,6 +826,11 @@ def run_step(cfg, room: dict, record: dict, detail: dict) -> list[dict]:
     blocked = _board_blocked(cfg, room)          # W29-I1: ни карточек, ни записей в доску
     if blocked:
         return [{"action": "none", "reason": "sandbox_real_board", "text": blocked}]
+    # W30-D1: принятая задача заморожена — цикл критика (и доработка) не идёт.
+    # Проверка до записи истории раундов: после принятия не должно быть ни карточек,
+    # ни правок реестра, ни вызовов модели.
+    if _accepted(cfg, room, root_id, detail):
+        return [{"action": "none", "reason": "accepted"}]
 
     # История раундов: держим в реестре, чтобы UI показывал ход цикла, а страховки
     # («нет прогресса») работали даже если карточки пропали из дерева.

@@ -42,7 +42,7 @@ FINAL_WORDS = ("итог", "письмо", "кратко", "final", "summary", "
 #: Служебные файлы приложения и агентов: `_state.json`, `_index.html` и подобные.
 SERVICE_EXT = (".json", ".html", ".htm", ".log")
 #: Подкаталог зеркала комнаты с заметками запросов — это не материалы запроса.
-MIRROR_NOTE_DIR = "Запросы"
+MIRROR_NOTE_DIR = "Задачи"
 #: Чужой id запроса в имени файла (`t_1a2b3c4d`) — файл другой работы.
 _REQUEST_ID_RE = re.compile(r"t_[0-9a-f]{8}", re.I)
 # Этапы проекта — свойство КОМНАТЫ (W17-R §1, B-8): списка в коде больше нет.
@@ -83,14 +83,26 @@ def steps(canon: dict) -> list:
     return out
 
 
+#: поля вопроса, которые доходят до API как есть (W30-A §1: «зачем», «откуда
+#: взялось», варианты, «блокирует», пояснение). Раньше они терялись здесь — и
+#: страница запроса видела только текст.
+_QUESTION_KEEP = ("why", "context", "options", "blocking", "explanation", "topic_key",
+                  "plain_ok", "plain_issues", "duplicate_of", "duplicate_reason",
+                  "postpone_until", "source")
+
+
 def questions(canon: dict) -> list:
     out = []
     for i, item in enumerate(as_list(canon.get("open_questions")), 1):
         item = {"text": item, "for": "mikhail"} if isinstance(item, str) else item
         if isinstance(item, dict) and str(item.get("text") or "").strip():
-            out.append({"id": item.get("id") or f"q_{i}", "text": str(item["text"]).strip(),
-                        "for": item.get("for") or "mikhail", "answered": bool(item.get("answered")),
-                        "answer": item.get("answer"), "answered_at": item.get("answered_at")})
+            row = {"id": item.get("id") or f"q_{i}", "text": str(item["text"]).strip(),
+                   "for": item.get("for") or "mikhail", "answered": bool(item.get("answered")),
+                   "answer": item.get("answer"), "answered_at": item.get("answered_at")}
+            for key in _QUESTION_KEEP:
+                if item.get(key) not in (None, "", [], {}):
+                    row[key] = item[key]
+            out.append(row)
     return out
 
 

@@ -102,7 +102,7 @@ test('unseenOf: открытый запрос гасит только свою �
 test('badgeText: число и подсказка «сколько и где»', () => {
   const text = mod.badgeText({ count: 2, requests: ['a', 'b'] });
   assert.equal(text.label, '2');
-  assert.match(text.title, /Новые реакции руководителя: 2 реакции в 2 запроса/);
+  assert.match(text.title, /Новые реакции руководителя: 2 реакции в 2 задачи/);
   assert.equal(mod.badgeText({ count: 0, requests: [] }).count, 0);
   assert.equal(mod.badgeText({ count: 120, requests: ['a'] }).label, '99+');
 });
@@ -112,9 +112,9 @@ test('склонения: реакции и запросы', () => {
   assert.equal(mod.reactionsWord(2), 'реакции');
   assert.equal(mod.reactionsWord(5), 'реакций');
   assert.equal(mod.reactionsWord(11), 'реакций');
-  assert.equal(mod.requestsWord(1), 'запроса');
-  assert.equal(mod.requestsWord(3), 'запроса');
-  assert.equal(mod.requestsWord(8), 'запросов');
+  assert.equal(mod.requestsWord(1), 'задачи');
+  assert.equal(mod.requestsWord(3), 'задачи');
+  assert.equal(mod.requestsWord(8), 'задач');
 });
 
 /* ────────────────────────────────────────────── локальная отметка «прочитано» */

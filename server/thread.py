@@ -198,7 +198,7 @@ def author_label(cfg, room: dict, profile: str, roster: dict | None = None) -> s
     if not name or name == "mikhail":
         return "Михаил"
     if name == "system":
-        return "Диалог запроса"
+        return "Диалог задачи"
     roster = _profiles(cfg) if roster is None else roster
     role = role_label(name, room)
     person = _display_name(name, room, roster)
@@ -295,7 +295,7 @@ def _comment_item(cfg, room: dict, row, roster: dict) -> dict:
 
 
 _EVENT_TEXT = {
-    "decomposed": "Руководитель разложил запрос на карточки.",
+    "decomposed": "Руководитель разложил задачу на карточки.",
     "blocked": "Карточка ждёт решения.",
     "unblocked": "Работа продолжена.",
     "completed": "Шаг готов.",
@@ -316,11 +316,11 @@ def _event_item(row, titles: dict) -> dict | None:
     if kind == "decomposed":
         children = payload.get("child_ids")
         if isinstance(children, list) and children:
-            text = "Руководитель разложил запрос: карточек — %d." % len(children)
+            text = "Руководитель разложил задачу: карточек — %d." % len(children)
     elif title:
         text = "%s «%s»" % (_EVENT_TEXT[kind].rstrip("."), _short(title, 80))
     return {"id": "e%d" % int(row["id"]), "at": int(row["created_at"] or 0),
-            "author_kind": "system", "author": "system", "author_label": "Диалог запроса",
+            "author_kind": "system", "author": "system", "author_label": "Диалог задачи",
             "text": text, "task_id": task_id or None, "kind": "event"}
 
 
@@ -348,7 +348,7 @@ def _versions(con, root_id: str) -> list:
         number += 1
         out.append({"id": "v%d" % int(row["id"]), "at": int(row["ended_at"] or 0),
                     "author_kind": "system", "author": "system",
-                    "author_label": "Диалог запроса",
+                    "author_label": "Диалог задачи",
                     "text": "Версия %d готова." % number, "task_id": root_id, "kind": "event"})
     return out
 
@@ -383,7 +383,7 @@ def get_thread(cfg, root_id, *, room=None, board=None, limit: int = _MAX_ITEMS) 
         for note in notes:      # «приняли уточнение» + итог карточки как сообщение команды
             items.append({"id": "n%s" % note["id"], "at": int(note["created_at"] or 0),
                           "author_kind": "system", "author": "system",
-                          "author_label": "Диалог запроса",
+                          "author_label": "Диалог задачи",
                           "text": "Уточнение передано руководителю комнаты.",
                           "task_id": str(note["id"]), "kind": "event"})
             done = [r for r in _run_rows(con, [note["id"]])
@@ -696,7 +696,7 @@ def _retry(cfg, board: str, root: str) -> dict:
     try:
         from . import engine_write as ew
     except ImportError:  # pragma: no cover
-        return {"ok": False, "warning": "Модуль записи недоступен — повторите запрос вручную."}
+        return {"ok": False, "warning": "Модуль записи недоступен — повторите действие вручную."}
     try:
         res = ew.act(cfg, board, root, "retry", task_id=root)
     except EngineWriteError as exc:

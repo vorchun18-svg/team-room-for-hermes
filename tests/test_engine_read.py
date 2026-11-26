@@ -335,6 +335,8 @@ class EngineReadSandboxTest(unittest.TestCase):
         self.assertIsInstance(disp["running"], bool)
         if not disp["running"]:
             self.assertTrue(disp["warning"])
+        # W30-R1: единица работы — «задача»; слово «запрос» в подписях движка не живёт
+        self.assertNotIn("запрос", (disp["warning"] or "").lower())
 
     def test_17_summary_matches_detail(self):
         for state in STATES:

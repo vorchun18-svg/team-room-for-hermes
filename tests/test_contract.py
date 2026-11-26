@@ -205,5 +205,53 @@ class RevisionBodyTest(unittest.TestCase):
         self.assertEqual(len(a), 10)
 
 
+class QuestionsContractTest(unittest.TestCase):
+    """W30-A §2: блок «Как задавать вопросы Михаилу» и «не спрашивать об этом»."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="tr-contract-w30a-")
+        self.cfg = FakeCfg(Path(self.tmp.name))
+        self.cfg.state_dir = Path(self.tmp.name) / "data" / "state"
+        self.room = make_room()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_card_has_the_question_form(self):
+        body = contract.build_request_body(self.room, "текст", "r-slug", self.cfg)
+        self.assertIn('"why"', body, "форма вопроса в карточке: «зачем»")
+        self.assertIn('"context"', body, "форма вопроса в карточке: «откуда взялось»")
+        self.assertIn('"consequence"', body, "варианты с последствиями")
+        self.assertIn('"blocking"', body, "признак «блокирует работу»")
+
+    def test_full_contract_teaches_the_language(self):
+        text = contract.full_contract_text(self.room, "request", self.cfg)
+        self.assertIn("Как задавать вопросы Михаилу", text)
+        self.assertIn("не больше 3", text)
+        self.assertIn("Хорошо:", text)
+        self.assertIn("Плохо:", text)
+        # примеры нейтральные: химчистка/грузоперевозки, без выдуманных кодов в «хорошем»
+        self.assertIn("стирк", text.lower())
+        self.assertIn("D19", text, "плохой пример должен показывать именно код без расшифровки")
+
+    def test_recon_stage_rule_is_in_the_contract(self):
+        text = contract.full_contract_text(self.room, "request", self.cfg)
+        self.assertIn("Разведка → Обзор", text)
+        self.assertIn("ОДНОГО блокирующего", text)
+
+    def test_closed_topics_line_appears_and_disappears(self):
+        import server.questions as q_mod
+        self.assertEqual(contract.closed_topics_rule(self.room, self.cfg), "")
+        q_mod.close_topic(self.cfg, "cafe", {"id": "q_1",
+                                             "text": "Ставим цену 210 за килограмм или 240?"})
+        line = contract.closed_topics_rule(self.room, self.cfg)
+        self.assertIn("не актуально", line)
+        self.assertIn("килограмм", line)
+        self.assertLessEqual(len(line), 600)
+        q_mod.reopen_topic(self.cfg, "cafe", {"id": "q_1",
+                                              "text": "Ставим цену 210 за килограмм или 240?"})
+        self.assertEqual(contract.closed_topics_rule(self.room, self.cfg), "")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

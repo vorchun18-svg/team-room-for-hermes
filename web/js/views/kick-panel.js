@@ -204,7 +204,7 @@ export function kickText(report, opts = {}) {
     const rest = list.length - shown.length;
     if (rest > 0) lines.push(`И ещё ${countNoun(rest, ['исполнитель', 'исполнителя', 'исполнителей'])}.`);
     if (scope.size && !inScope.length && started.length) {
-      lines.push('В этом запросе новых запусков нет — работы взяты из других.');
+      lines.push('В этой задаче новых запусков нет — работы взяты из других.');
     }
   } else if (kind === 'reclaimed') {
     title = `Возвращено зависших: ${reclaimed}`;

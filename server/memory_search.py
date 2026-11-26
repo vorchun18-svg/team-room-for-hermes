@@ -45,16 +45,19 @@ ROUTES = [
 ]
 
 #: Порядок и подписи видов памяти (интерфейс показывает их как разделы).
-KINDS = ("decision", "svod", "answer", "journal", "note")
+KINDS = ("decision", "svod", "answer", "journal", "note", "passport")
 KIND_TITLES = {
     "decision": "Решение",
     "svod": "Свод",
     "answer": "Ответ",
     "journal": "Журнал",
     "note": "Заметка",
+    # W30-D1: паспорт принятой задачи — итог, утверждённый человеком.
+    "passport": "Принятая задача",
 }
 #: Вес вида в выдаче: решение — главный ответ на «почему мы так решили».
-WEIGHTS = {"decision": 1.5, "svod": 1.2, "answer": 1.3, "journal": 0.8, "note": 0.9}
+WEIGHTS = {"decision": 1.5, "svod": 1.2, "answer": 1.3, "journal": 0.8, "note": 0.9,
+           "passport": 1.4}
 #: Потолки чтения: поиск не должен читать гигабайты по Ctrl+K.
 MAX_FILES = 200
 MAX_BYTES = 262_144
@@ -67,6 +70,7 @@ SOURCE_TITLES = {
     "answer": "ответ человека",
     "journal": "журнал",
     "note": "заметка Vault",
+    "passport": "паспорт принятой задачи",
 }
 
 
@@ -266,12 +270,49 @@ def _text_docs(cfg, room_id: str) -> list[dict]:
     return out
 
 
+def _passport_docs(cfg, room_id: str) -> list[dict]:
+    """Паспорта принятых задач комнаты (W30-D1): по находке на задачу.
+
+    Итог, утверждённый человеком, — самая надёжная память комнаты: «что решили и
+    чем закончилось». Читается только файл ``data/state/<room>/accepted.json``,
+    модели не вызываются.
+    """
+    try:
+        try:
+            from . import passports as passports_mod
+        except ImportError:  # pragma: no cover
+            import passports as passports_mod      # type: ignore
+        tasks = passports_mod.load(cfg, room_id)
+    except Exception:                    # noqa: BLE001 — память вторична для поиска
+        return []
+    out: list[dict] = []
+    for root_id, entry in (tasks or {}).items():
+        entry = entry if isinstance(entry, dict) else {}
+        passport = entry.get("passport") if isinstance(entry.get("passport"), dict) else {}
+        title = _flat(passport.get("title") or root_id)
+        outcome = _flat(passport.get("outcome"))
+        decisions = " ".join(_flat(d) for d in (passport.get("decisions") or []) if d)
+        if not title and not outcome:
+            continue
+        body = " ".join(x for x in (title, outcome, decisions) if x)
+        out.append({
+            "kind": "passport", "room": room_id, "id": str(root_id),
+            "title": title if len(title) <= 120 else title[:119] + "…",
+            "text": body, "at": _int(entry.get("at")),
+            "status": "принята", "request_id": str(root_id),
+            "source": "паспорт принятой задачи",
+        })
+    return out
+
+
 def room_docs(cfg, room_id: str, kinds=None) -> list[dict]:
     """Все документы памяти комнаты (по видам, если ``kinds`` задан)."""
     want = {str(k) for k in kinds} if kinds else set(KINDS)
     docs: list[dict] = []
     if "decision" in want:
         docs.extend(_decision_docs(cfg, room_id))
+    if "passport" in want:
+        docs.extend(_passport_docs(cfg, room_id))
     if "svod" in want or "answer" in want or "journal" in want:
         for doc in _state_docs(cfg, room_id):
             if doc["kind"] in want:

@@ -142,13 +142,13 @@ export async function mount(el, ctx = {}) {
       count: items.length,
       actions: [
         h('button', { class: 'btn btn--secondary', type: 'button', onclick: () => fromRequestDialog() },
-          icon('copy', { size: 13 }), 'Сохранить запрос как рецепт'),
+          icon('copy', { size: 13 }), 'Сохранить задачу как рецепт'),
         h('button', { class: 'btn btn--primary', type: 'button', onclick: () => editorDialog(null) },
           icon('plus', { size: 13 }), 'Создать рецепт'),
       ],
     }));
     head.appendChild(h('p', { class: 'rcp__hint small muted' },
-      'Повторяющийся процесс одной кнопкой: заполнили поля — приложение создаёт запрос '
+      'Повторяющийся процесс одной кнопкой: заполнили поля — приложение создаёт задачу '
       + 'с готовым планом и карточки шагов с моделями этой комнаты. Разбирать заново ничего не нужно.'));
 
     if (!items.length) {
@@ -158,7 +158,7 @@ export async function mount(el, ctx = {}) {
         text: 'Рецепт — это порядок шагов, который вы делаете регулярно: «ответ на претензию», '
           + '«сверка накладных», «меню на неделю». Заведите его один раз — дальше запуск одной кнопкой.',
         action: [
-          { label: 'Создать из запроса', onclick: () => fromRequestDialog(), variant: 'primary' },
+          { label: 'Создать из задачи', onclick: () => fromRequestDialog(), variant: 'primary' },
           { label: 'Создать с нуля', onclick: () => editorDialog(null), variant: 'secondary' },
         ],
       }));
@@ -225,7 +225,7 @@ export async function mount(el, ctx = {}) {
         h('div', { class: 'rcp-card__title-row' },
           h('div', { class: 'rcp-card__title' }, item.name),
           item.builtin ? h('span', { class: 'chip chip--muted' }, 'пример') : null,
-          item.source === 'request' ? h('span', { class: 'chip chip--muted' }, 'из запроса') : null),
+          item.source === 'request' ? h('span', { class: 'chip chip--muted' }, 'из задачи') : null),
         item.description ? h('div', { class: 'rcp-card__desc' }, item.description) : null,
         h('div', { class: 'rcp-card__meta small muted' }, recipeLine(item)),
         chain),
@@ -261,7 +261,7 @@ export async function mount(el, ctx = {}) {
     const inputs = {};
     const form = h('div', { class: 'rcp-form' });
     form.appendChild(h('p', { class: 'small muted' },
-      'Заполните поля — дальше приложение само создаст запрос и карточки шагов.'));
+      'Заполните поля — дальше приложение само создаст задачу и карточки шагов.'));
     for (const fieldItem of item.fields || []) {
       const id = 'rcp-' + String(fieldItem.id || '');
       const control = fieldItem.kind === 'due'
@@ -448,7 +448,7 @@ export async function mount(el, ctx = {}) {
     const errorLine = h('div', { class: 'rcp-form__error small', role: 'alert' });
     let chosen = '';
     list.appendChild(h('p', { class: 'small muted' },
-      'Выберите запрос с готовыми шагами — приложение возьмёт его порядок в шаги рецепта.'));
+      'Выберите задачу с готовыми шагами — приложение возьмёт её порядок в шаги рецепта.'));
     list.appendChild(pick);
     list.appendChild(errorLine);
     pick.appendChild(skeleton(2));
@@ -458,7 +458,7 @@ export async function mount(el, ctx = {}) {
         pick.replaceChildren();
         if (!items.length) {
           pick.appendChild(emptyState({
-            icon: 'inbox', title: 'Запросов пока нет',
+            icon: 'inbox', title: 'Задач пока нет',
             text: 'Рецепт можно собрать и с нуля: «Создать рецепт».',
           }));
           return;
@@ -477,20 +477,20 @@ export async function mount(el, ctx = {}) {
         }
       })
       .catch(() => {
-        pick.replaceChildren(h('p', { class: 'small muted' }, 'Список запросов не загрузился — можно создать рецепт с нуля.'));
+        pick.replaceChildren(h('p', { class: 'small muted' }, 'Список задач не загрузился — можно создать рецепт с нуля.'));
       });
 
     const go = h('button', { class: 'btn btn--primary', type: 'button' }, 'Сохранить как рецепт');
     const shell = buildDialog({
-      title: 'Сохранить запрос как рецепт', body: list,
+      title: 'Сохранить задачу как рецепт', body: list,
       buttons: [h('button', { class: 'btn btn--secondary', type: 'button', onclick: () => shell.close() }, 'Отмена'), go],
       onCancel: () => shell.close(),
     });
     go.addEventListener('click', () => {
-      if (!chosen) { errorLine.textContent = 'Выберите запрос из списка.'; return; }
+      if (!chosen) { errorLine.textContent = 'Выберите задачу из списка.'; return; }
       go.disabled = true;
       apiCall('post', roomPath + '/from-request', { request_id: chosen })
-        .then(() => { shell.close(); toast('Рецепт сохранён из запроса', 'ok'); load(); })
+        .then(() => { shell.close(); toast('Рецепт сохранён из задачи', 'ok'); load(); })
         .catch((err) => { go.disabled = false; errorLine.textContent = String((err && err.message) || 'не удалось сохранить'); });
     });
   }

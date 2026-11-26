@@ -92,9 +92,17 @@ NOT_REQUEST_ACTIONS = {
     "once": "решение по разрешению — поле decision при action:'approval'",
     "always": "решение по разрешению — поле decision при action:'approval'",
     "deny": "решение по разрешению — поле decision при action:'approval'",
-    "accept": "решение руководителя — поле outcome/decision при action:'decision'",
+    # W30-D1: «accept» стал настоящим действием запроса (приём задачи), поэтому в
+    # таблице исключений его больше нет — иначе стража «спрятать серверное имя»
+    # срабатывает справедливо. «reject»/«discuss» остаются значениями решения.
     "reject": "решение руководителя — поле outcome/decision при action:'decision'",
     "discuss": "решение руководителя — поле outcome/decision при action:'decision'",
+    # W30-B §2: решение по предложению задач уходит своей ручкой
+    # `POST /api/requests/{id}/proposal/resolve` (поле action), а не на /actions.
+    "accept_all": "предложение задач: POST /api/requests/{id}/proposal/resolve (action=accept_all)",
+    "reject_all": "предложение задач: POST /api/requests/{id}/proposal/resolve (action=reject_all)",
+    "apply": "предложение задач: POST /api/requests/{id}/proposal/resolve (action=apply)",
+    "custom": "предложение задач: свой вариант — POST /api/requests/{id}/proposal/resolve (action=custom)",
     "ack": "«Понятно, скрыть» у жёсткого запрета — только вид, серверу не шлётся",
     # другие ручки: у них свой набор действий
     "approve": "дело: POST /api/delos/{id}/actions",
@@ -204,6 +212,28 @@ class ActionNamesContractTest(unittest.TestCase):
                              "у %s обязателен approval_id" % name)
         for name in ("hint_agent", "trust_profile", "dismiss"):
             self.assertIn(name, ap.EXTRA_DECISIONS, "сервер не знает недоговорное действие %s" % name)
+
+    def test_w30_question_and_task_actions_are_accepted(self):
+        """W30 (§1, §2, §3): новые действия волны принимаются ручкой /actions.
+
+        Стража «что шлёт интерфейс» ловит только имена, дошедшие до js. Здесь —
+        явный перечень действий волны: если имя уберут из ``ACTION_ALLOWED``,
+        кнопки вопросов и приёма задачи начнут отвечать 400 «Неизвестное действие».
+        У ``split_to_tasks`` кнопки пока нет (действие для старых больших задач,
+        документировано в docs/API.md) — сервер обязан принимать его и без клиента.
+        """
+        for name in ("answer_option", "answer_custom", "explain_more", "postpone",
+                     "dismiss", "restore", "accept", "reopen_accepted", "split_to_tasks"):
+            self.assertIn(name, ACTION_ALLOWED, "действие волны «%s» сервер не принимает" % name)
+        for name in ("answer_custom", "explain_more", "postpone"):
+            self.assertEqual(ACTION_REQUIRED.get(name), ("question_id",),
+                             "у «%s» обязателен question_id" % name)
+        self.assertEqual(ACTION_REQUIRED.get("answer_option"), ("question_id", "option_id"),
+                         "выбор варианта без option_id не отличить от своего ответа")
+        joined = "\n".join(self.texts.values())
+        for name in ("answer_option", "answer_custom", "explain_more", "postpone",
+                     "accept", "reopen_accepted"):
+            self.assertIn("'%s'" % name, joined, "у действия «%s» нет кнопки в интерфейсе" % name)
 
     def test_exempt_table_does_not_rot(self):
         """Таблица исключений: имя есть в js и НЕ является серверным действием."""

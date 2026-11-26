@@ -154,7 +154,7 @@ test('лист: подпись счётчика и высоты из канон�
   assert.equal(handleText('7'), 'От вас нужно · 7');
   assert.equal(HANDLE_CLASS, 'req-sheet__handle');
   // Область числа названа: на вкладке комнаты число другое (по всей комнате).
-  assert.equal(handleAria(2), 'От вас нужно: 2 в этом запросе, развернуть');
+  assert.equal(handleAria(2), 'От вас нужно: 2 в этой задаче, развернуть');
   assert.equal(handleAria(0), 'От вас нужно, развернуть');
   assert.equal(OPEN_CLASS, 'is-sheet-open');
 });

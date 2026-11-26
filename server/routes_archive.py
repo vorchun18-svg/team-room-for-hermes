@@ -145,9 +145,9 @@ class ArchiveRoutes:
         raw = body.get("root_ids") if isinstance(body.get("root_ids"), list) else []
         ids = [str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()]
         if not ids:
-            raise err(400, "Выберите хотя бы один запрос", field="root_ids")
+            raise err(400, "Выберите хотя бы одну задачу", field="root_ids")
         if len(ids) > MASS_LIMIT:
-            raise err(400, "Слишком много запросов за раз: не больше %d" % MASS_LIMIT,
+            raise err(400, "Слишком много задач за раз: не больше %d" % MASS_LIMIT,
                       field="root_ids", limit=MASS_LIMIT, count=len(ids))
         records = {str(rec.get("root_id")): rec for rec in self._records(room_id)}
         results = []
@@ -156,7 +156,7 @@ class ArchiveRoutes:
             rec = records.get(root_id)
             entry = {"root_id": root_id, "ok": False}
             if not rec:
-                entry["message"] = "Запрос не найден в этой комнате"
+                entry["message"] = "Задача не найдена в этой комнате"
                 entry["code"] = "not_found"
                 failed += 1
                 results.append(entry)
@@ -176,7 +176,7 @@ class ArchiveRoutes:
                 continue
             entry.update({"ok": True, "count": int(res.get("count") or 0),
                           "message": res.get("message") or (
-                              "Запрос в архиве" if action == "archive" else "Запрос возвращён")})
+                              "Запрос в архиве" if action == "archive" else "Задача возвращена")})
             if res.get("already") or (action == "restore" and not res.get("count")):
                 entry["note"] = entry["message"]
             done += 1

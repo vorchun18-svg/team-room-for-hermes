@@ -78,7 +78,7 @@ export const START_LAST = 'last';
 /** Значения стартовой страницы — один список на настройки, каркас и тесты. */
 export const START_OPTIONS = [
   { value: START_TODAY, label: 'Сегодня', hint: 'свод: что ждёт вас и что идёт' },
-  { value: START_ROOMS, label: 'Комнаты', hint: 'список комнат и быстрый запрос' },
+  { value: START_ROOMS, label: 'Комнаты', hint: 'список комнат и быстрая задача' },
   { value: START_LAST, label: 'Последнее место', hint: 'там, где вы остановились' },
 ];
 
@@ -168,7 +168,7 @@ export function parseRouteHash(hash) {
   const seg = path.split('/').filter(Boolean).map(decode);
   if (!seg.length) return { kind: 'home' };
   if (seg[0] === 'room' && seg[1]) {
-    const tab = seg[2] || 'composer';
+    const tab = seg[2] || 'tasks';
     if (tab === 'request' && seg[3]) return { kind: 'request', roomId: seg[1], tab, id: seg[3] };
     return { kind: 'room', roomId: seg[1], tab, id: seg[3] || null };
   }
@@ -184,11 +184,11 @@ export function parseRouteHash(hash) {
   return null;
 }
 
-/** Хэш вкладки комнаты. */
-export function buildRoomHash(roomId, tab = 'composer') {
+/** Хэш вкладки комнаты. По умолчанию — доска «Задачи» (главный экран комнаты). */
+export function buildRoomHash(roomId, tab = 'tasks') {
   const id = String(roomId || '');
   if (!id) return '#/';
-  return '#/room/' + encodeURIComponent(id) + '/' + encodeURIComponent(String(tab || 'composer'));
+  return '#/room/' + encodeURIComponent(id) + '/' + encodeURIComponent(String(tab || 'tasks'));
 }
 
 /**
@@ -214,7 +214,7 @@ export function chooseHash(opts = {}) {
   const stored = parseStored(o.stored);
   const rooms = new Set((Array.isArray(o.roomIds) ? o.roomIds : []).map(String));
   const tabs = new Set((Array.isArray(o.tabIds) ? o.tabIds : []).map(String));
-  const defaultTab = String(o.defaultTab || 'composer');
+  const defaultTab = String(o.defaultTab || 'tasks');
   const requestOk = o.requestOk === true ? true : o.requestOk === false ? false : null;
 
   // Явный «дом» в адресе (`#/`) — человек был на списке комнат и обновил

@@ -54,7 +54,7 @@ function rowDecision(row) {
         row.statusLabel ? h('span', { class: 'day-row__status' }, row.statusLabel) : null,
         row.statusLabel && row.roomTitle ? h('span', { class: 'day-row__dot' }, ' · ') : null,
         row.roomTitle,
-        row.href ? h('a', { class: 'day-row__open', href: row.href }, ' к запросу') : null)));
+        row.href ? h('a', { class: 'day-row__open', href: row.href }, ' к задаче') : null)));
 }
 
 function rowWaiting(row) {

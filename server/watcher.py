@@ -49,6 +49,22 @@ DUTY_GRACE_S = 180
 DUTY_START_LOOKBACK_S = 900
 
 
+def _is_accepted(cfg, room, root_id) -> bool:
+    """Принята ли задача (W30-D1): принятая заморожена, как архивная.
+
+    Одна проверка на все петли работы. Сбой чтения отметки — «не принята»:
+    сторож продолжает работать как раньше, а не встаёт целиком.
+    """
+    try:
+        try:
+            from . import passports as _passports
+        except ImportError:  # pragma: no cover - плоский импорт
+            import passports as _passports   # type: ignore
+        return bool(_passports.is_accepted(cfg, room, root_id))
+    except Exception:  # noqa: BLE001 - отметка вторична для тика
+        return False
+
+
 def _module_missing(exc: BaseException) -> bool:
     """Модуль ещё не готов (нет в сборке/в подмене) — это не ошибка тика.
 
@@ -555,8 +571,13 @@ class Watcher:
                     # вызова модели и никаких новых карточек. Счётчики его не считают.
                     # Проверка именно по флагу: статус архивного корня вычисляется
                     # отдельно и не обязан быть `archived`.
+                    # W30-D1: принятая задача заморожена так же, как архивная —
+                    # тот же `continue`, ни одного вызова модели после принятия.
                     if detail.get("archived") or status == "archived":
                         stats["archived"] = int(stats.get("archived") or 0) + 1
+                        continue
+                    if detail.get("accepted") or _is_accepted(self.cfg, room, root_id):
+                        stats["accepted"] = int(stats.get("accepted") or 0) + 1
                         continue
                     if status in ("working", "reviewing", "synthesizing"):
                         counters["working"] += 1

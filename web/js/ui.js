@@ -93,7 +93,7 @@ const STATUS_META = {
   reviewing: { label: 'проверка', tone: 'info', pulse: true, hint: 'Критик проверяет свод' },
   synthesizing: { label: 'сводит', tone: 'info', pulse: true, hint: 'Руководитель комнаты дорабатывает свод' },
   needs_you: { label: 'нужен ответ', tone: 'warn', hint: 'Нужен ответ Михаила' },
-  done: { label: 'готово', tone: 'ok', hint: 'Запрос завершён' },
+  done: { label: 'готово', tone: 'ok', hint: 'Задача завершена' },
   failed: { label: 'ошибка', tone: 'danger', hint: 'Выполнение сорвалось' },
   /* карточки канбана */
   triage: { label: 'разбор', tone: 'muted', hint: 'Ждёт разбора' },
@@ -155,7 +155,7 @@ export function statusChip(status) {
 
 /** @type {Record<string, {label: string, tone: string, hint: string}>} */
 const ROLE_META = {
-  root: { label: 'корень', tone: 'accent', hint: 'Главная задача запроса' },
+  root: { label: 'корень', tone: 'accent', hint: 'Главная задача комнаты' },
   worker: { label: 'исполнитель', tone: 'muted', hint: 'Исполнитель' },
   synthesizer: { label: 'руководитель', tone: 'info', hint: 'Руководитель комнаты сводит ответ' },
   critic: { label: 'критик', tone: 'warn', hint: 'Проверяет свод' },

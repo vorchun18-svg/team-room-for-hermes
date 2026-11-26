@@ -144,6 +144,13 @@ COPY_TOOLS = (
     # и tests/test_mock_server.py падает на импорте в собранном релизе
     "mock_delos.py",
     "mock_duties_fe.py",
+    # W30: части демо-сервера волны (mock_read/mock_write импортируют их — вопросы,
+    # предложение задач, доска задач, результаты агентов, скрепка). Без них сборка
+    # падает на импорте mock_read и весь tests/test_mock_server краснеет.
+    "mock_w30c.py",
+    "mock_w30d.py",
+    "mock_w30e.py",
+    "mock_w30f.py",
 )
 
 COPY_DOCS = (

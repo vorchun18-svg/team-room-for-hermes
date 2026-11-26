@@ -173,14 +173,14 @@ export async function openAttachPreview(opts = {}) {
     if (!value) return;
     if (typeof o.onInsert === 'function') {
       o.onInsert(value);
-      say('Расшифровка добавлена в запрос');
+      say('Расшифровка добавлена в задачу');
       return;
     }
     if (o.requestId) {
       try {
         await api.post('/api/requests/' + encodeURIComponent(o.requestId) + '/messages',
           { text: 'Расшифровка голосового «' + name + '»:\n' + value });
-        say('Расшифровка отправлена в запрос');
+        say('Расшифровка отправлена в задачу');
         if (typeof o.onChanged === 'function') o.onChanged();
         return;
       } catch (err) {
@@ -189,13 +189,13 @@ export async function openAttachPreview(opts = {}) {
       }
     }
     const ok = await copyText(value);
-    say(ok ? 'Текст скопирован — вставьте его в запрос' : 'Не удалось скопировать текст', !ok);
+    say(ok ? 'Текст скопирован — вставьте его в задачу' : 'Не удалось скопировать текст', !ok);
   };
 
   const transcriptBox = (text, extra) => {
     const pre = h('pre', { class: 'ap-transcript', tabindex: '0' }, text || 'Тишина: в записи нет речи.');
     const acts = h('div', { class: 'ap-actions' },
-      btn('Добавить расшифровку в запрос', {
+      btn('Добавить расшифровку в задачу', {
         icon: 'comment-draft', variant: 'primary',
         onclick: () => { insertText(text); },
       }),
@@ -242,7 +242,7 @@ export async function openAttachPreview(opts = {}) {
               (res && res.text) || 'Текст не найден.'));
             if (res && res.text) {
               out.appendChild(h('div', { class: 'ap-actions' },
-                btn('Добавить текст в запрос', { icon: 'comment-draft', variant: 'primary', onclick: () => insertText(res.text) })));
+                btn('Добавить текст в задачу', { icon: 'comment-draft', variant: 'primary', onclick: () => insertText(res.text) })));
             }
             say('Готово за ' + (res && res.seconds != null ? res.seconds + ' с' : 'несколько секунд'));
           } catch (err) {

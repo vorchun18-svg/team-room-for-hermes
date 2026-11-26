@@ -505,7 +505,7 @@ function artifactStateChip(artifact, state) {
 /* W20-A1 (B-43): группы блока «Файлы» — итоговые первыми (§1.4). */
 export const ARTIFACT_GROUPS = [
   { id: 'final', title: 'Итоговые', hint: 'письмо и краткая сводка' },
-  { id: 'material', title: 'Материалы', hint: 'рабочие файлы запроса' },
+  { id: 'material', title: 'Материалы', hint: 'рабочие файлы задачи' },
   { id: 'service', title: 'Служебные', hint: 'служебные файлы приложения' },
 ];
 

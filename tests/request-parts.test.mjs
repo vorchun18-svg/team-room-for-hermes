@@ -90,7 +90,7 @@ test('pipeline: queued без детей — активен «Разбор», э
   assert.equal(p.done, 0);
   assert.equal(p.currentId, 'parse');
   assert.equal(p.stages[0].state, 'active');
-  assert.match(p.nowText, /разбирает запрос/);
+  assert.match(p.nowText, /разбирает задачу/);
   assert.equal(p.withCritic, true);
 });
 

@@ -326,7 +326,7 @@ test('участники части работы — по именам, без �
 
 /* -------------------------------------------------------------------- кнопки */
 
-test('шапка блока: «Запустить всё», «Добавить часть работы», «Собрать карту из запросов комнаты»', () => {
+test('шапка блока: «Запустить всё», «Добавить часть работы», «Собрать карту из задач комнаты»', () => {
   installFakeDom();
   try {
     const calls = [];
@@ -341,7 +341,7 @@ test('шапка блока: «Запустить всё», «Добавить �
     assert.deepEqual(calls[0], ['all', ['s4']], 'запускает только предложенные');
 
     buttonWith(root, 'Добавить часть работы').dispatch('click', { type: 'click' });
-    buttonWith(root, 'Собрать карту из запросов комнаты').dispatch('click', { type: 'click' });
+    buttonWith(root, 'Собрать карту из задач комнаты').dispatch('click', { type: 'click' });
     assert.deepEqual(calls.slice(1), [['add'], ['rebuild']]);
   } finally {
     uninstallFakeDom();
@@ -394,19 +394,19 @@ test('пусто: «Карты пока нет» + что делать', () => {
     assert.ok(empty, 'пустое состояние есть');
     assert.equal(byClass(empty, 'empty__title')[0].textContent, 'Карты пока нет');
     assert.equal(byClass(empty, 'empty__text')[0].textContent,
-      'Напишите главный запрос — руководитель комнаты предложит части работы.');
+      'Напишите главную задачу — руководитель комнаты предложит части работы.');
     assert.equal(buttonWith(root, 'Запустить всё'), undefined, 'запускать нечего');
   } finally {
     uninstallFakeDom();
   }
 });
 
-test('пустая карта с действием «Собрать карту из запросов комнаты»', () => {
+test('пустая карта с действием «Собрать карту из задач комнаты»', () => {
   installFakeDom();
   try {
     let rebuilt = 0;
     const root = render({ plan: null, onRebuild: () => { rebuilt += 1; } });
-    const btn = buttonWith(root, 'Собрать карту из запросов комнаты');
+    const btn = buttonWith(root, 'Собрать карту из задач комнаты');
     btn.dispatch('click', { type: 'click' });
     assert.equal(rebuilt, 1);
   } finally {

@@ -127,7 +127,7 @@ export function buildTree(nodes) {
 
 /** Пять этапов страницы запроса. `critic` может быть пропущен. */
 export const STAGES = [
-  { id: 'parse', title: 'Разбор', icon: 'git-branch', hint: 'Руководитель комнаты разбирает запрос на срезы' },
+  { id: 'parse', title: 'Разбор', icon: 'git-branch', hint: 'Руководитель комнаты разбирает задачу на срезы' },
   { id: 'work', title: 'Работа', icon: 'robot', hint: 'Команда выполняет срезы' },
   { id: 'critic', title: 'Критик', icon: 'shield', hint: 'Независимая проверка свода' },
   { id: 'summary', title: 'Сводка', icon: 'note', hint: 'Руководитель комнаты сводит один ответ' },
@@ -179,10 +179,10 @@ export function pipeline(detail) {
     if (totalCards > 0) {
       state.set('parse', 'done');
       state.set('work', 'active');
-      nowText = 'сейчас: запрос разложен, работа ещё не началась';
+      nowText = 'сейчас: задача разложена, работа ещё не началась';
     } else {
       state.set('parse', 'active');
-      nowText = 'сейчас: руководитель комнаты разбирает запрос';
+      nowText = 'сейчас: руководитель комнаты разбирает задачу';
     }
     if (!enabled) state.set('critic', 'skipped');
   } else if (status === 'working') {
@@ -190,7 +190,7 @@ export function pipeline(detail) {
     if (totalCards > 0) {
       nowText = `сейчас: команда работает, готово ${doneCards} из ${totalCards}`;
     } else {
-      nowText = 'сейчас: команда взяла запрос в работу';
+      nowText = 'сейчас: команда взяла задачу в работу';
     }
   } else if (status === 'reviewing') {
     fillThrough('critic', 'active');
@@ -206,14 +206,29 @@ export function pipeline(detail) {
       ? 'сейчас: руководитель комнаты дорабатывает свод по замечаниям'
       : 'сейчас: руководитель комнаты сводит ответ';
   } else if (status === 'needs_you') {
+    // W30-C: подпись этапа по контракту §1 — сервер отдаёт `stage_hint` и
+    // `questions_summary.blocking`. Раньше любой неотвеченный вопрос писал
+    // «работа ждёт вашего ответа», даже когда он работу не держал.
+    const summary = d.questions_summary && typeof d.questions_summary === 'object'
+      ? d.questions_summary : {};
+    const blocking = Math.max(0, Number(summary.blocking) || 0);
+    const openCount = Math.max(0, Number(summary.open) || 0);
+    const hint = String(d.stage_hint || '').trim();
+    // Старый сервер не присылает ни `stage_hint`, ни `questions_summary` — тогда
+    // подпись остаётся прежней («ждёт вашего ответа»): гадать по отсутствию полей
+    // нельзя, иначе боевая комната начнёт врать про «работа идёт».
+    const known = Boolean(hint) || summary.blocking !== undefined || summary.open !== undefined;
+    const holds = known ? blocking > 0 : true;
     if (totalCards > 0) {
-      fillThrough('work', 'paused');
-      nowText = 'сейчас: работа ждёт вашего ответа';
+      fillThrough('work', holds ? 'paused' : 'active');
+      nowText = 'сейчас: ' + (hint || (holds
+        ? 'работа ждёт вашего ответа'
+        : `работа идёт, ${openCount || 1} ${openCount === 1 ? 'вопрос ждёт' : 'вопросов ждут'} вас`));
     } else {
-      state.set('parse', 'paused');
-      nowText = 'сейчас: нужно ваше решение, чтобы начать';
+      state.set('parse', holds ? 'paused' : 'active');
+      nowText = 'сейчас: ' + (hint || 'нужно ваше решение, чтобы начать');
     }
-    tone = 'warn';
+    tone = holds ? 'warn' : 'info';
   } else if (status === 'failed') {
     const c = d.critic || {};
     if (enabled && c.state === 'failed') {
@@ -227,7 +242,7 @@ export function pipeline(detail) {
       nowText = 'сейчас: работа остановлена из-за ошибки';
     } else {
       state.set('parse', 'failed');
-      nowText = 'сейчас: запрос не удалось разобрать';
+      nowText = 'сейчас: задачу не удалось разобрать';
     }
     tone = 'danger';
   } else if (status === 'done') {
@@ -239,7 +254,7 @@ export function pipeline(detail) {
     tone = 'ok';
   } else {
     state.set('parse', 'active');
-    nowText = 'сейчас: состояние запроса уточняется';
+    nowText = 'сейчас: состояние задачи уточняется';
   }
 
   if (!enabled) state.set('critic', 'skipped');
@@ -831,10 +846,10 @@ export function criticInfo(detail) {
 
   let note = '';
   const ready = Number(d.synthesis && d.synthesis.version) > 0;
-  if (state === 'off') note = 'Проверка критиком для этого запроса не включалась.';
+  if (state === 'off') note = 'Проверка критиком для этой задачи не включалась.';
   else if (state === 'waiting') {
     if (ready) note = 'Свод готов, но критик ещё не запускался — проверку можно запустить вручную.';
-    else if (d.status === 'failed') note = 'Проверка не начнётся: запрос остановлен из-за ошибки.';
+    else if (d.status === 'failed') note = 'Проверка не начнётся: задача остановлена из-за ошибки.';
     else if (d.status === 'needs_you') note = 'Проверка начнётся после вашего ответа — свод ещё не готов.';
     else note = 'Критик запустится, когда будет готов свод.';
   }
@@ -930,7 +945,7 @@ export function formatBytes(size) {
 /* ──────────────────────────────────────────────────────────────────── хронология */
 
 const TIMELINE_KIND = {
-  created: { icon: 'sparkle', label: 'запрос создан' },
+  created: { icon: 'sparkle', label: 'задача создана' },
   decomposed: { icon: 'git-branch', label: 'разложен' },
   promoted: { icon: 'arrow-up', label: 'в очереди' },
   claimed: { icon: 'person', label: 'взял в работу' },

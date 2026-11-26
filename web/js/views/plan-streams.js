@@ -183,7 +183,7 @@ export function streamOrigin(createdBy) {
     return { label: 'добавил вы', hint: 'Вы добавили эту часть работы вручную' };
   }
   return {
-    label: 'предложил руководитель', hint: 'Часть работы предложил руководитель комнаты по главному запросу',
+    label: 'предложил руководитель', hint: 'Часть работы предложил руководитель комнаты по главной задаче',
   };
 }
 
@@ -388,8 +388,8 @@ function streamCard(stream, ctx) {
       ? h('a', {
         class: 'ps-card__request',
         href: requestHrefOf(ctx, rid),
-        title: 'Открыть под-запрос этой части работы',
-      }, icon('link-external', { size: 11 }), 'под-запрос')
+        title: 'Открыть подзадачу этой части работы',
+      }, icon('link-external', { size: 11 }), 'подзадача')
       : null),
   h('div', { class: 'ps-card__actions' },
     canLaunch
@@ -477,9 +477,9 @@ export function renderStreams(opts) {
         class: 'btn btn--ghost btn--sm ps-rebuild',
         type: 'button',
         disabled: busy || undefined,
-        title: 'Руководитель комнаты посмотрит уже сделанные запросы и соберёт карту заново',
+        title: 'Руководитель комнаты посмотрит уже сделанные задачи и соберёт карту заново',
         onclick: () => o.onRebuild && o.onRebuild(),
-      }, icon('sync', { size: 12 }), 'Собрать карту из запросов комнаты')));
+      }, icon('sync', { size: 12 }), 'Собрать карту из задач комнаты')));
 
   const body = h('div', { class: 'card__body ps-body' });
   if (!streams.length) {
@@ -487,13 +487,13 @@ export function renderStreams(opts) {
       icon('map', { size: 22 }),
       h('div', { class: 'empty__title' }, 'Карты пока нет'),
       h('div', { class: 'empty__text' },
-        'Напишите главный запрос — руководитель комнаты предложит части работы.'),
+        'Напишите главную задачу — руководитель комнаты предложит части работы.'),
       h('div', { class: 'empty__actions' },
         o.onComposer
           ? h('button', {
             class: 'btn btn--secondary btn--sm', type: 'button',
             onclick: () => o.onComposer(),
-          }, 'Написать главный запрос')
+          }, 'Написать главную задачу')
           : null)));
   } else {
     body.appendChild(h('div', { class: 'ps-grid' }, streams.map((s) => streamCard(s, {

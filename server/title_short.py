@@ -95,7 +95,7 @@ def capitalize(text: str) -> str:
     return text
 
 
-def short_title(text, limit: int = TITLE_LIMIT, fallback: str = "Запрос") -> str:
+def short_title(text, limit: int = TITLE_LIMIT, fallback: str = "Задача") -> str:
     """Короткое название ≤ ``limit`` знаков: первое предложение или фрагмент.
 
     Пустой/мусорный текст → ``fallback``. Никогда не бросает и не возвращает

@@ -18,6 +18,9 @@ import mock_delos
 import mock_notes
 import mock_duties_fe   # W27-E8: дежурства комнаты
 import mock_recipes      # W29B-Q1: рецепты комнаты
+import mock_w30c        # W30-C: варианты ответа, «свой ответ», решения по предложению
+import mock_w30f        # W30-F: скрепка (pick / attach-check / attach-open)
+import mock_w30d         # W30-D2: доска задач комнаты (accept / reopen_accepted)
 import mock_paths
 import mock_plan
 import mock_stt
@@ -685,6 +688,15 @@ class MockWrite:
                 "at": now()}
 
     def post(self, path: str, query: dict, body: dict) -> tuple:
+        hit = mock_w30c.handle(self, "POST", path, query, body or {})
+        if hit is not None:                     # W30-C: предложение и новые действия вопроса
+            return hit
+        hit = mock_w30f.handle(self, "POST", path, query, body or {})
+        if hit is not None:                     # W30-F: pick / attach-check / attach-open
+            return hit
+        hit = mock_w30d.handle(self, "POST", path, query, body or {})
+        if hit is not None:                     # W30-D2: «Принять» / «Вернуть в работу»
+            return hit
         hit = mock_batchb.handle(self, "POST", path, query, body or {})
         if hit is not None:                     # W29-AC2: итог дня, совместимость, уведомления
             return hit

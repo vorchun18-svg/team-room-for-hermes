@@ -105,7 +105,7 @@ const THREAD = [
 test('лента: Михаил справа и выделен, команда с аватаром и ролью, события строкой, даты', () => {
   const { host } = mount({ id: 't_root', status: 'working', thread: THREAD });
 
-  assert.equal(textOf(byClass(host, 'thr__title')[0]).trim(), 'Диалог по запросу');
+  assert.equal(textOf(byClass(host, 'thr__title')[0]).trim(), 'Диалог по задаче');
 
   const mine = byClass(host, 'thr-msg--mine');
   assert.equal(mine.length, 1, 'сообщение Михаила одно');

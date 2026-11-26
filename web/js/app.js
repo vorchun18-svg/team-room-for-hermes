@@ -615,7 +615,7 @@ function renderTopbar(route) {
     if (phaseText) {
       meta.push(h('span', {
         class: 'chip chip--outline topbar__phase',
-        title: 'Этап проекта: общий путь комнаты, а не одного запроса. Меняется в настройках комнаты.',
+        title: 'Этап проекта: общий путь комнаты, а не одной задачи. Меняется в настройках комнаты.',
       }, phaseText, termHelp('phase', { className: 'term-help--chip' })));
     }
     // P8: один переключатель вместо значка «вся команда» и бейджа у крошек.
@@ -1034,7 +1034,7 @@ function mountShell() {
   // W29-Q7: полоса вкладок открытых запросов — над страницей и вне #view:
   // перерисовка вида её не трогает, вкладки не мигают при обновлении свода.
   const tabsHost = h('div', {
-    class: 'req-tabs', id: 'req-tabs', 'aria-label': 'Открытые запросы', hidden: true,
+    class: 'req-tabs', id: 'req-tabs', 'aria-label': 'Открытые задачи', hidden: true,
   });
   if (mainCol) mainCol.insertBefore(tabsHost, el.view);
   else el.app.appendChild(tabsHost);
@@ -1144,7 +1144,7 @@ async function planBootRoute() {
   const route = parseRouteHash(plan.hash);
   if (route && route.kind === 'request' && plan.why !== 'deep-link') {
     const ok = await requestExists(route.id);
-    if (ok === false) return buildRoomHash(route.roomId, 'composer');
+    if (ok === false) return buildRoomHash(route.roomId, 'tasks');
   }
   return plan.hash;
 }

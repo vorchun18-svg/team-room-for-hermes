@@ -67,12 +67,25 @@ ACTION_ALLOWED = ("dispatch", "comment", "answer", "unblock", "reassign", "rewor
                   # возврат всего запроса — своим именем, без второго значения.
                   # W29B-Q4: «Второе мнение» — карточка-проверка на ДРУГОЙ модели
                   # (server/second_opinion.py, тело {provider?, model}).
-                  "unarchive", "second_opinion")
+                  # W30-D1: «Принять» (полная заморозка + паспорт в память комнаты)
+                  # и «Вернуть в работу» у принятой задачи — server/passports.py.
+                  # W30-A §1: действия вопроса человеку — выбор варианта, свой ответ,
+                  # «Ещё пояснить», «Отложить». Ведём в существующий механизм ответа
+                  # (answer/need_explanation): второго источника ответов нет.
+                  "unarchive", "second_opinion", "accept", "reopen_accepted",
+                  "answer_option", "answer_custom", "explain_more", "postpone",
+                  # W30-B §2: «Разбить на задачи» — карточка руководителю с просьбой
+                  # предложить ветки подзадач (ничего не создаётся без его ответа).
+                  "split_to_tasks")
 ACTION_REQUIRED = {"answer": ("question_id",), "reassign": ("task_id", "profile"),
                    "answer_remind": ("question_id",), "step_drop": ("step_id",),
                    "step_agree": ("step_id",), "step_comment": ("step_id",),
                    "step_move": ("step_id",), "decision": ("decision_id",),
                    "question_dismiss": ("question_id",),
+                   "answer_option": ("question_id", "option_id"),
+                   "answer_custom": ("question_id",),
+                   "explain_more": ("question_id",),
+                   "postpone": ("question_id",),
                    "card_stop": ("task_id",), "card_resume": ("task_id",),
                    "hint_agent": ("approval_id",), "trust_profile": ("approval_id",),
                    "card_model": ("task_id", "model")}
@@ -150,7 +163,7 @@ def derive_title(text: str, limit: int = 80) -> str:
         clean = re.sub(r"\s+", " ", clean)
         if clean:
             return clean[:limit]
-    return "Запрос"
+    return "Задача"
 
 
 def preview(text: str, limit: int = 200) -> str:

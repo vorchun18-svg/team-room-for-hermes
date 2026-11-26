@@ -570,7 +570,7 @@ export function criticalList(items, opts = {}) {
   const list = Array.isArray(items) ? items : [];
   if (!list.length) {
     return h('div', { class: 'aut-crit-empty' },
-      'Ничего не ждёт вашего «да» — критичных запросов нет.');
+      'Ничего не ждёт вашего «да» — критичных задач нет.');
   }
   const box = h('div', { class: 'aut-crit-list' });
   for (const item of list) box.appendChild(criticalCard(item, opts));

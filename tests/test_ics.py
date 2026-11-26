@@ -114,7 +114,9 @@ class IcsTest(unittest.TestCase):
         self.assertEqual(one(ev, "DTEND;VALUE=DATE"), "20261106")
         self.assertIn("Кто: Михаил", one(ev, "DESCRIPTION"))
         self.assertIn("Статус: открыт", one(ev, "DESCRIPTION"))
-        self.assertIn("Запрос: t_a1b2c3d4", one(ev, "DESCRIPTION"))
+        # R1 (W30): единица работы в выгрузках называется «Задача» (слова «запрос»
+        # в видимых строках больше нет); поле в календаре — то же самое.
+        self.assertIn("Задача: t_a1b2c3d4", one(ev, "DESCRIPTION"))
 
     def test_special_chars_escaped(self):
         item = {"id": "x:9", "room": "cafe", "due": "2026-11-07",

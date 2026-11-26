@@ -78,7 +78,7 @@ test('вкладка «Рецепты» объявлена и названа о�
 test('экран: пустое состояние с делом и кнопками, без «пока ничего нет»', () => {
   const src = read('web/js/views/recipes.js');
   assert.ok(src.includes('Рецептов пока нет'));
-  assert.ok(src.includes('Создать из запроса'));
+  assert.ok(src.includes('Создать из задачи'));
   assert.ok(src.includes('Создать с нуля'));
   assert.ok(!src.includes('Пока ничего нет'), 'пустой экран объясняет смысл');
   assert.ok(src.includes('Запустить'), 'у рецепта есть кнопка запуска');

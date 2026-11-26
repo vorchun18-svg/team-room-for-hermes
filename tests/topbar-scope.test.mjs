@@ -60,9 +60,9 @@ test('app.js рисует этап через phaseLabel (одно место)',
     'голое название этапа больше не подставляется');
 });
 
-/* ─────────────────────────────── переключатель «Вся комната / Этот запрос» ─ */
+/* ─────────────────────────────── переключатель «Вся комната / Эта задача» ─ */
 
-test('страница запроса: активно «Этот запрос», «Вся комната» ведёт в комнату', () => {
+test('страница задачи: активно «Эта задача», «Вся комната» ведёт в комнату', () => {
   const m = scopeModel({ roomId: 'demo', name: 'request', id: 't_a1b2c3d4', requestId: 't_a1b2c3d4' });
   assert.ok(m, 'переключатель есть');
   assert.equal(m.active, 'request');
@@ -74,14 +74,14 @@ test('страница запроса: активно «Этот запрос»,
   assert.equal(m.request.href, '#/room/demo/request/t_a1b2c3d4');
 });
 
-test('вкладка с фильтром: «Этот запрос», снятие фильтра — «Вся комната»', () => {
+test('вкладка с фильтром: «Эта задача», снятие фильтра — «Вся комната»', () => {
   const m = scopeModel({ roomId: 'demo', tab: 'backlog', requestId: 't_a1b2c3d4' });
   assert.equal(m.active, 'request');
   assert.equal(m.request.href, '#/room/demo/backlog?request=t_a1b2c3d4');
   assert.equal(m.whole.href, '#/room/demo/backlog', 'у «Вся комната» фильтра нет');
 });
 
-test('вкладка без фильтра: активна «Вся комната», «Этот запрос» не предлагается', () => {
+test('вкладка без фильтра: активна «Вся комната», «Эта задача» не предлагается', () => {
   const m = scopeModel({ roomId: 'demo', tab: 'backlog' });
   assert.equal(m.active, 'whole');
   assert.equal(m.whole.active, true);

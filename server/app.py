@@ -357,7 +357,7 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, RoomOrderRoutes, SttRoutes):
             if quiet:
                 return []
             self.log.error("реестр %s" % room_id, exc)
-            raise ApiError(502, "Не удалось прочитать реестр запросов", detail={"room": room_id}) from exc
+            raise ApiError(502, "Не удалось прочитать реестр задач", detail={"room": room_id}) from exc
         if isinstance(rows, dict):
             rows = rows.get("requests") or rows.get("items") or []
         out = []
@@ -417,7 +417,7 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, RoomOrderRoutes, SttRoutes):
                         ((self.cfg, board, root_id, room.get("id"), list(extra or [])), {}),
                         ((self.cfg, board, root_id), {"room": room}))
         if not isinstance(res, dict):
-            raise ApiError(502, "Движок вернул пустой ответ по запросу", detail={"rid": root_id})
+            raise ApiError(502, "Движок вернул пустой ответ по задаче", detail={"rid": root_id})
         # WAVE 9 (§4): бриф/под-запрос — необязательные связи с картой проекта.
         try:
             res.update(self.call("plan", "detail_meta",
@@ -460,7 +460,7 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, RoomOrderRoutes, SttRoutes):
         summary = self._local_summary(room, root_id, text, title, critic, mode)
         summary["degraded"] = True
         summary["warning"] = {"code": "summary_unavailable",
-                              "message": "Запрос создан, но сводку прочитать не удалось — "
+                              "message": "Задача создана, но сводку прочитать не удалось — "
                                          "детали появятся, когда движок освободится."}
         return summary
 
@@ -469,7 +469,7 @@ class App(GuardRoutes, ReadRoutes, WriteRoutes, RoomOrderRoutes, SttRoutes):
             for rec in self._records(room.get("id"), quiet=True):
                 if rec.get("root_id") == rid:
                     return room, rec
-        raise err(404, "Запрос не найден", reason="not_root", rid=rid)
+        raise err(404, "Задача не найдена", reason="not_root", rid=rid)
 
     def _register(self, room: dict, record: dict) -> None:
         try:
@@ -840,6 +840,16 @@ from server.routes_archive import install_archive_routes                        
 
 install_archive_routes(App, ROUTES)
 
+# --- канбан задач комнаты (W30-D1): стадии, «Принята», паспорт в память --------
+# ``GET /api/rooms/{id}/tasks`` — доска задач (стадии new/working/needs_you/review/
+# done_system/accepted, счётчики колонок); ``{action:"accept"|"reopen_accepted"}``
+# в ``POST /api/requests/{id}/actions`` — принятие (полная заморозка + паспорт)
+# и возврат в работу. Правила — server/tasks_board.py, server/passports.py,
+# routes_tasks.py; остановка идущих карточек — server/archive.py:stop_work.
+from server.routes_tasks import install_tasks_routes                               # noqa: E402
+
+install_tasks_routes(App, ROUTES)
+
 # --- совместимость с Hermes (W29B-Q2): «Проверка» → что у участника от комнаты ---
 # ``GET /api/rooms/{id}/parity`` — профиль, модель и её источник, инструменты,
 # навыки, MCP, разрешения и расхождения с обычным запуском агента (только чтение);
@@ -902,6 +912,16 @@ from server.routes_attach_preview import install_attach_preview_routes          
 install_attach_preview_routes(App, ROUTES)
 
 
+# --- результаты агентов (W30-E): кто что сделал, вывод, файлы, что осталось ---
+# ``GET /api/requests/{id}/agent-results`` + ключ ``agent_results`` в детали задачи
+# — server/agent_results.py, server/routes_agent_results.py. Собирается из дерева
+# карточек и метаданных (`summary_md`, `artifacts`): моделей не вызывает, файлы
+# только проверяет на существование.
+from server.routes_agent_results import install_agent_results_routes                # noqa: E402
+
+install_agent_results_routes(App, ROUTES)
+
+
 # --- рецепты комнаты (W29B-Q1): повторяющийся процесс одной кнопкой ----------
 # ``GET/POST /api/rooms/{id}/recipes``, ``POST …/recipes/from-request``,
 # ``PATCH/DELETE /api/rooms/{id}/recipes/{rid}``, ``POST …/{rid}/launch|restore``
@@ -944,6 +964,18 @@ install_daily_routes(App, ROUTES)
 from server.memory_search import install_memory_search_routes                      # noqa: E402
 
 install_memory_search_routes(App, ROUTES)
+
+
+# --- предложение задач и проект «задача → подзадачи» (W30-B, §2) ---------------
+# ``GET /api/requests/{id}/proposal``, ``POST …/proposal/decision``,
+# ``POST …/proposal/resolve`` + ключи ``proposal``/``project`` в деталях задачи и
+# действие ``split_to_tasks`` — server/projects.py, server/routes_projects.py.
+# Подзадачи — отдельные задачи-корни; связь «родитель→подзадачи» живёт в
+# data/state/<room>/projects.json, не в связях доски. Создание — только по
+# явному решению человека, ничего не применяется само.
+from server.routes_projects import install_project_routes                          # noqa: E402
+
+install_project_routes(App, ROUTES)
 
 
 # --- сервер ----------------------------------------------------------------

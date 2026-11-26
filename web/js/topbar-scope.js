@@ -82,8 +82,8 @@ export function scopeModel(opts = {}) {
 
 /** Подсказки сегментов: что произойдёт по клику. */
 const SCOPE_HINTS = {
-  whole: 'Показать комнату целиком: все запросы и дела',
-  request: 'Показать только этот запрос',
+  whole: 'Показать комнату целиком: все задачи и дела',
+  request: 'Показать только эту задачу',
 };
 
 /**
@@ -128,7 +128,7 @@ export function toolsGroup(opts = {}) {
     class: 'btn btn--ghost btn--icon btn--sm topbar__tool',
     type: 'button',
     'data-tool': 'search',
-    title: 'Поиск по комнатам и запросам',
+    title: 'Поиск по комнатам и задачам',
     'aria-label': 'Поиск',
     onclick: () => navigate('#/search'),
   }, icon('search', { size: 15 })));

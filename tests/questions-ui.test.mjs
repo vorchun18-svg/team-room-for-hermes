@@ -453,3 +453,273 @@ test('встречный вопрос («поясни») остаётся отк
     uninstallFakeDom();
   }
 });
+
+/* ─────────────── W30-C: вопрос по-человечески (контракт §1) ────────────────
+ *
+ * Дефект 13/14: вопрос приходил строкой без «зачем», без вариантов и без
+ * пояснения руководителя. Здесь проверяется то, что видит человек:
+ *   * «Зачем это нужно» — на виду, «Откуда взялось» — раскрывается;
+ *   * варианты кнопками с последствиями, выбор уходит действием `answer_option`;
+ *   * «Свой ответ» — поле + «Отправить» (диктовка ставится общим правилом),
+ *     для вопроса с вариантами это действие `answer_custom`;
+ *   * состояние `explained` — пояснение ПОД вопросом, кнопки активны;
+ *   * «Пояснить ещё», «Отложить», «Не актуально» — у каждого вопроса;
+ *   * блокирующий вопрос и «пакет решений» (неблокирующие) различаются.
+ */
+
+const Q_W30 = [
+  {
+    id: 'q_w1',
+    text: 'Приём вещей на дому делаем своей машиной или через партнёра-курьера?',
+    for: 'mikhail',
+    why: 'От этого зависит, нужен ли свой водитель — 34 000 ₽ в месяц против 9 000 ₽ за курьера.',
+    context: 'Сейчас вещи принимают только в пункте. Два клиента спрашивали выезд на дом.',
+    options: [
+      { id: 'own', label: 'Своя машина', consequence: 'Полный контроль, но платёж каждый месяц.' },
+      { id: 'partner', label: 'Партнёр-курьер', consequence: 'Платим только за выезд.' },
+    ],
+    blocking: true,
+    plain_ok: true,
+    answer_state: 'open',
+    answered: false,
+  },
+  {
+    id: 'q_w2',
+    text: 'Сколько берём за выезд на дом?',
+    for: 'mikhail',
+    why: 'Цена выезда решает, поедет ли клиент.',
+    context: 'Средний чек в пункте — 1 240 ₽.',
+    options: [{ id: 'flat', label: '700 ₽ за адрес', consequence: 'Окупается на трёх вещах.' }],
+    blocking: true,
+    plain_ok: true,
+    answer_state: 'explained',
+    answered: false,
+    explanation: 'Выезд — способ забрать вещи, а не отдельная услуга. 700 ₽ покрывают расходы на двух вещах.',
+  },
+  {
+    id: 'q_w3',
+    text: 'Какую ткань считаем деликатной?',
+    for: 'mikhail',
+    why: 'Внутреннее правило приёмки, работу не останавливает.',
+    context: 'В памятке приёмщика: шёлк, кашемир, вискоза.',
+    options: [],
+    blocking: false,
+    plain_ok: false,
+    plain_issues: ['внутренний код (SKL-2) без расшифровки'],
+    answer_state: 'open',
+    answered: false,
+  },
+  {
+    id: 'q_w4',
+    text: 'Печатать ли номер заказа крупно?',
+    for: 'mikhail',
+    why: 'Мелкий шрифт — единственная жалоба за месяц.',
+    context: '4 жалобы за месяц.',
+    options: [],
+    blocking: false,
+    plain_ok: true,
+    answer_state: 'open',
+    answered: false,
+  },
+  {
+    id: 'q_w5',
+    text: 'Хранить вещи дольше 30 дней?',
+    for: 'mikhail',
+    why: 'Склад занят, но просрочек мало.',
+    context: 'Две вещи пролежали 40 дней.',
+    options: [],
+    blocking: false,
+    plain_ok: true,
+    answer_state: 'postponed',
+    answered: false,
+    postponed: true,
+  },
+];
+
+let standSeq = 0;
+
+function w30Stand(questions) {
+  installFakeDom();
+  patchDom();
+  const posted = [];
+  const toasts = [];
+  const detail = {
+    id: 't_root1',
+    next_steps: [],
+    open_questions: JSON.parse(JSON.stringify(questions)),
+    decisions: [],
+    future_questions: [],
+    needs_you_count: {
+      questions: questions.filter((q) => !q.postponed).length,
+      decisions: 0, approvals: 0, steps: 0,
+      total: questions.filter((q) => !q.postponed).length,
+    },
+    questions_summary: { open: 4, blocking: 2, hidden_duplicates: 2, closed_topics: 1 },
+  };
+  const ctx = {
+    api: {
+      async post(path, body) { posted.push({ path, body }); return {}; },
+      async get() { return {}; },
+    },
+    toast: (message, kind) => toasts.push({ message, kind }),
+    room: { id: 'cafe', members: [] },
+    navigate() {},
+  };
+  // Свой id на каждый стенд: стор запроса кэшируется по rid на процесс, и общий
+  // rid отдал бы тесту api предыдущего стенда — запросы ушли бы в чужой массив.
+  standSeq += 1;
+  const R = {
+    ctx, rid: 't_w30root' + standSeq, keepValues: new Map(), roomId: 'cafe',
+    get detail() { return detail; },
+    get backlog() { return new Map(); },
+    async refresh() {},
+  };
+  const { buildAside } = createAside(R);
+  const host = globalThis.document.createElement('div');
+  host.appendChild(buildAside());
+  return { host, posted, toasts, detail, R };
+}
+
+const rowOf = (host, qid) => all(host, 'req-q').find((r) => r.getAttribute('data-q') === qid);
+
+test('вопрос: «Зачем это нужно» на виду, «Откуда взялось» — раскрываемо', () => {
+  const s = w30Stand(Q_W30);
+  try {
+    const row = rowOf(s.host, 'q_w1');
+    const txt = text(row);
+    assert.match(txt, /Зачем это нужно/, 'зачем — видно без раскрытия');
+    assert.match(txt, /34 000 ₽ в месяц против 9 000 ₽/, 'текст «зачем» из API');
+    assert.match(txt, /Откуда взялось/, 'контекст подписан');
+    assert.match(txt, /Два клиента спрашивали выезд на дом/, 'текст контекста из API');
+    assert.equal(all(row, 'req-q__ctx').length, 1, 'контекст — раскрываемый блок');
+    assert.match(text(row), /Блокирует работу/, 'блокирующий вопрос помечен');
+  } finally {
+    uninstallFakeDom();
+  }
+});
+
+test('варианты: кнопки с последствиями, выбор уходит answer_option', async () => {
+  const s = w30Stand(Q_W30);
+  try {
+    const row = rowOf(s.host, 'q_w1');
+    const opts = all(row, 'req-q__option');
+    assert.equal(opts.length, 2, 'оба варианта на месте');
+    assert.match(text(opts[0]), /Своя машина/);
+    assert.match(text(opts[0]), /Платёж каждый месяц/i, 'последствие видно словами');
+    assert.equal(opts[0].getAttribute('data-option-id'), 'own');
+    opts[1].dispatch('click');
+    await tick(); await tick();
+    assert.deepEqual(s.posted[0].body,
+      { action: 'answer_option', question_id: 'q_w1', option_id: 'partner' });
+    assert.equal(s.posted[0].path, '/api/requests/' + s.R.rid + '/actions');
+  } finally {
+    uninstallFakeDom();
+  }
+});
+
+test('«Свой ответ»: поле + «Отправить» рядом (диктовка) — действие answer_custom', async () => {
+  const s = w30Stand(Q_W30);
+  try {
+    const row = rowOf(s.host, 'q_w1');
+    assert.match(text(row), /Свой ответ/, 'у вопроса с вариантами есть «Свой ответ»');
+    const field = all(row, 'req-q__input')[0];
+    const send = all(row, 'req-q__send')[0];
+    assert.ok(field && send);
+    assert.equal(send.parentNode, field.parentNode, 'поле и кнопка-действие в одной строке');
+    field.value = 'Только партнёр, своей машины не покупаем';
+    field.dispatch('input');
+    send.dispatch('click');
+    await tick(); await tick();
+    assert.deepEqual(s.posted[0].body, {
+      action: 'answer_custom', question_id: 'q_w1',
+      text: 'Только партнёр, своей машины не покупаем',
+    });
+  } finally {
+    uninstallFakeDom();
+  }
+});
+
+test('пояснено: пояснение руководителя ПОД вопросом, кнопки активны', () => {
+  const s = w30Stand(Q_W30);
+  try {
+    const row = rowOf(s.host, 'q_w2');
+    const txt = text(row);
+    assert.match(txt, /пояснено — выберите ответ/, 'состояние explained подписано');
+    assert.match(txt, /Пояснение руководителя/, 'пояснение под вопросом');
+    assert.match(txt, /700 ₽ покрывают расходы на двух вещах/, 'текст пояснения из API');
+    assert.equal(all(row, 'req-q__option').length, 1, 'варианты активны');
+    assert.ok(all(row, 'req-q__input').length, 'свой ответ доступен');
+    assert.ok(all(row, 'req-q__stale').length, '«Не актуально» доступно и в состоянии «пояснено»');
+  } finally {
+    uninstallFakeDom();
+  }
+});
+
+test('«Пояснить ещё» и «Отложить»: свои действия контракта §1', async () => {
+  const s = w30Stand(Q_W30);
+  try {
+    const explained = rowOf(s.host, 'q_w2');
+    const more = all(explained, 'req-q__explain-more')[0];
+    assert.ok(more, 'у объяснённого вопроса есть «Пояснить ещё»');
+    more.dispatch('click');
+    await tick(); await tick();
+    assert.deepEqual(s.posted[0].body, { action: 'explain_more', question_id: 'q_w2' });
+
+    const open = rowOf(s.host, 'q_w1');
+    const later = all(open, 'req-q__postpone')[0];
+    assert.ok(later, '«Отложить» есть у открытого вопроса');
+    later.dispatch('click');
+    await tick(); await tick();
+    assert.deepEqual(s.posted.filter((p) => p.body).pop().body,
+      { action: 'postpone', question_id: 'q_w1' });
+  } finally {
+    uninstallFakeDom();
+  }
+});
+
+test('«Не актуально» уходит с возвратом, отложенные видны отдельным списком', () => {
+  const s = w30Stand(Q_W30);
+  try {
+    const row = rowOf(s.host, 'q_w1');
+    const stale = all(row, 'req-q__stale')[0];
+    assert.match(text(stale), /Не актуально/);
+
+    const postponed = all(s.host, 'req-side__postponed')[0];
+    assert.ok(postponed, 'блок «Отложенные» есть');
+    assert.match(text(postponed), /Отложенные вопросы: 1/);
+    const back = all(postponed, 'req-q__stale')[0];
+    assert.match(text(back), /Вернуть/, 'отложенный вопрос возвращается, а не пропадает');
+  } finally {
+    uninstallFakeDom();
+  }
+});
+
+test('блокирующие и неблокирующие: полные строки и «пакет решений»', () => {
+  const s = w30Stand(Q_W30);
+  try {
+    const packet = all(s.host, 'req-side__packet')[0];
+    assert.ok(packet, 'неблокирующие — «пакетом решений»');
+    assert.match(text(packet), /Пакет решений: 2 вопроса/);
+    assert.match(text(packet), /работу не блокируют/);
+    const packets = all(packet, 'req-q').map((r) => r.getAttribute('data-q'));
+    assert.deepEqual(packets, ['q_w3', 'q_w4'], 'в пакете ровно неблокирующие вопросы');
+    assert.equal(all(s.host, 'req-q').length, 4, 'все открытые вопросы на экране (без отложенных)');
+    assert.match(text(s.host), /Похожие вопросы скрыты как дубли: 2/, 'дубли темы объяснены тихо');
+  } finally {
+    uninstallFakeDom();
+  }
+});
+
+test('вопрос без проверки «понятно человеку» помечен тихо, а не запрещён', () => {
+  const s = w30Stand(Q_W30);
+  try {
+    const row = rowOf(s.host, 'q_w3');
+    const mark = all(row, 'req-q__plain')[0];
+    assert.ok(mark, 'служебная пометка есть');
+    assert.match(text(mark), /проверка простоты не пройдена/);
+    assert.match(String(mark.getAttribute('title') || ''), /SKL-2/, 'причина — в подсказке');
+    assert.ok(all(row, 'req-q__input').length, 'ответить по-прежнему можно');
+  } finally {
+    uninstallFakeDom();
+  }
+});

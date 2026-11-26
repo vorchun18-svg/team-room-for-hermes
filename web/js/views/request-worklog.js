@@ -365,7 +365,7 @@ export function mountWorklog(host, ctx, opts = {}) {
   const earlierBtn = h('button', { class: 'btn btn--ghost btn--sm wl__earlier', type: 'button' },
     icon('history', { size: 13 }), h('span', null, 'Показать раньше'));
   const newBtn = h('button', { class: 'wl__new', type: 'button', 'aria-hidden': 'true', hidden: true });
-  const emptyEl = h('div', { class: 'wl__empty' }, 'Здесь появятся действия команды по этому запросу.');
+  const emptyEl = h('div', { class: 'wl__empty' }, 'Здесь появятся действия команды по этой задаче.');
   const errorEl = h('div', { class: 'wl__error', hidden: true });
   const digestEl = h('div', { class: 'wl__digest' });
   const hintEl = h('div', { class: 'wl__hint' },
@@ -703,7 +703,7 @@ export function mountWorklog(host, ctx, opts = {}) {
         emptyEl.textContent = 'Ход работы выключен для этого экрана. Включить обратно — кнопка «Подробно» или «Кратко» выше.';
       }
     } else {
-      emptyEl.textContent = 'Пока событий нет: команда ещё не начала работу по этому запросу.';
+      emptyEl.textContent = 'Пока событий нет: команда ещё не начала работу по этой задаче.';
     }
   }
 

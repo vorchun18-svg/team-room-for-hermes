@@ -156,7 +156,7 @@ test('итог по запросу: запуски из других запро�
   const report = { kind: 'started', spawned: 1,
     started: [{ id: 't_other', assignee: 'team-ops', title: 'Чужая работа' }], counts: {} };
   const text = kickText(report, { scopeIds: new Set(['t_mine']) });
-  assert.match(text.lines.join(' '), /В этом запросе новых запусков нет/);
+  assert.match(text.lines.join(' '), /В этой задаче новых запусков нет/);
 });
 
 test('старый ответ сервера (без report) тоже превращается в итог', () => {

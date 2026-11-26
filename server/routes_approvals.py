@@ -198,10 +198,10 @@ class ApprovalRoutes:
         payload = {"ok": True, "scope": scope, "room": room_id, "closed": closed,
                    "already_closed": already, "requests": touched, "errors": errors,
                    "total": total, "at": int(_time.time()),
-                   "message": (("Неактуальных пунктов у завершённых запросов: %d." % total)
+                   "message": (("Неактуальных пунктов у завершённых задач: %d." % total)
                                if preview else
                                ("Закрыто как неактуальное: %d." % total) if total
-                               else "Неактуальных пунктов у завершённых запросов нет.")}
+                               else "Неактуальных пунктов у завершённых задач нет.")}
         if preview:
             payload["preview"] = True
             payload.pop("requests", None)

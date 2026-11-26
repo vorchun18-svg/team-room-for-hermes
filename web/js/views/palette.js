@@ -120,7 +120,7 @@ export async function open(ctx = {}) {
     'aria-autocomplete': 'list',
     'aria-controls': 'pal-list',
     'aria-expanded': 'true',
-    placeholder: 'Команда, комната, запрос…',
+    placeholder: 'Команда, комната, задача…',
     autocomplete: 'off',
     spellcheck: 'false',
   });
@@ -199,7 +199,7 @@ export async function open(ctx = {}) {
         h('div', { class: 'pal-empty__title' }, query ? 'Ничего не найдено' : 'Пока нечего показать'),
         h('div', { class: 'pal-empty small muted' },
           query ? 'Попробуйте другое слово — или начните с команды: «комната», «тема», «настройки».'
-            : 'Введите команду или запрос. Например: «отчёты», «новый запрос», «тема».'),
+            : 'Введите команду или задача. Например: «отчёты», «новая задача», «тема».'),
       ));
     }
     list.replaceChildren(frag);
@@ -254,9 +254,9 @@ export async function open(ctx = {}) {
       const items = Array.isArray(payload && payload.items) ? payload.items : [];
       recents = items.slice(0, 6).map((req) => ({
         id: 'req:' + String(req.id),
-        group: 'Последние запросы',
+        group: 'Последние задачи',
         icon: req.status === 'needs_you' ? 'bell' : 'comment-discussion',
-        title: req.title || req.preview || req.id || 'Запрос',
+        title: req.title || req.preview || req.id || 'Задача',
         hint: [formatStatusRu(req.status) || req.status || '', req.needs_you ? 'ждёт вас' : '']
           .filter(Boolean).join(' · '),
         keywords: (req.text || req.preview || '') + ' ' + (req.title || ''),

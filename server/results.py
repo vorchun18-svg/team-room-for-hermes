@@ -296,10 +296,10 @@ def phases_from_requests(cfg, room, items, limit: int = PHASE_LIMIT) -> dict:
             break
     if not phases:
         return {"ok": False, "reason": "no_results",
-                "message": "Нет завершённых запросов — этапы пока не из чего собрать"}
+                "message": "Нет завершённых задач — этапы пока не из чего собрать"}
     phases.append({"title": "Итоги и следующий шаг",
                    "description": "Что делаем дальше по проекту: приоритет и следующий запрос."})
-    got = phase_book.capture(room, phases, by="по выполненным запросам", source="requests")
+    got = phase_book.capture(room, phases, by="по выполненным задачам", source="requests")
     if not got.get("applied"):
         reason = got.get("reason") or "unchanged"
         text = {"empty": "Предложение пустое — этапы не собраны",
@@ -380,7 +380,7 @@ def roadmap_offer(cfg, room, board=None, now=None, states=None) -> dict:
             "kind": "roadmap_offer",
             "status": "open",
             "text": "Предлагаю собрать карту проекта: завершённых запросов — %d" % len(done),
-            "why": "Этапы соберу по выполненным запросам («%s»). Принять, поправить или "
+            "why": "Этапы соберу по выполненным задачам («%s»). Принять, поправить или "
                    "отклонить — ваше решение; этапы комнаты не меняются."
                    % "», «".join(t for t in titles if t),
             "source_title": str(room.get("title") or room_id),

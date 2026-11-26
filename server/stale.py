@@ -25,6 +25,8 @@
 """
 from __future__ import annotations
 
+import time
+
 #: Состояния вопроса, решения и шага (контракт §1).
 ITEM_STATES = ("open", "answered", "accepted", "rejected", "dismissed", "done")
 #: Состояния разрешения (контракт §1).
@@ -38,13 +40,17 @@ APPROVAL_STATES = ("pending", "granted_once", "granted_always", "denied", "expir
 #: вопрос с кнопками разрешения — то есть кнопки дефекта 6 не работали и по счётчику.
 APPROVAL_EXTRA_STATES = ("workaround", "info", "hinted", "trusted")
 #: Почему пункт закрыт. Один словарь на сервер, интерфейс и тексты.
-CLOSED_REASONS = ("card_finished", "request_done", "request_archived", "dismissed", "superseded")
+CLOSED_REASONS = ("card_finished", "request_done", "request_archived", "request_accepted",
+                  "dismissed", "superseded")
 REASON_RU = {
     "card_finished": "работа завершена",
-    "request_done": "запрос завершён",
+    "request_done": "задача завершена",
     # W29-P4: запрос в архиве — пункт не ждёт человека; после «Вернуть из архива»
     # он снова открывается сам (закрытие вычисляется из флага, а не пишется в карточку).
-    "request_archived": "запрос в архиве",
+    "request_archived": "задача в архиве",
+    # W30-D1: задача принята человеком — она заморожена, пункты ждать некому;
+    # после «Вернуть в работу» открываются сами (из флага, без записи в данные).
+    "request_accepted": "задача принята — заморожена",
     "dismissed": "закрыто как неактуальное",
     "superseded": "устарело: работа пошла иначе",
 }
@@ -124,7 +130,18 @@ def question_state(item: dict) -> str:
         return "dismissed"
     if answer in _ANSWER_CLOSED:
         return "answered"
-    if answer in ("open", "waiting_explanation", ""):
+    # W30-A §1: «Отложить» — человек увидел вопрос и попросил вернуться позже.
+    # Это не «ждёт вас сейчас» и не ответ: пункт живёт до срока, затем снова open.
+    if answer == "postponed":
+        until = item.get("postpone_until")
+        try:
+            until = int(until) if until else 0
+        except (TypeError, ValueError):
+            until = 0
+        if until and until > int(time.time()):
+            return "postponed"
+        return "open"
+    if answer in ("open", "waiting_explanation", "explained", ""):
         return "open" if not item.get("answered") else "answered"
     return "answered" if item.get("answered") else "open"
 
@@ -216,15 +233,19 @@ def closed_reason(kind: str, item: dict, state: str) -> str | None:
 
 
 def _actions_for(kind: str, state: str) -> list[dict]:
-    """Кнопки пункта: «Не актуально» у ожидающего, «Вернуть» у снятого."""
+    """Кнопки пункта: «Не актуально» у ожидающего, «Вернуть» у снятого/отложенного."""
     if waits(kind, state):
         return [{"id": "dismiss", "label": ACTION_LABELS["dismiss"], "kind": "close"}]
     if state == "dismissed" and kind != "approval":
         return [{"id": "restore", "label": ACTION_LABELS["restore"], "kind": "restore"}]
+    # W30-A §1: отложенный вопрос — не тупик: «Вернуть» возвращает его в работу.
+    if state == "postponed" and kind == "question":
+        return [{"id": "restore", "label": ACTION_LABELS["restore"], "kind": "restore"}]
     return []
 
 
-def _apply(kind: str, item: dict, close: bool, archived: bool = False) -> bool:
+def _apply(kind: str, item: dict, close: bool, archived: bool = False,
+           accepted: bool = False) -> bool:
     """Проставить пункту единые поля. True — он ждёт человека."""
     state = item_state(kind, item)
     reason = closed_reason(kind, item, state)
@@ -232,8 +253,10 @@ def _apply(kind: str, item: dict, close: bool, archived: bool = False) -> bool:
         # Автозакрытие (контракт §1): у завершённого запроса пункт не ждёт никого.
         # W29-P4: у архивного запроса — своя причина, чтобы человек видел, почему
         # пункт закрыт, и после «Вернуть из архива» он открылся снова сам.
+        # W30-D1: у принятой задачи — своя: «задача принята — заморожена».
         state = "dismissed"
-        reason = "request_archived" if archived else "request_done"
+        reason = ("request_accepted" if accepted else
+                  "request_archived" if archived else "request_done")
         item["auto_closed"] = True
     item["state"] = state
     waiting = waits(kind, state) and (kind != "approval" or bool(item.get("actions") or []))
@@ -270,6 +293,50 @@ def counts(detail: dict) -> dict:
             out["approvals"] += 1
     out["total"] = out["questions"] + out["decisions"] + out["approvals"] + out["steps"]
     return out
+
+
+def stage_hint(detail: dict) -> str:
+    """Подпись этапа запроса: ждёт человека работа или идёт (W30-A §7, контракт §1).
+
+    «Работа ждёт вашего ответа» — ТОЛЬКО когда есть блокирующие вопросы (их не
+    больше трёх): тогда работа правда стоит. Неблокирующие вопросы ответа ждут,
+    но работу не останавливают — иначе человек видит «ждёт вас» у задачи, которая
+    спокойно идёт (дефект 13). Пустая строка — ждать нечего.
+    """
+    detail = detail if isinstance(detail, dict) else {}
+    if request_finished(detail.get("status")) or detail.get("archived"):
+        return ""
+    blocking = open_ = 0
+    for item in detail.get("open_questions") or []:
+        if not isinstance(item, dict):
+            continue
+        state = question_state(item)
+        if state != "open":
+            continue
+        open_ += 1
+        if item.get("blocking"):
+            blocking += 1
+    if blocking:
+        return "Работа ждёт вашего ответа: %d %s без ответа" % (
+            blocking, _plural(blocking, "блокирующий вопрос", "блокирующих вопроса",
+                              "блокирующих вопросов"))
+    if open_:
+        return "Работа идёт, %d %s ждут вас" % (
+            open_, _plural(open_, "вопрос", "вопроса", "вопросов"))
+    return ""
+
+
+def _plural(count: int, one: str, few: str, many: str) -> str:
+    """Русская форма слова по числу (11–14 — всегда «много»)."""
+    count = abs(int(count))
+    if count % 100 in (11, 12, 13, 14):
+        return many
+    tail = count % 10
+    if tail == 1:
+        return one
+    if tail in (2, 3, 4):
+        return few
+    return many
 
 
 def stale_open(detail: dict) -> dict:
@@ -309,9 +376,11 @@ def decorate(detail: dict, request_status=None, auto_close=None) -> dict:
         return detail
     status = request_status if request_status is not None else detail.get("status")
     archived = bool(detail.get("archived"))
-    finished = request_finished(status) or archived
+    # W30-D1: принятая задача заморожена — пункты закрываются сами, как у архивной.
+    accepted = bool(detail.get("accepted"))
+    finished = request_finished(status) or archived or accepted
     if auto_close is None:
-        close = auto_closeable(status) or archived
+        close = auto_closeable(status) or archived or accepted
     else:
         close = bool(auto_close)
     auto_closed = 0
@@ -321,12 +390,12 @@ def decorate(detail: dict, request_status=None, auto_close=None) -> dict:
             continue
         for item in items:
             if isinstance(item, dict):
-                _apply(kind, item, close, archived)
+                _apply(kind, item, close, archived, accepted)
                 if item.get("auto_closed"):
                     auto_closed += 1
     for item in detail.get("approvals") or []:
         if isinstance(item, dict):
-            _apply("approval", item, close, archived)
+            _apply("approval", item, close, archived, accepted)
             if item.get("auto_closed"):
                 auto_closed += 1
     counter = counts(detail)
@@ -490,6 +559,6 @@ __all__ = ["ITEM_STATES", "APPROVAL_STATES", "APPROVAL_EXTRA_STATES", "CLOSED_RE
            "SYSTEM_PAUSE_LABEL", "SYSTEM_PAUSE_DEFAULT_REASON",
            "BLOCKED_ACTIONS", "SYSTEM_PAUSE_ACTIONS",
            "AUTO_CLOSE_REQUESTS", "request_finished", "auto_closeable", "question_state", "decision_state", "step_state",
-           "item_state", "needs_you", "closed_reason", "counts", "stale_open",
+           "item_state", "needs_you", "closed_reason", "counts", "stale_open", "stage_hint",
            "decorate", "open_targets", "is_system_pause", "guard_holds", "mark_system_pauses",
            "mark_blocked_actions", "blocked_waiting"]

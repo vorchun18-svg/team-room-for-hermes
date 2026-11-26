@@ -27,7 +27,7 @@ export const REACTIONS_KEY = 'teamroom.reactions.';
 export const NOTICE_RU = {
   tabNew: 'Новые реакции руководителя',
   tabOne: 'Новая реакция руководителя',
-  tabHint: 'Руководитель отреагировал на ваш ответ. Откройте «От вас нужно» или запрос — там строка «Ответ учтён».',
+  tabHint: 'Руководитель отреагировал на ваш ответ. Откройте «От вас нужно» или задачу — там строка «Ответ учтён».',
   recent: 'руководитель ответил на ваш ответ',
   answered: 'Ответ учтён',
   read: 'Руководитель прочитал ответ',
@@ -118,10 +118,10 @@ export function requestsWord(n) {
   const num = Math.abs(Number(n) || 0);
   const mod10 = num % 10;
   const mod100 = num % 100;
-  if (mod100 >= 11 && mod100 <= 14) return 'запросов';
-  if (mod10 === 1) return 'запроса';
-  if (mod10 >= 2 && mod10 <= 4) return 'запроса';
-  return 'запросов';
+  if (mod100 >= 11 && mod100 <= 14) return 'задач';
+  if (mod10 === 1) return 'задачи';
+  if (mod10 >= 2 && mod10 <= 4) return 'задачи';
+  return 'задач';
 }
 
 /**

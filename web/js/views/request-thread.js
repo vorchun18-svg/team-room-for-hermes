@@ -4,7 +4,7 @@
  * Лента: сообщения Михаила — справа и выделены; команда — слева, с аватаром и
  * ролью по-русски; системные события — тонкой серой строкой; между днями —
  * разделители. Поле ввода растёт, микрофон ставится сам (dictation-auto),
- * скрепка прикрепляет путь к файлу (pathChip, как в композере).
+ * скрепка прикрепляет путь к файлу (общий компонент attach-picker.js, как в композере).
  *
  * Отправка — ОДНА кнопка «Отправить руководителю» (Ctrl+Enter):
  *   POST /api/requests/{rid}/messages {text, attach, urgent}
@@ -36,7 +36,9 @@
 
 import { h, fmtDate, fmtDateTime, toDate } from '../util.js';
 import { icon } from '../icons.js';
-import { ensureCss, avatar, pathChip, promptDialog } from '../ui.js';
+import { ensureCss, avatar } from '../ui.js';
+// W30-F (дефект 15): прикрепление файлов — ОДИН общий компонент, как в композере.
+import { createAttachPicker } from '../attach-picker.js';
 import { countNoun, errorText } from '../text-ru.js';
 import { profileName } from './request-util.js';
 import { createSection } from './section-collapse.js';
@@ -286,7 +288,7 @@ export function mountThread(container, ctx, opts = {}) {
 
   const feed = h('div', {
     class: 'thr__feed', role: 'log', 'aria-live': 'polite',
-    'aria-label': 'Диалог по запросу', tabindex: '0',
+    'aria-label': 'Диалог по задаче', tabindex: '0',
   });
 
   function messageNode(item) {
@@ -466,7 +468,22 @@ export function mountThread(container, ctx, opts = {}) {
   let reviseInput = null;
 
   const errLine = h('div', { class: 'thr__err hidden', role: 'alert' });
-  const filesHost = h('div', { class: 'thr__files hidden' });
+  // W30-F (дефект 15): прикрепление файлов — один общий компонент. Скрепка
+  // открывает системное окно выбора файлов Windows (POST /api/files/pick), пути
+  // прикрепляются как пути (копий нет), предел 30, секреты — через
+  // «Всё равно прикрепить». `st.attach` держит пути для отправки сообщения.
+  const picker = createAttachPicker({
+    api,
+    toast,
+    prefix: 'thr-attach',
+    title: 'Прикрепить файлы к сообщению',
+    label: '',
+    buttonClass: 'btn btn--ghost btn--icon thr__clip',
+    buttonTitle: 'Прикрепить файлы — окно выбора откроется на компьютере',
+    rowOnAdd: false,
+    onChange: (items) => { st.attach = items.map((item) => item.path); },
+  });
+  const filesHost = picker.chipsHost;
   /** Блок-обёртка со стрелкой (У-1): заголовок, счётчик, метка нового ответа. */
   let sec = null;
   /**
@@ -498,19 +515,15 @@ export function mountThread(container, ctx, opts = {}) {
     errLine.classList.toggle('hidden', !st.error);
   }
 
+  /**
+   * Показать прикреплённые пути в общем компоненте: после сборки блока и после
+   * отправки (когда `st.attach` очищен). Сами чипы рисует `attach-picker.js` —
+   * у них те же «Просмотр / Открыть / Открыть в папке / Убрать», что в композере.
+   */
   function paintFiles() {
-    setChildren(filesHost);
     const list = Array.isArray(st.attach) ? st.attach : [];
-    filesHost.classList.toggle('hidden', !list.length);
-    for (const path of list) {
-      filesHost.appendChild(h('span', { class: 'thr__file' },
-        pathChip(path),
-        h('button', {
-          class: 'btn btn--ghost btn--icon btn--sm thr__unclip', type: 'button',
-          title: 'Убрать файл', 'aria-label': 'Убрать файл',
-          onclick: () => { st.attach = st.attach.filter((p) => p !== path); paintFiles(); },
-        }, icon('close', { size: 11 }))));
-    }
+    if (list.length) picker.set(list);
+    else picker.clear();
   }
 
   /**
@@ -601,33 +614,8 @@ export function mountThread(container, ctx, opts = {}) {
     ta.style.overflowY = h0 > cap ? 'auto' : 'hidden';
   }
 
-  async function attachFile() {
-    let path = '';
-    try {
-      path = await promptDialog({
-        title: 'Прикрепить файл',
-        label: 'Путь к файлу',
-        placeholder: 'C:/Проекты/Комната/отчёт.md',
-        submitLabel: 'Прикрепить',
-        hint: 'Абсолютный путь на этом компьютере. Файл не копируется — руководитель откроет его по пути.',
-      });
-    } catch (err) {
-      console.warn('[thread] прикрепление:', err);
-      return;
-    }
-    const clean = String(path || '').trim();
-    if (!clean) return;
-    if (st.attach.includes(clean)) { toast('Этот файл уже прикреплён', 'info'); return; }
-    if (st.attach.length >= 10) { toast('Больше 10 файлов к одному сообщению не приложить', 'warn'); return; }
-    st.attach = [...st.attach, clean];
-    paintFiles();
-  }
-
-  const clipBtn = h('button', {
-    class: 'btn btn--ghost btn--icon thr__clip', type: 'button',
-    title: 'Прикрепить файл', 'aria-label': 'Прикрепить файл',
-    onclick: () => { attachFile(); },
-  }, icon('attach', { size: 14 }));
+  // Дефект 15: скрепка открывает проводник, а не просит вставить путь.
+  const clipBtn = picker.button;
 
   /**
    * Переключатели и вторая кнопка по статусу запроса. Собираются заново ТОЛЬКО
@@ -724,7 +712,7 @@ export function mountThread(container, ctx, opts = {}) {
       return;
     }
     if (!rid) {
-      showError('Не удалось отправить: в адресе нет номера запроса. Обновите страницу.');
+      showError('Не удалось отправить: в адресе нет номера задачи. Обновите страницу.');
       return;
     }
 
@@ -783,7 +771,7 @@ export function mountThread(container, ctx, opts = {}) {
       st.attach = [];
       st.urgent = false;
       if (urgentInput) urgentInput.checked = false;
-      paintFiles();
+      picker.clear();
       if (res && res.duplicate) {
         // Сервер уже принял это сообщение чуть раньше — второй раз не нужно.
         toast('Это сообщение уже отправлено — второго не будет', 'info');
@@ -863,6 +851,8 @@ export function mountThread(container, ctx, opts = {}) {
   const form = h('div', { class: 'thr__form' },
     h('div', { class: 'thr__field' }, ta),
     filesHost,
+    // Запасной путь: раскрывается сам, только если окно выбора недоступно.
+    picker.row,
     h('div', { class: 'thr__bar' },
       clipBtn,
       h('div', { class: 'spacer' }),
@@ -879,7 +869,7 @@ export function mountThread(container, ctx, opts = {}) {
   sec = createSection({
     key: 'thread',
     requestId: rid || String((detail && detail.id) || ''),
-    title: 'Диалог по запросу',
+    title: 'Диалог по задаче',
     titleClass: 'thr__title',
     defaultOpen: false,
     className: 'thr',

@@ -546,7 +546,7 @@ test('блок на странице запроса: ждущие сверху, 
   assert.match(body, /Разрешения агентам/);
   assert.equal(byAttr(block, 'data-approval', 'ap_7f3a12cd').length, 1);
   assert.equal(byAttr(block, 'data-approval', 'ap_done01').length, 1);
-  assert.match(body, /Решённые: 1 запрос/);
+  assert.match(body, /Решённые: 1 задача/);
 });
 
 /* ─────────── W28-B (дефект 6): «нельзя штатно» с честным состоянием сервера ─────── */

@@ -52,7 +52,7 @@ export function fuzzyMatch(text, query) {
   let raw = 0;
   let prev = -2;
   for (const ch of needle) {
-    if (ch === ' ') continue; // пробелы в запросе не ищем посимвольно
+    if (ch === ' ') continue; // пробелы в задаче не ищем посимвольно
     const found = hay.indexOf(ch, cursor);
     if (found < 0) return null;
     let bonus = 1;
@@ -139,7 +139,7 @@ export function highlightSegments(text, query) {
 
 /** Запасной порядок вкладок, если палитре не передали TABS. Должен совпадать
     с router.TABS (это проверяет tests/vocab.test.mjs). */
-export const TAB_ORDER = ['composer', 'team', 'roadmap', 'backlog', 'delos', 'reports', 'journal', 'inbox', 'duties', 'recipes', 'archive'];
+export const TAB_ORDER = ['tasks', 'composer', 'team', 'roadmap', 'backlog', 'delos', 'reports', 'journal', 'inbox', 'duties', 'recipes', 'archive'];
 
 /**
  * Постоянные команды палитры.
@@ -169,9 +169,9 @@ export function buildCommandItems(input = {}) {
       id: 'new:' + current.id,
       group: 'Действия',
       icon: 'comment-discussion',
-      title: 'Новый запрос в «' + currentTitle + '»',
-      hint: 'К полю запроса',
-      keywords: 'новый запрос написать ' + currentTitle,
+      title: 'Новая задача в «' + currentTitle + '»',
+      hint: 'К полю задачи',
+      keywords: 'новая задача написать ' + currentTitle,
       action: { type: 'new-request', room: current.id },
     });
   } else if (rooms.length) {
@@ -180,9 +180,9 @@ export function buildCommandItems(input = {}) {
       id: 'new:' + first.id,
       group: 'Действия',
       icon: 'comment-discussion',
-      title: 'Новый запрос в «' + (first.title || first.id) + '»',
-      hint: 'К полю запроса',
-      keywords: 'новый запрос написать ' + (first.title || first.id),
+      title: 'Новая задача в «' + (first.title || first.id) + '»',
+      hint: 'К полю задачи',
+      keywords: 'новая задача написать ' + (first.title || first.id),
       action: { type: 'new-request', room: first.id },
     });
   }
@@ -258,7 +258,7 @@ export function buildCommandItems(input = {}) {
 /** Заголовок группы для типа результата поиска. */
 export function sectionForKind(kind) {
   switch (String(kind || '')) {
-    case 'request': return { id: 'hits:request', title: 'Запросы' };
+    case 'request': return { id: 'hits:request', title: 'Задачи' };
     case 'decision': return { id: 'hits:decision', title: 'Решения' };
     case 'backlog': return { id: 'hits:backlog', title: 'Бэклог' };
     case 'journal': return { id: 'hits:journal', title: 'Журнал' };
@@ -346,7 +346,7 @@ export function composeList(input = {}) {
   const groups = [];
 
   if (!query) {
-    if (recents.length) groups.push({ id: 'recents', title: 'Последние запросы', items: recents.slice(0, 5) });
+    if (recents.length) groups.push({ id: 'recents', title: 'Последние задачи', items: recents.slice(0, 5) });
     if (commands.length) groups.push({ id: 'commands', title: 'Команды', items: commands.slice(0, limit) });
     return groups;
   }
@@ -355,7 +355,7 @@ export function composeList(input = {}) {
   const foundCommands = filterItems(commands, query, cmdLimit);
   const foundRecents = filterItems(recents, query, 3);
   if (foundCommands.length) groups.push({ id: 'commands', title: 'Команды', items: foundCommands });
-  if (foundRecents.length) groups.push({ id: 'recents', title: 'Последние запросы', items: foundRecents });
+  if (foundRecents.length) groups.push({ id: 'recents', title: 'Последние задачи', items: foundRecents });
 
   if (query.length >= 2 && hits.length) {
     // Один и тот же запрос не должен стоять дважды: в «последних» и в выдаче.

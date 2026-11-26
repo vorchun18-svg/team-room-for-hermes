@@ -824,7 +824,7 @@ function renderRecent(items) {
       class: 'recent__item' + (mark ? ' recent__item--reacted' : '') + (item.pinned ? ' recent__item--pinned' : ''),
       href: '#/room/' + enc(item.roomId) + '/request/' + enc(item.id),
       title: (item.pinned ? 'Закреплён · ' : '') + fullHint,
-      'aria-label': short + ' — ' + (roomTitle || 'комната запроса')
+      'aria-label': short + ' — ' + (roomTitle || 'комната задачи')
         + (item.pinned ? ', закреплён' : '')
         + (mark ? ', есть новая реакция руководителя' : ''),
     },
@@ -833,7 +833,7 @@ function renderRecent(items) {
       h('span', { class: 'recent__title', title: fullHint },
         item.pinned ? icon('pin', { size: 11, className: 'recent__pin' }) : null,
         short),
-      h('span', { class: 'recent__room', title: roomTitle || null }, roomTitle || 'Запрос')),
+      h('span', { class: 'recent__room', title: roomTitle || null }, roomTitle || 'Задача')),
     mark,
     ));
   }
@@ -943,7 +943,7 @@ function engineInfo() {
     return {
       tone: 'warn',
       label: 'Движок на паузе',
-      title: ['Новые запросы не начнут работу, пока движок не запущен.', ...details].join('\n'),
+      title: ['Новые задачи не начнут работу, пока движок не запущен.', ...details].join('\n'),
     };
   }
   return { tone: 'ok', label: 'Движок работает', title: ['Очередь задач обрабатывается.', ...details].join('\n') };
@@ -1079,7 +1079,7 @@ export function buildSidebar(host, { onNewRoom, onToggleNotifications, onCycleTh
         h('span', { class: 'sidebar__label-count', id: 'bmarks-count' })),
       h('div', { class: 'recent', id: 'bmarks-list' }),
     ),
-    h('section', { class: 'sidebar__recent hidden', id: 'sidebar-recent', 'aria-label': 'Недавние запросы и дела' },
+    h('section', { class: 'sidebar__recent hidden', id: 'sidebar-recent', 'aria-label': 'Недавние задачи и дела' },
       h('div', { class: 'sidebar__label' }, 'Недавнее'),
       h('div', { class: 'recent', id: 'recent-list' }),
     ),
@@ -1091,7 +1091,7 @@ export function buildSidebar(host, { onNewRoom, onToggleNotifications, onCycleTh
   const tools = h('div', { class: 'sidebar__tools' },
     h('button', {
       class: 'btn btn--ghost btn--icon btn--sm', type: 'button', id: 'notify-toggle',
-      title: 'Включить уведомления о новых запросах и готовых ответах',
+      title: 'Включить уведомления о новых задачах и готовых ответах',
       'aria-label': 'Уведомления',
       onclick: () => onToggleNotifications(),
     }, icon('bell', { size: 15 })),

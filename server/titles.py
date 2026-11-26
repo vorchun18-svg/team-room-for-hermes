@@ -61,7 +61,7 @@ REFRESH_MIN_S = 300
 BRIDGE_TIMEOUT = 90
 #: бюджет входа моста (``MAX_TITLE_INPUT_CHARS`` Hermes)
 MAX_INPUT = 1000
-FALLBACK_TITLE = "Запрос"
+FALLBACK_TITLE = "Задача"
 
 _LOG: list = []                     # последние ошибки моста (диагностика, без шума)
 _QUEUE: "queue.Queue | None" = None
@@ -144,7 +144,7 @@ def seed(text, title: str = "", user: bool = False) -> dict:
 def derive(text, limit: int = TITLE_LIMIT) -> str:
     """Запасное название без Hermes: как ``derive_title`` — первая осмысленная строка.
 
-    Никогда не бросает и не возвращает пустоту (пустой текст → «Запрос»).
+    Никогда не бросает и не возвращает пустоту (пустой текст → «Задача»).
     """
     try:
         return short_title(text, limit)

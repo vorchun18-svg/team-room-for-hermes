@@ -95,7 +95,7 @@ async function mountSearch(el, ctx) {
       h('span', { class: 'small muted' }, 'Комната:'), seg));
   }
   filterRow.appendChild(h('span', { class: 'srch-filter__hint small muted' },
-    'Ищем по запросам, ответам, решениям, шагам и журналу'));
+    'Ищем по задачам, ответам, решениям, шагам и журналу'));
   root.appendChild(filterRow);
   root.appendChild(metaHost);
   root.appendChild(results);
@@ -141,7 +141,7 @@ async function mountSearch(el, ctx) {
     const box = emptyState({
       icon: 'search',
       title: 'Что найти?',
-      text: 'Поиск идёт по запросам и ответам, решениям, шагам «От вас нужно», журналу и отчётам. '
+      text: 'Поиск идёт по задачам и ответам, решениям, шагам «От вас нужно», журналу и отчётам. '
         + 'Начните вводить — или выберите пример ниже.',
     });
     const chips = h('div', { class: 'srch-examples' });

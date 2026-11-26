@@ -120,7 +120,7 @@ export async function mount(el, ctx) {
     return h('a', {
       class: 'tm-task truncate',
       href,
-      title: isRoot ? 'Открыть запрос: ' + label : 'Открыть ленту запросов комнаты',
+      title: isRoot ? 'Открыть задачу: ' + label : 'Открыть ленту задач комнаты',
     }, label);
   }
 
@@ -448,7 +448,7 @@ export async function mount(el, ctx) {
         href: now.request_id
           ? `#/room/${encodeURIComponent(roomId)}/request/${encodeURIComponent(now.request_id)}`
           : `#/room/${encodeURIComponent(roomId)}/composer`,
-        title: nowText + ' — открыть запрос, где идёт эта работа',
+        title: nowText + ' — открыть задачу, где идёт эта работа',
       }, nowText)
       : (model.current
         ? taskLink(model.current.taskId, model.current.title)
@@ -753,7 +753,7 @@ export async function mount(el, ctx) {
         h('div', { class: 'card__actions' }, changeBtn)),
       h('div', { class: 'card__body stack stack--tight' },
         h('p', { class: 'small muted tm-settings__intro' },
-          'Запрос уходит руководителю комнаты: он раздаёт работу команде и сводит один ответ, критик проверяет свод перед показом.'),
+          'Задача уходит руководителю комнаты: он раздаёт работу команде и сводит один ответ, критик проверяет свод перед показом.'),
         row('Руководитель комнаты', director
           ? h('span', { class: 'tm-fact__pair' }, avatar(labelForProfile(director, 'orchestrator').short, { size: 20 }),
             h('span', { class: 'small', title: 'Профиль Hermes: ' + director },
@@ -854,7 +854,7 @@ export async function mount(el, ctx) {
               request_id: String(r.id || ''),
             });
           }
-        } catch { /* один запрос без ленты не мешает остальным */ }
+        } catch { /* одна задача без ленты не мешает остальным */ }
       }));
       state.now = found;
     } catch (err) {
@@ -889,7 +889,7 @@ export async function mount(el, ctx) {
           const feed = await api.get(`/api/rooms/${encodeURIComponent(roomId)}/requests?limit=100`, { signal: abort.signal });
           const items = Array.isArray(feed && feed.items) ? feed.items : [];
           state.roots = new Set(items.map((r) => String((r && r.id) || '')).filter(Boolean));
-        } catch { /* ссылки на задачи уйдут в ленту запросов */ }
+        } catch { /* ссылки на задачи уйдут в ленту задач */ }
       }
       if (!state.room || !Array.isArray(state.room.context_files)) {
         try {

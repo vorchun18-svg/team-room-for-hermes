@@ -337,7 +337,12 @@ class ContractTest(unittest.TestCase):
         self.assertTrue(hasattr(app_mod.App, "h_files_attach_open"))
 
     def test_ui_and_server_agree_on_fields(self):
-        js = (ROOT / "web" / "js" / "views" / "composer.js").read_text(encoding="utf-8")
+        # W30-F: прикрепление файлов — ОДИН общий компонент `attach-picker.js`
+        # (его используют и композер, и «Диалог по запросу»). Ручки выбора файлов
+        # зовёт он, поэтому сверяем оба файла: иначе стража требовала бы вызовы
+        # в композере, которых там больше нет по замыслу.
+        js = "".join((ROOT / "web" / "js" / "views" / "composer.js").read_text(encoding="utf-8")
+                     + (ROOT / "web" / "js" / "attach-picker.js").read_text(encoding="utf-8"))
         # Клиент зовёт ровно те ручки, что объявлены здесь.
         for _method, pattern, _handler in pick_routes.ROUTES:
             url = pattern.replace(r"\\.", ".")

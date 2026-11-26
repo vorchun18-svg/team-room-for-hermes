@@ -267,8 +267,13 @@ def build(sources, last_visit_at=None, now=None) -> dict:
 
             Только `archived`: у `done` бывает открытый вопрос, и это рабочее
             состояние «руководитель завершил карточку, чтобы спросить», а не мусор.
+            W30-D1: принятая задача тоже не «ждёт вас» — она заморожена, и её
+            пункты закрыты с причиной ``request_accepted``.
             """
-            status = str(state_of(str(root_id or "")).get("status") or "").lower()
+            state = state_of(str(root_id or ""))
+            if state.get("accepted"):
+                return True
+            status = str(state.get("status") or "").lower()
             return status in AUTO_CLOSED_REQUESTS
 
         # 1) «Ждёт вас»: вопросы, решения, разрешения. W27-FIX: точные пункты берутся

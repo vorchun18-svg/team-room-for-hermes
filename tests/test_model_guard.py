@@ -451,6 +451,23 @@ class GuardTests(Base):
         journal = (Path(self.cfg.state_dir) / ROOM / "journal.jsonl").read_text("utf-8")
         self.assertIn("исправлена до запуска", journal)
 
+    def test_review_card_gets_room_model_before_dispatch(self):
+        """Карточка в `review` (её берёт рецензент) получает модель комнаты ДО запуска.
+
+        Боевой цикл 25–26.11: `review` была в «неприкасаемых», воркер шёл на модели профиля,
+        сторож его убивал, карточка возвращалась в `review` — и так каждую минуту, с записью
+        «вопроса» человеку в ветку каждый раз. Теперь `review` — «ещё не запущена».
+        """
+        self.select_worker_model()
+        root = self.new_root("Рецензия")
+        card_id = self.card("Проверь выводы", WORKER, "review", parent=root,
+                            model=EXPENSIVE[1], provider=EXPENSIVE[0])
+        res = self.tick()
+        self.assertIn(card_id, res["fixed"], res)
+        row = self.row(card_id)
+        self.assertEqual(row.get("model_override"), CHEAP[1], row)
+        self.assertEqual(row.get("status"), "review", "статус рецензии не меняем")
+
     def test_idempotent_tick_ten_times(self):
         """Десять проходов подряд — одно исправление (нет петли и перезаписи)."""
         self.select_worker_model()          # W29-I1: пин правится только по выбору комнаты

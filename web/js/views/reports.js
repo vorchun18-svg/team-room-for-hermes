@@ -104,8 +104,8 @@ function reportCard(item, roomId, titles = {}) {
           class: 'rep-card__src small',
           href: '#/room/' + encodeURIComponent(roomId) + '/request/' + encodeURIComponent(rid),
           title: sourceHint(ridTitle, rid),
-        }, icon('comment-discussion', { size: 11 }), sourceTitle(ridTitle, rid) || 'запрос-источник')
-        : h('span', { class: 'small muted' }, 'Без запроса-источника'),
+        }, icon('comment-discussion', { size: 11 }), sourceTitle(ridTitle, rid) || 'задача-источник')
+        : h('span', { class: 'small muted' }, 'Без задачи-источника'),
       h('span', { class: 'spacer' }),
       h('a', { class: 'rep-card__open small', href }, 'Открыть', icon('arrow-right', { size: 11 })),
     ),
@@ -140,11 +140,11 @@ function resultRow(item, roomId) {
   const href = '#/room/' + encodeURIComponent(roomId) + '/request/' + encodeURIComponent(item.id);
   const reports = Array.isArray(item.reports) ? item.reports : [];
   const meta = h('div', { class: 'result-row__meta small muted' },
-    h('span', { title: 'Когда запрос завершён' },
+    h('span', { title: 'Когда задача завершена' },
       item.finished_at ? 'Завершён ' + fmtDate(item.finished_at) : 'Завершён'),
     reports.length ? h('span', null, ' · отчётов: ' + reports.length) : null,
     item.delo ? h('span', null, ' · дело: ' + String(item.delo.title || item.delo.id)) : null,
-    item.short ? null : h('span', null, ' · итог — на странице запроса'));
+    item.short ? null : h('span', null, ' · итог — на странице задачи'));
   return h('article', { class: 'result-row', dataset: { request: String(item.id || '') } },
     h('div', { class: 'result-row__main' },
       h('a', { class: 'result-row__title', href, title: item.title || item.id },
@@ -160,7 +160,7 @@ function resultRow(item, roomId) {
         title: (rep.kind === 'html' ? 'Страница-отчёт: ' : 'Интерактивный отчёт: ') + String(rep.title || rep.key),
       }, icon(rep.kind === 'html' ? 'globe' : 'graph', { size: 11 }), String(rep.title || rep.key))),
       h('span', { class: 'spacer' }),
-      h('a', { class: 'btn btn--ghost btn--sm', href }, 'Открыть запрос', icon('arrow-right', { size: 11 }))));
+      h('a', { class: 'btn btn--ghost btn--sm', href }, 'Открыть задачу', icon('arrow-right', { size: 11 }))));
 }
 
 /** Заголовок подраздела внутри «Результатов». */
@@ -185,7 +185,7 @@ async function mountGallery(el, ctx, roomId) {
 
   let items = [];
   let titles = {};
-  let results = null;            // итоги завершённых запросов (W29-P6)
+  let results = null;            // итоги завершённых задач (W29-P6)
   let signature = '';
   let stopped = false;
   let loading = true;
@@ -239,8 +239,8 @@ async function mountGallery(el, ctx, roomId) {
     if (!loading && !error) {
       head.appendChild(h('p', { class: 'rep__hint small muted' },
         requestId
-          ? 'Здесь только итоги этого запроса. Чип выше снимает фильтр — тогда видны результаты всей комнаты.'
-          : 'Итоги всех завершённых запросов комнаты: короткий вывод, файлы и отчёты. '
+          ? 'Здесь только итоги этой задачи. Чип выше снимает фильтр — тогда видны результаты всей комнаты.'
+          : 'Итоги всех завершённых задач комнаты: короткий вывод, файлы и отчёты. '
             + 'Страницы-отчёты команды открываются на весь экран отдельным блоком.'));
     }
   }
@@ -261,7 +261,7 @@ async function mountGallery(el, ctx, roomId) {
 
     // 1) Итоги завершённых запросов — главное содержимое вкладки.
     if (finished.length) {
-      body.appendChild(subHeader('Итоги запросов', finished.length));
+      body.appendChild(subHeader('Итоги задач', finished.length));
       const list = h('div', { class: 'result-list', role: 'list' });
       for (const item of finished) {
         const row = resultRow(item, roomId);
@@ -288,8 +288,8 @@ async function mountGallery(el, ctx, roomId) {
     if (requestId) {
       body.appendChild(emptyState({
         icon: 'report',
-        title: 'У этого запроса итогов пока нет',
-        text: 'Запрос ещё не завершён — результат появится здесь, когда команда закончит. '
+        title: 'У этой задачи итогов пока нет',
+        text: 'Задача ещё не завершена — результат появится здесь, когда команда закончит. '
           + 'Снимите фильтр, чтобы увидеть результаты всей комнаты.',
         action: { label: 'Все результаты комнаты', onclick: clearFilter },
       }));
@@ -297,14 +297,14 @@ async function mountGallery(el, ctx, roomId) {
     }
     body.appendChild(emptyState({
       icon: 'report',
-      title: pending ? 'Результаты появятся после первого завершённого запроса' : 'Результатов пока нет',
+      title: pending ? 'Результаты появятся после первой завершённой задачи' : 'Результатов пока нет',
       text: pending
-        ? 'В работе запросов: ' + pending + '. Как только команда закончит, итог — короткий вывод, '
+        ? 'В работе задач: ' + pending + '. Как только команда закончит, итог — короткий вывод, '
           + 'файлы и отчёты — появится здесь сам, без ваших действий.'
-        : 'Здесь собираются итоги ВСЕХ завершённых запросов комнаты: короткий вывод, файлы, '
-          + 'страницы-отчёты. Начните с запроса — результат придёт сюда сам.',
+        : 'Здесь собираются итоги ВСЕХ завершённых задач комнаты: короткий вывод, файлы, '
+          + 'страницы-отчёты. Начните с задачи — результат придёт сюда сам.',
       action: {
-        label: pending ? 'Открыть текущие запросы' : 'Создать запрос',
+        label: pending ? 'Открыть текущие задачи' : 'Создать задачу',
         onclick: () => {
           location.hash = '#/room/' + encodeURIComponent(roomId) + '/composer';
         },
@@ -494,7 +494,7 @@ async function mountDetail(el, ctx, roomId, key) {
       tools.push(h('a', {
         class: 'btn btn--ghost btn--sm',
         href: '/api/export/request/' + encodeURIComponent(meta.request_id) + '.html',
-        title: 'Скачать автономный HTML со всем запросом и отчётом',
+        title: 'Скачать автономный HTML со всей задачей и отчётом',
         download: 'request-' + String(meta.request_id) + '.html',
       }, icon('cloud-upload', { size: 12 }), 'Экспорт HTML'));
     }

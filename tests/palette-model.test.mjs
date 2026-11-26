@@ -171,7 +171,7 @@ test('composeList: ≥2 символов добавляет hits, сгруппи
     assert.ok(ids.includes(id), 'группа ' + id);
   }
   const titles = groups.map((g) => g.title);
-  assert.ok(titles.includes('Запросы') && titles.includes('Решения') && titles.includes('Результаты'));
+  assert.ok(titles.includes('Задачи') && titles.includes('Решения') && titles.includes('Результаты'));
 });
 
 test('composeList: hits с external не теряются, даже если не совпали с query', () => {
@@ -234,7 +234,7 @@ test('routeForHit: канонические маршруты по типу', () 
 });
 
 test('sectionForKind: русские заголовки, неизвестное — «Найдено»', () => {
-  assert.equal(sectionForKind('request').title, 'Запросы');
+  assert.equal(sectionForKind('request').title, 'Задачи');
   assert.equal(sectionForKind('decision').title, 'Решения');
   assert.equal(sectionForKind('backlog').title, 'Бэклог');
   assert.equal(sectionForKind('journal').title, 'Журнал');

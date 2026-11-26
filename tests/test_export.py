@@ -136,9 +136,9 @@ class MarkdownTest(unittest.TestCase):
 
     def test_minimal_detail(self):
         md = export.export_request_md({})
-        self.assertTrue(md.startswith("# Запрос"))
+        self.assertTrue(md.startswith("# Задача"))
         md = export.export_request_md(None)
-        self.assertIn("# Запрос", md)
+        self.assertIn("# Задача", md)
 
     def test_no_python_none_leaks(self):
         detail = make_detail()

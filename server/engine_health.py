@@ -126,4 +126,4 @@ def dispatcher_status(cfg) -> dict:
         return {"ok": False, "running": False, "pid": pid, "state": "stale", "age_s": age_s, "updated_at": updated_at,
                 "warning": "Шлюз Hermes жив, но состояние не обновлялось больше 120 с — диспетчер, похоже, завис."}
     return {"ok": False, "running": False, "pid": pid, "state": "stopped", "age_s": age_s, "updated_at": updated_at,
-            "warning": "Шлюз Hermes не запущен (gateway.pid нет) — запросы не начнут работу сами."}
+            "warning": "Шлюз Hermes не запущен (gateway.pid нет) — задачи не начнут работу сами."}

@@ -36,7 +36,7 @@ const FILTERS = [
 /** Примеры формулировок для пустой ленты (по комнате). */
 const EXAMPLES = {
   cafe: [
-    'Собери себестоимость набора из 6 суфле по каналам и предложи цену продажи',
+    'Собери себестоимость набора из 6 пирожных по каналам и предложи цену продажи',
     'Что мешает запуску сейчас: разбери блокеры по этапам и скажи, что делать первым',
     'Сравни «Едок» и «Развоз» для первых 100 наборов: комиссии, охват, сроки',
   ],
@@ -126,7 +126,7 @@ export function createFeed(opts) {
   const feedNote = h('div', { class: 'cmp-feed__note small muted' });
   const searchInput = h('input', {
     class: 'input', type: 'search', placeholder: 'Поиск по заголовку',
-    'aria-label': 'Поиск по заголовку запроса',
+    'aria-label': 'Поиск по заголовку задачи',
   });
   const searchBox = h('div', { class: 'search-field cmp-search' }, icon('search', { size: 13 }), searchInput);
   const filtersHost = h('div', { class: 'cmp-filters' });
@@ -136,17 +136,17 @@ export function createFeed(opts) {
   });
   // W29-P4: «Выбрать» — массовый уход в архив. Вторая кнопка в шапке ленты.
   const selectBtn = iconButton({
-    icon: 'check-all', size: 'sm', title: 'Выбрать несколько запросов',
+    icon: 'check-all', size: 'sm', title: 'Выбрать несколько задач',
     onclick: () => toggleSelect(),
   });
 
-  const feedHead = sectionHeader('Запросы', { count: 0, actions: [selectBtn, refreshBtn] });
+  const feedHead = sectionHeader('Задачи', { count: 0, actions: [selectBtn, refreshBtn] });
   const feedCount = feedHead.querySelector('.section-header__count');
   if (feedCount) {
     feedCount.classList.add('count-pill');
     // B16: у числа есть пояснение «что считается».
-    feedCount.title = 'Запросы комнаты: считаются все, кроме архива';
-    feedCount.setAttribute('aria-label', 'Запросы комнаты: считаются все, кроме архива');
+    feedCount.title = 'Задачи комнаты: считаются все, кроме архива';
+    feedCount.setAttribute('aria-label', 'Задачи комнаты: считаются все, кроме архива');
   }
   const toolbar = h('div', { class: 'cmp-toolbar' }, filtersHost, searchBox);
   // W29-P4: строка массового выбора и строка отмены архивации (10 секунд).
@@ -159,7 +159,7 @@ export function createFeed(opts) {
   /* кандидаты */
   const candToggle = h('button', { class: 'cmp-cands__toggle', type: 'button', 'aria-expanded': 'false' },
     icon('chevron-right', { size: 13, className: 'cmp-cands__chev' }),
-    h('span', null, 'Найденные на доске запросы'),
+    h('span', null, 'Найденные на доске задачи'),
     h('span', { class: 'count-pill count-pill--quiet cmp-cands__count hidden' }, '0'));
   const candBody = h('div', { class: 'cmp-cands__body hidden' });
   const cands = h('section', { class: 'cmp-cands' }, candToggle, candBody);
@@ -187,7 +187,7 @@ export function createFeed(opts) {
     btn.setAttribute('aria-expanded', 'true');
 
     const closeOnPick = (fn) => () => { closeMenu(); fn(); };
-    const menu = h('div', { class: 'popover menu cmp-menu', role: 'menu', 'aria-label': 'Действия с запросом' },
+    const menu = h('div', { class: 'popover menu cmp-menu', role: 'menu', 'aria-label': 'Действия с задачей' },
       h('button', { class: 'menu__item', type: 'button', role: 'menuitem', onclick: closeOnPick(() => cloneRequest(item)) },
         icon('copy', { size: 13 }), 'Клонировать'),
       h('div', { class: 'menu__sep' }),
@@ -213,10 +213,10 @@ export function createFeed(opts) {
       }
       if (!text) text = String(item.preview || '');
       if (text) insertText(text);
-      toast(text ? 'Копия создана — текст в поле запроса' : 'Копия создана', 'ok');
+      toast(text ? 'Копия создана — текст в поле задачи' : 'Копия создана', 'ok');
       await loadFeed();
     } catch (err) {
-      toast(err && err.message ? err.message : 'Не удалось клонировать запрос', 'danger');
+      toast(err && err.message ? err.message : 'Не удалось клонировать задачу', 'danger');
     }
   }
 
@@ -246,16 +246,16 @@ export function createFeed(opts) {
     undo.offer({
       // Один предмет — одна отмена: повтор по тем же запросам закрывает прежнюю.
       key: 'archive:' + roomId + ':' + ids.slice().sort().join(','),
-      text: ids.length === 1 ? 'Запрос в архиве' : 'Запросы в архиве: ' + ids.length,
+      text: ids.length === 1 ? 'Задача в архиве' : 'Задачи в архиве: ' + ids.length,
       action: async () => {
         try {
           const res = await api.post('/api/rooms/' + enc(roomId) + '/archive/requests', { root_ids: ids });
           if (res && res.failed) {
             const first = (res.results || []).find((r) => r && !r.ok);
-            toast(first && first.message ? first.message : 'Не все запросы убраны в архив', 'danger');
+            toast(first && first.message ? first.message : 'Не все задачи убраны в архив', 'danger');
           } else {
-            toast(ids.length === 1 ? 'Запрос в архиве — вернуть можно в «Архиве»'
-              : 'Запросы в архиве: ' + ids.length, 'ok');
+            toast(ids.length === 1 ? 'Задача в архиве — вернуть можно в «Архиве»'
+              : 'Задачи в архиве: ' + ids.length, 'ok');
           }
         } catch (err) {
           toast(err && err.message ? err.message : 'Не удалось убрать в архив', 'danger');
@@ -263,7 +263,7 @@ export function createFeed(opts) {
         state.select = false;
         await loadFeed();
       },
-      onUndo: () => { toast('Запрос остался в ленте — ничего не изменилось', 'ok'); },
+      onUndo: () => { toast('Задача остался в ленте — ничего не изменилось', 'ok'); },
     });
   }
 
@@ -288,13 +288,13 @@ export function createFeed(opts) {
       if (!items.length) return;
       const ok = await confirmDialog({
         title: 'Убрать в архив ' + items.length + '?',
-        text: 'Работа по выбранным запросам остановится. Вернуть можно сразу после — 10 секунд.',
+        text: 'Работа по выбранным задачам остановится. Вернуть можно сразу после — 10 секунд.',
         confirmLabel: 'В архив', cancelLabel: 'Отмена', danger: true,
       });
       if (ok) await archiveMany(items);
     });
     bulkHost.append(
-      h('span', { class: 'small muted' }, n ? 'Выбрано: ' + n : 'Отметьте запросы, которые не актуальны'),
+      h('span', { class: 'small muted' }, n ? 'Выбрано: ' + n : 'Отметьте задачи, которые не актуальны'),
       h('div', { class: 'row row--tight' }, toArchive,
         h('button', { class: 'btn btn--ghost btn--sm', type: 'button', onclick: () => toggleSelect() }, 'Отмена')));
   }
@@ -395,10 +395,10 @@ export function createFeed(opts) {
       }, h('div', { class: 'progress__bar', style: { width: pct + '%' } })));
       row.appendChild(h('span', {
         class: 'cmp-card__count small muted nowrap tnum',
-        title: 'Выполнено ' + done + ' работ из ' + total + ' — так команда разложила этот запрос',
+        title: 'Выполнено ' + done + ' работ из ' + total + ' — так команда разложила эту задачу',
       }, done + '/' + total));
     }
-    let now = 'руководитель комнаты разбирает запрос';
+    let now = 'руководитель комнаты разбирает задачу';
     if (st === 'reviewing') now = 'критик проверяет свод';
     else if (st === 'synthesizing') now = 'руководитель комнаты сводит ответ';
     else if (detail && detail.names.length) now = detail.names.map(personName).join(', ');
@@ -457,7 +457,7 @@ export function createFeed(opts) {
 
     const main = h('a', {
       class: 'cmp-card__main', href, 'data-act': 'open',
-      'aria-label': short + ' — открыть страницу запроса',
+      'aria-label': short + ' — открыть страницу задачи',
     },
     h('div', { class: 'cmp-card__row' },
       h('h3', { class: 'cmp-card__title', title: titleHint(item) || short }, short)),
@@ -550,8 +550,8 @@ export function createFeed(opts) {
     } else if (!state.requests.length) {
       listEl.appendChild(emptyState({
         icon: 'comment-discussion',
-        title: 'Пока ни одного запроса',
-        text: 'Напишите запрос выше — руководитель комнаты разложит его по команде. Можно начать с примера:',
+        title: 'Пока ни одной задачи',
+        text: 'Напишите задачу выше — руководитель комнаты разложит её по команде. Можно начать с примера:',
         action: examples.map((text) => ({
           label: text,
           variant: 'secondary',
@@ -561,8 +561,8 @@ export function createFeed(opts) {
     } else if (!items.length) {
       const total = state.requests.length;
       const text = state.query.trim()
-        ? 'По запросу «' + state.query.trim() + '» ничего не нашлось среди ' + total + ' ' + fromForm(total, ['запрос', 'запроса', 'запросов']) + '.'
-        : 'Под этот фильтр не подходит ни один из ' + total + ' ' + fromForm(total, ['запрос', 'запроса', 'запросов']) + '.';
+        ? 'По задаче «' + state.query.trim() + '» ничего не нашлось среди ' + total + ' ' + fromForm(total, ['задача', 'задачи', 'задач']) + '.'
+        : 'Под этот фильтр не подходит ни один из ' + total + ' ' + fromForm(total, ['задача', 'задачи', 'задач']) + '.';
       listEl.appendChild(emptyState({
         icon: 'filter',
         title: 'Ничего не найдено',
@@ -582,7 +582,7 @@ export function createFeed(opts) {
     const active = state.requests.filter((i) => ACTIVE.has(String(i.status))).length;
     const parts = [];
     if (items.length !== state.requests.length) parts.push('показано ' + items.length + ' из ' + state.requests.length);
-    if (active) parts.push(active === 1 ? 'идёт 1 запрос' : 'идут ' + active + ' ' + plural(active, ['запрос', 'запроса', 'запросов']));
+    if (active) parts.push(active === 1 ? 'идёт 1 задача' : 'идут ' + active + ' ' + plural(active, ['задача', 'задачи', 'задач']));
     return parts.join(' · ');
   }
 

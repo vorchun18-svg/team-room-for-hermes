@@ -184,7 +184,7 @@ def _join_win(base: str, part: str) -> str:
 
 def _win_safe(name: str) -> str:
     text = _WIN_BAD_RE.sub("-", str(name or ""))
-    return _SPACE_RE.sub(" ", text).strip(" .") or "Запрос"
+    return _SPACE_RE.sub(" ", text).strip(" .") or "Задача"
 
 
 def _today() -> str:
@@ -350,7 +350,7 @@ def _summary_line(cfg, room_id: str, rec: dict, note_path: str) -> str:
         return "Итог: " + from_note
     first = str(rec.get("text") or "").strip().splitlines()
     if first:
-        return "Запрос: " + _one_line(first[0], MAX_SUMMARY_LINE)
+        return "Задача: " + _one_line(first[0], MAX_SUMMARY_LINE)
     return "Итог: пока не записан."
 
 
@@ -400,7 +400,7 @@ def similar_requests(cfg, room_id: str, text: str, limit: int = DEFAULT_LIMIT) -
 # ---------------------------------------------------------------- правило файлов
 def _request_subdir(text: str) -> str:
     """Подпапка запроса: `project_dir.request_subdir`, иначе `<дата> <название>`."""
-    title = _one_line(text, 60) or "Запрос"
+    title = _one_line(text, 60) or "Задача"
     try:
         from . import project_dir as pd_mod
     except Exception:  # noqa: BLE001 - модуль папки проекта пишет сосед
@@ -503,8 +503,29 @@ def notes_section(cfg, room, limit: int = MAX_NOTES_CHARS) -> str:
         return ""
 
 
+def accepted_section(cfg, room, limit: int = 1200) -> str:
+    """Раздел «Принятые задачи комнаты» (W30-D1): итоги уже принятых задач.
+
+    Собирает ``passports.summary_text`` — паспорта принятых задач, ≤ ``limit``
+    знаков. Нет принятых задач/модуля — пустая строка: блок контекста выглядит
+    как раньше. Ошибки не мешают созданию запроса.
+    """
+    room_id = str((room or {}).get("id") or "") if isinstance(room, dict) else str(room or "")
+    if not room_id:
+        return ""
+    try:
+        try:
+            from . import passports as passports_mod
+        except ImportError:  # pragma: no cover - плоский импорт
+            import passports as passports_mod      # type: ignore
+        got = passports_mod.summary_text(cfg, room_id, limit)
+        return _scrub(got).strip() if isinstance(got, str) else ""
+    except Exception:  # noqa: BLE001 - память комнаты не должна ломать карточку
+        return ""
+
+
 def _render(room_id: str, title: str, desc: str, summary: str, summary_path: str,
-            files: list, similar: list, rule: str, notes: str = "") -> str:
+            files: list, similar: list, rule: str, notes: str = "", accepted: str = "") -> str:
     lines = [CONTEXT_OPEN]
     head = f"Комната: «{title}»" if title else "Комната"
     if room_id:
@@ -519,13 +540,19 @@ def _render(room_id: str, title: str, desc: str, summary: str, summary_path: str
         lines.extend(summary.splitlines())
     elif summary_path:
         lines.append(f"Выжимка проекта пока пуста — CONTEXT.md: {summary_path} "
-                     f"(появится после первого разбора запросов).")
+                     f"(появится после первого разбора задач).")
     else:
         lines.append("Выжимка проекта пока пуста.")
 
     if notes:
         lines.append("")
         lines.extend(notes.splitlines())
+
+    # W30-D1: итоги принятых задач комнаты — краткая справка в контекст новых
+    # задач (≤ 1200 знаков, последние по дате). Паспорт собран без модели.
+    if accepted:
+        lines.append("")
+        lines.extend(accepted.splitlines())
 
     lines.append("")
     if files:
@@ -536,14 +563,14 @@ def _render(room_id: str, title: str, desc: str, summary: str, summary_path: str
 
     lines.append("")
     if similar:
-        lines.append("Похожие прошлые запросы (не начинай с нуля — посмотри, что уже решили):")
+        lines.append("Похожие прошлые задачи (не начинай с нуля — посмотри, что уже решили):")
         for index, item in enumerate(similar, 1):
             row = f"{index}. «{item['title']}» — {item['summary_line']}"
             if item.get("note_path"):
                 row += f" — {item['note_path']}"
             lines.append(row)
     else:
-        lines.append("Похожих прошлых запросов не нашлось — это первый запрос по этой теме.")
+        lines.append("Похожих прошлых задач не нашлось — это первый запрос по этой теме.")
 
     lines.append("")
     lines.append(INSTRUCTION)
@@ -571,6 +598,7 @@ def build_context_block(cfg, room, text) -> str:
     similar = similar_requests(cfg, room_id, text, DEFAULT_LIMIT) if room_id else []
     rule = files_rule(cfg, room, text)
     notes = notes_section(cfg, room, MAX_NOTES_CHARS)
+    accepted = accepted_section(cfg, room) if room_id else ""
 
     counts = sorted({len(similar), min(3, len(similar)), min(2, len(similar)), min(1, len(similar)), 0},
                     reverse=True)
@@ -584,7 +612,7 @@ def build_context_block(cfg, room, text) -> str:
         for count in counts:
             for cap in caps:
                 block = _render(room_id, title, desc, _clamp(summary, cap), summary_path,
-                                files, similar[:count], rule, piece)
+                                files, similar[:count], rule, piece, accepted)
                 if len(block) <= MAX_BLOCK_CHARS:
                     return block
     return block[: MAX_BLOCK_CHARS - 1].rstrip() + "…"

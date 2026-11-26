@@ -170,7 +170,7 @@ export async function applyStepAction(opts) {
       + encodeURIComponent(itemId), body);
   };
   const actionCall = (body) => {
-    if (!rid) throw new Error('Шаг не привязан к запросу');
+    if (!rid) throw new Error('Шаг не привязан к задаче');
     return api.post('/api/requests/' + encodeURIComponent(rid) + '/actions',
       Object.assign({ step_id: stepId }, body));
   };
@@ -313,7 +313,7 @@ export function openStepQueue(opts) {
       }, label));
     }
     acts.appendChild(h('a', { class: 'btn btn--ghost btn--sm stepq__open', href: row.href },
-      'Открыть запрос', icon('arrow-right', { size: 12 })));
+      'Открыть задачу', icon('arrow-right', { size: 12 })));
 
     foot.appendChild(h('button', {
       class: 'btn btn--ghost btn--sm', type: 'button', 'data-stepq-skip': '',

@@ -510,9 +510,9 @@ export async function mount(el, ctx) {
   async function rebuildPlan() {
     if (state.planBusy) return;
     const ok = await confirmDialog({
-      title: 'Собрать карту из запросов комнаты?',
-      text: 'Руководитель комнаты посмотрит уже сделанные запросы и предложит карту заново. '
-        + 'Ответ появится на странице нового запроса.',
+      title: 'Собрать карту из задач комнаты?',
+      text: 'Руководитель комнаты посмотрит уже сделанные задачи и предложит карту заново. '
+        + 'Ответ появится на странице новой задачи.',
       confirmLabel: 'Собрать карту',
       cancelLabel: 'Отмена',
     });
@@ -522,7 +522,7 @@ export async function mount(el, ctx) {
       const res = await api.post(`${planPath}/rebuild`, {});
       const req = res && (res.request || res);
       const rid = req && (req.id || req.root_id);
-      toast('Запрос «Собрать карту» отправлен руководителю комнаты', 'ok');
+      toast('Задача «Собрать карту» отправлена руководителю комнаты', 'ok');
       if (rid) navigate(requestHref(rid));
       else await loadPlan({ silent: true });
     } catch (err) {
@@ -686,7 +686,7 @@ export async function mount(el, ctx) {
     const stepId = String(itemId || '').includes(':')
       ? String(itemId).split(':').pop() : String(itemId || '');
     if (!rid) {
-      toast('У шага нет запроса-источника — открыть окно нельзя', 'warn');
+      toast('У шага нет задачи-источника — открыть окно нельзя', 'warn');
       return;
     }
     openStepDialog({
@@ -733,7 +733,7 @@ export async function mount(el, ctx) {
             ? h('span', { class: 'rm-detail__source' },
               'источник: ',
               h('a', { class: 'rm-source', href: requestHref(source.requestId), title: sourceHint(sourceName, source.requestId) },
-                icon('link-external', { size: 10 }), sourceName || 'запрос'))
+                icon('link-external', { size: 10 }), sourceName || 'задача'))
             : null),
         related.length
           ? h('div', { class: 'rm-detail__related' },
@@ -747,7 +747,7 @@ export async function mount(el, ctx) {
         steps.length
           ? h('div', { class: 'rm-detail__related' },
             h('div', { class: 'rm-detail__subtitle small muted' },
-              'Шаги из запроса', h('span', { class: 'tnum' }, ' · ' + steps.length)),
+              'Шаги из задачи', h('span', { class: 'tnum' }, ' · ' + steps.length)),
             h('ul', { class: 'rm-related-list' }, steps.map((item) => h('li', { class: 'rm-related' },
               h('span', { class: 'chip chip--' + (item.status === 'done' ? 'ok' : 'outline') },
                 item.kind === 'future_question' ? 'вопрос' : 'шаг'),
@@ -891,7 +891,7 @@ export async function mount(el, ctx) {
   function buildPhasesButton(label) {
     const btn = h('button', {
       class: 'btn btn--primary btn--sm', type: 'button',
-      title: 'Собрать этапы карты по завершённым запросам комнаты — без запуска модели',
+      title: 'Собрать этапы карты по завершённым задачам комнаты — без запуска модели',
       onclick: async () => {
         btn.disabled = true;
         try {
@@ -906,7 +906,7 @@ export async function mount(el, ctx) {
           btn.disabled = false;
         }
       },
-    }, icon('map', { size: 13 }), label || 'Собрать этапы по выполненным запросам');
+    }, icon('map', { size: 13 }), label || 'Собрать этапы по выполненным задачам');
     return btn;
   }
 
@@ -952,7 +952,7 @@ export async function mount(el, ctx) {
         nextAction(plan.primary.key, plan.primary.label),
         plan.secondary ? nextAction(plan.secondary.key, plan.secondary.label, false) : null));
       if (plan.note) body.appendChild(h('p', { class: 'rm-next__note small muted' }, plan.note));
-      if (block.steps.length) body.appendChild(nextStepsList(block.steps, 'Шаги из запросов'));
+      if (block.steps.length) body.appendChild(nextStepsList(block.steps, 'Шаги из задач'));
       return h('section', { class: 'card rm-next rm-next--empty' },
         h('div', { class: 'card__head' },
           h('div', { class: 'card__title' }, 'Что дальше'),
@@ -1136,7 +1136,7 @@ export async function mount(el, ctx) {
     if (state.busy) return;
     const ok = await confirmDialog({
       title: 'Свести проект в систему?',
-      text: 'Руководитель комнаты получит запрос «обнови STATE.md»: соберёт этапы, решения и шаги в актуальный файл зеркала. Ответ появится на странице запроса.',
+      text: 'Руководитель комнаты получит задачу «обнови STATE.md»: соберёт этапы, решения и шаги в актуальный файл зеркала. Ответ появится на странице задачи.',
       confirmLabel: 'Отправить руководителю комнаты',
       cancelLabel: 'Отмена',
     });
@@ -1145,10 +1145,10 @@ export async function mount(el, ctx) {
     try {
       const res = await api.post(`/api/rooms/${encodeURIComponent(roomId)}/consolidate`, {});
       const rootId = (res && (res.root_id || (res.request && res.request.id))) || null;
-      toast(rootId ? 'Запрос руководителю комнаты создан: обновит STATE.md' : 'Запрос руководителю комнаты создан', 'ok');
+      toast(rootId ? 'Задача руководителю комнаты создана: обновит STATE.md' : 'Задача руководителю комнаты создана', 'ok');
       await load({ silent: true });
     } catch (err) {
-      toast(err && err.message ? err.message : 'Не удалось создать запрос', 'danger');
+      toast(err && err.message ? err.message : 'Не удалось создать задачу', 'danger');
     } finally {
       state.busy = false;
     }

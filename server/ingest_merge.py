@@ -300,7 +300,7 @@ def _journal_events(detail: dict, extracted: dict, root_id: str, title: str, at:
         events.append({
             "at": _as_int(detail.get("created_at")) or at, "kind": "request_created",
             "request_id": root_id, "task_id": root_id, "actor": "mikhail",
-            "text": f"Новый запрос: «{title}»", "detail": {"mode": detail.get("mode") or "auto"},
+            "text": f"Новая задача: «{title}»", "detail": {"mode": detail.get("mode") or "auto"},
         })
     version = _as_int(syn.get("version")) or 1
     if syn.get("state") == "ready" or syn.get("text_md"):
@@ -308,7 +308,7 @@ def _journal_events(detail: dict, extracted: dict, root_id: str, title: str, at:
         events.append({
             "at": at, "kind": "request_done", "request_id": root_id, "task_id": root_id,
             "actor": str(syn.get("author") or "system"),
-            "text": f"Готов ответ по запросу «{title}»{suffix}",
+            "text": f"Готов ответ по задаче «{title}»{suffix}",
             "detail": {"version": version, "source_task": syn.get("source_task")},
         })
     critic = detail.get("critic") or {}

@@ -122,6 +122,39 @@ def _patch_record(cfg, room_id: str, root_id: str, record: dict, patch: dict) ->
         pass
 
 
+def stop_work(cfg, room: dict, root_id: str, *, reason: str = "") -> dict:
+    """Остановить карточки запроса, которые ещё идут (общий механизм W23-AT1).
+
+    Нужно «Принятой» задаче (W30-D1): принятие замораживает работу так же, как
+    архив, но статус карточек не меняется на ``archived`` — поэтому вместо
+    глагола ``archive`` останавливаем только те карточки, на которых ещё может
+    стоять модель (``running``/``ready``). Возвращает ``{stopped, failed}``:
+    частичный сбой не отменяет остановку остальных и виден вызывающему коду.
+
+    Уже завершённые карточки не трогаются: переписывать итог принятой задачи
+    нельзя. Если останавливать нечего — честный пустой список, без ошибки.
+    """
+    room = room if isinstance(room, dict) else {}
+    board = str(room.get("board") or getattr(cfg, "board", "") or "team")
+    root_id = str(root_id or "")
+    if not root_id:
+        raise _write.EngineWriteError("bad_request", "Не передана задача для остановки")
+    ids = sorted(_write.tree_ids(cfg, board, root_id))
+    states = _read.request_states(cfg, board, ids) or {}
+    stopped: list = []
+    failed: list = []
+    for tid in ids:
+        status = str((states.get(tid) or {}).get("status") or "")
+        if status not in ("running", "ready"):
+            continue
+        try:
+            _write.card_stop(cfg, board, tid, reason=reason or "работа остановлена")
+            stopped.append(tid)
+        except Exception:  # noqa: BLE001 — карточка могла успеть завершиться
+            failed.append(tid)
+    return {"stopped": stopped, "failed": failed}
+
+
 def archive_request(cfg, room: dict, record: dict, root_id: str, *, by: str = "",
                     reason: str = "") -> dict:
     """Убрать запрос в архив. Возвращает ``{archived, count, already, prev, at}``."""
@@ -130,13 +163,13 @@ def archive_request(cfg, room: dict, record: dict, root_id: str, *, by: str = ""
     board = str(room.get("board") or getattr(cfg, "board", "") or "team")
     root_id = str(root_id or record.get("root_id") or "")
     if not root_id:
-        raise _write.EngineWriteError("bad_request", "Не передан запрос для архивации")
+        raise _write.EngineWriteError("bad_request", "Не передана задача для архивации")
 
     ids = sorted(_write.tree_ids(cfg, board, root_id))
     before = _db_statuses(cfg, board, ids)
     if before.get(root_id) == "archived":
         return {"archived": [], "count": 0, "already": True, "prev": {}, "at": 0,
-                "message": "Запрос уже в архиве"}
+                "message": "Задача уже в архиве"}
     prev = {tid: before[tid] for tid in ids if before.get(tid) and before[tid] != "archived"}
     # Штатный глагол: Hermes архивирует корень и детей и сам завершает воркер.
     _write.act(cfg, board, root_id, "archive")
@@ -159,14 +192,14 @@ def restore_request(cfg, room: dict, record: dict, root_id: str, *, by: str = ""
     board = str(room.get("board") or getattr(cfg, "board", "") or "team")
     root_id = str(root_id or record.get("root_id") or "")
     if not root_id:
-        raise _write.EngineWriteError("bad_request", "Не передан запрос для возврата")
+        raise _write.EngineWriteError("bad_request", "Не передана задача для возврата")
 
     ids = sorted(_write.tree_ids(cfg, board, root_id))
     states = _read.request_states(cfg, board, ids) or {}
     archived = [tid for tid in ids if str((states.get(tid) or {}).get("status") or "") == "archived"]
     if not archived:
         return {"restored": [], "count": 0, "paused": [], "at": 0,
-                "message": "Запрос не в архиве"}
+                "message": "Задача не в архиве"}
     prev = record.get("archive_prev") if isinstance(record.get("archive_prev"), dict) else {}
     items: list = []
     paused: list = []
@@ -185,7 +218,7 @@ def restore_request(cfg, room: dict, record: dict, root_id: str, *, by: str = ""
             paused.append(tid)
     if not items:
         return {"restored": [], "count": 0, "paused": [], "at": 0,
-                "message": "Запрос уже был в архиве до этого действия"}
+                "message": "Задача уже была в архиве до этого действия"}
 
     try:
         from . import kanban_atomic as _atomic
@@ -195,19 +228,19 @@ def restore_request(cfg, room: dict, record: dict, root_id: str, *, by: str = ""
         res = _atomic.restore(cfg, board, items)
     except _atomic.AtomicError as exc:
         raise _write.EngineWriteError(exc.code or "no_hermes",
-                                      "Не удалось вернуть запрос из архива: %s. "
+                                      "Не удалось вернуть задачу из архива: %s. "
                                       "Повторите позже." % (exc.message or "нет доступа к Hermes"),
                                       detail=dict(getattr(exc, "detail", {}) or {})) from exc
     if not res.get("ok"):
         raise _write.EngineWriteError("conflict",
-                                      "Не удалось вернуть запрос из архива: %s"
+                                      "Не удалось вернуть задачу из архива: %s"
                                       % (res.get("message") or "карточки не на месте"))
     restored = [str(item.get("task_id")) for item in (res.get("restored") or []) if item]
     at = int(time.time())
     _patch_record(cfg, room.get("id"), root_id, record,
                   {"archived_at": 0, "archived_by": "", "archive_prev": {},
                    "restored_at": at, "restored_by": str(by or "")})
-    message = "Запрос возвращён из архива"
+    message = "Задача возвращена из архива"
     if paused:
         message += (" — работа приостановлена: нажмите «Продолжить» там, где нужно "
                     "продолжить, или дайте указание")
@@ -217,4 +250,4 @@ def restore_request(cfg, room: dict, record: dict, root_id: str, *, by: str = ""
 
 __all__ = ["ARCHIVE_LIMIT", "REASON_ARCHIVED", "RESTORE_DONE", "RESTORE_PAUSED",
            "SUGGEST_AFTER_S", "SUGGEST_LIMIT", "AUTO_DEFAULT", "auto_enabled",
-           "suggestions", "archive_info", "archive_request", "restore_request"]
+           "suggestions", "archive_info", "stop_work", "archive_request", "restore_request"]

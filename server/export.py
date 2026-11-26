@@ -80,7 +80,7 @@ def _md_cell(value) -> str:
 
 
 def _title(detail: dict) -> str:
-    return _s(detail.get("title")) or _s(detail.get("id")) or "Запрос"
+    return _s(detail.get("title")) or _s(detail.get("id")) or "Задача"
 
 
 def _status(detail: dict) -> str:
@@ -207,7 +207,7 @@ def export_request_md(detail) -> str:
 
     text = _s(d.get("text"))
     if text:
-        out += ["## Запрос", "", text, ""]
+        out += ["## Задача", "", text, ""]
 
     out += ["## Ответ", ""]
     if syn.get("state") == "ready" and _s(syn.get("text_md")):
@@ -480,7 +480,7 @@ def _report_spec(cfg: Cfg, detail: dict):
 
 def _shell(cfg: Cfg, payload: dict, css: str, mods: dict, order: list, files: dict, has_entry: bool) -> str:
     E = _rk_export()
-    title = payload.get("title") or "Запрос"
+    title = payload.get("title") or "Задача"
     p = ['<!doctype html>\n<html lang="ru" data-theme="auto">\n<head>\n<meta charset="utf-8">\n',
          '<meta name="viewport" content="width=device-width, initial-scale=1">\n',
          '<meta name="color-scheme" content="light dark">\n',

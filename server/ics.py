@@ -134,7 +134,7 @@ def _description(item: dict) -> str:
     if item.get("source_title"):
         parts.append("Источник: " + str(item["source_title"]))
     if item.get("source_request"):
-        parts.append("Запрос: " + str(item["source_request"]))
+        parts.append("Задача: " + str(item["source_request"]))
     return escape_text(" · ".join(parts))
 
 

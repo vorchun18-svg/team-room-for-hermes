@@ -78,7 +78,10 @@ def waiting_items(app, room: dict, rec: dict) -> list[dict]:
                 continue
             out.append({"kind": kind, "id": str(item.get("id") or ""),
                         "text": _item_text(kind, item),
-                        "since": _item_since(item, rec)})
+                        "since": _item_since(item, rec),
+                        # W30-D1: блокирует ли пункт работу — колонка «Ждёт вас»
+                        # на доске задач считает то же, что и страница запроса.
+                        "blocking": bool(item.get("blocking"))})
     # W28-F: заблокированная карточка — тоже «ждёт человека»: у неё есть действие
     # («Ответить, что делать дальше» → `action: unblock`), и вкладка «От вас нужно»
     # считала её всегда, а «Сегодня» — нет. Одно число — один источник: теперь в обоих.
@@ -91,7 +94,9 @@ def waiting_items(app, room: dict, rec: dict) -> list[dict]:
             continue
         out.append({"kind": "blocked", "id": str(node.get("id") or ""),
                     "text": str(node.get("title") or "Заблокированная задача"),
-                    "since": _item_since(node, rec)})
+                    "since": _item_since(node, rec),
+                    # W30-D1: заблокированная карточка блокирует работу — да
+                    "blocking": True})
     return out
 
 

@@ -247,7 +247,7 @@ function guardNote(node, detail) {
   const feed = Array.isArray(detail && detail.model_guard) && detail.model_guard.length
     ? h('button', {
       type: 'button', class: 'btn btn--link btn--sm rp-attempt__link',
-      title: 'Что сделал контроль моделей по этому запросу',
+      title: 'Что сделал контроль моделей по этой задаче',
       onclick: () => {
         const target = typeof document !== 'undefined'
           ? document.querySelector('[data-model-guard="feed"], #model-guard') : null;
@@ -621,7 +621,7 @@ export function renderTree(detail, ctx, opts = {}) {
       emptyState({
         icon: 'type-hierarchy',
         title: 'Задач пока нет',
-        text: 'Руководитель комнаты ещё не разложил запрос на срезы — дерево появится, когда начнётся работа.',
+        text: 'Руководитель комнаты ещё не разложил задачу на срезы — дерево появится, когда начнётся работа.',
       }));
   }
 

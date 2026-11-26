@@ -99,8 +99,8 @@ test('расшифровка склоняется: 1 вопрос, 2 вопро�
 /* --------------------------------------------------------------------- D18 */
 
 test('число с существительным для бейджей', () => {
-  assert.equal(countText(1, COUNT_FORMS.request), '1 запрос');
-  assert.equal(countText(3, COUNT_FORMS.request), '3 запроса');
+  assert.equal(countText(1, COUNT_FORMS.request), '1 задача');
+  assert.equal(countText(3, COUNT_FORMS.request), '3 задачи');
   assert.equal(countText(7, COUNT_FORMS.question), '7 вопросов');
   assert.equal(countText(9, COUNT_FORMS.case), '9 дел');
   assert.equal(countText(0, COUNT_FORMS.case), '0 дел');

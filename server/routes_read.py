@@ -112,6 +112,8 @@ DETAIL_FIELDS = {
     "approvals": "approvals",
     # W23-MG1 §2.5: лента контроля моделей — отдельным блоком (по умолчанию идёт всегда).
     "model_guard": "model_guard",
+    # W30-E §4: «Результаты агентов» — отдельным блоком (`?fields=agent_results`).
+    "agent_results": "agent_results",
 }
 #: поля-ядро (RequestSummary + связи с картой проекта): остаются при любом `fields`
 DETAIL_CORE = frozenset({"id", "room", "title", "title_short", "title_source", "title_locked",
@@ -616,19 +618,39 @@ class ReadRoutes:
                       allowed=sorted(DETAIL_FIELDS))
         detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), rec.get("answers"),
                               include_heartbeat="heartbeat" in include)
+        # W30-D1: «Принята» — до разметки пунктов, чтобы `stale.decorate` закрыл их
+        # с причиной `request_accepted` (один заход на страницу, без моделей).
+        self._accepted_view(room, detail)
         self._ensure_ingested(room, detail)
         self._critic_view(room, rec, detail)          # W13-E §9: режим, ход, страховки
         self._drop_known_critic_question(room, rec, detail)   # §7: не переспрашивать
         detail["thread"] = self._thread(room, rid)
         self._answers_view(room, rec, detail)          # W14-D: ответ ↔ вопрос, шаги
+        self._agent_results_view(room, detail)         # W30-E §4: кто что сделал, файлы, что осталось
         self._detail_view(detail, fields)              # W17-B §5: один источник вопросов, `?fields=`
         self._title_view(detail, rec)                  # W17-B §4: название с приоритетом источников
         self._pin_view(detail, rec)                    # W20-U3: закрепление запроса
         self._svod_view(room, rec, detail)             # W20-S1 §1.1: живой свод + доставка
         self._approvals_view(room, rec, detail)        # W22-AP1 §2.1: разрешения агентам
         self._model_guard_view(room, rec, detail)      # W23-MG1 §2.5: лента контроля моделей
+        self._project_view(room, rid, rec, detail)     # W30-B §2: proposal и подзадачи проекта
         return 200, detail, {"ETag": http_util.etag_of(http_util.json_bytes(detail)),
                              "Cache-Control": "no-cache"}
+
+    def _accepted_view(self, room: dict, detail: dict) -> None:
+        """W30-D1 §3: `accepted`, `accepted_at`, `passport`, `board_stage` в детали.
+
+        Ставится ДО `stale.decorate`: у принятой задачи пункты закрыты с причиной
+        ``request_accepted``, а не «ждёт вас». Ни одного вызова модели и ни одной
+        записи в доску — только чтение файла отметки комнаты.
+        """
+        if not isinstance(detail, dict):
+            return
+        try:
+            self.mod("passports").decorate_detail(self.cfg, room, detail)
+        except Exception as exc:  # noqa: BLE001 - отметка вторична для страницы
+            self.log.warning("принятие %s: %s" % (detail.get("id"), exc))
+            detail.setdefault("accepted", False)
 
     def _model_guard_view(self, room: dict, rec: dict, detail: dict) -> None:
         """W23-MG1 §2.5: `model_guard[]` — что приложение исправило/остановило по запросу.
@@ -742,6 +764,8 @@ class ReadRoutes:
                 detail["open_questions"] = questions
             reactions = mod.reactions_from_thread(detail.get("thread") or [], questions,
                                                   stored, lead=room.get("orchestrator"))
+            # W30-A §5: пояснение руководителя в ветке — прямо под вопросом.
+            explanations = mod.explanations_from_thread(detail.get("thread") or [])
             # W19-D2 (B-21): первая дорога — исход в метаданных реакции
             # (`metadata.reaction.outcome`); комментарий без исхода — запасной.
             meta_reactions = mod.reactions_from_tree(detail.get("tree") or [])
@@ -763,7 +787,20 @@ class ReadRoutes:
                 # W17-B §8 (B-12): реакция — та же функция, что у кнопки «Напомнить»,
                 # с временем ответа и только от руководителя комнаты.
                 mod.apply_question(question, record,
-                                   mod.reaction_for_question(question, reactions))
+                                   mod.reaction_for_question(question, reactions),
+                                   explanation=explanations.get(str(question.get("id"))))
+            # W30-A §1: ОДНА форма вопроса — поля контракта (why/context/options/
+            # blocking/plain_ok), скрытие смысловых дублей и закрытых тем, потолок
+            # блокирующих (3), `questions_summary` и `stage_hint`. После этого
+            # `open_questions` — только видимые вопросы, поэтому счётчики и
+            # «нужен ваш ответ» считают их же (число = число пунктов).
+            if self._has_mod("questions"):
+                try:
+                    self.mod("questions").shape(detail, room_id=str(room.get("id") or ""),
+                                                cfg=self.cfg)
+                    questions = detail.get("open_questions") or questions
+                except Exception as exc:  # noqa: BLE001 - список важнее формы
+                    self.log.warning("вопросы W30 %s: %s" % (detail.get("id"), exc))
             if isinstance(detail.get("questions"), list):
                 detail["questions"] = questions
             # W20-D1 §1.2 (B-38): у сообщения руководителя в ленте — `asks:[id]`

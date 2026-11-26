@@ -28,7 +28,7 @@ export const WIZARD_TITLES = {
   template: 'Дежурство по шаблону',
   proposal: 'Дежурство из предложения',
   delo: 'Регулярная проверка по делу',
-  request: 'Регулярная проверка по запросу',
+  request: 'Регулярная проверка по задаче',
 };
 
 /** Подписи кнопок — одни для интерфейса, подсказок и тестов. */
@@ -409,7 +409,7 @@ export function createWizard(opts = {}) {
 
     if (doc.from) {
       box.appendChild(h('p', { class: 'dw__from small muted dw__field--wide' },
-        (doc.from.kind === 'delo' ? 'Из дела: ' : doc.from.kind === 'request' ? 'Из запроса: ' : 'Из предложения: ')
+        (doc.from.kind === 'delo' ? 'Из дела: ' : doc.from.kind === 'request' ? 'Из задачи: ' : 'Из предложения: ')
         + (doc.from.title || doc.from.id || '')));
     }
     return box;

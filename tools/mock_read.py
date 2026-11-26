@@ -21,6 +21,10 @@ import mock_delos
 import mock_stt
 import mock_duties_fe   # W27-E8: демо-сервер дежурств комнаты
 import mock_recipes      # W29B-Q1: демо-сервер рецептов комнаты
+import mock_w30c         # W30-C: вопросы по-человечески и предложение руководителя
+import mock_w30f        # W30-F: окно выбора файлов, «Запросы без дела»
+import mock_w30d         # W30-D2: доска задач комнаты (канбан)
+import mock_w30e         # W30-E: результаты агентов (блок в задаче)
 from mock_write import collapse_approvals   # W22-ST: строки-группы разрешений (одно правило)
 
 _LABEL_DASH = re.compile("\\s*[\u2014\u2013\u2015\u2012\u2212-]{1,2}\\s*")
@@ -171,6 +175,15 @@ def shift_date(text: str, days: int) -> str:
 
 class MockRead:
     def get(self, path: str, query: dict) -> tuple:
+        hit = mock_w30c.handle(self, "GET", path, query, {})
+        if hit is not None:                 # W30-C: предложение руководителя (демо)
+            return hit
+        hit = mock_w30e.handle(self, "GET", path, query, {})
+        if hit is not None:                 # W30-E: результаты агентов, демо-просмотр
+            return hit
+        hit = mock_w30f.handle(self, "GET", path, query, {})
+        if hit is not None:                 # W30-F: «Запросы без дела» в форме боевого ответа
+            return hit
         hit = mock_batchb.handle(self, "GET", path, query, {})
         if hit is not None:                 # W29-AC2: ручки партии B
             return hit
@@ -196,6 +209,10 @@ class MockRead:
         # W29B-Q1: рецепты комнаты — список, корзина, история запусков, роли.
         if re.fullmatch(r"/api/rooms/[a-z][a-z0-9_-]{1,31}/recipes", path):
             return 200, mock_recipes.listing()
+        # W30-D2: доска «Задачи» комнаты — задачи по стадиям (контракт §3).
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/tasks", path)
+        if m:
+            return 200, mock_w30d.listing(self, m.group(1))
         m = re.fullmatch(r"/api/duties/([A-Za-z0-9_.-]{1,64})/history", path)
         if m:
             return 200, mock_duties_fe.history(self, m.group(1))
@@ -505,7 +522,9 @@ class MockRead:
                      # W22-AP2: запросы разрешения агентам — часть детали запроса.
                      "approvals": "approvals",
                      # W23-MG2: лента «Контроль моделей» — тоже часть детали.
-                     "model_guard": "model_guard"}
+                     "model_guard": "model_guard",
+                     # W30-E: «Результаты агентов» — часть детали (`?fields=agent_results`).
+                     "agent_results": "agent_results"}
     DETAIL_CORE = ("id", "room", "title", "title_short", "title_source", "title_locked",
                    "status", "status_reason", "mode", "critic",
                    "created_at", "started_at", "finished_at", "duration_s", "progress", "assignee",
@@ -616,6 +635,8 @@ class MockRead:
             detail.setdefault("pinned", False)
             detail.setdefault("pinned_at", None)
         detail.pop("questions", None)
+        # W30-E: «Результаты агентов» — как на сервере, из дерева и метаданных.
+        mock_w30e.attach(self, detail)
         # W17-B §7 (B7-3): служебный вопрос «сколько раундов критика» задан настройками
         # комнаты — не показываем его и не держим на нём «ждёт тебя» (как сервер).
         questions = detail.get("open_questions")
@@ -634,6 +655,9 @@ class MockRead:
                     wanted.add(self.DETAIL_FIELDS[name])
             for key in [key for key in detail if key not in wanted]:
                 detail.pop(key, None)
+        # W30-C: демо-задачи пакета C — поля контракта §1–§2 (why/context/options,
+        # пояснение, questions_summary, stage_hint, proposal, project).
+        mock_w30c.overlay(self, detail, rid)
         return detail
 
     def _ensure_svod_live(self, detail: dict) -> None:

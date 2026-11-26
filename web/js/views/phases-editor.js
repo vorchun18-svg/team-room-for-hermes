@@ -747,7 +747,7 @@ export function createProposalWaiting(opts = {}) {
     ? h('button', {
       class: 'btn btn--ghost btn--sm', type: 'button',
       onclick: () => o.onOpen(o.rootId),
-    }, icon('link-external', { size: 12 }), 'Открыть запрос')
+    }, icon('link-external', { size: 12 }), 'Открыть задачу')
     : null;
   return h('section', { class: 'card pe-wait', role: 'status' },
     h('div', { class: 'pe-wait__head' },
@@ -783,7 +783,7 @@ export function createProposeButton(opts = {}) {
         toast('Руководитель уже предложил этапы — сначала примите их или отклоните', 'warn');
         if (typeof o.onSent === 'function') o.onSent(null);
       } else {
-        toast('Запрос руководителю отправлен: он предложит этапы', 'ok');
+        toast('Задача руководителю отправлена: он предложит этапы', 'ok');
         if (typeof o.onSent === 'function') o.onSent(res);
       }
     } catch (err) {

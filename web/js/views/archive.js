@@ -10,7 +10,8 @@
  *         POST /api/rooms/{id}/archive/restore {root_ids}
  */
 
-import { h, debounce, timeAgo, fmtDateTime, fromForm } from '../util.js';
+import { h, debounce, timeAgo, fmtDateTime } from '../util.js';
+import { countNoun } from '../text-ru.js';
 import { icon } from '../icons.js';
 import { ensureCss, emptyState, skeleton, errorBanner, segmented, sectionHeader } from '../ui.js';
 import { statusChip } from '../ui.js';
@@ -50,7 +51,7 @@ export async function mount(el, ctx) {
 
   const search = h('input', {
     class: 'input', type: 'search', autocomplete: 'off',
-    placeholder: 'Поиск по названию и тексту запроса',
+    placeholder: 'Поиск по названию и тексту задачи',
     'aria-label': 'Поиск по архиву',
   });
   const listHost = h('div', { class: 'archive__list', role: 'list' });
@@ -69,8 +70,8 @@ export async function mount(el, ctx) {
   const root = h('div', { class: 'view__inner archive' },
     head,
     h('p', { class: 'archive__intro muted' },
-      'Сюда попадают запросы, убранные как «не актуально». Работа по ним остановлена. ',
-      'Откройте запрос, чтобы прочитать итог, или верните его в работу — данные и ответы сохранятся.'),
+      'Сюда попадают задачи, убранные как «не актуально». Работа по ним остановлена. ',
+      'Откройте задачу, чтобы прочитать итог, или верните его в работу — данные и ответы сохранятся.'),
     toolbar, noteHost, hintHost, actionsHost, listHost);
   el.appendChild(root);
 
@@ -120,8 +121,8 @@ export async function mount(el, ctx) {
     const rid = String(item.id || '');
     const short = titleShortOf(item) || 'Без названия';
     const body = String(item.summary || item.preview || item.text || '').trim();
-    const text = `Итог запроса «${short}»`
-      + (body ? `:\n${body}` : ` — запрос ${rid}`);
+    const text = `Итог задачи «${short}»`
+      + (body ? `:\n${body}` : ` — задача ${rid}`);
     const profile = noteProfile();
     if (!profile) {
       try {
@@ -137,7 +138,7 @@ export async function mount(el, ctx) {
     if (btn) btn.disabled = true;
     try {
       await api.post(`/api/rooms/${enc(roomId)}/agents/${enc(profile)}/notes/entries`,
-        { text, source: 'request', origin: rid, why: 'итог архивного запроса' });
+        { text, source: 'request', origin: rid, why: 'итог архивной задачи' });
       toast('Итог скопирован в заметку', 'ok');
     } catch (err) {
       toast((err && err.message) || 'Не удалось записать итог в заметку', 'danger');
@@ -154,11 +155,11 @@ export async function mount(el, ctx) {
       const res = await api.post(`/api/rooms/${enc(roomId)}/archive/requests`,
         { root_ids: [rootId] });
       const first = ((res && res.results) || []).find((r) => r && !r.ok);
-      if (first) toast(first.message || 'Не удалось убрать запрос в архив', 'danger');
-      else toast('Запрос в архиве — можно вернуть в любой момент', 'ok');
+      if (first) toast(first.message || 'Не удалось убрать задачу в архив', 'danger');
+      else toast('Задача в архиве — можно вернуть в любой момент', 'ok');
       await load();
     } catch (err) {
-      toast((err && err.message) || 'Не удалось убрать запрос в архив', 'danger');
+      toast((err && err.message) || 'Не удалось убрать задачу в архив', 'danger');
       if (btn) btn.disabled = false;
     }
   }
@@ -185,8 +186,7 @@ export async function mount(el, ctx) {
       onclick: () => { state.hintHidden = true; renderHint(); } }, 'Оставить как есть');
     hintHost.appendChild(h('div', { class: 'archive__hintbox' },
       h('div', { class: 'archive__hinthead' },
-        h('strong', null, `Пора в архив: ${data.total} `
-          + fromForm(Number(data.total), ['запрос', 'запроса', 'запросов'])),
+        h('strong', null, `Пора в архив: ${countNoun(Number(data.total), ['задача', 'задачи', 'задач'])}`),
         h('div', { class: 'small muted' },
           `Завершены больше ${Number(data.after_days) || 14} дней назад и с тех пор без событий. `
           + 'Автоархив выключен — решаете вы.')),
@@ -212,12 +212,12 @@ export async function mount(el, ctx) {
       : (prev ? 'работа была остановлена' : '');
     const restoreBtn = h('button', {
       class: 'btn btn--secondary btn--sm archive__restore', type: 'button',
-      title: 'Вернуть запрос в обычный список — без запуска моделей',
+      title: 'Вернуть задачу в обычный список — без запуска моделей',
     }, icon('debug-restart', { size: 12 }), 'Вернуть');
     restoreBtn.addEventListener('click', () => restore([rid], restoreBtn));
     const noteBtn = h('button', {
       class: 'btn btn--ghost btn--sm archive__t-onote', type: 'button',
-      title: 'Скопировать итог запроса записью в заметки комнаты',
+      title: 'Скопировать итог задачи записью в заметки комнаты',
     }, icon('note', { size: 12 }), 'Итог в заметку');
     noteBtn.addEventListener('click', () => { copyToNote(item, noteBtn).catch(() => {}); });
 
@@ -246,7 +246,7 @@ export async function mount(el, ctx) {
     }
     noteHost.textContent = state.q || state.range !== 'all'
       ? `Найдено: ${state.items.length} из ${state.total}`
-      : (state.total ? `Всего в архиве: ${state.total} ${fromForm(state.total, ['запрос', 'запроса', 'запросов'])}` : '');
+      : (state.total ? `Всего в архиве: ${countNoun(state.total, ['задача', 'задачи', 'задач'])}` : '');
     if (!state.loaded && !state.error) {
       listHost.appendChild(skeleton(4));
       renderActions();
@@ -262,11 +262,11 @@ export async function mount(el, ctx) {
         icon: 'archive',
         title: state.total ? 'Ничего не нашлось' : 'Архив пуст',
         text: state.total
-          ? 'В архиве нет запросов под этот поиск или срок. Сбросьте фильтр, чтобы увидеть все.'
-          : 'Убранные запросы («Не актуально → в архив») попадают сюда: их можно прочитать и вернуть.',
+          ? 'В архиве нет задач под этот поиск или срок. Сбросьте фильтр, чтобы увидеть все.'
+          : 'Убранные задачи («Не актуально → в архив») попадают сюда: их можно прочитать и вернуть.',
         action: state.total
           ? { label: 'Сбросить поиск', onclick: () => { search.value = ''; state.q = ''; state.range = 'all'; renderFilters(); load(); } }
-          : { label: 'К запросам комнаты', variant: 'primary',
+          : { label: 'К задачам комнаты', variant: 'primary',
             onclick: () => { if (typeof ctx.navigate === 'function') ctx.navigate(`#/room/${enc(roomId)}/composer`); } },
       }));
       renderActions();
@@ -316,10 +316,10 @@ export async function mount(el, ctx) {
       const res = await api.post(`/api/rooms/${enc(roomId)}/archive/restore`, { root_ids: ids });
       const done = Number((res && res.done) || 0);
       const failed = Number((res && res.failed) || 0);
-      if (done) toast(done === 1 ? 'Запрос возвращён в работу' : `Возвращено запросов: ${done}`, 'ok');
+      if (done) toast(done === 1 ? 'Задача возвращена в работу' : `Возвращено задач: ${done}`, 'ok');
       if (failed) {
         const first = ((res && res.results) || []).find((r) => r && !r.ok);
-        toast(first && first.message ? first.message : 'Не все запросы удалось вернуть', 'danger');
+        toast(first && first.message ? first.message : 'Не все задачи удалось вернуть', 'danger');
       }
       await load();
     } catch (err) {

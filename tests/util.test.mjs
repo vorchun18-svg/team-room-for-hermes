@@ -170,9 +170,9 @@ test('countNoun: число с существительным в имените�
 
 test('errorText: коды API → человеческие фразы, код наружу не идёт', () => {
   assert.deepEqual(errorText({ code: 'not_found', message: 'Not Found' }),
-    { message: 'Запрос не найден — возможно, его убрали в архив.', code: '' });
+    { message: 'Задача не найдена — возможно, её убрали в архив.', code: '' });
   assert.deepEqual(errorText({ code: 'bad_request', message: 'members' }),
-    { message: 'Запрос составлен неверно — обновите страницу и попробуйте снова.', code: '' });
+    { message: 'Задача составлена неверно — обновите страницу и попробуйте снова.', code: '' });
   assert.deepEqual(errorText({ code: 'engine_error', message: 'boom' }),
     { message: 'Движок команды не смог выполнить действие. Попробуйте ещё раз.', code: '' });
   assert.deepEqual(errorText({ code: 'http_500', message: 'x' }),

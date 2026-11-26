@@ -46,20 +46,53 @@ def _next_steps(raw: Any) -> list[dict]:
 def _open_questions(raw: Any) -> list[dict]:
     out: list[dict] = []
     for item in _items(raw):
+        # W30-A §1: поля вопроса есть у КАЖДОЙ формы (строка/словарь) — иначе
+        # нормализация перестаёт быть идемпотентной (второй проход добавил бы их).
+        extra: dict = {"why": None, "context": None, "blocking": False, "options": [],
+                       "explanation": None, "topic_key": None}
         if isinstance(item, dict):
             text = _text(item.get("text") or item.get("question") or item.get("q"))
             target = _text(item.get("for") or item.get("for_") or item.get("to")
                            or item.get("addressee") or item.get("assignee")) or "mikhail"
             answered = bool(item.get("answered"))
+            # W30-A §1: вопрос человеку — с «зачем», «откуда взялось», вариантами
+            # и пометкой «блокирует». Поля необязательные: старый формат работает
+            # как раньше (why/context отсутствуют, plain_ok считает сервер).
+            extra = {"why": _text(item.get("why") or item.get("reason")) or None,
+                     "context": _text(item.get("context") or item.get("background")
+                                      or item.get("origin")) or None,
+                     "blocking": bool(item.get("blocking")),
+                     "options": _question_options(item.get("options")),
+                     "explanation": _text(item.get("explanation")) or None,
+                     "topic_key": _text(item.get("topic_key")) or None}
         elif isinstance(item, str):
             text, target, answered = _text(item), "mikhail", False
         else:
             continue
         if not text:
             continue
-        out.append({"text": text, "for": target, "answered": answered})
+        out.append({"text": text, "for": target, "answered": answered, **extra})
     ids = _dedupe_ids("q", [q["text"] for q in out])
     return [{"id": i, **q} for i, q in zip(ids, out)]
+
+
+def _question_options(raw: Any) -> list[dict]:
+    """Варианты ответа вопроса: ``[{id, label, consequence}]`` (контракт §1)."""
+    out: list[dict] = []
+    for index, item in enumerate(_items(raw)):
+        if isinstance(item, str):
+            label, consequence = _text(item), ""
+        elif isinstance(item, dict):
+            label = _text(item.get("label") or item.get("text") or item.get("title"))
+            consequence = _text(item.get("consequence") or item.get("effect"))
+        else:
+            continue
+        if not label:
+            continue
+        ident = _text(item.get("id")) if isinstance(item, dict) else ""
+        out.append({"id": ident or "o%d" % (index + 1), "label": label,
+                    "consequence": consequence})
+    return out[:4]
 
 
 def _decisions(raw: Any) -> list[dict]:

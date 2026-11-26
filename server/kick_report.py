@@ -124,7 +124,21 @@ def board_state(cfg, board, *, now=None, limit: int = MAX_CARDS) -> dict:
 
     counts = _empty_counts()
     cards = []
+    # W30-D1: карточки принятых задач заморожены — в отчёте диспетчера их нет
+    # (они не «готовы к запуску» и не «зависли»: работа по ним остановлена намеренно).
+    try:
+        try:
+            from . import passports as _passports
+        except ImportError:  # pragma: no cover - плоский импорт
+            import passports as _passports      # type: ignore
+        frozen_cards = _passports.frozen_card_ids(cfg)
+        frozen_roots = set(_passports.frozen_roots(cfg))
+    except Exception:  # noqa: BLE001 - отчёт важнее отметки
+        frozen_cards, frozen_roots = set(), set()
     for row in rows:
+        card_id = str(row["id"] or "")
+        if card_id in frozen_cards or card_id in frozen_roots:
+            continue
         code = _classify(row, stamp)
         if code in counts:
             counts[code] += 1

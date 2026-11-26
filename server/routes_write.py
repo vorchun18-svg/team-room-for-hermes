@@ -13,10 +13,13 @@ try:  # пакетный и «плоский» импорт
     from . import config
     from . import attachments
     from . import answers as answers_mod
+    from . import questions as questions_mod
     from . import decision_registry as dec_reg
     from . import idempotency as idem_mod
     from . import stale as stale_mod
     from . import archive as archive_mod
+    from . import passports as passports_mod
+    from . import tasks_board as board_mod
     from . import engine_write as engine_write_mod
     from .app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM, BACKLOG_STATUSES,
                              MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS, REPORT_KEY_RE, TASK_ID_RE,
@@ -30,10 +33,13 @@ except ImportError:  # pragma: no cover
     import config  # type: ignore
     import attachments  # type: ignore
     import answers as answers_mod  # type: ignore
+    import questions as questions_mod  # type: ignore
     import decision_registry as dec_reg  # type: ignore
     import idempotency as idem_mod  # type: ignore
     import stale as stale_mod  # type: ignore
     import archive as archive_mod  # type: ignore
+    import passports as passports_mod  # type: ignore
+    import tasks_board as board_mod  # type: ignore
     import engine_write as engine_write_mod  # type: ignore
     from app_common import (ACTION_ALLOWED, ACTION_REQUIRED, ACTION_TEXT, AUTHOR_MAXIM,  # type: ignore
                             BACKLOG_STATUSES, MAX_ATTACH, MAX_NOTE, MAX_TEXT, PATCH_FIELDS,
@@ -487,10 +493,10 @@ class WriteRoutes:
     def h_request_create(self, query, body, room_id):
         room = self._room(room_id)
         if room.get("archived"):
-            raise err(409, "Комната в архиве — новые запросы недоступны", room=room_id)
+            raise err(409, "Комната в архиве — новые задачи недоступны", room=room_id)
         text = body.get("text")
         if not isinstance(text, str) or not text.strip():
-            raise err(400, "Текст запроса пуст", field="text")
+            raise err(400, "Текст задачи пуст", field="text")
         if has_nul(text):
             raise err(400, "В тексте есть NUL-байт", field="text")
         if len(text) > MAX_TEXT:
@@ -571,8 +577,31 @@ class WriteRoutes:
             except Exception:  # noqa: BLE001 — защита не должна превращаться в 501
                 state = {}
             if str((state.get(rid) or {}).get("status") or "") == "archived":
-                raise err(409, "Запрос в архиве — сначала верните его из архива",
+                raise err(409, "Задача в архиве — сначала верните её из архива",
                           code="request_archived", rid=rid)
+        # W30-D1: «Принята» — полная заморозка. У принятой задачи разрешены только
+        # «Вернуть в работу», повторное «Принять» (честно ответит «уже принята») и
+        # комментарий человеку: всё остальное запустило бы работу и модели. Проверка
+        # до разбора тела, чтобы ни одно действие не просочилось в движок.
+        if action not in ("accept", "reopen_accepted", "comment"):
+            try:
+                frozen = bool(passports_mod.is_accepted(self.cfg, room, rid))
+            except Exception:  # noqa: BLE001 — защита не должна превращаться в 501
+                frozen = False
+            if frozen:
+                raise err(409, "Задача принята — она заморожена. Нажмите «Вернуть в работу», "
+                               "чтобы продолжить", code="request_accepted", rid=rid)
+        if action in ("accept", "reopen_accepted"):
+            # W30-D1 §3: «Принять» (только из «Готово (по мнению системы)») и
+            # «Вернуть в работу». Логика — `passports.py`, остановка карточек —
+            # общий механизм `archive.stop_work`; здесь только HTTP и паспорт.
+            return self._accept_action(room, rec, rid, body, action)
+        if action in ("answer_option", "answer_custom", "explain_more", "postpone"):
+            # W30-A §1: кнопки-варианты, «Свой ответ», «Ещё пояснить», «Отложить».
+            # Первые три идут в существующий механизм ответа (`answer` /
+            # `need_explanation`) — второго источника ответов не заводим; «Отложить»
+            # пишет только отметку в реестре ответов комнаты.
+            return self._question_w30_action(room, rec, rid, dict(body), action)
         if action in ("hint_agent", "trust_profile"):
             # W28-B (дефект 6): карточка «нельзя штатно» шлёт действие СВОИМ именем —
             # `{action:"hint_agent"|"trust_profile", approval_id, ttl?, note?}`. Раньше
@@ -589,6 +618,11 @@ class WriteRoutes:
             # блокировка «опасной» команды в карточке. Свой обработчик: тело другое
             # (approval_id, decision, note), текст в карточку пишет он же.
             return self._approval_action(room, rec, rid, body)
+        if action == "split_to_tasks":
+            # W30-B §2: «Разбить на задачи» — карточка руководителю с просьбой
+            # предложить ветки-подзадачи (server/routes_projects.py). Сами задачи
+            # появятся только после согласия человека. Ничего не запускается само.
+            return self._split_action(room, rec, rid, body)
         if action in ("dismiss", "restore"):
             # W27-E1 §1: ОДНО действие «Не актуально» / «Вернуть» на все виды пунктов
             # запроса — цель в `target{kind,id}`. Ведёт к существующим механизмам
@@ -678,7 +712,7 @@ class WriteRoutes:
         if action == "decompose":
             status = self._request_status(room, rid, rec)
             if status not in ("queued", None):
-                raise ApiError(409, "Запрос уже разложен или не ждёт декомпозиции", code="conflict",
+                raise ApiError(409, "Задача уже разложена или не ждёт декомпозиции", code="conflict",
                                detail={"reason": "already_decomposed", "status": status,
                                        "rid": str(rid)})
         if action == "answer_remind":          # §2: «Напомнить руководителю»
@@ -852,7 +886,7 @@ class WriteRoutes:
         except Exception:  # noqa: BLE001 — вспомогательная проверка, не повод для 501
             state = {}
         if str((state.get(rid) or {}).get("status") or "") == "archived":
-            raise err(409, "Запрос в архиве — верните его из архива, чтобы продолжить",
+            raise err(409, "Задача в архиве — верните её из архива, чтобы продолжить",
                       code="request_archived", rid=rid)
         text = body.get("text")
         if not isinstance(text, str) or not text.strip():
@@ -1027,7 +1061,7 @@ class WriteRoutes:
             raise ApiError(503, "Не удалось сохранить название — попробуйте ещё раз",
                            detail={"rid": rid, "error": str(exc)[:200]}) from exc
         if not isinstance(updated, dict):
-            raise err(404, "Запрос не найден", rid=rid)
+            raise err(404, "Задача не найдена", rid=rid)
         summary = self._summary_or_local(
             room, rid, rec.get("text") or "", rec.get("title") or "",
             bool(rec.get("critic")), rec.get("mode") or "auto", updated.get("answers"))
@@ -1528,6 +1562,12 @@ class WriteRoutes:
         for question in (detail or {}).get("open_questions") or []:
             if isinstance(question, dict) and str(question.get("id")) == qid:
                 return question
+        # W30-A §1: смысловой дубль скрыт из основного списка, но ответить на него
+        # всё равно можно (например, интерфейс успел показать старую копию) —
+        # ищем и в скрытых, иначе кнопка ответа давала бы 404.
+        for question in (detail or {}).get("hidden_duplicate_questions") or []:
+            if isinstance(question, dict) and str(question.get("id")) == qid:
+                return question
         if not qid:
             return None
         from_comment = answers_mod.questions_from_thread(
@@ -1606,6 +1646,93 @@ class WriteRoutes:
             room, rid, rec.get("text") or "", rec.get("title") or "",
             bool(rec.get("critic")), rec.get("mode") or "auto", answers)
         return 200, payload, {}
+
+    def _question_w30_action(self, room: dict, rec: dict, rid: str, body: dict, action: str):
+        """Действия вопроса по контракту W30-A §1 (кнопки вариантов, свой ответ, отложить).
+
+        Тело: ``{action, question_id, option_id?|text?}``. ``answer_option`` берёт
+        подпись и последствие варианта и отвечает ими (в ветку уходит понятная
+        строка, а не «o2»); ``answer_custom`` — текст человека как есть;
+        ``explain_more`` — просьба пояснить (кнопка «Ещё пояснить»); ``postpone`` —
+        «Отложить»: отметка в реестре ответов, вопрос вернётся сам.
+        """
+        body = body if isinstance(body, dict) else {}
+        qid = str(body.get("question_id") or "").strip()
+        if not qid:
+            raise err(400, "Нужен question_id", field="question_id")
+        if action == "postpone":
+            return self._question_postpone(room, rec, rid, qid, body)
+        answers = rec.get("answers") if isinstance(rec.get("answers"), dict) else {}
+        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), answers)
+        question = self._find_question(room, rid, detail, qid, answers)
+        if question is None:
+            raise err(404, "Вопрос не найден", question_id=qid)
+        forwarded = {"action": "answer", "question_id": qid}
+        if action == "answer_option":
+            text = questions_mod.option_answer(question, body.get("option_id"))
+            if not text:
+                raise err(400, "У вопроса нет такого варианта",
+                          field="option_id", value=str(body.get("option_id") or "")[:60],
+                          options=[str((o or {}).get("id")) for o in question.get("options") or []
+                                   if isinstance(o, dict)])
+            forwarded["text"] = text
+        elif action == "answer_custom":
+            forwarded["text"] = body.get("text")
+        else:                                    # explain_more — «Ещё пояснить»
+            forwarded["need_explanation"] = True
+            if isinstance(body.get("text"), str) and body.get("text").strip():
+                forwarded["text"] = body.get("text")
+        status, payload, headers = self.h_request_actions({}, forwarded, rid)
+        if isinstance(payload, dict):
+            # Что именно нажали — чтобы интерфейс подсветил выбранный вариант.
+            payload["action"] = action
+            payload["question_id"] = qid
+            if action == "answer_option":
+                payload["option_id"] = str(body.get("option_id") or "")
+        return status, payload, headers
+
+    def _question_postpone(self, room: dict, rec: dict, rid: str, qid: str, body: dict):
+        """«Отложить»: вопрос не ждёт сейчас, но и не закрыт — вернётся сам (W30-A §1).
+
+        Срок: ``until`` (unixtime) или ``hours`` (1–168, по умолчанию 24). Вопрос
+        остаётся в списке со своим состоянием: из счётчиков «нужен ответ» он уходит
+        до срока, а «Не актуально»/«Вернуть» остаются рабочими кнопками.
+        """
+        if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", qid):
+            raise err(400, "Некорректный id вопроса", field="question_id", value=qid[:80])
+        answers = dict(rec.get("answers") or {}) if isinstance(rec.get("answers"), dict) else {}
+        detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"), answers)
+        question = self._find_question(room, rid, detail, qid, answers)
+        if question is None:
+            raise err(404, "Вопрос не найден", question_id=qid)
+        if question.get("answered"):
+            raise err(409, "Вопрос уже отвечен", question_id=qid)
+        at = int(time.time())
+        until = body.get("until")
+        if until is not None:
+            if isinstance(until, bool) or not isinstance(until, int) or until <= at:
+                raise err(400, "until — время в будущем (unixtime)", field="until", value=until)
+        else:
+            hours = body.get("hours", 24)
+            if isinstance(hours, bool) or not isinstance(hours, int) or not 1 <= hours <= 168:
+                raise err(400, "hours: целое от 1 до 168", field="hours", value=hours)
+            until = at + hours * 3600
+        record = {"kind": "question", "question_id": qid,
+                  "question_text": str(question.get("text") or ""),
+                  "status": "postponed", "answered": False, "text": "",
+                  "at": at, "postponed_at": at, "postpone_until": until,
+                  "source": question.get("source") or "card"}
+        answers[qid] = record
+        self._save_answers(room, rid, answers)
+        view = answers_mod.apply_question(dict(question), record)
+        when = time.strftime("%d.%m в %H:%M", time.localtime(until))
+        payload = {"ok": True, "action": "postpone", "question_id": qid, "question": view,
+                   "state": "postponed", "postpone_until": until,
+                   "message": "Вопрос отложен до %s. «Вернуть» — если нужно ответить раньше." % when,
+                   "request": self._summary_or_local(
+                       room, rid, rec.get("text") or "", rec.get("title") or "",
+                       bool(rec.get("critic")), rec.get("mode") or "auto", answers)}
+        return 200, payload, {"Cache-Control": "no-store"}
 
     def _stale_action(self, room: dict, rec: dict, rid: str, body: dict, action: str):
         """«Не актуально» / «Вернуть» для вопроса, решения, разрешения и шага (W27-E1 §1).
@@ -1708,6 +1835,18 @@ class WriteRoutes:
                    "source": question.get("source") or "card"}
         answers[qid] = new
         self._save_answers(room, rid, answers)
+        # W30-A §4: «Не актуально» запоминается как ЗАКРЫТАЯ ТЕМА комнаты — об этом
+        # больше не спрашиваем (реестр `question_topics.json` + строка «не
+        # спрашивать об этом» в контракте руководителя). «Вернуть» тему снимает.
+        room_id = str(room.get("id") or "")
+        try:
+            if action == "dismiss":
+                questions_mod.close_topic(self.cfg, room_id, dict(question, request_id=rid),
+                                          reason=reason or "")
+            else:
+                questions_mod.reopen_topic(self.cfg, room_id, dict(question, request_id=rid))
+        except Exception as exc:  # noqa: BLE001 - реестр тем вторичен для действия
+            self.log.warning("тема вопроса %s не записана: %s" % (qid, exc))
         mark = answers_mod.stale_comment(action, "question", qid,
                                          question.get("text") or "", reason or None)
         try:
@@ -1966,7 +2105,7 @@ class WriteRoutes:
         room = self._room(room_id)
         text = body.get("text")
         if text is not None and (not isinstance(text, str) or not text.strip()):
-            raise err(400, "Пустой текст запроса", field="text")
+            raise err(400, "Пустой текст задачи", field="text")
         extra = {"text": text} if isinstance(text, str) and text.strip() else {}
         try:
             with self.engine():
@@ -2170,7 +2309,7 @@ class WriteRoutes:
         dispatcher = self._dispatcher()
         if not dispatcher.get("ok") and not warning:
             warning = {"code": "dispatcher_down",
-                       "message": "Запрос создан, но диспетчер не запущен — работа не начнётся сама."}
+                       "message": "Задача создана, но диспетчер не запущен — работа не начнётся сама."}
         return {"root_id": root_id, "slug": slug, "title": title, "text": text,
                 "critic": bool(critic), "warning": warning, "record": record}
 
@@ -2274,6 +2413,113 @@ class WriteRoutes:
         payload["archived"] = bool(action == "archive" and not (res or {}).get("already"))
         payload["archive_prev"] = dict((res or {}).get("prev") or {})
         return payload
+
+    # --- «Принята»: заморозка и паспорт в память комнаты (W30-D1 §3) ---
+
+    def _accept_action(self, room: dict, rec: dict, rid: str, body: dict, action: str):
+        """«Принять» и «Вернуть в работу». Модели не вызываются ни разу.
+
+        Принятие разрешено только в стадии ``done_system`` и без блокирующих
+        пунктов: иначе человек «принимал» бы работу, которая ещё спрашивает.
+        Паспорт собирается из уже прочитанной детали (свод, решения, артефакты) —
+        без вызова модели. Карточки, на которых ещё стоит работа, останавливаются
+        общим механизмом `archive.stop_work` (как при архивации).
+        """
+        if not rid:
+            raise err(400, "Не передан запрос", field="rid")
+        note = body.get("note") if isinstance(body, dict) else None
+        if note is not None and not isinstance(note, str):
+            raise err(400, "note: строка", field="note")
+        note = (note or "").strip()[:MAX_NOTE]
+        if note and has_nul(note):
+            raise err(400, "В note есть NUL-байт", field="note")
+        try:
+            if action == "reopen_accepted":
+                res = passports_mod.reopen(self.cfg, room, rid, by=AUTHOR_MAXIM)
+                payload = {"ok": True, "action": action, "accepted": False}
+                payload.update(res if isinstance(res, dict) else {})
+                payload["board_stage"] = board_mod.stage_of(
+                    self._request_status(room, rid, rec), accepted=False)
+                payload["request"] = self._summary_or_local(
+                    room, rid, rec.get("text") or "", rec.get("title") or "",
+                    bool(rec.get("critic")), rec.get("mode") or "auto", rec.get("answers"))
+                return 200, payload, {"Cache-Control": "no-store"}
+            already = passports_mod.get(self.cfg, room, rid)
+            board = room.get("board") or self.board
+            status = ""
+            try:
+                states = self.call("engine_read", "today_states",
+                                   ((self.cfg, board, [rid]), {})) or {}
+                status = str((states.get(rid) or {}).get("status") or "")
+            except Exception:  # noqa: BLE001 — статус узнаем ниже по сводке
+                status = ""
+            # Стадию даёт статус ЗАПРОСА (он считается из дерева), карточка корня —
+            # запасной путь: у идущей работы корень бывает `todo`.
+            request_status = self._request_status(room, rid, rec) or status
+            archived = (status == "archived" or request_status == "archived")
+            # Блокирующие пункты: тот же расчёт, что на странице запроса (без моделей)
+            blocking = []
+            try:
+                from . import routes_today as today_routes
+            except ImportError:  # pragma: no cover
+                import routes_today as today_routes          # type: ignore
+            try:
+                items = today_routes.waiting_items(self, room, rec) or []
+            except Exception:  # noqa: BLE001 — пункты вторичны, стадию берём с доски
+                items = []
+            blocking = [item for item in items if isinstance(item, dict) and item.get("blocking")]
+            stage = board_mod.stage_of(request_status, accepted=bool(already),
+                                       archived=archived, blocking=len(blocking))
+            if stage == "archived":
+                raise err(409, "Задача в архиве — принять её нельзя. Сначала верните её "
+                               "из архива", code="request_archived", rid=rid)
+            if already:
+                payload = {"ok": True, "action": "accept", "accepted": True, "already": True,
+                           "at": int(already.get("at") or 0),
+                           "passport": already.get("passport") or {},
+                           "board_stage": "accepted", "message": "Задача уже принята"}
+                payload["request"] = self._summary_or_local(
+                    room, rid, rec.get("text") or "", rec.get("title") or "",
+                    bool(rec.get("critic")), rec.get("mode") or "auto", rec.get("answers"))
+                return 200, payload, {"Cache-Control": "no-store"}
+            if blocking:
+                raise err(409, "Работа ещё ждёт вашего ответа: %d вопрос(а) блокируют "
+                               "задачу. Ответьте — и её можно будет принять"
+                          % len(blocking), code="needs_answer", rid=rid,
+                          blocking=len(blocking))
+            if stage != "done_system":
+                raise err(409, "Принять можно только готовую задачу (сейчас: «%s»)"
+                          % board_mod.STAGE_RU.get(stage, stage),
+                          code="not_done", rid=rid, stage=stage)
+            # 1) остановить то, на чём ещё могла стоять работа (как при архивации)
+            stopped: list = []
+            try:
+                stop = archive_mod.stop_work(self.cfg, room, rid,
+                                             reason=passports_mod.ACCEPT_STOP_REASON)
+                stopped = list((stop or {}).get("stopped") or [])
+            except Exception as exc:  # noqa: BLE001 — принятие важнее остановки
+                self.log.warning("принятие %s: остановка карточек: %s" % (rid, exc))
+            # 2) паспорт из уже прочитанной детали (без модели) и запись принятия
+            detail: dict = {}
+            try:
+                detail = self._detail(room, rid, rec.get("extra_cards"), rec.get("critic"),
+                                      rec.get("answers")) or {}
+            except Exception as exc:  # noqa: BLE001 — паспорт соберётся из реестра
+                self.log.warning("принятие %s: деталь недоступна: %s" % (rid, exc))
+            passport = passports_mod.build_passport(self.cfg, room, rec, detail)
+            res = passports_mod.accept(self.cfg, room, rec, rid, by=AUTHOR_MAXIM,
+                                       note=note, passport=passport, stopped=stopped)
+        except engine_write_mod.EngineWriteError as exc:
+            status_code = int(getattr(exc, "http_status", None) or 409)
+            raise err(status_code, exc.message_ru, exc.code, **dict(exc.detail or {})) from exc
+        payload = {"ok": True, "action": "accept"}
+        payload.update(res if isinstance(res, dict) else {})
+        payload["board_stage"] = "accepted"
+        payload["stopped"] = list(payload.get("stopped") or stopped)
+        payload["request"] = self._summary_or_local(
+            room, rid, rec.get("text") or "", rec.get("title") or "",
+            bool(rec.get("critic")), rec.get("mode") or "auto", rec.get("answers"))
+        return 200, payload, {"Cache-Control": "no-store"}
 
     # --- карточка: остановить / продолжить / сменить модель (W23-MG1 §2.8) ---
 

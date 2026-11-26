@@ -379,7 +379,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   /* ── W27-E6 «Автономия» ────────────────────────────────────────────────
      Содержимое вкладки живёт в своём файле (views/autonomy.js): уровни,
      предпросмотр «что изменится», список «только с моего да», журнал и
-     критичные запросы. Здесь только место и понятный отказ, если файл не
+     критичные задачи. Здесь только место и понятный отказ, если файл не
      загрузился, — у вкладки всегда есть текст, а не пустота. */
   if (!isEdit) {
     autonomyPanel.appendChild(h('div', { class: 'roomdlg__hint' },
@@ -835,7 +835,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   workPanel.appendChild(guardField.el);
 
   /* ─── «Ход работы» (W20-FB; WAVE18 п.4). Простыми словами: что видно на
-     странице запроса, пока команда работает. Лента только читается с диска —
+     странице задачи, пока команда работает. Лента только читается с диска —
      модели для этого не вызываются. Личное Подробно/Кратко/Выкл.
      есть и в самом блоке: оно действует лишь на экране того, кто нажал. ─── */
 
@@ -859,7 +859,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   digestSelect.value = [0, 1, 2, 5].includes(digestSaved) ? String(digestSaved) : '2';
 
   const worklogHelp = h('div', { class: 'roomdlg__hint roomdlg__hint--help hidden', id: 'roomdlg-worklog-help' },
-    h('p', null, 'Пока команда работает, на странице запроса видно, кто чем занят: кто читает файл, '
+    h('p', null, 'Пока команда работает, на странице задачи видно, кто чем занят: кто читает файл, '
       + 'кто ищет в сети, кто передал задачу другому. Не нужно ждать готового ответа, чтобы понять, '
       + 'что работа идёт, а не встала.'),
     h('p', null, '«Подробно» — ещё и короткие рассуждения участников, приглушённым курсивом: '
@@ -884,7 +884,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   workPanel.appendChild(h('div', { class: 'roomdlg__section roomdlg__section--worklog' },
     h('div', { class: 'roomdlg__label' }, 'Ход работы'),
     h('div', { class: 'roomdlg__hint' },
-      'Что видно на странице запроса, пока команда работает. Только чтение: ничего не запускает, модель не вызывает.'),
+      'Что видно на странице задачи, пока команда работает. Только чтение: ничего не запускает, модель не вызывает.'),
     h('div', { class: 'roomdlg__field-mini' },
       h('span', { class: 'field__label' }, 'Показывать ход работы'),
       h('div', { class: 'roomdlg__critic-row' }, worklogModeSelect, worklogHelpBtn)),
@@ -988,7 +988,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   function renderFiles() {
     filesHost.replaceChildren();
     if (!files.length) {
-      filesHost.appendChild(h('span', { class: 'roomdlg__files-empty' }, 'Файлов пока нет — агенты прочитают только текст запроса.'));
+      filesHost.appendChild(h('span', { class: 'roomdlg__files-empty' }, 'Файлов пока нет — агенты прочитают только текст задачи.'));
       return;
     }
     for (const path of files) {
@@ -1040,12 +1040,12 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   const projectModeInput = h('input', { type: 'checkbox', id: 'roomdlg-project-mode' });
   projectModeInput.checked = projectMode;
   const projectModeBox = h('label', { class: 'checkbox' }, projectModeInput,
-    h('span', null, 'Руководитель делит большой запрос на части работы'));
+    h('span', null, 'Руководитель делит большую задачу на части работы'));
 
   const PROJECT_MODE_HINT =
-    'Проектный режим: большой запрос руководитель делит на несколько частей '
+    'Проектный режим: большую задачу руководитель делит на несколько частей '
     + '(например: «юридическая часть», «закупки», «упаковка»). Каждая часть — '
-    + 'отдельный запрос со своим ходом работы и своим исполнителем. Включайте, '
+    + 'отдельная задача со своим ходом работы и своим исполнителем. Включайте, '
     + 'если одна задача — это целый проект; выключен — руководитель отвечает '
     + 'одним общим ответом.';
   // B-33: «Сейчас: …» — заметной плашкой, а не строчкой мелкого текста.
@@ -1056,7 +1056,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
   // Один термин вместо «направления» (B-10): «часть работы» — везде одинаково.
   const LAUNCH_CHOICES = [
     ['auto', 'Сразу, без подтверждения',
-      'Команда начинает работу, как только руководитель разделил запрос.'],
+      'Команда начинает работу, как только руководитель разделил задачу.'],
     ['plan_first', 'Сначала показать план — я запускаю сам кнопкой «Запустить»',
       'Вы увидите список частей и решите, что запускать.'],
   ];
@@ -1163,7 +1163,7 @@ export async function openRoomDialog(ctx, room = null, opts = {}) {
     const d = profileById(directorSelect.value);
     directorHint.textContent = d && d.description
       ? String(d.description)
-      : 'Руководитель комнаты разложит запрос по команде и сведёт один ответ.';
+      : 'Руководитель комнаты разложит задачу по команде и сведёт один ответ.';
     const c = profileById(criticSelect.value);
     criticHint.textContent = criticSelect.value
       ? (c && c.description ? String(c.description) : 'Критик проверит свод перед ответом.')

@@ -1,0 +1,392 @@
+/* view-proposal.css — W30-C: «Предложение руководителя», подзадачи проекта
+ * и человеческий вид вопроса («зачем», «откуда», варианты, пояснение).
+ *
+ * Правила темы: только токены (--ui-*, --space-*, --radius-*), поэтому светлая
+ * и тёмная темы работают без отдельных правил. Никаких фиксированных ширин
+ * контейнеров: узкое окно 683 px не даёт горизонтального скролла — всё
+ * переносится, длинные слова рвутся, кнопки не растягивают строку.
+ */
+
+/* ─────────────────────────────────────────── карточка предложения ───────── */
+
+.proposal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.proposal__head { display: flex; flex-direction: column; gap: var(--space-1); }
+.proposal__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.proposal__icon { color: var(--ui-text-tertiary); flex: none; }
+.proposal__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1.3;
+  min-width: 0;
+}
+.proposal__state { flex: none; }
+.proposal__meta { display: flex; flex-wrap: wrap; gap: 0; }
+.proposal__summary {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: 1.55;
+  color: var(--ui-text-primary);
+}
+.proposal__lead {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--ui-text-secondary);
+}
+.proposal__cap {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ui-text-quaternary);
+  display: block;
+  margin-bottom: 2px;
+}
+.proposal__cap-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+
+/* Кнопки: фиксированная ширина «по содержимому», но не больше строки. */
+.proposal__actions,
+.proposal__footer,
+.proposal__branch-actions,
+.proposal__apply-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.proposal__act,
+.proposal__foot-act,
+.proposal__branch-act {
+  flex: 0 0 auto;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.proposal__footer {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--ui-stroke-tertiary);
+}
+.proposal__decided { margin: 0; }
+.proposal__closed { display: flex; align-items: center; gap: 6px; }
+
+/* «Свой вариант»: кнопка, а рядом (после нажатия) поле с диктовкой. */
+.proposal__custom { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.proposal__custom-form { width: 100%; min-width: 0; }
+.proposal__custom-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.proposal__custom-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+.proposal__custom-send { flex: none; }
+
+/* ─────────────────────────────────────────── ветки объёмной задачи ──────── */
+
+.proposal__branches-head { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.proposal__tally { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.proposal__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.proposal__branch {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--ui-stroke-tertiary);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-quaternary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.proposal__branch--yes { border-color: var(--ui-stroke-secondary); background: var(--ui-bg-tertiary); }
+.proposal__branch--no { opacity: 0.72; }
+.proposal__branch-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.proposal__branch-order { color: var(--ui-text-quaternary); flex: none; }
+.proposal__branch-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+.proposal__branch-state { flex: none; }
+.proposal__branch-goal {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--ui-text-secondary);
+  overflow-wrap: anywhere;
+}
+.proposal__branch-meta { display: flex; flex-wrap: wrap; gap: 2px; }
+.proposal__branch-task { color: var(--ui-accent); text-decoration: none; }
+.proposal__branch-task:hover { text-decoration: underline; }
+.proposal__branch-questions { margin: 0; }
+.proposal__qlist { margin: 4px 0 0; padding-left: 18px; }
+.proposal__q { font-size: var(--text-sm); line-height: 1.45; color: var(--ui-text-secondary); }
+.proposal__branch-custom {
+  border-left: 2px solid var(--ui-stroke-secondary);
+  padding-left: var(--space-2);
+  min-width: 0;
+}
+.proposal__branch-custom-text { font-size: var(--text-sm); line-height: 1.5; }
+
+/* ─────────────────────────────────────────── созданные подзадачи ────────── */
+
+.proposal__created { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.proposal__created-list { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.proposal__created-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+.proposal__created-link {
+  color: var(--ui-accent);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  max-width: 100%;
+}
+.proposal__created-link:hover { text-decoration: underline; }
+.proposal__apply-row { padding-top: var(--space-1); }
+
+/* ─────────────────────────────────────────── блок «Подзадачи» ───────────── */
+
+.proposal-project { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.proposal-project__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.proposal-project__item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+  padding: 3px 0;
+}
+.proposal-project__link {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+  font-size: var(--text-sm);
+}
+.proposal-project__link:hover { color: var(--ui-accent); text-decoration: underline; }
+.proposal-project__stage { flex: none; }
+
+/* «Часть проекта: <родитель>» — тихая строка над сводом подзадачи. */
+.proposal-parent {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--ui-text-tertiary);
+  margin: 0 0 var(--space-1);
+  max-width: 100%;
+}
+.proposal-parent__link { color: var(--ui-accent); text-decoration: none; }
+.proposal-parent__link:hover { text-decoration: underline; }
+
+/* ─────────────────────────────── вопрос по-человечески (request-aside) ──── */
+
+.req-q__cap {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ui-text-quaternary);
+}
+
+/* Заголовок вопроса — крупнее остального списка: это главный текст строки. */
+.req-q__text { font-size: var(--text-base); line-height: 1.45; }
+.req-q[data-open="1"] .req-q__text { font-weight: 500; }
+.req-q__blocking { flex: none; }
+.req-q__explained { flex: none; }
+
+.req-q__why {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: var(--space-1) 0 0;
+  padding: var(--space-1) var(--space-2);
+  border-left: 2px solid var(--ui-stroke-secondary);
+  background: var(--ui-bg-quaternary);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--ui-text-secondary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.req-q__why-text { color: var(--ui-text-primary); }
+
+.req-q__ctx { margin: var(--space-1) 0 0; font-size: var(--text-sm); }
+.req-q__ctx-sum {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--ui-text-tertiary);
+  font-size: var(--text-xs);
+}
+.req-q__ctx-text {
+  margin-top: 4px;
+  color: var(--ui-text-secondary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.req-q__explain-box {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  border: 1px solid var(--ui-stroke-secondary);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-secondary);
+  min-width: 0;
+}
+.req-q__explain-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ui-text-tertiary);
+  margin-bottom: 2px;
+}
+.req-q__explain-text {
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--ui-text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* Варианты: кнопка — вертикальная карточка (подпись + последствие), не «таблетка». */
+.req-q__options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 0;
+  min-width: 0;
+}
+.btn--choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--ui-stroke-secondary);
+  border-radius: var(--radius-md);
+  background: var(--ui-bg-elevated);
+  color: var(--ui-text-primary);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  white-space: normal;
+}
+.btn--choice:hover { background: var(--ui-control-hover-background); }
+.btn--choice:focus-visible { outline: 2px solid var(--focus-ring, var(--ui-accent)); outline-offset: 2px; }
+.btn--choice.is-picked { border-color: var(--ui-accent); background: var(--ui-bg-secondary); }
+.req-q__option-label { font-size: var(--text-sm); font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+.req-q__option-cons {
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--ui-text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.req-q__custom-cap {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 2px;
+  min-width: 0;
+}
+.req-q__custom-hint { font-size: var(--text-2xs); }
+
+/* Служебная строка: «Пояснить ещё / Отложить / Не актуально». */
+.req-q__tools,
+.req-q__stale-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  min-width: 0;
+}
+.req-q__plain {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: var(--text-2xs);
+  color: var(--ui-text-quaternary);
+}
+
+/* Пакет решений (неблокирующие вопросы) и отложенные — свёрнутые списки. */
+.req-side__packet,
+.req-side__postponed {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--ui-stroke-tertiary);
+  padding-top: var(--space-1);
+}
+.req-side__packet-sum,
+.req-side__postponed .req-side__closed-sum {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--ui-text-secondary);
+  line-height: 1.4;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.req-side__packet-list .req-q { border-top: 1px solid var(--ui-stroke-quaternary); }
+.req-side__packet-list .req-q:first-child { border-top: 0; }
+
+/* Узкое окно: кнопки не вылезают за колонку, поле и кнопка «Отправить» в столбик
+   только если места правда нет. */
+@media (max-width: 760px) {
+  .proposal__act,
+  .proposal__foot-act,
+  .proposal__branch-act { flex: 1 1 auto; justify-content: center; }
+  .proposal__custom-row { flex-direction: column; align-items: stretch; }
+  .proposal__custom-send { align-self: flex-end; }
+  .req-q__options .btn--choice { padding: var(--space-2) var(--space-2); }
+}

@@ -297,7 +297,7 @@ test('диалог: «Проектный режим» новой комнаты 
   await sleep(30);
 
   const { box, radios, streams, hint } = modeNodes(doc);
-  assert.ok(box, 'переключатель «Руководитель делит большой запрос на части работы»');
+  assert.ok(box, 'переключатель «Руководитель делит большую задачу на части работы»');
   assert.equal(box.checked, true, 'у новой комнаты проектный режим включён');
   assert.equal(radios.length, 2);
   // W17-R §3 (решение Михаила 06.11): у НОВОЙ комнаты части запускаются сразу.
@@ -385,7 +385,7 @@ test('диалог: «сразу» и 4 части работы уходят в 
 test('room-dialog.js: слова для человека, без «директора» и общих режимов', () => {
   const source = readFileSync(new URL('../web/js/views/room-dialog.js', import.meta.url), 'utf8');
   assert.ok(!/директор/i.test(source), 'в диалоге — «руководитель комнаты», не «директор»');
-  assert.ok(source.includes('Руководитель делит большой запрос на части работы'));
+  assert.ok(source.includes('Руководитель делит большую задачу на части работы'));
   assert.ok(source.includes('Как запускать части работы'));
   assert.ok(source.includes('Одновременно частей работы'));
   assert.ok(source.includes('max_parallel_streams: Number.isInteger(maxStreams)'));

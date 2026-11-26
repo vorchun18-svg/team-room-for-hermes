@@ -26,7 +26,8 @@ import {
   elementForKey, scrollKeyOf, routeMessage, createRouteMemory,
 } from '../web/js/route-memory.js';
 
-const TABS = ['composer', 'team', 'roadmap', 'backlog', 'reports', 'journal'];
+// W30-QA1: «Задачи» — первая вкладка комнаты и вкладка по умолчанию (вход в комнату).
+const TABS = ['tasks', 'composer', 'team', 'roadmap', 'backlog', 'reports', 'journal'];
 const ROOMS = ['cafe', 'fn'];
 
 /* ─────────────────────────────────────────────────────── мини-DOM */
@@ -108,12 +109,12 @@ test('хэш: разбор маршрута и сборка вкладки', () 
   assert.deepEqual(parseRouteHash('#/room/cafe/request/t_9f3c2a10'),
     { kind: 'request', roomId: 'cafe', tab: 'request', id: 't_9f3c2a10' });
   assert.equal(parseRouteHash('#/room/cafe/backlog').kind, 'room');
-  assert.equal(parseRouteHash('#/room/cafe').tab, 'composer');
+  assert.equal(parseRouteHash('#/room/cafe').tab, 'tasks', 'вход в комнату — доска «Задачи» (W30-QA1)');
   assert.equal(parseRouteHash('#/settings/diagnostics').kind, 'settings');
   assert.equal(parseRouteHash('#/search?q=упаковка').kind, 'search');
   assert.equal(parseRouteHash('#/мусор/вот'), null);
 
-  assert.equal(buildRoomHash('cafe'), '#/room/cafe/composer');
+  assert.equal(buildRoomHash('cafe'), '#/room/cafe/tasks');
   assert.equal(buildRoomHash('cafe', 'backlog'), '#/room/cafe/backlog');
   assert.equal(buildRoomHash('', 'team'), '#/');
 });
@@ -143,7 +144,7 @@ test('старт: явный «#/» — человек на всех комна�
 test('старт: несуществующий запрос → вкладка комнаты, а не пустая страница', () => {
   const stored = { hash: '#/room/fn/request/t_deleted', scroll: {} };
   assert.equal(chooseHash({ urlHash: '', stored, roomIds: ROOMS, tabIds: TABS, requestOk: false }),
-    '#/room/fn/composer');
+    '#/room/fn/tasks');
 });
 
 test('старт: сервер молчит (requestOk=null) — маршрут не выбрасываем', () => {
@@ -155,17 +156,17 @@ test('старт: сервер молчит (requestOk=null) — маршрут 
 test('старт: удалённая комната и неизвестная вкладка', () => {
   const stored = { hash: '#/room/old/request/t_1', scroll: {} };
   assert.equal(chooseHash({ urlHash: '', stored, roomIds: ROOMS, tabIds: TABS, defaultRoom: 'cafe' }),
-    '#/room/cafe/composer');
+    '#/room/cafe/tasks');
 
   const tabStored = { hash: '#/room/cafe/старое', scroll: {} };
   assert.equal(chooseHash({ urlHash: '', stored: tabStored, roomIds: ROOMS, tabIds: TABS }),
-    '#/room/cafe/composer');
+    '#/room/cafe/tasks');
 });
 
 test('старт: пустая память и нет комнат → «все комнаты»', () => {
   assert.equal(chooseHash({ urlHash: '', stored: null, roomIds: [], tabIds: TABS }), '#/');
   assert.equal(chooseHash({ urlHash: '', stored: parseStored(null), roomIds: ['fn'], tabIds: TABS }),
-    '#/room/fn/composer');
+    '#/room/fn/tasks');
   assert.equal(chooseHash({ urlHash: '#/settings', stored: null, roomIds: [], tabIds: TABS }), '#/settings');
   assert.equal(chooseHash({ urlHash: '#/', stored: null, roomIds: ['fn'], tabIds: TABS }), '#/');
 });

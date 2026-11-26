@@ -101,7 +101,7 @@ function kindChip(kind, label) {
 /** Карточка «ждёт вас». */
 function needsYouNode(card) {
   const href = requestHash({ room: card.room, request_id: card.requestId });
-  const title = card.requestTitle || 'Запрос';
+  const title = card.requestTitle || 'Задача';
   const key = 'ny|' + card.room + '|' + card.requestId + '|' + card.kind + '|' + card.text.slice(0, 24);
   const head = h('div', { class: 'today-card__head' },
     h('span', { class: 'today-card__room', title: card.roomTitle }, card.roomTitle),
@@ -149,7 +149,7 @@ function dueNode(row, kind, handlers) {
   const r = dueRow(row, kind);
   const acts = handlers || {};
   const when = h('span', { class: ['today-row__when', 'tnum', 'today-row__when--' + r.tone] }, r.when);
-  const openTitle = 'Открыть ' + (r.requestTitle || 'запрос')
+  const openTitle = 'Открыть ' + (r.requestTitle || 'задача')
     + (r.stepId ? ' и показать этот шаг' : '');
   const textNode = r.href
     ? h('a', {
@@ -228,7 +228,7 @@ function changedNodes(data, now) {
     nodes.push(h('div', { class: 'today-changed__row', 'data-key': 'chg-fin|' + item.requestId, title: item.roomTitle },
       h('span', { class: 'chip chip--ok today-changed__tag' }, 'готово'),
       h('span', { class: 'today-changed__text' },
-        href ? requestLink(href, item.requestTitle || 'Запрос', 'today-changed__link') : item.requestTitle),
+        href ? requestLink(href, item.requestTitle || 'Задача', 'today-changed__link') : item.requestTitle),
       h('span', { class: 'today-changed__ago small muted tnum' }, agoText(item.at, now))));
   }
   for (const item of sum.failures) {
@@ -248,7 +248,7 @@ function runningNode(row) {
   return h('div', { class: 'today-row', 'data-key': 'run|' + (row && row.request_id) },
     h('span', { class: 'today-row__mark today-row__mark--live', 'aria-hidden': 'true' }, h('span', { class: 'today-dot' })),
     h('div', { class: 'today-row__main' },
-      h('div', { class: 'today-row__text' }, href ? requestLink(href, r.requestTitle || 'Запрос', 'today-row__link') : r.requestTitle),
+      h('div', { class: 'today-row__text' }, href ? requestLink(href, r.requestTitle || 'Задача', 'today-row__link') : r.requestTitle),
       h('div', { class: 'today-row__meta small muted' },
         h('span', {}, r.roomTitle), h('span', { class: 'today-row__dot' }, '·'), h('span', {}, r.membersText))),
     h('span', { class: 'today-row__when tiny tnum' }, r.ago));
@@ -468,7 +468,7 @@ export async function mount(el, ctx) {
         class: 'btn btn--secondary btn--sm today__stale',
         type: 'button',
         'data-key': 'stale-' + entry.room,
-        title: 'Закрыть неактуальные пункты у завершённых запросов комнаты «' + label
+        title: 'Закрыть неактуальные пункты у завершённых задач комнаты «' + label
           + '»: счётчик «ждёт вас» обнулится, решённое вами останется',
         onclick: (ev) => runDismissStale(ev && ev.currentTarget, entry.room),
       }, 'Закрыть все неактуальные (' + entry.total + ')');
@@ -487,7 +487,7 @@ export async function mount(el, ctx) {
       const total = Number((res && res.total) || 0);
       toast(total
         ? 'Закрыто как неактуальное: ' + countNoun(total, FORMS.case) + '. Решённое вами осталось.'
-        : 'Неактуальных пунктов у завершённых запросов нет.', total ? 'ok' : 'warn');
+        : 'Неактуальных пунктов у завершённых задач нет.', total ? 'ok' : 'warn');
       await loadStalePreview();
       render();
       setTimeout(() => { if (!stopped) load(false).catch(() => { /* числа догонит опрос */ }); },

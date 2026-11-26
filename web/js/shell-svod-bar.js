@@ -194,7 +194,7 @@ export function buildSvodBar(opts = {}) {
     h('span', { class: 'req-bar__spacer' }),
     h('button', {
       type: 'button', class: 'btn btn--secondary btn--sm req-bar__revise', 'data-bar': 'revise',
-      title: 'Руководитель получит запрос, этот свод, ваше замечание и ваши ответы после этой версии',
+      title: 'Руководитель получит задачу, этот свод, ваше замечание и ваши ответы после этой версии',
       onclick: press('revise'),
     }, icon('comment-draft', { size: 13 }), h('span', { class: 'req-bar__btn-text' }, 'Доработать')),
     h('button', {

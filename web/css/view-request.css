@@ -1127,8 +1127,11 @@
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
 }
-/* Вид < 700 (xs): лист 52 px, поля 12 px, крошка — только стрелка. */
-.app[data-layout="xs"][data-aside="sheet"] .req__aside { height: var(--sheet-h-xs); }
+/* Вид < 700 (xs): лист 52 px, поля 12 px, крошка — только стрелка.
+   W30-C: 52 px — только у СВЁРНУТОГО листа. Раньше это правило перебивало
+   разворот (`is-sheet-open`) и на 683 px лист оставался полоской 52 px: вопросы
+   открывались, но их не было видно — человек упирался в тупик. */
+.app[data-layout="xs"][data-aside="sheet"]:not(.is-sheet-open) .req__aside { height: var(--sheet-h-xs); }
 .app[data-layout="xs"] .req-sheet__handle { height: var(--sheet-h-xs); padding: 0 var(--space-3); }
 .app[data-layout="xs"] .req-sheet__hint { display: none; }
 
@@ -1153,7 +1156,13 @@
   line-height: 1.62;
 }
 .app[data-layout="xs"] .req__title { font-size: 17px; line-height: 1.3; }
-.app[data-layout="xs"] .req__meta { flex-wrap: nowrap; max-height: 20px; overflow: hidden; }
+/* W30-F (683 px): мета-строка держалась одной линией (`nowrap`) и на 683 px
+   выходила за контейнер — «критик: раунд 2 из 2» на 15 px, «руководитель
+   комнаты» на 202 px (проверено размерами DOM в Chromium). Перенос строк
+   оставляет шапку в тех же 20 px (лишние строки срезает max-height), но ни один
+   пункт не выезжает за границу; внутри пункта текст при нужде обрезается. */
+.app[data-layout="xs"] .req__meta { flex-wrap: wrap; max-height: 20px; overflow: hidden; }
+.app[data-layout="xs"] .req__meta-item { min-width: 0; max-width: 100%; overflow: hidden; }
 .app[data-layout="xs"] .req__crumb-text { display: none; }
 .app[data-layout="xs"] .topbar { padding-left: var(--space-3); padding-right: var(--space-3); }
 .app[data-layout="xs"] .tabs { padding-left: var(--space-3); padding-right: var(--space-3); }

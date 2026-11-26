@@ -44,26 +44,26 @@ const tabRoute = (tab, query = {}) => ({
 
 test('параметр фильтра называется request (согласовано с BACKLOG-FIX)', () => {
   assert.equal(REQUEST_PARAM, 'request');
-  // W20-U1 (P7/P8): слова охвата — из одного словаря («Вся комната / Этот запрос»).
+  // W20-U1 (P7/P8), W30-R1: слова охвата — из одного словаря («Вся комната / Эта задача»).
   assert.equal(WHOLE_ROOM_LABEL, 'Вся комната');
-  assert.equal(FILTER_LABEL, 'Этот запрос');
+  assert.equal(FILTER_LABEL, 'Эта задача');
 });
 
-test('крошки: страница запроса — комната, затем «Запрос «…»»', () => {
+test('крошки: страница задачи — комната, затем «Задача «…»»', () => {
   const items = crumbItems({ route: requestRoute, roomTitle: 'Лето', requestTitle: 'Юнит-экономика набора' });
   assert.equal(items.length, 2);
   assert.equal(items[0].text, 'Комната «Лето»');
   // ссылка ведёт на уровень выше — в комнату, а не на саму страницу
   assert.equal(items[0].href, '#/room/cafe/composer');
   assert.notEqual(items[0].current, true);
-  assert.equal(items[1].text, 'Запрос «Юнит-экономика набора»');
+  assert.equal(items[1].text, 'Задача «Юнит-экономика набора»');
   assert.equal(items[1].href, undefined);
   assert.equal(items[1].current, true);
 });
 
-test('крошки: без названия запроса — просто «Запрос» (без id в тексте)', () => {
+test('крошки: без названия задачи — просто «Задача» (без id в тексте)', () => {
   const items = crumbItems({ route: requestRoute, roomTitle: 'Лето', requestTitle: '' });
-  assert.equal(items[1].text, 'Запрос');
+  assert.equal(items[1].text, 'Задача');
   assert.ok(!/t_[0-9a-f]+/.test(items[1].text));
 });
 
@@ -129,8 +129,8 @@ test('filterByRequest: журнал фильтруется по request_id со�
 
 test('sourceTitle/sourceHint: id в тексте не показываем, только в title', () => {
   assert.equal(sourceTitle('Юнит-экономика набора', 't_a1b2c3d4'), 'Юнит-экономика набора');
-  assert.equal(sourceTitle('t_a1b2c3d4', 't_a1b2c3d4'), 'запрос-источник');
-  assert.equal(sourceTitle('', 't_a1b2c3d4'), 'запрос-источник');
+  assert.equal(sourceTitle('t_a1b2c3d4', 't_a1b2c3d4'), 'задача-источник');
+  assert.equal(sourceTitle('', 't_a1b2c3d4'), 'задача-источник');
   const hint = sourceHint('Юнит-экономика набора', 't_a1b2c3d4');
   assert.ok(hint.includes('Юнит-экономика набора'));
   assert.ok(hint.includes('t_a1b2c3d4'));

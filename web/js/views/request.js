@@ -27,6 +27,8 @@ import { ensureProfileDirectory } from '../participant-label.js';
 import { createHeader } from './request-header.js';
 import { createAnswer } from './request-answer.js';
 import { createAside } from './request-aside.js';
+// W30-C: «Предложение руководителя» (разовая/объёмная задача) и проект «задача → подзадачи».
+import { buildProposalCard, buildProjectBlock, buildParentNote } from './proposal-card.js';
 // W29-P2 п.4: постоянное поле «Написать руководителю / дать указание» внизу запроса.
 import { mountReplyBar } from './request-reply.js';
 // W29-P2: сколько карточек стоит — тот же расчёт, что у колонки и вкладки.
@@ -49,6 +51,8 @@ import { installDensity } from '../density.js';
 import { isTypingTarget } from '../hotkeys.js';
 // W27-E3: якорь шага `?step=ns_…` — раскрыть и подсветить шаг, к которому пришли.
 import { focusStepWhenReady, stepFromRoute } from './step-focus.js';
+// W30-E: «Результаты агентов» — кто что сделал, вывод, файл, что осталось.
+import { renderAgentResults } from './agent-results.js';
 
 const FINAL = new Set(['done', 'failed']);
 // WAVE17-P4: опрос реже, чем раньше (было 2 с): 304 по ETag дешёвый, но и он
@@ -94,7 +98,7 @@ export async function mount(el, ctx) {
   let reportEmbed = null;
   let partsCheckedAt = 0;
   let backlog = null; // Map<item_id, BacklogItem> | null
-  let threadCtl = null; // { update, focus, destroy } — блок «Диалог по запросу» (монтируется один раз)
+  let threadCtl = null; // { update, focus, destroy } — блок «Диалог по задаче» (монтируется один раз)
   let worklogCtl = null; // { update, destroy } — блок «Ход работы» (тоже монтируется один раз)
   let replyCtl = null; // { element, setBlocked, destroy } — поле «дать указание» внизу
   let room = null; // деталь комнаты: project_dir, title (для кнопки папки и крошки)
@@ -102,7 +106,7 @@ export async function mount(el, ctx) {
   let planError = null;
   let planAt = 0;
   let launching = false; // идёт «Запустить всё»
-  let briefTitle = ''; // название брифа — для крошки под-запроса
+  let briefTitle = ''; // название брифа — для крошки под-задачи
 
   const state = { version: null, askOpen: false, pipeOpen: false };
   const keepValues = new Map(); // data-keep → введённый текст
@@ -258,7 +262,7 @@ export async function mount(el, ctx) {
       );
     } catch (err) {
       if (initial || !detail) { error = err; render(); }
-      else if (!quiet) errorToast(ctx, err, 'Не удалось обновить запрос');
+      else if (!quiet) errorToast(ctx, err, 'Не удалось обновить задачу');
       return;
     }
     lastFetchAt = Date.now();
@@ -330,7 +334,7 @@ export async function mount(el, ctx) {
     try {
       const res = await withTimeout(
         ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, { action, ...(body || {}) }),
-        lockTimeout(), 'Действие по запросу');
+        lockTimeout(), 'Действие по задаче');
       if (opts.toast) ctx.toast(opts.toast, opts.kind || 'ok');
       await refresh({ force: true });
       return res;
@@ -348,12 +352,12 @@ export async function mount(el, ctx) {
     try {
       const res = await withTimeout(
         ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, { action: 'clone' }),
-        lockTimeout(), 'Копирование запроса');
-      ctx.toast('Копия запроса создана', 'ok');
+        lockTimeout(), 'Копирование задачи');
+      ctx.toast('Копия задачи создана', 'ok');
       if (res?.root_id) ctx.navigate(`#/room/${encodeURIComponent(roomId)}/request/${encodeURIComponent(res.root_id)}`);
       else await refresh({ force: true });
     } catch (err) {
-      ctx.toast(err?.message || 'Не удалось клонировать запрос', 'danger');
+      ctx.toast(err?.message || 'Не удалось клонировать задачу', 'danger');
     } finally {
       busy = false;
     }
@@ -361,8 +365,8 @@ export async function mount(el, ctx) {
 
   async function decompose(btn) {
     const ok = await confirmDialog({
-      title: 'Разложить запрос сейчас?',
-      text: 'Это запустит модель-разборщика и потратит токены. Обычно руководитель комнаты разбирает запрос сам — действие нужно, только если работа не началась.',
+      title: 'Разложить задачу сейчас?',
+      text: 'Это запустит модель-разборщика и потратит токены. Обычно руководитель комнаты разбирает задачу сам — действие нужно, только если работа не началась.',
       confirmLabel: 'Разложить',
       cancelLabel: 'Отмена',
     });
@@ -371,7 +375,7 @@ export async function mount(el, ctx) {
     // выключенной, если запрос не ответил.
     await locked(btn, () => runAction('decompose', {},
       { toast: 'Разбор запущен — это может занять пару минут' }),
-    { label: 'Разбор запроса' });
+    { label: 'Разбор задачи' });
   }
 
   /* ── блоки страницы: шапка и меню, ответ, колонка «От вас нужно» ───────────── */
@@ -419,7 +423,7 @@ export async function mount(el, ctx) {
     const sec = createSection({
       key: 'ask',
       requestId: rid,
-      title: 'Запрос',
+      title: 'Задача',
       titleClass: 'req-ask__label',
       defaultOpen: defaults.ask,
       card: false,
@@ -548,7 +552,7 @@ export async function mount(el, ctx) {
     const btn = h('button', { class: 'btn btn--primary btn--sm', type: 'button' },
       icon('debug-restart', { size: 13 }), 'Вернуть из архива');
     btn.addEventListener('click', () => runAction('unarchive', {},
-      { toast: 'Запрос возвращён — он снова в списке запросов' }));
+      { toast: 'Задача возвращена — она снова в списке задач' }));
     const listBtn = h('a', {
       class: 'btn btn--secondary btn--sm',
       href: `#/room/${encodeURIComponent(roomId)}/archive`,
@@ -556,7 +560,7 @@ export async function mount(el, ctx) {
     return h('div', { class: 'banner req-archived-banner', role: 'status' },
       icon('archive', { size: 16 }),
       h('div', { class: 'banner__text' },
-        h('div', { class: 'req-archived-banner__title' }, 'Запрос в архиве — работа остановлена'),
+        h('div', { class: 'req-archived-banner__title' }, 'Задача в архиве — работа остановлена'),
         h('div', { class: 'small muted' },
           'Новые вопросы и обновления ответа не появляются, задачи не запускаются. ',
           'Ответ, решения и файлы сохранены. Вернуть можно в любой момент — модели при этом не запустятся.')),
@@ -565,12 +569,12 @@ export async function mount(el, ctx) {
 
   function buildPage() {
     if (!rid) {
-      return h('div', { class: 'req' }, requestErrorBanner(new Error('В адресе нет идентификатора запроса'), null));
+      return h('div', { class: 'req' }, requestErrorBanner(new Error('В адресе нет идентификатора задачи'), null));
     }
     if (!detail) {
       if (error) {
         return h('div', { class: 'req' },
-          h('div', { class: 'req__crumb' }, h('a', { href: `#/room/${encodeURIComponent(roomId)}/composer` }, icon('arrow-left', { size: 12 }), 'К запросам')),
+          h('div', { class: 'req__crumb' }, h('a', { href: `#/room/${encodeURIComponent(roomId)}/composer` }, icon('arrow-left', { size: 12 }), 'К задачам')),
           requestErrorBanner(error, () => refresh({ force: true, initial: true })));
       }
       return h('div', { class: 'req' },
@@ -622,10 +626,39 @@ export async function mount(el, ctx) {
     const main = h('div', { class: 'req__main' });
     const ask = askBlock();
     if (ask) main.append(ask);
+    // W30-C: «Часть проекта: <родитель>» — сначала где мы, потом решение.
+    const parentNote = buildParentNote({ project: detail.project, roomId });
+    if (parentNote) main.append(parentNote);
+    // W30-C: «Предложение руководителя» — решение человека до всего остального:
+    // разовая задача («Согласен / Не согласен / Свой вариант») или ветки-подзадачи
+    // с «Да / Нет / Свой вариант» и общими кнопками внизу.
+    const proposalCard = buildProposalCard({
+      proposal: detail.proposal,
+      roomId,
+      requestId: rid,
+      api: ctx && ctx.api,
+      toast: ctx && ctx.toast,
+      refresh: (opts) => refresh(opts),
+      keepValues,
+    });
+    if (proposalCard) main.append(proposalCard);
+    // W30-C: у родителя — блок «Подзадачи» (название, стадия, ссылка).
+    const projectBlock = buildProjectBlock({ project: detail.project, roomId });
+    if (projectBlock) main.append(projectBlock);
     // Бриф: карта направлений сразу под запросом, до ответа руководителя.
     const planCard = planBlock();
     if (planCard) main.append(planCard);
     main.append(buildAnswer());
+    // W30-E: «Результаты агентов» — сразу под «Сводом»: кто что изучил/сделал,
+    // вывод 2–3 строки, файл с путём и «что осталось». Раньше это тонуло в ленте.
+    // Раскрыто на широком виде; на узком — строка со счётчиками (выбор человека
+    // помнит `createSection`).
+    const agentResults = safePart('renderAgentResults', renderAgentResults, detail, ctx, {
+      room,
+      roomId,
+      defaultOpen: layoutMode() === 'xl' || layoutMode() === 'l',
+    });
+    if (agentResults) main.append(agentResults);
     // W29-P4: у архивного запроса «Разрешения», «Контроль моделей», «Диалог»,
     // «Ход работы» и поле внизу не показываем: это действия, которые буждали бы
     // агентов. Чтение (ответ, дерево, файлы, хронология) остаётся.

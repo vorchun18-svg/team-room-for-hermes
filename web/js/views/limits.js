@@ -304,10 +304,10 @@ export async function mountLimits(host, ctx = {}) {
   function topBlock() {
     const list = (data && data.top_requests) || [];
     const box = h('div', { class: 'lim__top' },
-      h('div', { class: 'lim__section-title' }, 'Самые дорогие запросы'));
+      h('div', { class: 'lim__section-title' }, 'Самые дорогие задачи'));
     if (!list.length) {
       box.appendChild(h('p', { class: 'small muted' },
-        'Пока нечего показать: приложение сопоставит запуски с запросами, как только команда поработает.'));
+        'Пока нечего показать: приложение сопоставит запуски с задачами, как только команда поработает.'));
       return box;
     }
     const chart = h('div', { class: 'lim__top-list' });
@@ -315,7 +315,7 @@ export async function mountLimits(host, ctx = {}) {
       chart.appendChild(h('a', {
         class: 'lim__top-row',
         href: '#/room/' + encodeURIComponent(item.room || '') + '/request/' + encodeURIComponent(item.rid || ''),
-        title: 'Открыть запрос: ' + String(item.title || ''),
+        title: 'Открыть задачу: ' + String(item.title || ''),
       },
       h('span', { class: 'lim__top-title' }, String(item.title || item.rid || '')),
       h('span', { class: 'small muted' }, String(item.room_title || item.room || '')),

@@ -40,8 +40,8 @@ export function briefTitle(title, max = 34) {
 export function sourceLink(roomId, rid, title) {
   if (!rid) return null;
   const full = String(title || '').trim();
-  const label = full ? briefTitle(full) : 'Запрос';
-  const caption = full ? 'Из запроса: ' + full : 'Открыть запрос-источник';
+  const label = full ? briefTitle(full) : 'Задача';
+  const caption = full ? 'Из задачи: ' + full : 'Открыть задачу-источник';
   return h('a', {
     class: 'backlog__source',
     href: requestHref(roomId, rid),
@@ -104,7 +104,7 @@ export function dueChip(item, { busy = false, onChange } = {}) {
 
 /** Чип «Только этот запрос ✕» и кнопка «Все дела комнаты». */
 export function filterBar({ roomId, requestId, title, onClear }) {
-  const caption = 'Открыть запрос: ' + (title || requestId);
+  const caption = 'Открыть задачу: ' + (title || requestId);
   return h('div', { class: 'backlog__filter row row--wrap row--tight' },
     h('a', {
       class: 'backlog__filter-link truncate',
@@ -113,7 +113,7 @@ export function filterBar({ roomId, requestId, title, onClear }) {
       'aria-label': caption,
     }, h('span', { class: 'backlog__filter-chip' },
       icon('filter', { size: 11 }),
-      h('span', {}, 'Только этот запрос'),
+      h('span', {}, 'Только эта задача'),
       h('span', { class: 'backlog__filter-sep', 'aria-hidden': 'true' }, '·'),
       h('span', { class: 'backlog__filter-name truncate' }, String(title || requestId)))),
     h('button', {

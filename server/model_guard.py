@@ -62,14 +62,19 @@ GUARD_TICK = 3.0
 GUARD_MIN_AGE = 15
 #: сколько раз одна карточка перезапускается автоматически (защита от петли)
 GUARD_MAX_RESTARTS = 2
+#: сколько секунд после парковки карточку не паркуем и не спрашиваем человека повторно
+PARK_QUIET_S = 6 * 3600
 #: как часто повторять одно и то же предупреждение по одной карточке (журнал не копим)
 WARN_TTL = 1800
 #: статусы «ещё не запущена» — здесь правится переопределение
-PENDING_STATUSES = ("triage", "todo", "ready", "blocked", "queued", "scheduled")
+#: `review` — тоже «ещё не запущена»: Hermes отдаёт такую карточку рецензенту (воркер берёт её
+#: со статусом `running`, `source_status=review`). Без переопределения модели она шла на модель
+#: профиля, сторож убивал её, она возвращалась в `review` и всё повторялось каждую минуту.
+PENDING_STATUSES = ("triage", "todo", "ready", "blocked", "queued", "scheduled", "review")
 #: статусы «пошла» — здесь сверяется факт из сессии воркера
 RUNNING_STATUSES = ("running",)
 #: карточки этих статусов не трогаем никогда
-LOCKED_STATUSES = ("review", "done", "archived")
+LOCKED_STATUSES = ("done", "archived")
 #: кольцо событий в состоянии комнаты (журнал комнаты — полный, это только для ленты)
 MAX_EVENTS = 200
 #: как часто повторять предупреждение «модель неизвестна» по одной карточке
@@ -1025,6 +1030,14 @@ def tick(cfg, room, *, now=None, log=None, limit: int = 80) -> dict:
             if started and stamp - started < GUARD_MIN_AGE:
                 out["skipped"] += 1          # только что взяли — дадим воркеру шанс
                 continue
+            # Размыкатель петли: карточку уже парковали недавно, а она снова идёт на не той
+            # модели (пауза не встала — из `review` `block` не принимается). Второй раз не
+            # убиваем и не пишем человеку: журнал и ветка не копят повторов, а причина
+            # (переопределение модели) чинится в `preflight` до запуска.
+            po = (state.get("park_once") or {}).get(cid) or {}
+            if po and stamp - int(po.get("at") or 0) < PARK_QUIET_S:
+                out["skipped"] += 1
+                continue
             if tries >= GUARD_MAX_RESTARTS or (state.get("reclaimed") or {}).get(cid):
                 # W28-C1 п.4: быстрый сторож уже останавливал эту карточку ОДИН раз — второй
                 # раз не убиваем (иначе «ошибки» в интерфейсе растут из наших же остановок):
@@ -1089,6 +1102,13 @@ def _park(cfg, room, card, *, room_id, root_id, profile, expected, actual, gmode
     except Exception:                        # noqa: BLE001 - пауза не встала: человек увидит текст
         pass
     mark_stopped(cfg, room_id, cid, by="guard", reason="модель не совпадает")
+
+    def _remember(data):
+        data.setdefault("park_once", {})[cid] = {"at": int(time.time()), "reason": "tick"}
+    try:
+        _mutate(cfg, room_id, _remember)
+    except Exception:                        # noqa: BLE001 - память вторична
+        pass
     text = ("Карточка %s (%s) идёт на %s вместо ожидаемой %s. Перезапускала %d раза — "
             "нужно решение" % (cid, profile, short(actual.get("provider"), actual.get("model")),
                                short(expected.get("provider"), expected.get("model")),

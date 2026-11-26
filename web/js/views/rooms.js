@@ -117,7 +117,7 @@ export async function mount(el, ctx) {
     h('div', { class: 'rooms__head-text' },
       h('h1', { class: 'rooms__title' }, 'Комнаты'),
       h('p', { class: 'rooms__sub' },
-        'Проект и его команда в одном месте. Пишете один запрос — руководитель комнаты раздаёт работу, вы читаете один ответ.'),
+        'Проект и его команда в одном месте. Пишете одну задачу — руководитель комнаты раздаёт работу, вы читаете один ответ.'),
     ),
     h('div', { class: 'rooms__head-actions' }, addBtn),
   );
@@ -126,7 +126,7 @@ export async function mount(el, ctx) {
     h('div', { class: 'rooms-howto__step' },
       h('span', { class: 'rooms-howto__num', 'aria-hidden': 'true' }, '1'),
       h('div', null,
-        h('div', { class: 'rooms-howto__title' }, 'Пишете запрос'),
+        h('div', { class: 'rooms-howto__title' }, 'Пишете задача'),
         h('div', { class: 'rooms-howto__text' }, 'Одним текстом, как диктуете. Исполнителя выбирать не нужно.'),
       ),
     ),
@@ -157,22 +157,22 @@ export async function mount(el, ctx) {
 
   const footnote = h('p', { class: 'rooms__note small muted' },
     icon('lock', { size: 12 }),
-    'Всё локально: комнаты, запросы и файлы лежат на этом компьютере. Внешних сервисов нет.');
+    'Всё локально: комнаты, задачи и файлы лежат на этом компьютере. Внешних сервисов нет.');
 
   root.appendChild(head);
 
   /* ── W27-E4: быстрый запрос с домашней страницы ─────────────────────────
-     «Комнаты» — не витрина: отсюда можно сразу написать запрос в выбранную
+     «Комнаты» — не витрина: отсюда можно сразу написать задачу в выбранную
      комнату, уйти в «Надиктовать» и открыть «Входящие» комнаты. Раньше на
      этой странице жила только кнопка «Комната» (создать), и любое действие
      требовало зайти в комнату. */
   const quickRoom = h('select', {
-    class: 'rooms-quick__select', id: 'quick-room', 'aria-label': 'Комната для запроса',
+    class: 'rooms-quick__select', id: 'quick-room', 'aria-label': 'Комната для задачи',
   });
   const quickText = h('textarea', {
     class: 'rooms-quick__text', id: 'quick-text', rows: '2', maxlength: '4000',
     placeholder: 'Что нужно сделать? Один текст — как диктуете.',
-    'aria-label': 'Текст запроса',
+    'aria-label': 'Текст задачи',
   });
   const quickSend = h('button', {
     class: 'btn btn--primary', type: 'button', 'data-action': 'quick-request',
@@ -186,16 +186,16 @@ export async function mount(el, ctx) {
     title: 'Записи комнаты, которые ждут разбора',
   }, icon('inbox', { size: 13 }), 'Входящие');
   const quickNote = h('p', { class: 'rooms-quick__note small muted' },
-    'Запрос уйдёт в выбранную комнату — руководитель комнаты раздаст работу.');
+    'Задача уйдёт в выбранную комнату — руководитель комнаты раздаст работу.');
   const quickForm = h('div', { class: 'rooms-quick__body' },
     h('div', { class: 'rooms-quick__row' }, quickRoom, quickText),
     h('div', { class: 'rooms-quick__actions' },
       quickSend, quickDictate, quickInbox, h('span', { class: 'spacer' }), quickNote),
   );
-  const quickCard = h('section', { class: 'rooms-quick', 'aria-label': 'Быстрый запрос' },
+  const quickCard = h('section', { class: 'rooms-quick', 'aria-label': 'Быстрая задача' },
     h('div', { class: 'rooms-quick__head' },
       icon('zap', { size: 15 }),
-      h('span', { class: 'rooms-quick__title' }, 'Быстрый запрос'),
+      h('span', { class: 'rooms-quick__title' }, 'Быстрая задача'),
     ),
     quickForm,
   );
@@ -225,8 +225,8 @@ export async function mount(el, ctx) {
     quickInbox.href = empty ? '#/' : '#/room/' + enc(keep) + '/inbox';
     quickInbox.classList.toggle('is-disabled', empty);
     quickNote.textContent = empty
-      ? 'Комнат пока нет — создайте первую, и запрос уйдёт в неё.'
-      : 'Запрос уйдёт в выбранную комнату — руководитель комнаты раздаст работу.';
+      ? 'Комнат пока нет — создайте первую, и задача уйдёт в неё.'
+      : 'Задача уйдёт в выбранную комнату — руководитель комнаты раздаст работу.';
   }
 
   quickRoom.addEventListener('change', () => {
@@ -239,7 +239,7 @@ export async function mount(el, ctx) {
     const text = String(quickText.value || '').trim();
     const roomId = quickRoomId();
     if (!roomId) { toast('Сначала создайте комнату', 'info'); return; }
-    if (!text) { toast('Введите текст запроса', 'info'); quickText.focus(); return; }
+    if (!text) { toast('Введите текст задачи', 'info'); quickText.focus(); return; }
     if (quickBusy) return;
     quickBusy = true;
     quickSend.disabled = true;
@@ -247,11 +247,11 @@ export async function mount(el, ctx) {
       const res = await api.post('/api/rooms/' + enc(roomId) + '/requests', { text, attach: [] });
       const rootId = res && (res.root_id || (res.request && res.request.id));
       quickText.value = '';
-      toast('Запрос принят', 'ok');
+      toast('Задача принята', 'ok');
       if (rootId) navigate('#/room/' + enc(roomId) + '/request/' + enc(rootId));
       else navigate('#/room/' + enc(roomId) + '/composer');
     } catch (err) {
-      toast(err && err.message ? err.message : 'Не удалось отправить запрос', 'danger');
+      toast(err && err.message ? err.message : 'Не удалось отправить задачу', 'danger');
     } finally {
       quickBusy = false;
       quickSend.disabled = !cardsSource().length;
@@ -404,7 +404,7 @@ export async function mount(el, ctx) {
       grid.appendChild(emptyState({
         icon: 'comment-discussion',
         title: 'Пока нет комнат',
-        text: 'Комната — это проект и его команда: руководитель комнаты, исполнители и критик. Создайте первую — и напишите запрос.',
+        text: 'Комната — это проект и его команда: руководитель комнаты, исполнители и критик. Создайте первую — и напишите задачу.',
         action: { label: 'Создать комнату', variant: 'primary', onclick: () => openCreate() },
       }));
     } else {

@@ -51,6 +51,11 @@ class MockServerTest(unittest.TestCase):
     def setUp(self):
         mock_stt.reset()
         self.addCleanup(mock_stt.reset)
+        # «Сделать делом» помнит оформленные запросы в памяти мока (mock_ac1._MADE);
+        # без сброса этот факт переезжает в следующие тесты этого же процесса.
+        import mock_ac1  # noqa: E402 - мок «Дел» лежит рядом в tools/
+        mock_ac1._MADE.clear()
+        self.addCleanup(mock_ac1._MADE.clear)
         self.server = mock.create_server(0, self.web, self.fixtures, phase_scale=0.03,
                                          extra_roots=[self.files])
         self.port = self.server.server_address[1]
@@ -97,7 +102,7 @@ class MockServerTest(unittest.TestCase):
         self.assertEqual(counts["without_delo"], len(body["without_delo"]),
                          "счётчик равен числу пунктов в списке")
         self.assertEqual(counts["requests"],
-                         counts["done"] + counts["pending"], counts)
+                         counts["results"] + counts["pending"], counts)
 
     def test_delo_from_request_removes_row_from_without_delo(self):
         """«Сделать делом» в демо работает: строка уходит из блока, а не в пустоту."""

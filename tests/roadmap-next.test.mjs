@@ -103,7 +103,7 @@ test('пустая карта: одно объяснение и действия
   // была только просьба к руководителю, и карта оставалась пустой, пока человек
   // не догадается. Ручное добавление этапов осталось вторым действием.
   assert.equal(on.primary.key, 'build');
-  assert.equal(on.primary.label, 'Собрать этапы по выполненным запросам');
+  assert.equal(on.primary.label, 'Собрать этапы по выполненным задачам');
   assert.equal(on.secondary.key, 'edit');
   assert.equal(on.secondary.label, 'Добавить этапы вручную');
 

@@ -863,13 +863,13 @@ export function draftFromDelo(delo, room) {
 /** Черновик «Сделать регулярным» из запроса. */
 export function draftFromRequest(request, room) {
   const doc = request && typeof request === 'object' ? request : {};
-  const title = String(doc.title || doc.title_short || 'запрос');
+  const title = String(doc.title || doc.title_short || 'задача');
   const draft = emptyDraft({ room: room || doc.room || '' });
   return normalizeDraft({
     ...draft,
     title: 'Проверять: ' + title,
     kind: 'model',
-    task: 'Повторить проверку из запроса «' + title + '»: что изменилось с прошлого раза. '
+    task: 'Повторить проверку из задачи «' + title + '»: что изменилось с прошлого раза. '
       + 'Если изменилось — сказать что и предложить следующий шаг.',
     schedule: '0 9 * * 1-5',
     change: { rule: 'model_compares', threshold: 0 },

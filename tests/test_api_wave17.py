@@ -67,8 +67,8 @@ class TitleShortTests(unittest.TestCase):
         self.assertTrue(value.startswith("Эта папка"), value)
 
     def test_empty_text(self):
-        self.assertEqual(title_mod.short_title(""), "Запрос")
-        self.assertEqual(title_mod.short_title("   "), "Запрос")
+        self.assertEqual(title_mod.short_title(""), "Задача")
+        self.assertEqual(title_mod.short_title("   "), "Задача")
 
     def test_markdown_is_stripped(self):
         value = title_mod.short_title("**Заголовок** с _курсивом_ и [ссылкой](http://x)")

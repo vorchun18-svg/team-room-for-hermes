@@ -601,7 +601,7 @@ def _synthesis(ctx: dict, nodes: list, extra_cards: list) -> tuple:
                          "message": "Ответ карточки в старом формате metadata — показан нормализованным.",
                          "detail": {"source_task": source}})
     if state == "none":
-        warnings.append({"code": "no_synthesis", "message": "Запрос завершён, но текста ответа в run'ах нет.",
+        warnings.append({"code": "no_synthesis", "message": "Задача завершена, но текста ответа в run'ах нет.",
                          "detail": {"rid": ctx["root_id"]}})
     svod_meta = _svod_public(canon)
     return ({"state": state, "version": version, "text_md": text, "author": author, "at": at,
@@ -699,7 +699,7 @@ def _status(root: dict, nodes: list, questions: list, critic=None) -> tuple:
     # работа не идёт (модели не запускаются), человек нажимает «Продолжить».
     # Без этой строки такой запрос выглядел бы «в очереди» и был бы тупиком.
     if root_status == "blocked":
-        return "needs_you", "Запрос остановлен — нажмите «Продолжить», чтобы вернуть его в работу"
+        return "needs_you", "Задача остановлена — нажмите «Продолжить», чтобы вернуть её в работу"
     if any(n.get("status") in ACTIVE for n in nodes[1:]):
         return "working", None
     if root_status == "running":

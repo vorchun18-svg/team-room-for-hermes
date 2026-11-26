@@ -123,7 +123,7 @@ export function createRequestStore(opts = {}) {
     refresh: typeof opts.refresh === 'function' ? opts.refresh : null,
     rev: 0,
     action: 0,
-    waiting: new Map(),       // ключ действия → true, пока запрос в полёте
+    waiting: new Map(),       // ключ действия → true, пока задача в полёте
     error: null,
     lastChange: null,
     signature: '',
@@ -285,7 +285,7 @@ export function createRequestStore(opts = {}) {
     try {
       // W28-D7: ожидание ограничено. Зависший (не отвечающий) запрос раньше
       // держал ключ и `btn.disabled` вечно: кнопка пункта замолкала навсегда.
-      const res = await withTimeout(job.request(), timeoutMs, 'Действие по запросу');
+      const res = await withTimeout(job.request(), timeoutMs, 'Действие по задаче');
       state.error = null;
       if (res && res.detail && typeof res.detail === 'object') {
         // Сервер вернул деталь целиком — она и есть истина.
@@ -412,6 +412,46 @@ export function createRequestStore(opts = {}) {
     });
   }
 
+  /**
+   * W30-C: действия вопроса по контракту §1 — `answer_option` (`{option_id}`),
+   * `answer_custom` (`{text}`), `explain_more`, `postpone`.
+   *
+   * Одно место на всю страницу: колонка «Нужен ваш ответ», нижний лист и
+   * «От вас нужно» получают ТО ЖЕ состояние, а не вторую историю. В отличие от
+   * ответа текстом, `answer_option` не трогает `answer` до ответа сервера — он
+   * главный и вернёт выбранный вариант в вопросе.
+   *
+   * @param {object} q вопрос
+   * @param {'answer_option'|'answer_custom'|'explain_more'|'postpone'} action
+   * @param {{option_id?:string, text?:string}} [extra]
+   * @returns {Promise<object>}
+   */
+  function questionAction(q, action, extra = {}) {
+    const id = itemId(q);
+    const kind = String(action || '');
+    if (!id) {
+      const err = new Error('Неизвестный вопрос');
+      err.code = 'not_found';
+      throw err;
+    }
+    const body = Object.assign({ action: kind, question_id: id }, extra || {});
+    const optimistic = kind === 'postpone' ? { answer_state: 'postponed', postponed: true }
+      : kind === 'explain_more' ? { answer_state: 'waiting_explanation', needs_explanation: true }
+        : kind === 'answer_option' ? { answer_state: 'sent', answered: true, answer_option: String((extra || {}).option_id || '') }
+          : { answer_state: 'sent', answered: true, answer: String((extra || {}).text || '') };
+    return dispatch({
+      kind: 'questions',
+      id,
+      key: kind + ':' + id,
+      fields: optimistic,
+      request: () => act(body),
+      apply: (res) => {
+        const q2 = res && res.question;
+        if (q2) patch('questions', id, q2, { quiet: true });
+      },
+    });
+  }
+
   /** Действие по решению: `accept` / `reject` / `discuss` / `dismiss` / `restore`. */
   function decisionAction(d, body) {
     const id = itemId(d);
@@ -524,7 +564,7 @@ export function createRequestStore(opts = {}) {
       throw err;
     }
     if (!state.roomId) {
-      const err = new Error('Неизвестна комната запроса');
+      const err = new Error('Неизвестна комната задачи');
       err.code = 'no_room';
       throw err;
     }
@@ -566,6 +606,8 @@ export function createRequestStore(opts = {}) {
     decideApproval,
     approvalAction,
     answerQuestion,
+    // W30-C: варианты ответа, свой ответ, «Пояснить ещё», «Отложить».
+    questionAction,
     decisionAction,
     stepAction,
     // W27-E2 §1: «Не актуально» / «Вернуть» / массовое закрытие / счётчик сервера.

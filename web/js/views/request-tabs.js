@@ -169,7 +169,7 @@ export function tabHash(tab) {
 /** Подпись вкладки: короткое название или «Запрос» (пустых подписей не бывает). */
 export function tabLabel(tab) {
   const t = String((tab && tab.title) || '').trim();
-  if (!t) return 'Запрос';
+  if (!t) return 'Новая задача';
   return t.length > 42 ? t.slice(0, 41).trimEnd() + '…' : t;
 }
 

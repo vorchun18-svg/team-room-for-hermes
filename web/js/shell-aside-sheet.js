@@ -36,7 +36,7 @@ export function handleText(count) {
 export function handleAria(count) {
   const n = Number(count) || 0;
   return n > 0
-    ? 'От вас нужно: ' + n + ' в этом запросе, развернуть'
+    ? 'От вас нужно: ' + n + ' в этой задаче, развернуть'
     : 'От вас нужно, развернуть';
 }
 
@@ -72,7 +72,20 @@ export function installAsideSheet(opts = {}) {
   let onKey = null;
   let raf = 0;
 
-  const asideOf = () => (view && view.querySelector ? view.querySelector('.req__aside') : null);
+  // W30-QA2: `view` приходит из оболочки один раз, а оболочка может
+  // пересобрать `#view` (и страница останется с колонкой без ручки — на узком
+  // экране вопросы становились недоступны). Поэтому каждый раз берём ЖИВОЙ
+  // `#view` и переподключаем наблюдатель, если узел сменился.
+  let watched = view;
+  const liveView = () => {
+    if (view && view.isConnected) return view;
+    const root = (typeof document !== 'undefined') ? document : null;
+    return (root && root.getElementById) ? root.getElementById('view') : null;
+  };
+  const asideOf = () => {
+    const v = liveView();
+    return (v && v.querySelector) ? v.querySelector('.req__aside') : null;
+  };
   const isSheet = () => app.dataset && app.dataset.aside === 'sheet';
 
   function isOpen() {
@@ -101,7 +114,7 @@ export function installAsideSheet(opts = {}) {
       class: HANDLE_CLASS,
       'aria-expanded': isOpen() ? 'true' : 'false',
       'aria-controls': 'req-aside-panel',
-      title: 'В этом запросе ждут ответа: ' + (Number(countWaiting(aside)) || 0)
+      title: 'В этой задаче ждут ответа: ' + (Number(countWaiting(aside)) || 0)
         + '. На вкладке «От вас нужно» — по всей комнате',
       'aria-label': handleAria(countWaiting(aside)),
       onclick: (ev) => {
@@ -116,6 +129,14 @@ export function installAsideSheet(opts = {}) {
   }
 
   function sync() {
+    const v = liveView();
+    if (MO && v && v !== watched) {
+      // Оболочка пересобрала #view: старый наблюдатель смотрит в оторванный узел.
+      if (observer) observer.disconnect();
+      observer = new MO(schedule);
+      observer.observe(v, { childList: true, subtree: true });
+      watched = v;
+    }
     const aside = asideOf();
     if (!isSheet() || !aside) {
       if (handle && handle.isConnected) handle.remove();
@@ -136,8 +157,11 @@ export function installAsideSheet(opts = {}) {
 
   const schedule = () => {
     if (raf) return;
+    // W30-QA2: `requestAnimationFrame` замирает в фоновой вкладке — тогда ручка
+    // листа не появлялась вовсе и вопросы на узком экране были недоступны.
+    // Обычный таймер даёт ту же задержку и работает всегда.
     const run = () => { raf = 0; sync(); };
-    raf = win && typeof win.requestAnimationFrame === 'function' ? win.requestAnimationFrame(run) : setTimeout(run, 16);
+    raf = setTimeout(run, 16);
   };
 
   // Страница перерисовывается точечно (живое обновление): следим за составом вида.

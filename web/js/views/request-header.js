@@ -29,9 +29,9 @@ export function createHeader(R) {
 
   async function archive() {
     const ok = await confirmDialog({
-      title: 'Убрать запрос в архив?',
-      text: 'Работа по запросу остановится: идущие задачи встанут, новые вопросы и обновления ответа не появятся. ' +
-        'Ответ, решения и файлы сохранятся — 10 секунд можно передумать, потом запрос вернётся кнопкой «Вернуть из архива».',
+      title: 'Убрать задачу в архив?',
+      text: 'Работа по задаче остановится: идущие задачи встанут, новые вопросы и обновления ответа не появятся. ' +
+        'Ответ, решения и файлы сохранятся — 10 секунд можно передумать, потом задача вернётся кнопкой «Вернуть из архива».',
       confirmLabel: 'В архив',
       cancelLabel: 'Отмена',
       danger: true,
@@ -41,17 +41,17 @@ export function createHeader(R) {
     // запрос жив как был — «Вернуть» ничего не откатывает, потому что нечего.
     undo.offer({
       key: 'archive:' + rid,
-      text: 'Запрос в архиве',
+      text: 'Задача в архиве',
       action: async () => {
-        await runAction('archive', {}, { toast: 'Запрос в архиве — вернуть можно в «Архиве»' });
+        await runAction('archive', {}, { toast: 'Задача в архиве — вернуть можно в «Архиве»' });
       },
-      onUndo: () => { if (typeof ctx.toast === 'function') ctx.toast('Запрос остался как был — ничего не изменилось', 'ok'); },
+      onUndo: () => { if (typeof ctx.toast === 'function') ctx.toast('Задача осталась как была — ничего не изменилось', 'ok'); },
     });
   }
 
   /** W29-P4: вернуть запрос из архива — данные целы, модели не запускаются. */
   async function restore() {
-    await runAction('unarchive', {}, { toast: 'Запрос возвращён — он снова в списке запросов' });
+    await runAction('unarchive', {}, { toast: 'Задача возвращена — она снова в списке задач' });
   }
 
   /* ── меню действий ─────────────────────────────────────────── */
@@ -115,7 +115,7 @@ export function createHeader(R) {
       window.dispatchEvent(new CustomEvent('teamroom:bookmarks', { detail: { id: rid, on: saved } }));
       if (typeof ctx.toast === 'function') {
         ctx.toast(saved
-          ? 'Запрос в закладках — он сверху в меню и в «Недавнем»'
+          ? 'Задача в закладках — она сверху в меню и в «Недавнем»'
           : 'Закладка снята', 'ok');
       }
       await R.refresh({ force: true });
@@ -124,6 +124,32 @@ export function createHeader(R) {
       if (typeof ctx.toast === 'function') {
         ctx.toast((err && err.message) || 'Не удалось изменить закрепление', 'danger');
       }
+    }
+  }
+
+  /**
+   * W30 §2 / QA2: «Разбить на задачи» — вход в предложение руководителя для
+   * старой большой задачи. Сама кнопка ничего не создаёт: она ставит карточку
+   * руководителю «подготовь план веток». Подзадачи появятся ТОЛЬКО после
+   * согласия человека, модели при нажатии не запускаются.
+   * Сервер идемпотентен: повтор возвращает ту же карточку (`duplicate`).
+   */
+  async function splitToTasks() {
+    const ok = await confirmDialog({
+      title: 'Разбить задачу на подзадачи?',
+      text: 'Руководитель подготовит план: ветки-подзадачи, исполнители и вопросы к каждой. '
+        + 'Ничего не создастся без вас — предложение появится на странице задачи, и вы решите '
+        + 'по каждой ветке («Да» / «Нет» / «Свой вариант»). Модели сейчас не запускаются.',
+      confirmLabel: 'Разбить на задачи',
+      cancelLabel: 'Отмена',
+    });
+    if (!ok) return;
+    const res = await runAction('split_to_tasks', {}, {});
+    if (!res) return;
+    if (typeof ctx.toast === 'function') {
+      ctx.toast(res.duplicate
+        ? 'План уже готовится — руководитель вернётся с предложением задач'
+        : 'Руководитель готовит предложение задач: подзадачи появятся после вашего согласия', 'ok');
     }
   }
 
@@ -145,7 +171,7 @@ export function createHeader(R) {
       only.push(menuItem({ iconName: 'markdown', label: 'Экспорт .md', href: md, download: '' }));
       only.push(menuItem({ iconName: 'globe', label: 'Экспорт .html', href: html, download: '' }));
       only.push(menuItem({ iconName: 'output', label: 'Печать', onclick: () => { closeMenu(); window.print(); } }));
-      return h('div', { class: 'popover req-menu__pop', role: 'menu', 'aria-label': 'Действия с запросом' },
+      return h('div', { class: 'popover req-menu__pop', role: 'menu', 'aria-label': 'Действия с задачей' },
         h('div', { class: 'menu' }, only));
     }
     const kick = kickUsefulness(kickStateFromTree(R.detail.tree));
@@ -205,6 +231,14 @@ export function createHeader(R) {
         onclick: () => { closeMenu(); decompose(); },
       }));
     }
+    // W30-QA2 §3: «Разбить на задачи» — для старых больших задач с множеством
+    // вопросов. Видна всегда (кроме архива): у задачи уже может быть предложение,
+    // тогда сервер ответит `duplicate` и человек увидит карточку предложения.
+    items.push(menuItem({
+      iconName: 'split-horizontal', label: 'Разбить на задачи',
+      hint: 'руководитель подготовит план; без вас ничего не создастся',
+      onclick: () => { closeMenu(); splitToTasks(); },
+    }));
     items.push(menuItem({
       iconName: 'verified', label: 'Запустить критика',
       disabled: !canCritique,
@@ -223,7 +257,7 @@ export function createHeader(R) {
     // W20-U3 (P13): закрепление запроса — держится сверху в «Недавнем» и списках.
     items.push(menuItem({
       iconName: 'pin',
-      label: R.detail.pinned ? 'Открепить запрос' : 'Закрепить запрос',
+      label: R.detail.pinned ? 'Открепить задачу' : 'Закрепить задачу',
       hint: R.detail.pinned ? 'вернуть в общий порядок' : 'сверху в «Недавнем»',
       onclick: () => { closeMenu(); togglePin(); },
     }));
@@ -234,7 +268,7 @@ export function createHeader(R) {
       hint: R.detail.archived ? 'Уже в архиве' : null,
       onclick: () => { closeMenu(); archive(); },
     }));
-    return h('div', { class: 'popover req-menu__pop', role: 'menu', 'aria-label': 'Действия с запросом' },
+    return h('div', { class: 'popover req-menu__pop', role: 'menu', 'aria-label': 'Действия с задачей' },
       h('div', { class: 'menu' }, items));
   }
 
@@ -242,7 +276,7 @@ export function createHeader(R) {
     const wrap = h('div', { class: 'req-menu' });
     const btn = h('button', {
       type: 'button', class: 'btn btn--secondary', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
-      title: 'Действия с запросом',
+      title: 'Действия с задачей',
     }, icon('ellipsis', { size: 14 }), 'Действия');
     wrap.append(btn);
     btn.addEventListener('click', () => {
@@ -274,13 +308,13 @@ export function createHeader(R) {
     if (R.detail && R.detail.archived) {
       return h('button', {
         type: 'button', class: 'btn btn--primary btn--sm req__archive-btn',
-        title: 'Вернуть запрос в обычный список — без запуска моделей',
+        title: 'Вернуть задачу в обычный список — без запуска моделей',
         onclick: () => restore(),
       }, icon('debug-restart', { size: 13 }), 'Вернуть из архива');
     }
     return h('button', {
       type: 'button', class: 'btn btn--secondary btn--sm req__archive-btn',
-      title: 'Не актуально → в архив: работа остановится, запрос можно вернуть',
+      title: 'Не актуально → в архив: работа остановится, задачу можно вернуть',
       onclick: () => archive(),
     }, icon('archive', { size: 13 }), 'Не актуально');
   }
@@ -325,7 +359,7 @@ export function createHeader(R) {
         // раньше она занимала отдельную строку и съедала 24 px до содержания.
         h('div', { class: 'req__crumb' },
           h('a', { href: `#/room/${encodeURIComponent(R.roomId)}/composer` },
-            icon('arrow-left', { size: 12 }), h('span', { class: 'req__crumb-text' }, 'К запросам'))),
+            icon('arrow-left', { size: 12 }), h('span', { class: 'req__crumb-text' }, 'К задачам'))),
         // W17-G §1 (B8/P5): короткое название + карандаш и замок. Полный текст
         // диктовки — в подсказке и в блоке «Запрос» ниже, не в заголовке.
         buildTitleBlock({

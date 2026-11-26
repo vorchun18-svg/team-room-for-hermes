@@ -271,5 +271,5 @@ export function syncBookmarks(serverRequests, opts = {}) {
 /** Заголовок закладки. */
 export function bookmarkLabel(item) {
   const t = String((item && item.title) || '').trim();
-  return t || 'Запрос';
+  return t || 'Задача';
 }

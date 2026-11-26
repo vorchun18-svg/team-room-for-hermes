@@ -407,7 +407,7 @@ export async function mount(el, ctx) {
       iconName: 'map',
       title: 'Карта проекта не собрана',
       text: item.text,
-      hint: item.why || 'Этапы соберу по названиям и итогам готовых запросов — без запуска модели.',
+      hint: item.why || 'Этапы соберу по названиям и итогам готовых задач — без запуска модели.',
       source: h('a', {
         class: 'inbox-row__link small',
         href: `#/room/${encodeURIComponent(roomId)}/roadmap`,
@@ -646,7 +646,7 @@ export async function mount(el, ctx) {
       ? segmented({
         options: [
           { value: REQUEST_FILTER_ALL, label: 'Все' },
-          { value: REQUEST_FILTER_ONE, label: 'Только этот запрос' },
+          { value: REQUEST_FILTER_ONE, label: 'Только эта задача' },
         ],
         value: requestFilterMode(state.requestFilter),
         onchange: (value) => setFilter(value === REQUEST_FILTER_ONE ? state.requestFilter : ''),
@@ -719,7 +719,7 @@ export async function mount(el, ctx) {
     const rid = String(item.source_request || '').trim();
     const localId = String(item.id || '').includes(':') ? String(item.id).split(':').pop() : String(item.id || '');
     if (!rid) {
-      toast('У шага нет запроса-источника — открыть окно нельзя', 'warn');
+      toast('У шага нет задачи-источника — открыть окно нельзя', 'warn');
       return;
     }
     openStepDialog({
@@ -745,7 +745,7 @@ export async function mount(el, ctx) {
       body = emptyState({
         icon: 'checklist',
         title: 'Шагов пока нет',
-        text: 'Когда команда закончит запрос, она предложит 3–7 конкретных следующих шагов — они появятся здесь.',
+        text: 'Когда команда закончит задачу, она предложит 3–7 конкретных следующих шагов — они появятся здесь.',
       });
     } else {
       body = h('div', { class: 'step-groups' }, groups.map((group) => h('div', { class: 'step-group' },
@@ -787,7 +787,7 @@ export async function mount(el, ctx) {
           sourceLink(roomId, item.source_request, item.source_title),
           asked && askedRid
             ? h('a', { class: 'backlog__source', href: requestHref(roomId, askedRid) },
-              icon('arrow-right', { size: 11 }), h('span', { class: 'truncate' }, 'Открыть запрос'))
+              icon('arrow-right', { size: 11 }), h('span', { class: 'truncate' }, 'Открыть задачу'))
             : null)),
       h('div', { class: 'future-card__actions' },
         asked
@@ -949,11 +949,11 @@ export async function mount(el, ctx) {
     try {
       const res = await api.post(`/api/rooms/${encodeURIComponent(roomId)}/backlog/${encodeURIComponent(item.id)}/ask`, {});
       const rootId = (res && (res.root_id || (res.request && res.request.id))) || null;
-      toast('Запрос создан', 'ok');
+      toast('Задача создана', 'ok');
       if (rootId) navigate(requestHref(roomId, rootId));
       else ctx.refresh();
     } catch (err) {
-      toast(err && err.message ? err.message : 'Не удалось создать запрос', 'danger');
+      toast(err && err.message ? err.message : 'Не удалось создать задачу', 'danger');
     } finally {
       state.busy.delete(item.id);
       await load({ silent: true });

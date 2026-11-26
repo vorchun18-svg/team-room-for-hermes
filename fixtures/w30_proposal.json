@@ -1,0 +1,131 @@
+{
+  "_comment": "W30-C: предложения руководителя по контракту §2 (single/big/applied) и связи «родитель → подзадачи». Данные вымышленные: химчистка и грузоперевозки.",
+  "proposals": {
+    "t_c0ffee01": {
+      "id": "pr_c0ffee01",
+      "root_id": "t_c0ffee01",
+      "kind": "single",
+      "state": "pending",
+      "summary": "Разовая задача: посчитать экономику приёма вещей на дому и подготовить памятку приёмщика. Считаю, что это одна задача на двух участников, а не проект.",
+      "author": "team-director",
+      "created_at": 1764190000,
+      "updated_at": 1764190000,
+      "single": {"decision": "pending", "text": ""},
+      "branches": [],
+      "resolution": null
+    },
+    "t_c0ffee02": {
+      "id": "pr_c0ffee02",
+      "root_id": "t_c0ffee02",
+      "kind": "big",
+      "state": "pending",
+      "summary": "Тема объёмная: три направления, каждое требует своей работы и проверки. Предлагаю разбить на три подзадачи — так у каждой будет свой исполнитель и срок.",
+      "author": "team-director",
+      "created_at": 1764191000,
+      "updated_at": 1764191000,
+      "single": {"decision": "pending", "text": ""},
+      "branches": [
+        {
+          "id": "b1",
+          "title": "Сравнить лизинг второго тягача и наёмные рейсы",
+          "goal": "Таблица: платёж, стоимость рейса, точка окупаемости — по трём вариантам, с числами за октябрь.",
+          "assignee": "analyst",
+          "questions": [
+            "Какой платёж банк подтвердит при нашем обороте?",
+            "Сколько рейсов в месяц нужно, чтобы лизинг окупился?"
+          ],
+          "order": 1,
+          "decision": "pending",
+          "custom_text": "",
+          "task_id": null
+        },
+        {
+          "id": "b2",
+          "title": "Проверить договор с наёмным перевозчиком",
+          "goal": "Список документов, ответственность за груз, страховка и штрафы — простыми словами, с местом для подписи.",
+          "assignee": "lawyer",
+          "questions": [
+            "Кто платит за повреждённый груз?",
+            "Какая страховка нужна от перевозчика?"
+          ],
+          "order": 2,
+          "decision": "pending",
+          "custom_text": "",
+          "task_id": null
+        },
+        {
+          "id": "b3",
+          "title": "Посчитать график выхода машины и поиск водителя",
+          "goal": "Календарь: когда подписываем лизинг, когда ищем водителя, когда первый рейс — без месяца простоя.",
+          "assignee": "team-ops",
+          "questions": [
+            "Сколько недель занимает поиск водителя с нужной категорией?"
+          ],
+          "order": 3,
+          "decision": "pending",
+          "custom_text": "",
+          "task_id": null
+        }
+      ],
+      "resolution": null
+    },
+    "t_c0ffee03": {
+      "id": "pr_c0ffee03",
+      "root_id": "t_c0ffee03",
+      "kind": "big",
+      "state": "applied",
+      "summary": "Приём вещей на дому запускаем через партнёра-курьера. Три подзадачи: договор, памятка приёмщика, цена выезда.",
+      "author": "team-director",
+      "created_at": 1764100000,
+      "updated_at": 1764189000,
+      "single": {"decision": "pending", "text": ""},
+      "branches": [
+        {
+          "id": "b1",
+          "title": "Договор с курьером и страхование вещей",
+          "goal": "Проверить условия, ответственность за груз и страховку.",
+          "assignee": "lawyer",
+          "questions": [],
+          "order": 1,
+          "decision": "yes",
+          "custom_text": "",
+          "task_id": "t_c0ffee04"
+        },
+        {
+          "id": "b2",
+          "title": "Памятка приёмщика для выезда на дом",
+          "goal": "Что проверять на месте и что писать в квитанции.",
+          "assignee": "team-ops",
+          "questions": [],
+          "order": 2,
+          "decision": "custom",
+          "custom_text": "Добавить в памятку фото вещи до отправки — клиенты спорят о пятнах.",
+          "task_id": "t_c0ff0101"
+        },
+        {
+          "id": "b3",
+          "title": "Цена выезда и правило бесплатного выезда",
+          "goal": "Посчитать, при каком чеке выезд окупается.",
+          "assignee": "analyst",
+          "questions": [],
+          "order": 3,
+          "decision": "no",
+          "custom_text": "",
+          "task_id": null
+        }
+      ],
+      "resolution": {"action": "apply", "text": "", "at": 1764189000}
+    }
+  },
+  "projects": {
+    "t_c0ffee02": {"parent_id": null, "children": []},
+    "t_c0ffee03": {
+      "parent_id": null,
+      "children": [
+        {"id": "t_c0ffee04", "title": "Договор с курьером и страхование вещей", "status": "running", "stage": "working"},
+        {"id": "t_c0ff0101", "title": "Памятка приёмщика для выезда на дом", "status": "blocked", "stage": "needs_you"}
+      ]
+    },
+    "t_c0ffee04": {"parent_id": "t_c0ffee03", "children": []}
+  }
+}

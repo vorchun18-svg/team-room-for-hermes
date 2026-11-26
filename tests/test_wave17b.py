@@ -176,7 +176,7 @@ class TitlePriorityTests(unittest.TestCase):
         value = titles_mod.derive(LONG_DICTATION)
         self.assertTrue(value)
         self.assertLessEqual(len(value), titles_mod.TITLE_LIMIT)
-        self.assertEqual(titles_mod.derive(""), "Запрос")
+        self.assertEqual(titles_mod.derive(""), "Задача")
         self.assertFalse(value.lower().startswith("так"))
 
     def test_seed_marks_user_title(self):

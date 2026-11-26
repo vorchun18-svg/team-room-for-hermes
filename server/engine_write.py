@@ -85,9 +85,9 @@ def _title(title: str, body: str = "") -> str:
             if line:
                 text = line[:120]
                 break
-    text = " ".join(text.split()) or "Запрос"
+    text = " ".join(text.split()) or "Задача"
     if text.startswith("-"):
-        text = "Запрос: " + text
+        text = "Задача: " + text
     return text[:200]
 
 
@@ -258,7 +258,7 @@ def _dispatcher_warning(cfg) -> dict | None:
     if dispatcher_ok(cfg):
         return None
     return {"code": "dispatcher_down",
-            "message": "Запрос создан, но диспетчер не запущен — работа не начнётся сама."}
+            "message": "Задача создана, но диспетчер не запущен — работа не начнётся сама."}
 
 
 # ---------------------------------------------------------------- профили
@@ -474,12 +474,12 @@ def create_request(cfg, room: dict, slug: str, title: str, body: str, *,
     чужой модели. Модель профиля исполнителя движок берёт сам.
     """
     if not isinstance(room, dict):
-        raise EngineWriteError("bad_request", "Не передана комната запроса.")
+        raise EngineWriteError("bad_request", "Не передана комната задачи.")
     board = (room.get("board") or "").strip()
     if not board:
         raise EngineWriteError("bad_request", "У комнаты не указана доска канбана.")
     if not (slug or "").strip():
-        raise EngineWriteError("bad_request", "Не указан слаг запроса.")
+        raise EngineWriteError("bad_request", "Не указан слаг задачи.")
     tenant = (room.get("tenant") or f"{TENANT_PREFIX}{room.get('id') or ''}").strip()
     body = body if isinstance(body, str) else str(body or "")
     title = _title(title, body)
@@ -527,8 +527,73 @@ def create_request(cfg, room: dict, slug: str, title: str, body: str, *,
             failed = [{"id": root_id, "reason": str(exc)[:160]}]
         if failed and warning is None:
             warning = {"code": "reasoning_not_set",
-                       "message": "Запрос создан, но уровень мышления не применился. "
+                       "message": "Задача создана, но уровень мышления не применился. "
                                   "Проверьте выбор модели в комнате."}
+    return {"root_id": root_id, "warning": warning}
+
+
+def create_subtask_request(cfg, room: dict, slug: str, title: str, body: str,
+                           assignee: str = "", *, idem_key: str | None = None) -> dict:
+    """Создать задачу-КОРЕНЬ подзадачи проекта (W30 §2) и вернуть ``{root_id, warning}``.
+
+    Отличие от `create_child_card`: у подзадачи НЕТ `--parent`. Родительская связь
+    доски слила бы её с деревом главной задачи (её работа попала бы в свод родителя
+    как «шаг», а не как отдельная задача); связь «проект» хранит приложение
+    (`data/state/<room>/projects.json`, `server/projects.py`).
+
+    Отличие от `create_request`: подзадача сразу идёт исполнителю ветки (`--assignee`,
+    без `--triage`) — иначе корень попал бы на разбор руководителю, и ветка осталась
+    бы без того, кто её делает. Пустой `assignee` — корень в `triage` (руководитель
+    разложит сам); это допустимый, но явный выбор человека.
+
+    Модель/провайдер исполнителя — тем же путём, что у остальных карточек комнаты
+    (`_model_args`), уровень мышления — мостом сразу после создания.
+    """
+    if not isinstance(room, dict):
+        raise EngineWriteError("bad_request", "Не передана комната подзадачи.")
+    board = (room.get("board") or "").strip()
+    if not board:
+        raise EngineWriteError("bad_request", "У комнаты не указана доска канбана.")
+    if not (slug or "").strip():
+        raise EngineWriteError("bad_request", "Не указан слаг подзадачи.")
+    tenant = (room.get("tenant") or f"{TENANT_PREFIX}{room.get('id') or ''}").strip()
+    body = body if isinstance(body, str) else str(body or "")
+    title = _title(title, body)
+    if "\x00" in title or "\x00" in body:
+        raise EngineWriteError("bad_request", "В заголовке или теле подзадачи есть NUL-байт.",
+                               detail={"field": "title" if "\x00" in title else "body"})
+    assignee = (assignee or "").strip()
+    if assignee:
+        assignee = assert_profile(cfg, assignee, allow_unassign=False, field="assignee")
+    body = with_context_pack(cfg, room, body)
+    body = _with_models_block(cfg, room, body)
+    model_args, settings = _model_args(cfg, room, assignee) if assignee else ([], {})
+    key = str(idem_key or ("r-sub-%s" % hashlib.sha1(body.encode("utf-8")).hexdigest()[:10]))
+    path = _write_body(cfg, body, slug)
+    try:
+        # Один список argv (как у create_child_card): модель/провайдер исполнителя
+        # едут в `create` сразу, а не дописываются вторым `+=` — иначе проверка
+        # «каждый путь создания передаёт модель» (tests/test_card_creation_paths.py)
+        # видит список без маркера модели и справедливо краснеет.
+        args = ["create", title, *([opt("assignee", assignee)] if assignee else []),
+                opt("tenant", tenant), opt("created-by", CREATED_BY), *model_args,
+                opt("idempotency-key", key), opt("body-file", path), "--json"]
+        data, _ms = _run_json(cfg, board, args)
+    finally:
+        try:
+            path.unlink()
+        except Exception:  # noqa: BLE001 - уборка временного тела не должна ронять запись
+            pass
+    root_id = str((data or {}).get("id") or "")
+    if not root_id:
+        raise EngineWriteError("engine_error", "Канбан не вернул id созданной подзадачи.",
+                               json.dumps(data, ensure_ascii=False)[:600])
+    warning = _dispatcher_warning(cfg)
+    if settings.get("reasoning"):
+        failed = _push_reasoning(cfg, board, root_id, str(settings["reasoning"]))
+        if failed and warning is None:
+            warning = {"code": "reasoning_not_set",
+                       "message": "Подзадача создана, но уровень мышления не применился."}
     return {"root_id": root_id, "warning": warning}
 
 
@@ -1109,7 +1174,7 @@ def act(cfg, board: str, root_id: str, action: str, **kw) -> dict:
         elif kw.get("task_id"):
             warning = "Карточка не была заблокирована — ответ сохранён комментарием."
         else:
-            warning = "В запросе нет заблокированных карточек — ответ сохранён комментарием."
+            warning = "В задаче нет заблокированных карточек — ответ сохранён комментарием."
         return done("Ответ отправлен" + ("." if not warning else " (без разблокировки)."),
                     ms, unblocked=targets, warning=warning, task_id=task_id)
 
@@ -1122,7 +1187,7 @@ def act(cfg, board: str, root_id: str, action: str, **kw) -> dict:
             ids = [tid for tid in tree_ids(cfg, board, root_id)
                    if (_task_row(cfg, board, tid) or {}).get("status") in ("blocked", "scheduled")]
         if not ids:
-            raise EngineWriteError("conflict", "Нечего разблокировать: в запросе нет заблокированных карточек.")
+            raise EngineWriteError("conflict", "Нечего разблокировать: в задаче нет заблокированных карточек.")
         _out, ms = _run(cfg, board, ["unblock", *ids, opt("reason", reason)])
         return done(f"Разблокировано: {len(ids)}.", ms, unblocked=ids)
 
@@ -1203,7 +1268,7 @@ def act(cfg, board: str, root_id: str, action: str, **kw) -> dict:
         status = str(row.get("status") or "")
         if status not in ("triage", "queued"):
             raise EngineWriteError("conflict",
-                                   "Запрос уже разложен или не ждёт декомпозиции (статус %s)." % status,
+                                   "Задача уже разложена или не ждёт декомпозиции (статус %s)." % status,
                                    detail={"reason": "already_decomposed", "status": status,
                                            "task_id": task_id}, http_status=409)
         out, ms = _run(cfg, board, ["decompose", *positional(task_id)], timeout=DECOMPOSE_TIMEOUT)

@@ -1,0 +1,91 @@
+/* attach-picker.css — один компонент «Прикрепить файлы» (W30-F, дефект 15).
+ *
+ * Общие классы `attach-*` работают в любом месте прикрепления (композер, диалог
+ * запроса, форма ответа на вопрос). Префиксные классы (`cmp-attach__…`,
+ * `thr-attach__…`) остаются для совместимости с прежней вёрсткой.
+ *
+ * Правила: имя файла — первым и самым заметным, полный путь — в подсказке;
+ * действия не уезжают на новую строку целиком; файл-секрет до подтверждения
+ * красноватый и с кнопкой «Всё равно прикрепить» (отказ — не тупик).
+ */
+
+.attach-chips { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.attach-chips:empty { display: none; }
+
+.attach-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  max-width: 100%;
+  min-width: 0;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--ui-border, var(--border));
+  border-radius: var(--radius-sm, 6px);
+  background: var(--ui-surface, var(--surface));
+}
+
+.attach-chip__name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  max-width: min(360px, 45ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-chip__size,
+.attach-chip__state {
+  font-size: var(--text-xs, 11px);
+  color: var(--muted, var(--descriptionForeground));
+  white-space: nowrap;
+}
+
+.attach-chip__why {
+  font-size: var(--text-xs, 11px);
+  color: var(--danger, var(--errorForeground));
+  max-width: min(520px, 60ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-chip__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.attach-chip__act {
+  font-size: var(--text-xs, 11px);
+  padding: 2px 6px;
+  min-height: 22px;
+  white-space: nowrap;
+}
+
+.attach-chip--bad {
+  border-color: var(--danger, var(--errorForeground));
+  background: color-mix(in srgb, var(--danger, var(--errorForeground)) 8%, transparent);
+}
+
+.attach-row { display: block; }
+.attach-row.hidden { display: none; }
+.attach-row__line { align-items: flex-start; gap: var(--space-2); }
+
+.attach-row__input {
+  resize: vertical;
+  min-height: calc(var(--space-4) * 2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.attach-picker__path-btn { white-space: nowrap; }
+
+/* Узкая колонка диалога: действия чипа уходят под имя, а не расширяют блок. */
+@container view (max-width: 560px) {
+  .attach-chip__actions { margin-left: 0; }
+  .attach-chip__name { max-width: 100%; }
+}

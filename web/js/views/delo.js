@@ -527,7 +527,7 @@ export async function mount(el, ctx) {
           h('p', { class: 'small muted' },
             counters.total
               ? 'Выберите «Все» — там ' + counters.total + '.'
-              : 'Дела появляются из запросов комнаты. Каждый запрос — уже работа: '
+              : 'Дела появляются из задач комнаты. Каждая задача — уже работа: '
                 + 'ниже его можно сделать делом, чтобы вести этапы, срок и ожидания.'),
           counters.total ? h('button', {
             class: 'btn btn--sm btn--secondary', type: 'button',
@@ -656,7 +656,7 @@ export async function mount(el, ctx) {
       delo.request_id ? h('a', {
         class: 'btn btn--sm btn--ghost',
         href: '#/room/' + encodeURIComponent(delo.room) + '/request/' + encodeURIComponent(delo.request_id),
-      }, 'Запрос, из которого пришло дело') : null,
+      }, 'Задача, из которой пришло дело') : null,
       delo.status === 'paused'
         ? h('button', { class: 'btn btn--sm btn--primary', type: 'button', onclick: () => act('resume', {}, 'Дело возобновлено') }, 'Возобновить')
         : h('button', { class: 'btn btn--sm btn--ghost', type: 'button', onclick: () => act('pause', {}, 'Дело на паузе') }, 'Пауза'),
@@ -669,7 +669,7 @@ export async function mount(el, ctx) {
   /* --- загрузка --------------------------------------------------------- */
 
   let lastItems = [];
-  let noDelo = null;             // запросы комнаты без дела (W29-P6)
+  let noDelo = null;             // задачи комнаты без дела (W29-P6)
 
   /** «Запросы без дела»: каждый запрос комнаты — неявное дело, пока из него не сделали дело. */
   async function loadNoDeleo(roomId) {
@@ -691,7 +691,7 @@ export async function mount(el, ctx) {
         ids.length > 1 ? { request_ids: ids } : { request_id: ids[0] });
       const made = (res && res.created) || [];
       const skipped = (res && res.skipped) || [];
-      if (made.length) toast('Дело открыто: ' + made.length + ' — ' + String(title || 'из запросов комнаты'), 'ok');
+      if (made.length) toast('Дело открыто: ' + made.length + ' — ' + String(title || 'из задач комнаты'), 'ok');
       else if (skipped.length) toast('Дело уже есть — открываю список дел', 'info');
       else toast(String((res && res.message) || 'Дело не открылось'), 'warn');
       await load(false);
@@ -708,18 +708,35 @@ export async function mount(el, ctx) {
     return false;
   }
 
+  /**
+   * Подпись статуса запроса по-русски (проверено на живой форме ответа
+   * `GET /api/rooms/{id}/results`): сервер отдаёт служебные коды `done`,
+   * `archived`, `failed`, `working` — в интерфейсе они не показываются.
+   * Раньше в блоке было сырое `archived` латиницей.
+   */
+  function requestStatusLabel(status) {
+    const code = String(status || '').trim().toLowerCase();
+    if (!code) return 'в работе';
+    if (code === 'done') return 'завершён';
+    if (code === 'archived') return 'в архиве';
+    if (code === 'failed' || code === 'error') return 'с ошибкой';
+    if (code === 'queued' || code === 'new' || code === 'pending') return 'ждёт запуска';
+    if (code === 'reviewing' || code === 'synthesizing') return 'идёт проверка';
+    return 'в работе';
+  }
+
   /** Блок «Запросы без дела»: явно говорит, что запросы комнаты — уже работа. */
   function noDeloBlock(payload) {
     const list = (payload && Array.isArray(payload.without_delo)) ? payload.without_delo : [];
     const counters = (payload && payload.counts) || {};
     const box = h('section', { class: 'delo-nodelo', 'data-block': 'without-delo' },
-      h('h2', { class: 'delo-nodelo__title' }, 'Запросы без дела',
+      h('h2', { class: 'delo-nodelo__title' }, 'Задачи без дела',
         h('span', { class: 'muted small' }, list.length ? ' · ' + list.length : '')),
       h('p', { class: 'delo-nodelo__lead small muted' },
         Number(counters.requests || 0)
-          ? 'Каждый запрос комнаты — уже работа. Дело добавляет к нему этапы, срок, ожидания и письма: '
-            + 'сделайте дело из запроса, чтобы вести его дальше.'
-          : 'Запросов в комнате пока нет — дела появятся сами, как только вы поставите первый запрос.'));
+          ? 'Каждая задача комнаты — уже работа. Дело добавляет к ней этапы, срок, ожидания и письма: '
+            + 'сделайте дело из задачи, чтобы вести его дальше.'
+          : 'Задач в комнате пока нет — дела появятся сами, как только вы поставите первую задачу.'));
     if (!list.length) return box;
     const rows = h('div', { class: 'delo-nodelo__list' }, ...list.slice(0, 12).map((req) => h('div', {
       class: 'delo-nodelo__row', 'data-request': String(req.id || ''),
@@ -730,10 +747,10 @@ export async function mount(el, ctx) {
       title: req.title || req.id,
     }, String(req.title || req.id)),
     h('span', { class: 'chip chip--outline delo-nodelo__status' },
-      String(req.status || '') === 'done' ? 'завершён' : (req.status ? String(req.status) : 'в работе')),
+      requestStatusLabel(req.status)),
     h('button', {
       class: 'btn btn--sm btn--secondary', type: 'button', 'data-act': 'make-delo',
-      title: 'Создать дело из этого запроса: этапы, срок, следующий шаг',
+      title: 'Создать дело из этой задачи: этапы, срок, следующий шаг',
       onclick: (ev) => { ev.preventDefault(); ev.stopPropagation(); makeDelo([req.id], req.title); },
     }, 'Сделать делом'))));
     box.appendChild(rows);
@@ -741,10 +758,10 @@ export async function mount(el, ctx) {
       box.appendChild(h('div', { class: 'delo-nodelo__bulk' },
         h('button', {
           class: 'btn btn--sm btn--ghost', type: 'button',
-          title: 'Создать дела для всех запросов без дела (одно дело на запрос)',
-          onclick: () => makeDelo(list.map((x) => x.id), 'запросы комнаты'),
+          title: 'Создать дела для всех задач без дела (одно дело на задачу)',
+          onclick: () => makeDelo(list.map((x) => x.id), 'задачи комнаты'),
         }, 'Сделать делами все (' + list.length + ')'),
-        h('span', { class: 'small muted' }, 'одно дело на запрос — повторов не будет')));
+        h('span', { class: 'small muted' }, 'одно дело на задачу — повторов не будет')));
     }
     return box;
   }

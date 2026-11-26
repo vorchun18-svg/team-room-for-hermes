@@ -177,7 +177,7 @@ export async function mount(el, ctx) {
 
   const heading = h('div', { class: 'journal__heading row row--between row--wrap' },
     // С фильтром это уже не «комната целиком» — заголовок говорит, что показано.
-    sectionHeader(state.requestId ? 'Хронология запроса' : 'Хронология комнаты', { count: 0 }),
+    sectionHeader(state.requestId ? 'Хронология задачи' : 'Хронология комнаты', { count: 0 }),
     h('div', { class: 'row row--tight small muted' },
       icon('pulse', { size: 12 }), 'обновляется автоматически'));
 
@@ -223,8 +223,8 @@ export async function mount(el, ctx) {
             ? h('a', {
               class: 'journal-event__link',
               href: requestHref(roomId, event.request_id),
-              title: 'Открыть запрос ' + event.request_id,
-            }, icon('arrow-right', { size: 11 }), 'к запросу')
+              title: 'Открыть задачу ' + event.request_id,
+            }, icon('arrow-right', { size: 11 }), 'к задаче')
             : null)));
   }
 
@@ -248,7 +248,7 @@ export async function mount(el, ctx) {
         return emptyState({
           icon: 'search',
           title: 'Ничего не найдено',
-          text: `По запросу «${state.q}» событий нет. Попробуйте короче или снимите фильтр.`,
+          text: `По задаче «${state.q}» событий нет. Попробуйте короче или снимите фильтр.`,
           action: { label: 'Сбросить поиск', onclick: resetFilters },
         });
       }
@@ -263,15 +263,15 @@ export async function mount(el, ctx) {
       if (state.requestId) {
         return emptyState({
           icon: 'history',
-          title: 'В этом запросе событий пока нет',
-          text: 'Журнал показывает только события одного запроса. Снимите фильтр, чтобы увидеть всю комнату.',
+          title: 'В этой задаче событий пока нет',
+          text: 'Журнал показывает только события одной задачи. Снимите фильтр, чтобы увидеть всю комнату.',
           action: { label: 'Показать весь журнал', onclick: clearRequestFilter },
         });
       }
       return emptyState({
         icon: 'history',
         title: 'Журнал пока пуст',
-        text: 'Здесь появятся события комнаты: созданные запросы, ответы, вопросы, решения и шаги.',
+        text: 'Здесь появятся события комнаты: созданные задачи, ответы, вопросы, решения и шаги.',
       });
     }
     const days = groupJournal(events, new Date());

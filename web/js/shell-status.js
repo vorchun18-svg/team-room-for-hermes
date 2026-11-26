@@ -60,7 +60,7 @@ export function renderBanners() {
 
   if (dispatcherRunning(hd) === false) {
     host.appendChild(bannerNode('warn', 'warning',
-      'Движок команды остановлен — новые запросы не начнут выполняться, пока он не запустится.',
+      'Движок команды остановлен — новые задачи не начнут выполняться, пока он не запустится.',
       h('button', { class: 'btn btn--ghost btn--sm', onclick: () => { D.retryHealth(); D.toast('Проверяю движок…', 'info'); } }, 'Проверить')));
   }
   if (D.pick(hd, 'engine.schema_ok') === false) {

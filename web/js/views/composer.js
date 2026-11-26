@@ -30,8 +30,8 @@ import { createMic } from '../dictation.js';
 import { participantLabel, ensureProfileDirectory, profileEntry, memberOf } from '../participant-label.js';
 import { createFeed } from './composer-feed.js';
 import { BRIEF_LABEL, BRIEF_HINT, briefDefaultOn, briefPayload } from './plan-req.js';
-// W29B-Q3: «Просмотр» у чипа вложения — картинка, PDF, текст, Office, голос.
-import { openAttachPreview } from './attach-preview.js';
+// W30-F: один общий компонент прикрепления файлов (скрепка → окно Windows).
+import { createAttachPicker } from '../attach-picker.js';
 
 /**
  * Проверка критиком — ОДИН список (P10): раньше рядом стояли переключатель
@@ -87,8 +87,6 @@ export function criticChoiceLabel(choice) {
 
 /** Мягкая подсказка: длинный запрос лучше разбить, но поле не ограничиваем. */
 const LONG_TEXT = 100000;
-/** Предел вложений — тот же, что у сервера (`app_common.MAX_ATTACH`). */
-const MAX_ATTACH = 30;
 const POLL_ACTIVE = 3000;
 const POLL_IDLE = 15000;
 
@@ -117,8 +115,8 @@ export function personName(id) {
  */
 export async function mount(el, ctx) {
   await ensureCss('css/view-composer.css');
-  // Чипы вложений (W28-A): имя, размер, «Открыть», «Открыть в папке», «Убрать».
-  await ensureCss('css/composer-attach.css');
+  // Чипы вложений (W30-F): стили общего компонента прикрепления.
+  await ensureCss('css/attach-picker.css');
   // Стили проектного режима: флажок брифа, бейджи, плашка карты.
   await ensureCss('css/plan-req.css');
 
@@ -154,8 +152,6 @@ export async function mount(el, ctx) {
     // confirmed}. `ok: null` — идёт проверка, `false` — файл не принят (причина в
     // `message`), `secret` — файл похож на секрет и ждёт «Всё равно прикрепить».
     attach: [],
-    attachOpen: false,
-    picking: false,
     ideas: [],
     draftSavedAt: 0,
     brief: false,
@@ -167,15 +163,15 @@ export async function mount(el, ctx) {
   const root = h('div', { class: 'view__inner cmp' });
 
   const heading = h('div', { class: 'cmp-head' },
-    h('h2', { class: 'cmp-head__title' }, 'Запрос команде'),
-    h('p', { class: 'cmp-head__sub' }, 'Один запрос — один сводный ответ.'));
+    h('h2', { class: 'cmp-head__title' }, 'Задача команде'),
+    h('p', { class: 'cmp-head__sub' }, 'Одна задача — один сводный ответ.'));
 
   const textarea = h('textarea', {
     class: 'textarea cmp-input',
     rows: 3,
     id: 'cmp-input',
-    placeholder: 'Напишите или надиктуйте запрос. Можно длинно — текст встанет туда, где курсор.',
-    'aria-label': 'Текст запроса',
+    placeholder: 'Напишите или надиктуйте задачу. Можно длинно — текст встанет туда, где курсор.',
+    'aria-label': 'Текст задачи',
     spellcheck: 'false',
     'data-mic': 'manual',
   });
@@ -183,7 +179,7 @@ export async function mount(el, ctx) {
   // Тихий счётчик: без верхней границы, только «сколько уже наговорено».
   const counter = h('span', { class: 'cmp-count tnum', 'aria-live': 'off' }, '0 знаков');
   const longNote = h('div', { class: 'cmp-long hidden', role: 'status' },
-    'Очень длинный запрос — лучше разбить на части.');
+    'Очень длинная задача — лучше разбить на части.');
 
   // Один селектор проверки: «Без критика / 1 раунд — быстро / 2 раунда / До
   // полного одобрения». Прежний переключатель «С критиком» и отдельный список
@@ -212,28 +208,27 @@ export async function mount(el, ctx) {
       icon('shield', { size: 13 }), criticSelect)
     : null;
 
-  // Запасной путь: несколько путей сразу — по одному на строку. Основной способ —
-  // скрепка (окно Windows), но поле остаётся: на не-Windows и когда окно не открылось.
-  const pathInput = h('textarea', {
-    class: 'input cmp-attach__path', rows: 2,
-    placeholder: 'C:/Проекты/Альфа/Смета.xlsx — или несколько путей, по одному на строку',
-    'aria-label': 'Путь к файлу', 'data-mic': 'off', spellcheck: 'false',
+  // W30-F (дефект 15): вложения — ОДИН общий компонент `attach-picker.js`, тот же,
+  // что в «Диалоге по запросу». Скрепка открывает окно выбора файлов Windows
+  // (POST /api/files/pick), чипы дают «Просмотр / Открыть / Открыть в папке /
+  // Убрать», предел 30, секреты — только через «Всё равно прикрепить».
+  // Прикрепляется ПУТЬ, а не копия файла. Ручной путь — скрытой ссылкой «Путь»
+  // внутри компонента (запасной способ, когда окно недоступно).
+  const picker = createAttachPicker({
+    api,
+    toast,
+    prefix: 'cmp-attach',
+    title: 'Прикрепить файлы к задаче',
+    buttonClass: 'btn btn--ghost btn--sm cmp-attach-btn',
+    label: 'Прикрепить файлы',
+    onChange: () => { state.attach = picker.paths(); saveDraftNow(); },
+    onInsert: (text) => { insertText(text); },
   });
-
-  const attachBtn = h('button', {
-    class: 'btn btn--ghost btn--sm cmp-attach-btn', type: 'button',
-    title: 'Выбрать файлы в окне Windows — можно несколько сразу',
-    'aria-label': 'Прикрепить файлы', 'aria-expanded': 'false',
-  }, icon('attach', { size: 14 }), h('span', { class: 'cmp-attach-btn__label' }, 'Прикрепить файлы'));
-
-  const attachAdd = h('button', { class: 'btn btn--secondary btn--sm', type: 'button' }, 'Прикрепить путь');
-  const attachRow = h('div', { class: 'cmp-attach hidden' },
-    h('div', { class: 'row cmp-attach__row' }, pathInput, attachAdd),
-    h('div', { class: 'field__hint' }, 'Запасной путь: вставьте один или несколько путей — по одному на строку. Скрепка открывает окно выбора файлов Windows.'),
-  );
+  const attachBtn = picker.button;
   // W28-QA2: чипы живут ВНЕ скрываемой строки пути — иначе при выборе через скрепку
   // (и при восстановлении черновика) файлы были в состоянии «прикреплён», но не видны.
-  const attachList = h('div', { class: 'cmp-attach__chips' });
+  const attachList = picker.chipsHost;
+  const attachRow = picker.row;
 
   const sendBtn = h('button', { class: 'btn btn--primary cmp-send', type: 'submit' });
 
@@ -243,25 +238,7 @@ export async function mount(el, ctx) {
   const dictNote = h('div', { class: 'cmp-dict' },
     'Надиктуйте — текст встанет туда, где курсор. Ctrl+M — начать и остановить.');
 
-  function showPathRow(show) {
-    state.attachOpen = show === undefined ? !state.attachOpen : Boolean(show);
-    attachRow.classList.toggle('hidden', !state.attachOpen);
-    attachBtn.setAttribute('aria-expanded', state.attachOpen ? 'true' : 'false');
-    if (state.attachOpen) { try { pathInput.focus(); } catch { /* необязательно */ } }
-  }
-
-  // Скрепка — сразу окно выбора файлов (дефект 4). Поле пути — запасной путь,
-  // оно раскрывается только когда окно недоступно или человек сам раскрыл его.
-  attachBtn.addEventListener('click', () => { openPicker(); });
-
-  // W28-QA2: у поля «запасного пути» не было ни одной кнопки, которая его раскрывает
-  // (только после ошибки окна) — путь вставить было нельзя, хотя он объявлен запасным.
-  const pathToggle = h('button', {
-    class: 'btn btn--ghost btn--sm cmp-attach-path-btn', type: 'button',
-    title: 'Вставить путь к файлу вручную (несколько — по одному на строку)',
-    'aria-label': 'Вставить путь к файлу',
-  }, 'Путь');
-  pathToggle.addEventListener('click', () => { showPathRow(); });
+  const pathToggle = picker.toggle;
 
   const bar = h('div', { class: 'cmp-bar' },
     criticControl, attachBtn, pathToggle,
@@ -278,7 +255,7 @@ export async function mount(el, ctx) {
     h('label', {
       class: 'checkbox cmp-brief__check',
       for: 'cmp-brief',
-      title: 'Главный запрос проекта: руководитель комнаты предложит карту частей работы',
+      title: 'Главная задача проекта: руководитель комнаты предложит карту частей работы',
     }, briefInput, h('span', null, BRIEF_LABEL)),
     briefHint);
   briefInput.addEventListener('change', () => {
@@ -324,8 +301,8 @@ export async function mount(el, ctx) {
     sendBtn.disabled = state.sending || empty;
     sendBtn.setAttribute('aria-disabled', sendBtn.disabled ? 'true' : 'false');
     sendBtn.setAttribute('title', empty
-      ? 'Напишите или надиктуйте запрос — кнопка станет активной'
-      : 'Отправить запрос (Ctrl+Enter)');
+      ? 'Напишите или надиктуйте задачу — кнопка станет активной'
+      : 'Отправить задачу (Ctrl+Enter)');
   }
 
   function updateCounter() {
@@ -346,8 +323,8 @@ export async function mount(el, ctx) {
     lsSet(draftKey, {
       text: textarea.value,
       // В черновике — пути и отдельно те секреты, которые человек уже подтвердил.
-      attach: state.attach.map((item) => item.path),
-      attachConfirmed: state.attach.filter((item) => item.secret && item.confirmed).map((item) => item.path),
+      attach: picker.paths(),
+      attachConfirmed: picker.confirmedPaths(),
       // Выбор проверки помним вместе с черновиком: `criticChoice` — новый ключ,
       // `critic` оставлен для старых черновиков и внешних читателей.
       critic: criticValue !== 'off', criticChoice: criticValue,
@@ -367,15 +344,16 @@ export async function mount(el, ctx) {
         onclick: async () => {
           const ok = await confirmDialog({
             title: 'Очистить черновик?',
-            text: 'Текст запроса и вложения будут удалены из этого браузера.',
+            text: 'Текст задачи и вложения будут удалены из этого браузера.',
             confirmLabel: 'Очистить', danger: true,
           });
           if (!ok) return;
           lsSet(draftKey, undefined);
           textarea.value = '';
           state.attach = [];
+          picker.clear();
           state.draftSavedAt = 0;
-          renderAttach(); updateCounter(); autosize(); renderDraftNote();
+          updateCounter(); autosize(); renderDraftNote();
           textarea.focus();
         },
       }, 'Очистить'),
@@ -411,262 +389,10 @@ export async function mount(el, ctx) {
 
   /* ──────────────────────────────────────────────────────── вложения */
 
-  /** Имя файла из пути: последний кусок после «/» или «\». */
-  function baseName(path) {
-    const parts = String(path == null ? '' : path).split(/[\\/]/);
-    return parts[parts.length - 1] || String(path == null ? '' : path);
-  }
+  // Всё прикрепление (скрепка → окно Windows, чипы, проверка секретов, предел 30,
+  // запасной ручной путь) живёт в общем компоненте `web/js/attach-picker.js`.
+  // Здесь остались только привязки к экрану: черновик и проверка перед отправкой.
 
-  /** Размер по-человечески: 940 Б, 12,4 КБ, 3 МБ. */
-  function sizeText(bytes) {
-    const n = Number(bytes);
-    if (!Number.isFinite(n) || n < 0) return '';
-    if (n < 1024) return Math.round(n) + ' Б';
-    const units = ['КБ', 'МБ', 'ГБ'];
-    let value = n / 1024;
-    let i = 0;
-    while (value >= 1024 && i < units.length - 1) { value /= 1024; i += 1; }
-    const text = value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
-    return String(text).replace('.', ',') + ' ' + units[i];
-  }
-
-  /** Пути из поля: по одному на строку, пустые строки пропускаем. */
-  function splitPaths(text) {
-    const src = String(text == null ? '' : text);
-    const lines = [];
-    let line = '';
-    for (const ch of src) {
-      const code = ch.codePointAt(0);
-      if (code === 10 || code === 13) {
-        if (line.trim()) lines.push(line.trim());
-        line = '';
-        continue;
-      }
-      line += ch;
-    }
-    if (line.trim()) lines.push(line.trim());
-    return lines;
-  }
-
-  /** Один и тот же файл, записанный по-разному (`C:\a\b` и `C:/a/b`). */
-  function samePath(a, b) {
-    const norm = (p) => String(p == null ? '' : p).trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-    return norm(a) === norm(b);
-  }
-
-  /** Новый чип вложення в состоянии «проверяю». */
-  function attachItem(path) {
-    return {
-      path, name: baseName(path), size: null, ext: '',
-      ok: null, code: 'checking', message: '', secret: false, confirmed: false,
-    };
-  }
-
-  /**
-   * Добавить пути (из окна выбора или из поля) и сразу проверить их на сервере.
-   * Ничего не блокируем по папкам и расширениям: «файл есть, это файл, читается».
-   */
-  async function addPaths(paths) {
-    const fresh = [];
-    for (const raw of (Array.isArray(paths) ? paths : [paths])) {
-      const path = String(raw == null ? '' : raw).trim();
-      if (!path) continue;
-      if (state.attach.some((item) => samePath(item.path, path))) {
-        toast('Этот путь уже прикреплён', 'info');
-        continue;
-      }
-      if (state.attach.length + fresh.length >= MAX_ATTACH) {
-        toast('Не больше ' + MAX_ATTACH + ' вложений — уберите лишние', 'warn');
-        break;
-      }
-      if (path.length > 500) { toast('Слишком длинный путь', 'warn'); continue; }
-      fresh.push(attachItem(path));
-    }
-    if (!fresh.length) return;
-    // W28-QA2: чипы видны всегда — при выборе через скрепку блок вложений был скрыт
-    // (`hidden`), и человек не видел, что файлы прикрепились. Раскрываем строку.
-    showPathRow(true);
-    state.attach.push(...fresh);
-    renderAttach(); saveDraftNow();
-    await checkPaths(fresh);
-  }
-
-  /**
-   * Проверка вложений через сервер: имя, размер, «похоже на секрет», причина отказа.
-   * Старый сервер без ручки — не мешаем прикреплять: чип остаётся с одним именем.
-   */
-  async function checkPaths(items) {
-    const list = (items || []).filter(Boolean);
-    if (!list.length) return;
-    const confirmedSecret = list.some((item) => item.secret && item.confirmed);
-    let data = null;
-    try {
-      data = await api.post('/api/files/attach-check', {
-        attach: list.map((item) => item.path),
-        confirm_secret: confirmedSecret,
-      });
-    } catch (err) {
-      for (const item of list) { item.ok = true; item.code = 'ok'; item.message = ''; }
-      renderAttach(); saveDraftNow();
-      if (err && err.status && err.status !== 404) {
-        toast(err.message || 'Не удалось проверить файлы', 'warn');
-      }
-      return;
-    }
-    const rows = data && Array.isArray(data.items) ? data.items : [];
-    rows.forEach((row, index) => {
-      const item = list[index];
-      if (!item || !row) return;
-      if (row.path) item.path = String(row.path);
-      item.name = row.name || item.name || baseName(item.path);
-      item.size = row.size == null ? item.size : Number(row.size);
-      item.ext = row.ext || item.ext;
-      item.secret = row.secret === true;
-      item.code = String(row.code || (row.ok ? 'ok' : 'error'));
-      item.message = String(row.message || '');
-      // Секрет считаем принятым только после явного «Всё равно прикрепить».
-      item.ok = row.ok === true || (item.secret && item.confirmed);
-    });
-    renderAttach(); saveDraftNow();
-    const broken = list.find((item) => item.ok === false && !item.secret);
-    if (broken) toast(broken.message || 'Файл не удалось приложить — уберите его', 'warn');
-  }
-
-  /** «Всё равно прикрепить»: человек сам решил — секрет принимается. */
-  function confirmSecret(item) {
-    item.confirmed = true;
-    item.ok = true;
-    item.code = 'ok';
-    item.message = '';
-    renderAttach(); saveDraftNow();
-    toast('«' + item.name + '» будет прикреплён', 'info');
-  }
-
-  function removePath(path) {
-    state.attach = state.attach.filter((item) => !samePath(item.path, path));
-    renderAttach(); saveDraftNow();
-  }
-
-  /** «Открыть» / «Открыть в папке» у чипа: действие делает сервер. */
-  async function openAttach(item, mode) {
-    try {
-      const res = await api.post('/api/files/attach-open', { path: item.path, mode });
-      if (res && res.note) toast(res.note, 'info');
-    } catch (err) {
-      toast(err && err.message ? err.message : 'Не удалось открыть файл', 'danger');
-    }
-  }
-
-  function attachAction(item, mode, label, title) {
-    return h('button', {
-      class: 'btn btn--ghost btn--sm cmp-attach__act', type: 'button',
-      title,
-      onclick: () => { openAttach(item, mode); },
-    }, label);
-  }
-
-  /**
-   * «Просмотр» чипа (W29B-Q3): панель с содержимым файла без внешней программы.
-   * Расшифровку голосового можно сразу вставить в поле запроса — человек не
-   * перепечатывает наговоренное.
-   */
-  function previewAttach(item) {
-    openAttachPreview({
-      path: item.path,
-      name: item.name || baseName(item.path),
-      api,
-      onInsert: (text) => { insertText(text); },
-    }).catch((err) => {
-      toast((err && err.message) || 'Не удалось открыть предпросмотр', 'danger');
-    });
-  }
-
-  function renderAttach() {
-    attachList.replaceChildren();
-    if (!state.attach.length) return;
-    for (const item of state.attach) {
-      const bad = item.ok === false;
-      const chip = h('div', { class: 'cmp-attach__item' + (bad ? ' cmp-attach__item--bad' : '') });
-      chip.appendChild(h('span', { class: 'cmp-attach__name', title: item.path }, item.name || baseName(item.path)));
-      const size = sizeText(item.size);
-      if (size) chip.appendChild(h('span', { class: 'cmp-attach__size tnum' }, size));
-      if (item.ok === null) {
-        chip.appendChild(h('span', { class: 'cmp-attach__state' }, 'проверяю…'));
-      } else if (bad) {
-        chip.appendChild(h('span', { class: 'cmp-attach__why', title: item.message }, item.message || 'Файл недоступен'));
-      }
-      const actions = h('div', { class: 'cmp-attach__actions' });
-      if (bad && item.secret) {
-        actions.appendChild(h('button', {
-          class: 'btn btn--secondary btn--sm', type: 'button',
-          title: 'Прикрепить, хотя файл похож на секрет — вы решаете сами',
-          onclick: () => confirmSecret(item),
-        }, 'Всё равно прикрепить'));
-      }
-      if (!bad) {
-        actions.appendChild(h('button', {
-          class: 'btn btn--ghost btn--sm cmp-attach__act', type: 'button',
-          title: 'Посмотреть «' + item.name + '» здесь, не открывая программу',
-          onclick: () => previewAttach(item),
-        }, icon('eye', { size: 12 }), 'Просмотр'));
-        actions.appendChild(attachAction(item, 'open', 'Открыть',
-          'Открыть «' + item.name + '» программой по умолчанию'));
-        actions.appendChild(attachAction(item, 'reveal', 'Открыть в папке',
-          'Показать «' + item.name + '» в проводнике'));
-      }
-      actions.appendChild(h('button', {
-        class: 'btn btn--ghost btn--sm cmp-attach__act', type: 'button',
-        title: 'Убрать «' + item.path + '»', 'aria-label': 'Убрать «' + item.path + '»',
-        onclick: () => removePath(item.path),
-      }, icon('close', { size: 12 }), 'Убрать'));
-      chip.appendChild(actions);
-      attachList.appendChild(chip);
-    }
-  }
-
-  /** Скрепка: системное окно выбора файлов Windows (ручка POST /api/files/pick). */
-  async function openPicker() {
-    if (state.picking) return;
-    state.picking = true;
-    attachBtn.disabled = true;
-    attachBtn.setAttribute('aria-busy', 'true');
-    const label = attachBtn.querySelector('.cmp-attach-btn__label');
-    if (label) label.textContent = 'Окно выбора…';
-    try {
-      const res = await api.post('/api/files/pick', { title: 'Прикрепить файлы к запросу' });
-      if (res && Number(res.dropped) > 0) {
-        toast('Взял первые ' + MAX_ATTACH + ' из ' + res.total + ' — остальные прикрепите следующим разом', 'warn');
-      }
-      if (res && Array.isArray(res.paths) && res.paths.length) await addPaths(res.paths);
-      else if (res && res.cancelled) toast('Выбор файлов отменён', 'info');
-    } catch (err) {
-      // Тупика нет: причина названа, поле пути раскрыто как запасной путь.
-      toast(err && err.message ? err.message : 'Не удалось открыть окно выбора файлов', 'warn');
-      showPathRow(true);
-    } finally {
-      state.picking = false;
-      attachBtn.disabled = false;
-      attachBtn.removeAttribute('aria-busy');
-      if (label) label.textContent = 'Прикрепить файлы';
-    }
-  }
-
-  attachAdd.addEventListener('click', () => {
-    const lines = splitPaths(pathInput.value);
-    if (!lines.length) { toast('Вставьте путь к файлу', 'info'); pathInput.focus(); return; }
-    addPaths(lines);
-    pathInput.value = '';
-  });
-  pathInput.addEventListener('keydown', (ev) => {
-    // Enter прикрепляет набранные строки; Shift+Enter — обычный перенос строки.
-    if (ev.key === 'Enter' && !ev.shiftKey) {
-      ev.preventDefault();
-      const lines = splitPaths(pathInput.value);
-      if (lines.length) { addPaths(lines); pathInput.value = ''; }
-      return;
-    }
-    if (ev.key === 'Escape') showPathRow(false);
-  });
 
   /* ─────────────────────────────────────────────────────── подсказка */
 
@@ -688,7 +414,7 @@ export async function mount(el, ctx) {
     hint.appendChild(h('span', {
       class: 'cmp-hint__sentence truncate',
       title: directorLabel ? 'Руководитель комнаты: ' + directorLabel.title : null,
-    }, 'Руководитель комнаты', roleWord ? ' ' : '', roleWord ? h('span', { class: 'cmp-hint__who' }, roleWord) : null, ' раздаст запрос команде'));
+    }, 'Руководитель комнаты', roleWord ? ' ' : '', roleWord ? h('span', { class: 'cmp-hint__who' }, roleWord) : null, ' раздаст задачу команде'));
 
     if (names.length) {
       // Подсказка у каждого аватара — «имя — роль», а не системный id профиля:
@@ -788,7 +514,7 @@ export async function mount(el, ctx) {
     warnHost.replaceChildren();
     if (!pendingWarning) return;
     const msg = String(pendingWarning.message
-      || 'Запрос создан, но движок не запущен — работа не начнётся сама.');
+      || 'Задача создана, но движок не запущен — работа не начнётся сама.');
     warnHost.appendChild(h('div', { class: 'banner banner--warn', role: 'status' },
       icon('warning', { size: 14 }),
       h('div', { class: 'banner__text' }, msg),
@@ -807,11 +533,11 @@ export async function mount(el, ctx) {
     if (state.sending) return;
     // До очистки поля: если Михаил поправил распознанное — предложим запомнить.
     try { micBtn.mic.learnNow(); } catch { /* необязательная подсказка */ }
-    if (!text) { toast('Введите текст запроса', 'info'); textarea.focus(); return; }
+    if (!text) { toast('Введите текст задачи', 'info'); textarea.focus(); return; }
     // Непринятый файл не отправляем молча: показываем его и причину рядом с полем.
-    const broken = state.attach.find((item) => item.ok === false);
+    const broken = picker.blocked();
     if (broken) {
-      showPathRow(true);
+      picker.showRow(true);
       toast(broken.secret
         ? '«' + broken.name + '» похож на секрет — нажмите «Всё равно прикрепить» или уберите файл'
         : (broken.message || 'Уберите файл, который не удалось приложить'),
@@ -828,9 +554,9 @@ export async function mount(el, ctx) {
       const res = await api.post('/api/rooms/' + enc(roomId) + '/requests', {
         text,
         ...criticBody,
-        attach: state.attach.map((item) => item.path),
+        attach: picker.paths(),
         // «Всё равно прикрепить»: секрет уходит только с явным подтверждением.
-        confirm_secret: state.attach.some((item) => item.secret && item.confirmed),
+        confirm_secret: picker.confirmedPaths().length > 0,
         // «Это бриф проекта»: поле уходит только в проектной комнате.
         ...briefPayload({ projectMode, brief: state.brief }),
       });
@@ -839,9 +565,10 @@ export async function mount(el, ctx) {
       lsSet(draftKey, undefined);
       textarea.value = '';
       state.attach = [];
+      picker.clear();
       state.draftSavedAt = 0;
-      renderAttach(); updateCounter(); autosize(); renderDraftNote();
-      toast('Запрос принят', 'ok');
+      updateCounter(); autosize(); renderDraftNote();
+      toast('Задача принята', 'ok');
       if (pendingWarning) toast(plainTerms(pendingWarning.message || 'Движок не запущен — работа ждёт.'), 'warn');
       if (rootId) {
         ctx.navigate('#/room/' + enc(roomId) + '/request/' + enc(rootId));
@@ -851,7 +578,7 @@ export async function mount(el, ctx) {
     } catch (err) {
       state.submitError = err;
       renderSubmitError();
-      toast(err && err.message ? err.message : 'Не удалось отправить запрос', 'danger');
+      toast(err && err.message ? err.message : 'Не удалось отправить задачу', 'danger');
     } finally {
       state.sending = false;
       renderSend();
@@ -883,7 +610,7 @@ export async function mount(el, ctx) {
       const text = String(idea.text || '');
       const chip = h('button', {
         class: 'chip chip--outline cmp-idea', type: 'button',
-        title: 'Вставить в поле запроса: ' + text,
+        title: 'Вставить в поле задачи: ' + text,
       // B8: чип обрезается многоточием — полный текст остаётся в подсказке.
       }, icon('lightbulb', { size: 11 }), h('span', { class: 'cmp-idea__text', title: text }, text));
       chip.addEventListener('click', () => insertText(text));
@@ -936,14 +663,9 @@ export async function mount(el, ctx) {
     textarea.value = draft.text;
     if (Array.isArray(draft.attach)) {
       const confirmed = new Set(Array.isArray(draft.attachConfirmed) ? draft.attachConfirmed : []);
-      state.attach = draft.attach
-        .filter((path) => typeof path === 'string' && path)
-        .slice(0, MAX_ATTACH)
-        .map((path) => {
-          const item = attachItem(path);
-          if (confirmed.has(path)) { item.confirmed = true; item.secret = true; }
-          return item;
-        });
+      picker.set(draft.attach.filter((path) => typeof path === 'string' && path), {
+        confirmed: Array.from(confirmed),
+      });
     }
     // Выбор проверки из черновика: новый ключ `criticChoice`; старый `critic`
     // (да/нет) понимаем как «раунды комнаты» или «без критика».
@@ -969,8 +691,6 @@ export async function mount(el, ctx) {
   updateCounter();
   autosize();
   renderSend();
-  renderAttach();
-  if (state.attach.length) checkPaths(state.attach.slice());
   renderDraftNote();
   renderHint();
   // Подсказки аватаров — «имя — роль»: каталог профилей приходит отдельным запросом,

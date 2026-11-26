@@ -647,17 +647,35 @@ def team_state(cfg, board, members: list, tenant=None) -> list:
     return out
 
 
+def _accepted_roots(cfg) -> dict:
+    """``{root_id: room_id}`` принятых задач — W30-D1, отметка в файлах комнат.
+
+    Сбой чтения — пустой словарь: отсутствие отметки не должно ломать чтение
+    доски (принятая задача тогда просто выглядит как обычная завершённая).
+    """
+    try:
+        try:
+            from . import passports as _passports
+        except ImportError:  # pragma: no cover - плоский импорт
+            import passports as _passports   # type: ignore
+        return _passports.frozen_roots(cfg)
+    except Exception:  # noqa: BLE001 - отметка принятия вторична для чтения
+        return {}
+
+
 def request_states(cfg, board, task_ids) -> dict:
     """Статусы карточек одним запросом (W17-B: список запросов для бокового меню).
 
-    Возвращает ``{task_id: {"status": str, "finished_at": int|None}}`` — без сборки
-    детали запроса, поэтому дешёво для всех комнат сразу. Нет доски/таблицы или
-    сбой чтения — пустой словарь (меню просто не покажет статус).
+    Возвращает ``{task_id: {"status": str, "finished_at": int|None, "accepted": bool}}``
+    — без сборки детали запроса, поэтому дешёво для всех комнат сразу. Нет
+    доски/таблицы или сбой чтения — пустой словарь (меню просто не покажет статус).
+    ``accepted`` (W30-D1) — задача принята человеком и заморожена.
     """
     ids = [str(i) for i in _as_list(task_ids) if i]
     if not ids:
         return {}
     out: dict = {}
+    frozen = _accepted_roots(cfg)
     try:
         with _conn(cfg, board) as con:
             _require_tables(con, "tasks")
@@ -666,7 +684,9 @@ def request_states(cfg, board, task_ids) -> dict:
                 for row in con.execute("SELECT id, status, completed_at FROM tasks WHERE id IN (%s)"
                                        % ph, chunk).fetchall():
                     out[str(row["id"])] = {"status": row["status"] or "",
-                                           "finished_at": row["completed_at"]}
+                                           "finished_at": row["completed_at"],
+                                           # W30-D1: принята человеком — заморожена
+                                           "accepted": str(row["id"]) in frozen}
     except EngineError:
         return {}
     except sqlite3.Error:
@@ -837,6 +857,7 @@ def today_states(cfg, board, root_ids) -> dict:
     if not ids:
         return {}
     out: dict = {}
+    frozen = _accepted_roots(cfg)          # W30-D1: принятые задачи — заморожены
     try:
         with _conn(cfg, board) as con:
             _require_tables(con, "tasks")
@@ -846,7 +867,8 @@ def today_states(cfg, board, root_ids) -> dict:
                                 "finished_at": row.get("completed_at"),
                                 "error": row.get("last_failure_error") or "",
                                 "members_working": 0,
-                                "since": row.get("started_at")}
+                                "since": row.get("started_at"),
+                                "accepted": root_id in frozen}
             if _cols(con, "task_links"):
                 live: dict = {}
                 for chunk in _chunks(ids):
