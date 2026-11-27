@@ -1,100 +1,111 @@
 /**
- * tasks-model.js — правила доски «Задачи» комнаты (W30-D2).
+ * tasks-model.js — правила доски «Задачи» комнаты (W31-B1).
  *
- * Здесь только чистые функции: стадии, колонки, порядок карточек, правила
- * переноса, клавиатура, подписи ожидания и возраста. Ни DOM, ни сети — поэтому
- * всё это проверяется без браузера (`tests/tasks-board.test.mjs`), а вьюха
- * (`tasks-board.js`) занимается только отрисовкой и действиями.
+ * Доска — ровно четыре колонки общего контракта волны 31:
+ *   `new` «Новая» → `working` «В работе» → `review` «На проверке» → `done` «Готово».
+ * «Ждёт вас» — НЕ колонка, а метка на карточке в работе («Ждёт вас · N вопросов»).
  *
- * Контракт API §3 волны 30 (пакет D1 — серверная часть):
+ * Здесь только чистые функции: колонки, порядок карточек, допустимые переносы,
+ * клавиатура, подписи. Ни DOM, ни сети — поэтому всё это проверяется без
+ * браузера (`tests/tasks-board.test.mjs`), а вьюха (`tasks-board.js`) занимается
+ * только отрисовкой и действиями.
+ *
+ * Контракт API волны 31:
  *   GET /api/rooms/{room}/tasks →
- *     {tasks:[{id,title,stage,status,assignee,steps_done,steps_total,
- *              needs_you:{count,blocking},accepted,parent_id,children_count,
- *              updated_at,summary_short}],
- *      columns:[...], counts:{...}}
+ *     {tasks:[{id, title, column, waiting_you, waiting_count, assignee,
+ *              steps_done, steps_total, children_count, updated_at,
+ *              summary_short, allowed_moves}], columns, counts, updated_at}
+ *   POST /api/requests/{id}/actions {action:'move', to, comment?, confirm?}
+ *   GET  /api/requests/{id} → {board_column, allowed_moves}
  *
- * Правила, которые здесь соблюдаются:
- *   • колонка = настоящая стадия задачи (`stage` сервера), своих стадий
- *     интерфейс не выдумывает и порядок колонок не переставляет;
- *   • перенос карточки — ТОЛЬКО существующее действие сервера: `accept`
- *     («Готово» → «Принята») и `reopen_accepted` («Принята» → «В работе»).
- *     Остальные переходы делает работа агентов, критик и ответы человека —
- *     доска честно объясняет, почему их нельзя поставить переносом;
- *   • счётчик колонки считается по карточкам этой же колонки (число = числу),
- *     а не берётся из ответа сервера: расхождение счётчика и списка — дефект;
- *   • «Принята» по умолчанию свёрнута, но счётчик виден всегда.
+ * Старые ответы (волна 30: new/working/needs_you/review/done_system/accepted)
+ * читаются без потерь: `stage` переводится в колонку по таблице `LEGACY_STAGE`.
  */
 
-/** Подписи стадий: одни и те же слова на доске, в списке и в карточке. */
+/** Подписи колонок: одни и те же слова на доске, в списке и в карточке. */
 export const STAGE_LABEL = {
   new: 'Новая',
   working: 'В работе',
-  needs_you: 'Ждёт вас',
   review: 'На проверке',
-  done_system: 'Готово',
-  accepted: 'Принята',
+  done: 'Готово',
   archived: 'В архиве',
-  scouting: 'Разведка',
-  overview_ready: 'Обзор сдан',
 };
 
-/** Тон стадии — для точки в шапке колонки и чипа (только токены темы). */
+/** Тон колонки — для точки в шапке (только токены темы). */
 export const STAGE_TONE = {
   new: 'muted',
   working: 'info',
-  needs_you: 'warn',
-  review: 'info',
-  done_system: 'ok',
-  accepted: 'ok',
+  review: 'warn',
+  done: 'ok',
   archived: 'muted',
 };
 
+/** Старая стадия → колонка контракта 31. */
+export const LEGACY_STAGE = {
+  new: 'new',
+  working: 'working',
+  needs_you: 'working',
+  review: 'review',
+  done_system: 'review',
+  accepted: 'done',
+  done: 'done',
+  archived: 'archived',
+};
+
 /**
- * Колонки доски — в порядке контракта §3.
+ * Допустимые переносы контракта 31 (`POST …/actions {action:'move'}`).
+ * `accept` — перенос в «Готово» равен принятию (отмена 10 с на клиенте).
+ */
+export const MOVE_RULES = {
+  new: {},
+  working: { review: {} },
+  review: { done: { accept: true }, working: { comment: true } },
+  done: { working: {} },
+};
+
+/**
+ * Колонки доски — в порядке контракта.
  * `empty` — что делать, если колонка пуста (пустое место без выхода запрещено).
  */
 export const BOARD_COLUMNS = [
   {
     id: 'new', title: STAGE_LABEL.new, tone: STAGE_TONE.new, create: true,
-    hint: 'Задача поставлена, работа ещё не началась.',
-    empty: 'Пусто. Поставьте задачу кнопкой «+ Новая задача» — руководитель оценит её и распределит работу.',
+    hint: 'Задача поставлена, руководитель оценивает объём.',
+    empty: 'Пусто. Новая задача сразу уходит в работу — здесь она бывает только в первые минуты.',
   },
   {
     id: 'working', title: STAGE_LABEL.working, tone: STAGE_TONE.working, create: false,
-    hint: 'Агенты работают: карточки идут своим ходом, от вас ничего не нужно.',
+    hint: 'Агенты работают. Метка «Ждёт вас» — у задачи есть открытые вопросы.',
     empty: 'Пусто. Сюда задачи попадают сами, когда руководитель распределил работу.',
   },
   {
-    id: 'needs_you', title: STAGE_LABEL.needs_you, tone: STAGE_TONE.needs_you, create: false,
-    hint: 'Без вашего ответа работа стоит — откройте задачу и ответьте.',
-    empty: 'Пусто — и это хорошо: ни одна задача не ждёт вашего ответа.',
-  },
-  {
     id: 'review', title: STAGE_LABEL.review, tone: STAGE_TONE.review, create: false,
-    hint: 'Критик или руководитель проверяет итог перед сдачей.',
+    hint: 'Итог проверяется. Примите его или верните на доработку с комментарием.',
     empty: 'Пусто. Сюда задачи попадают, когда итог готов и его проверяют.',
   },
   {
-    id: 'done_system', title: STAGE_LABEL.done_system, tone: STAGE_TONE.done_system, create: false,
-    hint: 'Система считает работу законченной. Примите итог, если согласны.',
-    empty: 'Пусто. Готовые задачи появятся здесь, и вы сможете их принять.',
-  },
-  {
-    id: 'accepted', title: STAGE_LABEL.accepted, tone: STAGE_TONE.accepted, create: false,
-    hint: 'Вы подтвердили итог: задача заморожена, итог записан в память комнаты.',
-    empty: 'Пусто. Принятые задачи хранятся здесь и не меняются, пока вы не вернёте их в работу.',
-    collapsible: true,
+    id: 'done', title: STAGE_LABEL.done, tone: STAGE_TONE.done, create: false,
+    hint: 'Принято вами: задача заморожена, итог записан в память комнаты.',
+    empty: 'Пусто. Принятые задачи хранятся здесь, пока вы не вернёте их в работу.',
   },
 ];
 
 const COLUMN_BY_ID = new Map(BOARD_COLUMNS.map((c) => [c.id, c]));
 
-/** Стадии, которые на доске не показываются полосой колонок. */
+/** Стадии вне доски: архив и этапы «Разведки». */
 const OFF_BOARD = new Set(['archived', 'scouting', 'overview_ready']);
 
+/** Колонка по стадии сервера (новая `column` важнее старого `stage`). */
+export function columnOfStage(raw) {
+  const stage = String(raw == null ? '' : raw);
+  if (COLUMN_BY_ID.has(stage)) return stage;
+  if (LEGACY_STAGE[stage]) return LEGACY_STAGE[stage];
+  return 'new';
+}
+
 /**
- * Нормализовать задачу из ответа сервера: у карточки всегда есть все поля,
- * даже если сервер прислал неполный объект (старые данные, мок).
+ * Нормализовать задачу: у карточки всегда есть все поля, даже если сервер
+ * прислал неполный объект (старые данные, мок).
  * @param {object} raw
  * @returns {object}
  */
@@ -103,23 +114,32 @@ export function normalizeTask(raw) {
   const needs = src.needs_you && typeof src.needs_you === 'object' ? src.needs_you : {};
   const done = Math.max(0, Number(src.steps_done) || 0);
   const total = Math.max(0, Number(src.steps_total) || 0);
+  const column = columnOfStage(src.column || src.stage);
+  const waitingCount = Math.max(0, Number(src.waiting_count != null ? src.waiting_count : needs.count) || 0);
+  const waiting = src.waiting_you != null ? Boolean(src.waiting_you) : waitingCount > 0;
+  const moves = Array.isArray(src.allowed_moves)
+    ? src.allowed_moves.map((m) => String(m)).filter((m) => COLUMN_BY_ID.has(m))
+    : null;
   return {
     id: String(src.id || ''),
     title: String(src.title || src.title_short || 'Без названия'),
-    stage: String(src.stage || 'new'),
+    // `stage` и `column` — одно и то же значение колонки: старые читатели
+    // (`stageOf`) не ломаются, новые берут `column`.
+    column,
+    stage: column,
     status: String(src.status || ''),
     assignee: String(src.assignee || ''),
     steps_done: done,
     steps_total: total,
-    needs_you: {
-      count: Math.max(0, Number(needs.count) || 0),
-      blocking: Boolean(needs.blocking),
-    },
-    accepted: Boolean(src.accepted),
+    waiting_you: waiting,
+    waiting_count: waitingCount,
+    needs_you: { count: waitingCount, blocking: Boolean(needs.blocking) },
+    accepted: column === 'done',
     parent_id: src.parent_id ? String(src.parent_id) : null,
     children_count: Math.max(0, Number(src.children_count) || 0),
     updated_at: Number(src.updated_at) || 0,
     summary_short: String(src.summary_short || ''),
+    allowed_moves: moves,
     archived: Boolean(src.archived),
   };
 }
@@ -129,23 +149,21 @@ export function normalizeTasks(list) {
   return (Array.isArray(list) ? list : []).filter(Boolean).map(normalizeTask);
 }
 
-/** Стадия карточки; неизвестную считаем «Новой» (карточка не пропадает). */
+/** Колонка карточки (старое имя `stageOf` оставлено для совместимости). */
 export function stageOf(task) {
-  const raw = String((task && task.stage) || '');
-  if (COLUMN_BY_ID.has(raw)) return raw;
-  if (raw === 'accepted' || (task && task.accepted)) return 'accepted';
-  return 'new';
+  const t = task || {};
+  return columnOfStage(t.column || t.stage);
 }
 
 /** Задача в архиве (не на доске; ссылка на раздел «Архив»). */
 export function isArchived(task) {
-  const raw = String((task && task.stage) || '');
+  const raw = String((task && (task.column || task.stage)) || '');
   return raw === 'archived' || Boolean(task && task.archived);
 }
 
 /** Вне доски: архив и этапы «Разведки» (они ждут обзора, а не решения о приёмке). */
 export function isOffBoard(task) {
-  return isArchived(task) || OFF_BOARD.has(String((task && task.stage) || ''));
+  return isArchived(task) || OFF_BOARD.has(String((task && (task.column || task.stage)) || ''));
 }
 
 /**
@@ -155,9 +173,9 @@ export function isOffBoard(task) {
 export function sortTasks(list) {
   const arr = Array.isArray(list) ? list.filter(Boolean).slice() : [];
   const weight = (t) => {
-    const n = t.needs_you || {};
-    if (Number(n.count) > 0 && n.blocking) return 0;
-    if (Number(n.count) > 0) return 1;
+    const count = Number(t.waiting_count != null ? t.waiting_count : (t.needs_you || {}).count) || 0;
+    if (count > 0 && (t.needs_you || {}).blocking) return 0;
+    if (count > 0) return 1;
     return 2;
   };
   arr.sort((a, b) => {
@@ -174,7 +192,7 @@ export function sortTasks(list) {
 
 /**
  * Колонки с задачами. Порядок колонок постоянный, пустые колонки тоже на месте:
- * пустая колонка объясняет, зачем она и что сделать сейчас.
+ * пустая колонка объясняет, зачем она.
  * @param {object[]} tasks
  */
 export function boardColumns(tasks) {
@@ -190,14 +208,13 @@ export function boardColumns(tasks) {
       hint: col.hint,
       empty: col.empty,
       create: Boolean(col.create),
-      collapsible: Boolean(col.collapsible),
       items,
       count: items.length,
     };
   });
 }
 
-/** Счётчики по стадиям (ровно по карточкам, которые видит человек). */
+/** Счётчики по колонкам (ровно по карточкам, которые видит человек). */
 export function boardCounts(tasks) {
   const out = {};
   for (const col of BOARD_COLUMNS) out[col.id] = 0;
@@ -208,67 +225,85 @@ export function boardCounts(tasks) {
   return out;
 }
 
-/**
- * Итоги шапки: всего на доске, ждут вашего ответа, готовы к приёмке, приняты,
- * в архиве (отдельно — ссылка на раздел).
- */
+/** Итоги шапки: всего, ждут вашего ответа, на проверке, принято, в архиве. */
 export function boardSummary(tasks) {
   const list = (Array.isArray(tasks) ? tasks : []).filter(Boolean);
   const onBoard = list.filter((t) => !isOffBoard(t));
   return {
     total: onBoard.length,
-    // W30-QA1: «ждут вашего ответа» в шапке — те же карточки, что в колонке
-    // «Ждёт вас» (число в шапке = числу карточек в ней). Раньше считались все
-    // задачи с открытыми пунктами, и шапка спорила с колонкой: у готовой задачи
-    // остаются необязательные пункты, но работа по ней уже не ждёт.
-    waiting: onBoard.filter((t) => stageOf(t) === 'needs_you').length,
-    blocking: onBoard.filter((t) => Boolean((t.needs_you || {}).blocking)).length,
-    ready: onBoard.filter((t) => stageOf(t) === 'done_system').length,
-    accepted: onBoard.filter((t) => stageOf(t) === 'accepted').length,
+    waiting: onBoard.filter((t) => stageOf(t) === 'working' && Boolean(t.waiting_you)).length,
+    questions: onBoard.reduce((sum, t) => sum + (stageOf(t) === 'working' ? Math.max(0, Number(t.waiting_count) || 0) : 0), 0),
+    review: onBoard.filter((t) => stageOf(t) === 'review').length,
+    done: onBoard.filter((t) => stageOf(t) === 'done').length,
     archived: list.filter(isArchived).length,
   };
+}
+
+/** Правило переноса колонок (или null, если такого переноса нет в контракте). */
+export function moveRule(fromId, toId) {
+  const from = String(fromId || '');
+  const to = String(toId || '');
+  const row = MOVE_RULES[from];
+  if (!row || !Object.prototype.hasOwnProperty.call(row, to)) return null;
+  return row[to];
 }
 
 /**
  * Что произойдёт, если перенести задачу из колонки `fromId` в колонку `toId`.
  *
- * Разрешены только действия, которые сервер действительно умеет
- * (`/api/requests/{id}/actions`: `accept`, `reopen_accepted`). Всё остальное —
- * честный отказ с причиной: стадию ведут агенты, критик и ответы человека.
+ * Разрешены ровно переносы контракта 31: с проверки — принять (в «Готово») или
+ * вернуть на доработку (в «В работу», с комментарием), из «Готово» — вернуть в
+ * работу, из «В работе» — отправить на проверку. Остальное — честный отказ
+ * с причиной. `allowed` — `allowed_moves` карточки/детали, если сервер его
+ * прислал: он главнее таблицы, клиент не догадывается.
  *
- * @returns {{ok:true, action:string}|{ok:false, reason:string, noop?:boolean}}
+ * @returns {{ok:true, action:'move', to:string, accept:boolean, comment:boolean}|{ok:false, reason:string, noop?:boolean}}
  */
-export function moveOutcome(fromId, toId) {
-  const from = String(fromId || '');
+export function moveOutcome(fromId, toId, allowed) {
+  const from = columnOfStage(fromId);
   const to = String(toId || '');
   const target = COLUMN_BY_ID.get(to);
   if (!target) return { ok: false, reason: 'Такой колонки нет на доске.' };
-  if (!COLUMN_BY_ID.has(from)) return { ok: false, reason: 'Задача не на доске — переносить нечего.' };
   if (from === to) return { ok: false, noop: true, reason: 'Задача уже в этой колонке.' };
-
-  if (to === 'accepted') {
-    if (from !== 'done_system') {
-      return {
-        ok: false,
-        reason: 'Принять можно только готовую задачу: сначала работа должна дойти до колонки «Готово».',
-      };
-    }
-    return { ok: true, action: 'accept' };
+  const allowedList = Array.isArray(allowed) ? allowed.map(String) : null;
+  if (allowedList && allowedList.length && !allowedList.includes(to)) {
+    return { ok: false, reason: 'Так перенести нельзя: «' + target.title + '» у этой задачи сейчас недоступно.' };
   }
+  const rule = moveRule(from, to);
+  if (rule) return { ok: true, action: 'move', to, accept: Boolean(rule.accept), comment: Boolean(rule.comment) };
+  return { ok: false, reason: refusalText(from, to) };
+}
 
-  if (from === 'accepted') {
-    if (to === 'working') return { ok: true, action: 'reopen_accepted' };
-    return {
-      ok: false,
-      reason: 'Принятую задачу можно только вернуть в работу: дальше её стадию поведут агенты.',
-    };
+/**
+ * Честная строка о переносе, который сервер записал, но на доске не переставил
+ * (`warnings[].code = board_not_moved`: движок доски отказал). Возвращает текст
+ * предупреждения или '' — тогда перенос прошёл целиком.
+ * @param {{warnings?: Array<{code?: string, message?: string}>}|null} res
+ * @returns {string}
+ */
+export function moveWarning(res) {
+  const list = res && Array.isArray(res.warnings) ? res.warnings : [];
+  const hit = list.find((w) => w && w.code === 'board_not_moved');
+  if (!hit) return '';
+  return 'Состояние задачи записано, но карточку на доске переставить не удалось — она обновится следующим проходом.';
+}
+
+/** Человеческая причина отказа (без внутренних кодов). */
+export function refusalText(fromId, toId) {
+  const from = columnOfStage(fromId);
+  const to = String(toId || '');
+  const title = (COLUMN_BY_ID.get(to) || {}).title || to;
+  if (from === 'new') {
+    return 'Из «Новой» переносить нечего: задачу сразу забирает руководитель, она уходит в работу сама.';
   }
-
-  return {
-    ok: false,
-    reason: 'Стадию задачи ведут работа агентов, проверка критика и ваши ответы — переносом её не поставить.'
-      + ' Откройте задачу, чтобы увидеть, что её ждёт.',
-  };
+  if (to === 'new') return 'В «Новую» задачу не вернуть: это начало пути, а не решение.';
+  if (from === 'working' && to === 'done') {
+    return 'Принять можно только с проверки: сначала отправьте задачу на проверку — итог должен быть готов.';
+  }
+  if (from === 'done' && to === 'review') {
+    return 'Принятую задачу можно только вернуть в работу — дальше её стадию поведут агенты.';
+  }
+  return 'Так перенести нельзя: из «' + ((COLUMN_BY_ID.get(from) || {}).title || from) + '» в «' + title + '» доска не переставляет.';
 }
 
 /**
@@ -276,16 +311,16 @@ export function moveOutcome(fromId, toId) {
  * пропускаем, чтобы стрелка не вела в отказ.
  * @param {string} fromId
  * @param {number} delta -1 влево, +1 вправо
+ * @param {string[]|null} [allowed] allowed_moves карточки
  * @returns {string|null}
  */
-export function keyboardTarget(fromId, delta) {
-  const from = String(fromId || '');
+export function keyboardTarget(fromId, delta, allowed) {
+  const from = columnOfStage(fromId);
   const start = BOARD_COLUMNS.findIndex((c) => c.id === from);
   if (start < 0) return null;
   const step = Number(delta) < 0 ? -1 : 1;
   for (let i = start + step; i >= 0 && i < BOARD_COLUMNS.length; i += step) {
-    const outcome = moveOutcome(from, BOARD_COLUMNS[i].id);
-    if (outcome.ok) return BOARD_COLUMNS[i].id;
+    if (moveOutcome(from, BOARD_COLUMNS[i].id, allowed).ok) return BOARD_COLUMNS[i].id;
   }
   return null;
 }
@@ -339,27 +374,45 @@ export function stepsPercent(task) {
 }
 
 /**
- * Что задача ждёт и от кого — одна строка на карточке.
- * @returns {{text:string, tone:'warn'|'danger'|'muted', blocking:boolean}}
+ * Метка «Ждёт вас · N вопросов» — только у карточки в работе (контракт 31):
+ * «ждёт вас» не колонка, а состояние задачи. У принятой задачи метки нет.
+ * @param {object} task
+ * @returns {{text:string, short:string, count:number, tone:'warn'|'danger', blocking:boolean}|null}
+ */
+export function waitingBadge(task) {
+  const t = task || {};
+  const column = stageOf(t);
+  const count = Math.max(0, Number(t.waiting_count != null ? t.waiting_count : (t.needs_you || {}).count) || 0);
+  if (column !== 'working') return null;
+  if (!t.waiting_you && count <= 0) return null;
+  const n = Math.max(1, count);
+  return {
+    text: 'Ждёт вас · ' + n + ' ' + pluralRu(n, ['вопрос', 'вопроса', 'вопросов']),
+    short: 'ждёт вас · ' + n,
+    count: n,
+    tone: Boolean((t.needs_you || {}).blocking) ? 'danger' : 'warn',
+    blocking: Boolean((t.needs_you || {}).blocking),
+  };
+}
+
+/**
+ * Что происходит с задачей — одна строка на карточке.
+ * @returns {{text:string, tone:'warn'|'danger'|'ok'|'muted', blocking:boolean}}
  */
 export function waitingOf(task) {
   const t = task || {};
-  const n = t.needs_you || {};
-  const count = Number(n.count) || 0;
-  const stage = stageOf(t);
-  // W30-QA1: принятая задача заморожена — «ждёт вас» на ней быть не может,
-  // даже если в данных остались пункты закрытой работы.
-  if (stage === 'accepted') return { text: 'принято вами — заморожено', tone: 'muted', blocking: false };
-  if (count > 0) {
-    const plural = count === 1 ? 'вопрос' : count < 5 ? 'вопроса' : 'вопросов';
-    return n.blocking
-      ? { text: 'ждёт вас: ' + count + ' ' + plural + ' — работа стоит', tone: 'danger', blocking: true }
-      : { text: 'ждёт вас: ' + count + ' ' + plural, tone: 'warn', blocking: false };
+  const column = stageOf(t);
+  const badge = waitingBadge(t);
+  if (badge) {
+    return {
+      text: badge.text + (badge.blocking ? ' — работа стоит' : ''),
+      tone: badge.tone,
+      blocking: badge.blocking,
+    };
   }
-  if (stage === 'review') return { text: 'на проверке у критика', tone: 'muted', blocking: false };
-  if (stage === 'done_system') return { text: 'готово — примите итог', tone: 'ok', blocking: false };
-  if (stage === 'accepted') return { text: 'принято вами — заморожено', tone: 'muted', blocking: false };
-  if (stage === 'working') {
+  if (column === 'done') return { text: 'принято вами — заморожено', tone: 'muted', blocking: false };
+  if (column === 'review') return { text: 'итог готов: примите или верните на доработку', tone: 'ok', blocking: false };
+  if (column === 'working') {
     return {
       text: t.assignee ? 'в работе у «' + t.assignee + '»' : 'в работе у команды',
       tone: 'muted', blocking: false,
@@ -368,7 +421,22 @@ export function waitingOf(task) {
   return { text: 'работа ещё не началась', tone: 'muted', blocking: false };
 }
 
-/** Группы для режима «Список»: стадия → задачи (пустые стадии не показываем). */
+/** Кнопки карточки по колонке (одно место для подписей). */
+export function cardActionsOf(task) {
+  const column = stageOf(task);
+  if (column === 'review') {
+    return [
+      { to: 'done', label: 'Принять', kind: 'primary', title: 'Принять итог: задача замораживается, итог уходит в память комнаты. Отменить можно 10 секунд' },
+      { to: 'working', label: 'Вернуть на доработку', kind: 'secondary', title: 'Вернуть задачу в работу с комментарием — что исправить' },
+    ];
+  }
+  if (column === 'done') {
+    return [{ to: 'working', label: 'Вернуть в работу', kind: 'ghost', title: 'Вернуть принятую задачу в работу — агенты продолжат' }];
+  }
+  return [];
+}
+
+/** Группы для режима «Список»: колонка → задачи (пустые колонки не показываем). */
 export function listGroups(tasks) {
   return boardColumns(tasks).filter((col) => col.count > 0)
     .map((col) => ({ id: col.id, title: col.title, tone: col.tone, items: col.items, count: col.count }));
@@ -379,8 +447,14 @@ export function taskHref(roomId, taskId) {
   return '#/room/' + encodeURIComponent(String(roomId || '')) + '/request/' + encodeURIComponent(String(taskId || ''));
 }
 
+/** Ссылка на доску комнаты (вход в комнату — всегда «Задачи»). */
+export function tasksHref(roomId) {
+  return '#/room/' + encodeURIComponent(String(roomId || '')) + '/tasks';
+}
+
 export default {
-  BOARD_COLUMNS, STAGE_LABEL, STAGE_TONE, ageText, boardColumns, boardCounts, boardSummary,
-  isArchived, isOffBoard, keyboardTarget, listGroups, moveOutcome, normalizeTask, normalizeTasks,
-  pluralRu, sortTasks, stageOf, stepsPercent, stepsText, taskHref, waitingOf,
+  BOARD_COLUMNS, LEGACY_STAGE, MOVE_RULES, STAGE_LABEL, STAGE_TONE, ageText, boardColumns,
+  boardCounts, boardSummary, cardActionsOf, columnOfStage, isArchived, isOffBoard, keyboardTarget,
+  listGroups, moveOutcome, moveRule, moveWarning, normalizeTask, normalizeTasks, pluralRu, refusalText, sortTasks,
+  stageOf, stepsPercent, stepsText, taskHref, tasksHref, waitingBadge, waitingOf,
 };

@@ -1,122 +1,445 @@
 {
-  "items": [
+ "items": [
+  {
+   "id": "rc-9f2a1c40",
+   "name": "Меню на неделю",
+   "description": "Собрать меню на неделю, посчитать закупку и проверить, что всё сходится.",
+   "topic": "cafe",
+   "builtin": true,
+   "source": "builtin",
+   "created_at": 1762700000,
+   "updated_at": 1762700000,
+   "runs": 2,
+   "last_run": 1763680000,
+   "fields": [
     {
-      "id": "rc-9f2a1c40",
-      "name": "Меню на неделю",
-      "description": "Собрать меню на неделю, посчитать закупку и проверить, что всё сходится.",
-      "topic": "cafe",
-      "builtin": true,
-      "source": "builtin",
-      "created_at": 1762700000,
-      "updated_at": 1762700000,
-      "runs": 2,
-      "last_run": 1763680000,
-      "fields": [
-        {"id": "season", "label": "Сезон и повод", "kind": "text", "required": false, "hint": "ноябрь, будни, без праздников"},
-        {"id": "limits", "label": "Ограничения", "kind": "text", "required": false, "hint": "что не готовим, сколько позиций"}
-      ],
-      "steps": [
-        {"id": "s1", "role": "технолог", "assignee": "", "title": "Собрать меню на неделю", "instruction": "Семь дней, сезонные продукты, без повторов.", "critic": false, "depends_on": []},
-        {"id": "s2", "role": "закупщик", "assignee": "", "title": "Посчитать закупку", "instruction": "Позиции, количество, примерная цена.", "critic": false, "depends_on": ["s1"]},
-        {"id": "s3", "role": "руководитель", "assignee": "", "title": "Утвердить меню", "instruction": "Сверить меню и закупку, сказать, что меняем.", "critic": true, "depends_on": ["s1", "s2"]}
-      ]
+     "id": "season",
+     "label": "Сезон и повод",
+     "kind": "text",
+     "required": false,
+     "hint": "ноябрь, будни, без праздников"
     },
     {
-      "id": "rc-3b7d55e1",
-      "name": "Ответ на претензию",
-      "description": "Разобрать претензию по заказу: факты, позиция, ответ клиенту с решением.",
-      "topic": "laundry",
-      "builtin": false,
-      "source": "request",
-      "created_at": 1763100000,
-      "updated_at": 1763400000,
-      "runs": 1,
-      "last_run": 1763500000,
-      "fields": [
-        {"id": "client", "label": "Клиент", "kind": "text", "required": true, "hint": "как обращаться и по какому заказу"},
-        {"id": "claim", "label": "Суть претензии", "kind": "text", "required": true, "hint": "что не устроило и чего просит клиент"},
-        {"id": "due", "label": "Ответить до", "kind": "due", "required": false, "hint": ""}
-      ],
-      "steps": [
-        {"id": "s1", "role": "юрист", "assignee": "", "title": "Проверить требования и сроки", "instruction": "Что требует клиент и в какие сроки обязаны ответить.", "critic": false, "depends_on": []},
-        {"id": "s2", "role": "оператор", "assignee": "", "title": "Собрать факты по заказу", "instruction": "Заказ, что выполнено, чеки, переписка.", "critic": false, "depends_on": ["s1"]},
-        {"id": "s3", "role": "руководитель", "assignee": "", "title": "Ответ клиенту и что меняем", "instruction": "Что признаём, что нет, что делаем дальше.", "critic": true, "depends_on": ["s1", "s2"]}
-      ]
+     "id": "limits",
+     "label": "Ограничения",
+     "kind": "text",
+     "required": false,
+     "hint": "что не готовим, сколько позиций"
+    }
+   ],
+   "steps": [
+    {
+     "id": "s1",
+     "role": "технолог",
+     "assignee": "",
+     "title": "Собрать меню на неделю",
+     "instruction": "Семь дней, сезонные продукты, без повторов.",
+     "critic": false,
+     "depends_on": []
     },
     {
-      "id": "rc-77c10ab2",
-      "name": "Сверка накладных",
-      "description": "Сверить накладные с реестром рейсов и собрать расхождения с решением.",
-      "topic": "freight",
-      "builtin": false,
-      "source": "user",
-      "created_at": 1763200000,
-      "updated_at": 1763600000,
-      "runs": 0,
-      "last_run": 0,
-      "fields": [
-        {"id": "folder", "label": "Где накладные", "kind": "file", "required": true, "hint": "папка или файл с накладными"},
-        {"id": "period", "label": "Период", "kind": "due", "required": false, "hint": "с какой даты сверяем"}
-      ],
-      "steps": [
-        {"id": "s1", "role": "бухгалтер", "assignee": "", "title": "Сверить накладные с реестром", "instruction": "Номер, дата, сумма, подпись; отдельно — чего не хватает.", "critic": false, "depends_on": []},
-        {"id": "s2", "role": "руководитель", "assignee": "", "title": "Решение по расхождениям", "instruction": "Исправить документ, доплатить или запросить перевозчика.", "critic": true, "depends_on": ["s1"]}
-      ]
-    }
-  ],
-  "trash": [
-    {
-      "id": "rc-0011dead",
-      "name": "Старый порядок приёмки",
-      "description": "Убран: заменён рецептом «Сверка накладных».",
-      "topic": "any",
-      "builtin": false,
-      "source": "user",
-      "created_at": 1762400000,
-      "updated_at": 1762500000,
-      "runs": 0,
-      "last_run": 0,
-      "fields": [],
-      "steps": [
-        {"id": "s1", "role": "руководитель", "assignee": "", "title": "Проверить приёмку", "instruction": "", "critic": false, "depends_on": []}
-      ]
-    }
-  ],
-  "runs": [
-    {
-      "id": "run-9f2a1c40-ab12cd",
-      "recipe_id": "rc-9f2a1c40",
-      "recipe_name": "Меню на неделю",
-      "request_id": "t_c41d9a77",
-      "at": 1763680000,
-      "state": "running",
-      "values": {"season": "ноябрь, будни", "limits": "не больше 12 позиций"},
-      "steps": [
-        {"id": "s1", "title": "Собрать меню на неделю", "assignee": "team-ops", "role": "технолог", "card_id": "t_77aa10c1", "status": "done", "depends_on": [], "error": ""},
-        {"id": "s2", "title": "Посчитать закупку", "assignee": "team-cfo", "role": "закупщик", "card_id": "t_77aa10c2", "status": "running", "depends_on": ["s1"], "error": ""},
-        {"id": "s3", "title": "Утвердить меню", "assignee": "team-director", "role": "руководитель", "card_id": "", "status": "pending", "depends_on": ["s1", "s2"], "error": ""}
-      ]
+     "id": "s2",
+     "role": "закупщик",
+     "assignee": "",
+     "title": "Посчитать закупку",
+     "instruction": "Позиции, количество, примерная цена.",
+     "critic": false,
+     "depends_on": [
+      "s1"
+     ]
     },
     {
-      "id": "run-3b7d55e1-fe98aa",
-      "recipe_id": "rc-3b7d55e1",
-      "recipe_name": "Ответ на претензию",
-      "request_id": "t_5c8e4a02",
-      "at": 1763500000,
-      "state": "done",
-      "values": {"client": "Кофейня «Пар»", "claim": "остывший кофе в доставке", "due": "2026-11-25"},
-      "steps": [
-        {"id": "s1", "title": "Проверить требования и сроки", "assignee": "team-lawyer", "role": "юрист", "card_id": "t_5c8e4a11", "status": "done", "depends_on": [], "error": ""},
-        {"id": "s2", "title": "Собрать факты по заказу", "assignee": "team-ops", "role": "оператор", "card_id": "t_5c8e4a12", "status": "done", "depends_on": ["s1"], "error": ""},
-        {"id": "s3", "title": "Ответ клиенту и что меняем", "assignee": "team-director", "role": "руководитель", "card_id": "t_5c8e4a13", "status": "done", "depends_on": ["s1", "s2"], "error": ""}
-      ]
+     "id": "s3",
+     "role": "руководитель",
+     "assignee": "",
+     "title": "Утвердить меню",
+     "instruction": "Сверить меню и закупку, сказать, что меняем.",
+     "critic": true,
+     "depends_on": [
+      "s1",
+      "s2"
+     ]
     }
-  ],
-  "roles": [
-    {"profile": "team-director", "role": "orchestrator", "label": "Руководитель комнаты"},
-    {"profile": "team-lawyer", "role": "worker", "label": "юрист: договоры и претензии"},
-    {"profile": "team-ops", "role": "worker", "label": "оператор: заказы и факты"},
-    {"profile": "team-cfo", "role": "worker", "label": "финансист: сметы и закупка"},
-    {"profile": "team-critic", "role": "critic", "label": "критик: проверяет свод"}
-  ]
+   ],
+   "sample": true,
+   "sample_note": "образец чужой сферы"
+  },
+  {
+   "id": "rc-3b7d55e1",
+   "name": "Ответ на претензию",
+   "description": "Разобрать претензию по заказу: факты, позиция, ответ клиенту с решением.",
+   "topic": "laundry",
+   "builtin": false,
+   "source": "request",
+   "created_at": 1763100000,
+   "updated_at": 1763400000,
+   "runs": 1,
+   "last_run": 1763500000,
+   "fields": [
+    {
+     "id": "client",
+     "label": "Клиент",
+     "kind": "text",
+     "required": true,
+     "hint": "как обращаться и по какому заказу"
+    },
+    {
+     "id": "claim",
+     "label": "Суть претензии",
+     "kind": "text",
+     "required": true,
+     "hint": "что не устроило и чего просит клиент"
+    },
+    {
+     "id": "due",
+     "label": "Ответить до",
+     "kind": "due",
+     "required": false,
+     "hint": ""
+    }
+   ],
+   "steps": [
+    {
+     "id": "s1",
+     "role": "юрист",
+     "assignee": "",
+     "title": "Проверить требования и сроки",
+     "instruction": "Что требует клиент и в какие сроки обязаны ответить.",
+     "critic": false,
+     "depends_on": []
+    },
+    {
+     "id": "s2",
+     "role": "оператор",
+     "assignee": "",
+     "title": "Собрать факты по заказу",
+     "instruction": "Заказ, что выполнено, чеки, переписка.",
+     "critic": false,
+     "depends_on": [
+      "s1"
+     ]
+    },
+    {
+     "id": "s3",
+     "role": "руководитель",
+     "assignee": "",
+     "title": "Ответ клиенту и что меняем",
+     "instruction": "Что признаём, что нет, что делаем дальше.",
+     "critic": true,
+     "depends_on": [
+      "s1",
+      "s2"
+     ]
+    }
+   ],
+   "sample": false,
+   "sample_note": ""
+  },
+  {
+   "id": "rc-77c10ab2",
+   "name": "Сверка накладных",
+   "description": "Сверить накладные с реестром рейсов и собрать расхождения с решением.",
+   "topic": "freight",
+   "builtin": false,
+   "source": "user",
+   "created_at": 1763200000,
+   "updated_at": 1763600000,
+   "runs": 0,
+   "last_run": 0,
+   "fields": [
+    {
+     "id": "folder",
+     "label": "Где накладные",
+     "kind": "file",
+     "required": true,
+     "hint": "папка или файл с накладными"
+    },
+    {
+     "id": "period",
+     "label": "Период",
+     "kind": "due",
+     "required": false,
+     "hint": "с какой даты сверяем"
+    }
+   ],
+   "steps": [
+    {
+     "id": "s1",
+     "role": "бухгалтер",
+     "assignee": "",
+     "title": "Сверить накладные с реестром",
+     "instruction": "Номер, дата, сумма, подпись; отдельно — чего не хватает.",
+     "critic": false,
+     "depends_on": []
+    },
+    {
+     "id": "s2",
+     "role": "руководитель",
+     "assignee": "",
+     "title": "Решение по расхождениям",
+     "instruction": "Исправить документ, доплатить или запросить перевозчика.",
+     "critic": true,
+     "depends_on": [
+      "s1"
+     ]
+    }
+   ],
+   "sample": false,
+   "sample_note": ""
+  }
+ ],
+ "trash": [
+  {
+   "id": "rc-0011dead",
+   "name": "Старый порядок приёмки",
+   "description": "Убран: заменён рецептом «Сверка накладных».",
+   "topic": "any",
+   "builtin": false,
+   "source": "user",
+   "created_at": 1762400000,
+   "updated_at": 1762500000,
+   "runs": 0,
+   "last_run": 0,
+   "fields": [],
+   "steps": [
+    {
+     "id": "s1",
+     "role": "руководитель",
+     "assignee": "",
+     "title": "Проверить приёмку",
+     "instruction": "",
+     "critic": false,
+     "depends_on": []
+    }
+   ]
+  }
+ ],
+ "runs": [
+  {
+   "id": "run-9f2a1c40-ab12cd",
+   "recipe_id": "rc-9f2a1c40",
+   "recipe_name": "Меню на неделю",
+   "request_id": "t_c41d9a77",
+   "at": 1763680000,
+   "state": "running",
+   "values": {
+    "season": "ноябрь, будни",
+    "limits": "не больше 12 позиций"
+   },
+   "steps": [
+    {
+     "id": "s1",
+     "title": "Собрать меню на неделю",
+     "assignee": "team-ops",
+     "role": "технолог",
+     "card_id": "t_77aa10c1",
+     "status": "done",
+     "depends_on": [],
+     "error": ""
+    },
+    {
+     "id": "s2",
+     "title": "Посчитать закупку",
+     "assignee": "team-cfo",
+     "role": "закупщик",
+     "card_id": "t_77aa10c2",
+     "status": "running",
+     "depends_on": [
+      "s1"
+     ],
+     "error": ""
+    },
+    {
+     "id": "s3",
+     "title": "Утвердить меню",
+     "assignee": "team-director",
+     "role": "руководитель",
+     "card_id": "",
+     "status": "pending",
+     "depends_on": [
+      "s1",
+      "s2"
+     ],
+     "error": ""
+    }
+   ]
+  },
+  {
+   "id": "run-3b7d55e1-fe98aa",
+   "recipe_id": "rc-3b7d55e1",
+   "recipe_name": "Ответ на претензию",
+   "request_id": "t_5c8e4a02",
+   "at": 1763500000,
+   "state": "done",
+   "values": {
+    "client": "Кофейня «Пар»",
+    "claim": "остывший кофе в доставке",
+    "due": "2026-11-25"
+   },
+   "steps": [
+    {
+     "id": "s1",
+     "title": "Проверить требования и сроки",
+     "assignee": "team-lawyer",
+     "role": "юрист",
+     "card_id": "t_5c8e4a11",
+     "status": "done",
+     "depends_on": [],
+     "error": ""
+    },
+    {
+     "id": "s2",
+     "title": "Собрать факты по заказу",
+     "assignee": "team-ops",
+     "role": "оператор",
+     "card_id": "t_5c8e4a12",
+     "status": "done",
+     "depends_on": [
+      "s1"
+     ],
+     "error": ""
+    },
+    {
+     "id": "s3",
+     "title": "Ответ клиенту и что меняем",
+     "assignee": "team-director",
+     "role": "руководитель",
+     "card_id": "t_5c8e4a13",
+     "status": "done",
+     "depends_on": [
+      "s1",
+      "s2"
+     ],
+     "error": ""
+    }
+   ]
+  }
+ ],
+ "roles": [
+  {
+   "profile": "team-director",
+   "role": "orchestrator",
+   "label": "Руководитель комнаты"
+  },
+  {
+   "profile": "team-lawyer",
+   "role": "worker",
+   "label": "юрист: договоры и претензии"
+  },
+  {
+   "profile": "team-ops",
+   "role": "worker",
+   "label": "оператор: заказы и факты"
+  },
+  {
+   "profile": "team-cfo",
+   "role": "worker",
+   "label": "финансист: сметы и закупка"
+  },
+  {
+   "profile": "team-critic",
+   "role": "critic",
+   "label": "критик: проверяет свод"
+  }
+ ],
+ "samples": [
+  {
+   "id": "builtin-laundry-claim",
+   "name": "Ответ клиенту на претензию",
+   "topic": "laundry",
+   "description": "Разобрать претензию по заказу: факты, позиция, ответ клиенту с решением.",
+   "builtin": true,
+   "sample": true,
+   "sample_note": "образец чужой сферы: посмотрите устройство, имя и шаги можно переделать под себя",
+   "source": "builtin",
+   "created_at": 0,
+   "updated_at": 0,
+   "runs": 0,
+   "last_run": 0,
+   "fields": [
+    {
+     "id": "client",
+     "label": "Клиент",
+     "kind": "text",
+     "required": true,
+     "hint": "как обращаться"
+    },
+    {
+     "id": "claim",
+     "label": "Суть претензии",
+     "kind": "text",
+     "required": true,
+     "hint": ""
+    }
+   ],
+   "steps": [
+    {
+     "id": "s1",
+     "role": "юрист",
+     "assignee": "",
+     "title": "Проверить требования и сроки",
+     "instruction": "Назови применимые правила и риски.",
+     "critic": false,
+     "depends_on": []
+    },
+    {
+     "id": "s2",
+     "role": "руководитель",
+     "assignee": "",
+     "title": "Ответ клиенту",
+     "instruction": "Сведи ответ: что признаём, что нет.",
+     "critic": true,
+     "depends_on": [
+      "s1"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "builtin-freight-reconcile",
+   "name": "Сверка накладных",
+   "topic": "freight",
+   "description": "Сверить накладные с реестром рейсов и собрать расхождения с решением.",
+   "builtin": true,
+   "sample": true,
+   "sample_note": "образец чужой сферы: посмотрите устройство, имя и шаги можно переделать под себя",
+   "source": "builtin",
+   "created_at": 0,
+   "updated_at": 0,
+   "runs": 0,
+   "last_run": 0,
+   "fields": [
+    {
+     "id": "folder",
+     "label": "Где накладные",
+     "kind": "file",
+     "required": true,
+     "hint": ""
+    }
+   ],
+   "steps": [
+    {
+     "id": "s1",
+     "role": "бухгалтер",
+     "assignee": "",
+     "title": "Сверить с реестром",
+     "instruction": "Номер, дата, сумма, подпись.",
+     "critic": false,
+     "depends_on": []
+    },
+    {
+     "id": "s2",
+     "role": "руководитель",
+     "assignee": "",
+     "title": "Решение по расхождениям",
+     "instruction": "Что исправить и кому написать.",
+     "critic": true,
+     "depends_on": [
+      "s1"
+     ]
+    }
+   ]
+  }
+ ],
+ "dialog": null
 }

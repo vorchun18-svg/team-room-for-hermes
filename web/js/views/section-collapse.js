@@ -44,6 +44,27 @@ const CLOSED_TASK = ['done', 'archived'];
 /* ─────────────────────────────────────────────────── умолчания (одна функция) */
 
 /**
+ * Сколько разрешений агентам ждёт решения человека.
+ *
+ * W31-B2 (дефект 26): от этого числа зависит умолчание блока «Разрешения агентам» —
+ * если решать нечего, блок свёрнут; если работа стоит — раскрыт.
+ *
+ * @param {object} detail
+ * @returns {number}
+ */
+export function pendingApprovals(detail) {
+  const list = Array.isArray(detail && detail.approvals) ? detail.approvals : [];
+  let n = 0;
+  for (const a of list) {
+    if (!a || typeof a !== 'object') continue;
+    const state = String(a.state || 'pending');
+    if (state && state !== 'pending') continue;
+    n += 1;
+  }
+  return n;
+}
+
+/**
  * Умолчания раскрытости блоков — ОДНА функция, чтобы правка была в одном месте.
  *
  * Правило волны 25 (R5 §7.2, канон для пакета L2): до свода и после него в
@@ -81,6 +102,13 @@ export function sectionDefaults(detail, opts = {}) {
     tree: false,
     artifacts: false,
     timeline: false,
+    // W31-B2 (дефект 26): «Свод», «Разрешения агентам» и «Проверка критика» —
+    // тоже сворачиваемые блоки, с тем же заголовком и тем же запоминанием.
+    // Свод открыт (его читают первым), разрешения — только когда ждут решения,
+    // проверка критика свёрнута (состояние видно чипом в заголовке).
+    svod: true,
+    approvals: pendingApprovals(detail) > 0,
+    critic: false,
     // «Что изменилось»: по умолчанию свёрнуто при виде < 1100 (R5 §7.2).
     changed: wide && version > 1,
   };
@@ -435,6 +463,6 @@ function hookPrint() {
 }
 
 export default {
-  createSection, sectionDefaults, treeSummaryChips, artifactsSummaryChips,
+  createSection, sectionDefaults, pendingApprovals, treeSummaryChips, artifactsSummaryChips,
   treeProblems, artifactsSummary, expandAllSections, liveSections, COLLAPSE_CSS,
 };

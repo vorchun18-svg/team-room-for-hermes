@@ -310,3 +310,31 @@ test('память: без localStorage (приватный режим) рабо
   assert.equal(memory.read().hash, '', 'хранилища нет — помнить нечего');
   assert.equal(routeMessage('#/room/cafe').type, ROUTE_MESSAGE);
 });
+
+/* ──────────────────────── W31-B1: вход в комнату — всегда «Задачи» (дефект 19) */
+
+test('W31: память не переопределяет главный экран комнаты', () => {
+  // Прошлый раз человек ушёл с вкладки «Новая задача» — при следующем запуске
+  // без хэша открывается доска «Задачи», а не композер.
+  for (const hash of ['#/room/cafe/composer', '#/room/cafe/backlog', '#/room/cafe/team']) {
+    assert.equal(chooseHash({ urlHash: '', stored: { hash, scroll: {} }, roomIds: ROOMS, tabIds: TABS }),
+      '#/room/cafe/tasks', 'из памяти: ' + hash);
+  }
+  // Явный адрес в строке (deep link) память не перебивает: вкладки ещё есть.
+  assert.equal(chooseHash({ urlHash: '#/room/cafe/backlog', stored: { hash: '#/room/fn/team', scroll: {} },
+    roomIds: ROOMS, tabIds: TABS }), '#/room/cafe/backlog');
+  // Страница задачи из памяти восстанавливается как раньше — это не «вкладка».
+  assert.equal(chooseHash({ urlHash: '', stored: { hash: '#/room/fn/request/t_9f3c2a10', scroll: {} },
+    roomIds: ROOMS, tabIds: TABS, requestOk: true }), '#/room/fn/request/t_9f3c2a10');
+});
+
+test('W31: старый адрес «Новая задача» ведёт на доску с фокусом в поле', () => {
+  // Дефект 21: вкладки больше нет, но закладка/ссылка на неё не должна ломаться.
+  for (const stored of [null, { hash: '#/room/cafe/composer', scroll: {} }]) {
+    assert.equal(chooseHash({ urlHash: '#/room/cafe/composer', stored, roomIds: ROOMS, tabIds: TABS }),
+      '#/room/cafe/tasks?focus=input');
+  }
+  // Из памяти старый композер тоже не открывается как вкладка.
+  assert.equal(chooseHash({ urlHash: '', stored: { hash: '#/room/cafe/composer', scroll: {} },
+    roomIds: ROOMS, tabIds: TABS }), '#/room/cafe/tasks');
+});

@@ -87,7 +87,9 @@ class AcceptTest(unittest.TestCase):
         self.assertEqual(status, 200, payload)
         self.assertTrue(payload["accepted"])
         self.assertFalse(payload["already"])
-        self.assertEqual(payload["board_stage"], "accepted")
+        self.assertEqual(payload["board_stage"], "done")
+        self.assertEqual(payload["board_column"], "done")
+        self.assertEqual(payload["allowed_moves"], ["working"])
         passport = payload.get("passport") or {}
         self.assertEqual(set(passport), {"title", "outcome", "decisions", "files", "at"})
         self.assertTrue(passport["title"])
@@ -143,7 +145,9 @@ class AcceptTest(unittest.TestCase):
         self._accept()
         _status, detail, _headers = self.app.h_request_get({}, {}, self.rid)
         self.assertTrue(detail["accepted"])
-        self.assertEqual(detail["board_stage"], "accepted")
+        self.assertEqual(detail["board_stage"], "done")
+        self.assertEqual(detail["board_column"], "done")
+        self.assertEqual(detail["allowed_moves"], ["working"])
         self.assertGreater(detail["accepted_at"], 0)
         self.assertIsInstance(detail["passport"], dict)
         # пункты принятой задачи не «ждут вас»

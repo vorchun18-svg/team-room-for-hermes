@@ -54,13 +54,18 @@ WAITING_TEXT = "ждёт вашего решения"
 
 #: Состояния пункта по контракту W27 §1 (вопрос / решение / шаг).
 ITEM_STATES = ("open", "answered", "accepted", "rejected", "dismissed", "done")
+#: Вопрос дополнительно знает `postponed` — «Отложить» (W30-A §1): человек увидел
+#: вопрос и просит вернуться позже. Это НЕ ответ и НЕ снятие: пункт не входит в
+#: счётчики сейчас, но остаётся открытым и обязан иметь кнопку «Вернуть»
+#: (`restore`) — иначе «Отложить» превращается в чёрную дыру.
+QUESTION_STATES = ITEM_STATES + ("postponed",)
 #: Состояния разрешения (§1). ``workaround``/``hint_agent`` — старые сборки W26.
 APPROVAL_STATES = ("pending", "granted_once", "granted_always", "denied", "expired",
                    "closed", "dismissed", "workaround", "info", "hinted", "trusted")
 #: Шаг дополнительно знает ``cancelled`` («снят по вашему ответу»).
 STEP_STATES = ITEM_STATES + ("cancelled",)
 #: Разделы запроса с пунктами «ждёт вас»: (ключ, вид, допустимые состояния).
-ITEM_SECTIONS = (("open_questions", "question", ITEM_STATES), ("questions", "question", ITEM_STATES),
+ITEM_SECTIONS = (("open_questions", "question", QUESTION_STATES), ("questions", "question", QUESTION_STATES),
                  ("decisions", "decision", ITEM_STATES), ("next_steps", "step", STEP_STATES))
 #: Ключи серверного счётчика запроса (§1).
 COUNTER_KEYS = ("questions", "decisions", "approvals", "steps", "total")
@@ -77,6 +82,12 @@ def _actions(item: dict) -> list:
         if isinstance(value, str) and value.strip():
             return [value]
     return []
+
+
+def _action_ids(item: dict) -> list:
+    """Имена кнопок пункта (``actions[]``/``options[]``) — то, что нажимает человек."""
+    return [str((a or {}).get("id") or "") if isinstance(a, dict) else str(a or "")
+            for a in _actions(item or {})]
 
 
 def check_approval(item: dict) -> list[str]:
@@ -157,7 +168,7 @@ def check_detail(detail: dict, request_id: str = "") -> list[dict]:
                          "card_state": "", "why": "счётчик «%d» больше числа строк с действием "
                                                   "(%d) — считает недоговорное" % (counted, len(waiting)),
                          "text": ""})
-    if detail.get("needs_you") and items and not waiting and not _generic_any(detail):
+    if detail.get("needs_you") and not waiting and not _generic_any(detail):
         problems.append({"request_id": rid, "kind": "counter", "id": "", "card_state": "",
                          "why": "карточка «нужен ваш ответ», а решать нечего", "text": ""})
     problems += _state_problems(detail, rid)
@@ -194,11 +205,24 @@ def _state_problems(detail: dict, rid: str) -> list[dict]:
                                  "card_state": "",
                                  "why": "открытый пункт «ждёт вас», а действия нет",
                                  "text": str(item.get("text") or "")[:160]})
+            elif str(state) == "postponed" and "restore" not in _action_ids(item):
+                # «Отложить» без «Вернуть» — чёрная дыра: пункт ушёл из счётчиков,
+                # и вернуть его человеку нечем (правило «без тупиков»).
+                problems.append({"request_id": rid, "kind": "dead_end", "id": ident,
+                                 "card_state": "",
+                                 "why": "отложенный вопрос без кнопки «Вернуть»: "
+                                        "пункт нигде не ждёт и вернуться не может",
+                                 "text": str(item.get("text") or "")[:160]})
     return problems
 
 
 def _counter_problems(detail: dict, rid: str) -> list[dict]:
-    """`needs_you_count` должен совпадать с числом пунктов, которые правда ждут (§1)."""
+    """`needs_you_count` должен совпадать с числом пунктов, которые правда ждут (§1).
+
+    W31-FIX4: в наборе — и заблокированные карточки (`blocked`), тот же список, что
+    в правой колонке и на доске. Раньше они считались в статусе «нужен ваш ответ» и
+    в «Сегодня», но не в счётчике задачи: человек видел «ждёт вас» и ноль в блоке.
+    """
     counter = detail.get("needs_you_count")
     if not isinstance(counter, dict):
         return []
@@ -208,7 +232,7 @@ def _counter_problems(detail: dict, rid: str) -> list[dict]:
         problems.append({"request_id": rid, "kind": "counter", "id": "", "card_state": "",
                          "why": "в счётчике нет полей: %s" % ", ".join(missing), "text": ""})
         return problems
-    actual = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0}
+    actual = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0, "blocked": 0}
     seen: set = set()
     for key, kind, _allowed in ITEM_SECTIONS:
         group = {"question": "questions", "decision": "decisions", "step": "steps"}[kind]
@@ -224,11 +248,19 @@ def _counter_problems(detail: dict, rid: str) -> list[dict]:
     for item in detail.get("approvals") or []:
         if isinstance(item, dict) and item.get("needs_you"):
             actual["approvals"] += 1
+    # Заблокированные карточки: ждут человека все, кроме системных пауз сторожа,
+    # и только те, у которых есть кнопка (иначе это скажет check_blocked_cards).
+    actual["blocked"] = len([node for node in _blocked_cards(detail)
+                             if not is_system_pause(node) and _actions(node)])
     for key in ("questions", "decisions", "approvals", "steps"):
         if counter.get(key) != actual[key]:
             problems.append({"request_id": rid, "kind": "counter", "id": "", "card_state": "",
                              "why": "счётчик «%s»=%s, а пунктов с действием %d"
                                     % (key, counter.get(key), actual[key]), "text": ""})
+    if "blocked" in counter and counter.get("blocked") != actual["blocked"]:
+        problems.append({"request_id": rid, "kind": "counter", "id": "", "card_state": "",
+                         "why": "счётчик «blocked»=%s, а заблокированных карточек с действием %d"
+                                % (counter.get("blocked"), actual["blocked"]), "text": ""})
     total = sum(actual.values())
     if counter.get("total") != total:
         problems.append({"request_id": rid, "kind": "counter", "id": "", "card_state": "",
@@ -314,7 +346,14 @@ def check_blocked_cards(detail: dict, request_id: str = "") -> list[dict]:
 
 
 def _generic_any(detail: dict) -> bool:
-    """Есть ли у запроса другие пункты, которые правда ждут человека."""
+    """Есть ли у запроса другие пункты, которые правда ждут человека.
+
+    W31-FIX4: заблокированная карточка — такой же пункт «ждёт вас» («Продолжить» /
+    «Дать указание»), как вопрос или разрешение: без неё проверка объявляла тупиком
+    задачу, у которой все вопросы отвечены, а корень стоит заблокированным, хотя
+    человеку есть что нажать. Системная пауза сторожа (``hold``) ждёт не человека —
+    её не считаем.
+    """
     for key in ("questions", "open_questions", "decisions", "next_steps"):
         for item in detail.get(key) or []:
             if not isinstance(item, dict):
@@ -327,6 +366,13 @@ def _generic_any(detail: dict) -> bool:
                     return True
             elif not item.get("done") and not item.get("cancelled_by_answer"):
                 return True
+    for node in detail.get("tree") or []:
+        if not isinstance(node, dict) or str(node.get("status") or "") != "blocked":
+            continue
+        if is_system_pause(node):
+            continue
+        if _actions(node):
+            return True
     return False
 
 
@@ -729,6 +775,40 @@ def selftest() -> list[str]:
     wrong_count = {"id": "t_b3", "tree": [good_card, pause_card], "needs_you_blocked": 2}
     if not check_blocked_cards(wrong_count, "t_b3"):
         bad.append("не поймал число заблокированных, не равное списку")
+    # W31-FIX4 №1: «Отложить» — законное состояние вопроса, если есть «Вернуть».
+    postponed_ok = {"id": "t_p1", "status": "working", "needs_you": False,
+                    "open_questions": [{"id": "q_p1", "state": "postponed", "needs_you": False,
+                                        "actions": [{"id": "restore"}], "text": "прайс"}]}
+    if check_detail(postponed_ok, "t_p1"):
+        bad.append("отложенный вопрос с «Вернуть» дал ложную тревогу: %s"
+                   % check_detail(postponed_ok, "t_p1"))
+    postponed_bad = {"id": "t_p2", "status": "working", "needs_you": False,
+                     "open_questions": [{"id": "q_p2", "state": "postponed", "needs_you": False,
+                                         "actions": [], "text": "прайс"}]}
+    if not [p for p in check_detail(postponed_bad, "t_p2") if p["kind"] == "dead_end"]:
+        bad.append("не поймал отложенный вопрос без «Вернуть»")
+    # W31-FIX4 №2: заблокированная карточка — пункт «ждёт вас» и в счётчике.
+    blocked_point = {"id": "t_b4", "status": "needs_you", "needs_you": True,
+                     "open_questions": [{"id": "q_b4", "state": "answered", "needs_you": False}],
+                     "tree": [{"id": "t_b4", "status": "blocked", "title": "сверстать прайс",
+                               "actions": [{"id": "resume"}, {"id": "instruct"}]}],
+                     "needs_you_count": {"questions": 0, "decisions": 0, "approvals": 0,
+                                         "steps": 0, "blocked": 1, "total": 1},
+                     "needs_you_blocked": 1,
+                     "blocked_waiting": [{"id": "t_b4", "actions": [{"id": "resume"}]}]}
+    if check_detail(blocked_point, "t_b4"):
+        bad.append("заблокированная карточка в счётчике дала ложную тревогу: %s"
+                   % check_detail(blocked_point, "t_b4"))
+    zero_counter = dict(blocked_point, needs_you_count={"questions": 0, "decisions": 0,
+                                                        "approvals": 0, "steps": 0, "total": 0})
+    if not [p for p in check_detail(zero_counter, "t_b5") if p["kind"] == "counter"]:
+        bad.append("не поймал счётчик, не считающий заблокированную карточку")
+    nothing_left = {"id": "t_e1", "status": "needs_you", "needs_you": True,
+                    "open_questions": [{"id": "q_e1", "state": "answered", "needs_you": False}],
+                    "needs_you_count": {"questions": 0, "decisions": 0, "approvals": 0,
+                                        "steps": 0, "blocked": 0, "total": 0}}
+    if not [p for p in check_detail(nothing_left, "t_e1") if "решать нечего" in p["why"]]:
+        bad.append("не поймал «нужен ваш ответ» без единого пункта")
     return bad
 
 

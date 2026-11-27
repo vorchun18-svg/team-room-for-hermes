@@ -583,7 +583,7 @@ class WriteRoutes:
         # «Вернуть в работу», повторное «Принять» (честно ответит «уже принята») и
         # комментарий человеку: всё остальное запустило бы работу и модели. Проверка
         # до разбора тела, чтобы ни одно действие не просочилось в движок.
-        if action not in ("accept", "reopen_accepted", "comment"):
+        if action not in ("accept", "reopen_accepted", "comment", "move"):
             try:
                 frozen = bool(passports_mod.is_accepted(self.cfg, room, rid))
             except Exception:  # noqa: BLE001 — защита не должна превращаться в 501
@@ -596,6 +596,12 @@ class WriteRoutes:
             # «Вернуть в работу». Логика — `passports.py`, остановка карточек —
             # общий механизм `archive.stop_work`; здесь только HTTP и паспорт.
             return self._accept_action(room, rec, rid, body, action)
+        if action == "move":
+            # W31-A1: перемещение карточки по доске одним действием (мышь на
+            # клиенте и кнопки в шапке задачи). `review→done` — это то же
+            # «Принять», `done→working` — «Вернуть в работу», `review→working` —
+            # «Вернуть на доработку», `working→review` — «Отправить на проверку».
+            return self._move_action(room, rec, rid, body)
         if action in ("answer_option", "answer_custom", "explain_more", "postpone"):
             # W30-A §1: кнопки-варианты, «Свой ответ», «Ещё пояснить», «Отложить».
             # Первые три идут в существующий механизм ответа (`answer` /
@@ -2477,7 +2483,9 @@ class WriteRoutes:
                 payload = {"ok": True, "action": "accept", "accepted": True, "already": True,
                            "at": int(already.get("at") or 0),
                            "passport": already.get("passport") or {},
-                           "board_stage": "accepted", "message": "Задача уже принята"}
+                           "board_stage": "done", "board_column": "done",
+                           "allowed_moves": ["working"],
+                           "message": "Задача уже принята"}
                 payload["request"] = self._summary_or_local(
                     room, rid, rec.get("text") or "", rec.get("title") or "",
                     bool(rec.get("critic")), rec.get("mode") or "auto", rec.get("answers"))
@@ -2487,8 +2495,8 @@ class WriteRoutes:
                                "задачу. Ответьте — и её можно будет принять"
                           % len(blocking), code="needs_answer", rid=rid,
                           blocking=len(blocking))
-            if stage != "done_system":
-                raise err(409, "Принять можно только готовую задачу (сейчас: «%s»)"
+            if not (request_status == "done" or stage == "done"):
+                raise err(409, "Принять можно только законченную задачу (сейчас: «%s»)"
                           % board_mod.STAGE_RU.get(stage, stage),
                           code="not_done", rid=rid, stage=stage)
             # 1) остановить то, на чём ещё могла стоять работа (как при архивации)
@@ -2514,8 +2522,136 @@ class WriteRoutes:
             raise err(status_code, exc.message_ru, exc.code, **dict(exc.detail or {})) from exc
         payload = {"ok": True, "action": "accept"}
         payload.update(res if isinstance(res, dict) else {})
-        payload["board_stage"] = "accepted"
+        payload["board_stage"] = "done"
+        payload["board_column"] = "done"
+        payload["allowed_moves"] = ["working"]
         payload["stopped"] = list(payload.get("stopped") or stopped)
+        payload["request"] = self._summary_or_local(
+            room, rid, rec.get("text") or "", rec.get("title") or "",
+            bool(rec.get("critic")), rec.get("mode") or "auto", rec.get("answers"))
+        return 200, payload, {"Cache-Control": "no-store"}
+
+    # --- перемещение по доске (W31-A1, контракт статусов) -------------------
+
+    def _move_action(self, room: dict, rec: dict, rid: str, body: dict):
+        """``{action:"move", to:"working"|"review"|"done", comment?, confirm?}``.
+
+        Одно действие на три кнопки и на перетаскивание карточки:
+
+        * ``review → done`` — принять (тот же путь, что «Принять»: заморозка,
+          паспорт, остановка карточек). Если у задачи открытые вопросы —
+          сначала ``409 {needs_confirm:true, open_questions:N}``, повтор с
+          ``confirm:true`` принимает и закрывает вопросы причиной «задача принята»;
+        * ``done → working`` — «Вернуть в работу»: снять заморозку, отметить
+          «возвращена в работу» (колонка «В работе», пока доска не догонит) и,
+          если удаётся, написать комментарий в карточку;
+        * ``review → working`` — «Вернуть на доработку» (комментарий желателен):
+          снять заморозку и переоткрыть карточку штатным `rework`;
+        * ``working → review`` — «Отправить на проверку»: штатный `request-review`.
+
+        Что нельзя — честный отказ «так перенести нельзя» со списком разрешённых,
+        без «тихого» успеха: колонки, которыми управляет система, человеком не
+        двигаются (дефект 18).
+        """
+        body = body if isinstance(body, dict) else {}
+        to = str(body.get("to") or "").strip().lower()
+        comment = body.get("comment")
+        if comment is not None and not isinstance(comment, str):
+            raise err(400, "comment: строка", field="comment")
+        comment = " ".join((comment or "").split())[:MAX_NOTE]
+        if comment and has_nul(comment):
+            raise err(400, "В comment есть NUL-байт", field="comment")
+        confirm = body.get("confirm") is True
+        board = room.get("board") or self.board
+        status = ""
+        try:
+            states = self.call("engine_read", "today_states", ((self.cfg, board, [rid]), {})) or {}
+            status = str((states.get(rid) or {}).get("status") or "")
+        except Exception:  # noqa: BLE001 — статус узнаем из сводки
+            status = ""
+        status = self._request_status(room, rid, rec) or status
+        try:
+            accepted = bool(passports_mod.is_accepted(self.cfg, room, rid))
+        except Exception:  # noqa: BLE001 — отметка вторична
+            accepted = False
+        archived = status == "archived"
+        column = board_mod.column_for(self.cfg, room, rid, status=status,
+                                      accepted=accepted, archived=archived)
+        allowed = board_mod.allowed_moves(column)
+        if to not in allowed:
+            raise err(409, "Так перенести нельзя: из «%s» %s"
+                      % (board_mod.STAGE_RU.get(column, column),
+                         ("можно в «%s»" % "», «".join(board_mod.STAGE_RU.get(x, x) for x in allowed))
+                         if allowed else "переносить вручную нечего — работой управляет система"),
+                      code="bad_move", rid=rid, from_column=column,
+                      allowed_moves=allowed)
+        # открытые вопросы: принятие при них — только с подтверждением
+        open_questions = 0
+        if to == "done":
+            try:
+                from . import routes_today as today_routes
+            except ImportError:  # pragma: no cover
+                import routes_today as today_routes      # type: ignore
+            try:
+                items = today_routes.waiting_items(self, room, rec) or []
+            except Exception:  # noqa: BLE001 — вопросы вторичны
+                items = []
+            open_questions = len([i for i in items if isinstance(i, dict)
+                                  and str(i.get("kind") or "") == "question"])
+            if open_questions and not confirm:
+                raise err(409, "У задачи %d открытых вопрос(а). Принять и закрыть их?"
+                          % open_questions, code="needs_confirm", rid=rid,
+                          needs_confirm=True, open_questions=open_questions)
+        if to == "done":
+            status_code, payload, headers = self._accept_action(
+                room, rec, rid, {"note": comment}, "accept")
+            if isinstance(payload, dict):
+                payload["action"] = "move"
+                payload["to"] = "done"
+                payload["from_column"] = column
+                payload["board_column"] = "done"
+                payload["allowed_moves"] = board_mod.allowed_moves("done")
+                payload["closed_questions"] = open_questions
+            try:
+                board_mod.clear_working(self.cfg, room.get("id"), rid)
+            except Exception:  # noqa: BLE001 — метка вторична
+                pass
+            return status_code, payload, headers
+        # --- возврат в работу: done→working и review→working
+        warnings = []
+        if accepted:
+            passports_mod.reopen(self.cfg, room, rid, by=AUTHOR_MAXIM)
+        if to == "review":
+            board_action = "request_review"
+        elif str(status or "") in ("review", "reviewing", "synthesizing", "done"):
+            board_action = "rework"
+        else:
+            board_action = ""       # карточка уже в очереди/работе — доску не трогаем
+        if board_action:
+            try:
+                self.call("engine_write", "act",
+                          ((self.cfg, board, rid, board_action),
+                           {"task_id": rid, "text": comment}))
+            except Exception as exc:  # noqa: BLE001 — метка важнее доски
+                self.log.warning("перенос %s: доска не переставлена: %s" % (rid, exc))
+                warnings.append({"code": "board_not_moved",
+                                 "message": "Карточку на доске переставить не удалось — "
+                                            "состояние задачи записано в комнате, "
+                                            "на доске оно обновится следующим проходом."})
+        if to == "working":
+            try:
+                board_mod.mark_working(self.cfg, room.get("id"), rid, note=comment)
+            except Exception as exc:  # noqa: BLE001
+                self.log.warning("перенос %s: метка «в работе»: %s" % (rid, exc))
+        new_column = board_mod.column_for(self.cfg, room, rid, status=status,
+                                          accepted=False, archived=archived)
+        if to == "working" and new_column != "working":
+            new_column = "working"      # метка только что поставлена
+        payload = {"ok": True, "action": "move", "to": to, "from_column": column,
+                   "board_column": new_column,
+                   "allowed_moves": board_mod.allowed_moves(new_column),
+                   "accepted": bool(passports_mod.is_accepted(self.cfg, room, rid)),
+                   "warnings": warnings}
         payload["request"] = self._summary_or_local(
             room, rid, rec.get("text") or "", rec.get("title") or "",
             bool(rec.get("critic")), rec.get("mode") or "auto", rec.get("answers"))

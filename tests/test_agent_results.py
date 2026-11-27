@@ -99,6 +99,18 @@ class TestRemaining(unittest.TestCase):
         self.assertEqual(ar.remaining_of({}), "")
         self.assertEqual(ar.remaining_of(None), "")
 
+    def test_machine_questions_are_rewritten(self):
+        """W31-A2: «что осталось» из open_questions — те же правила, что у задачи."""
+        got = ar.remaining_of({"open_questions": [
+            "Q3. Доставка: А) платная; Б) доплачиваем. Что выбираем?",
+            "D19 — отправляете 5–10 сообщений вручную или готовым текстом"]})
+        self.assertNotIn("Q3", got)
+        self.assertNotIn("D19", got)
+        self.assertIn("Доставка", got)
+        self.assertIn("Отправляете 5–10 сообщений вручную", got)
+        # «что осталось» из шагов — как было, без переписывания
+        self.assertEqual(ar.remaining_of({"next_steps": ["Подписать договор"]}), "Подписать договор")
+
 
 class TestFiles(unittest.TestCase):
     """Файлы результата: путь, существование, зеркала, секреты."""
@@ -202,6 +214,77 @@ class TestAgentAndBuild(unittest.TestCase):
     def test_attach_without_tree(self):
         detail = {"id": "t_00000001"}
         self.assertEqual(ar.attach(detail)["agents"], [])
+
+
+class TestAgentName(unittest.TestCase):
+    """Дефект 31: в «Результатах агентов» видно, КТО работал, а не «исполнитель-воркер»."""
+
+    ROOM = {
+        "orchestrator": "team-lead",
+        "critic": "team-critic",
+        "members": [{"profile": "team-a", "role": "worker", "label": "Анна — юрист"}],
+        "role_labels": {"team-lead": "Вера — руководитель"},
+    }
+
+    def test_name_comes_from_team_tab_label(self):
+        row = ar.agent_of(node(assignee="team-a"), room=self.ROOM)
+        self.assertEqual(row["agent_name"], "Анна", "имя из подписи участника, без должности")
+        self.assertEqual(row["agent_role"], "исполнитель")
+
+    def test_lead_and_critic_have_their_own_role(self):
+        lead = ar.agent_of(node(assignee="team-lead", role="root"), room=self.ROOM)
+        critic = ar.agent_of(node(assignee="team-critic", role="critic"), room=self.ROOM)
+        self.assertEqual((lead["agent_name"], lead["agent_role"]), ("Вера", "руководитель"))
+        self.assertEqual((critic["agent_name"], critic["agent_role"]), ("team-critic", "критик"))
+
+    def test_name_falls_back_to_profile_description(self):
+        row = ar.agent_of(node(assignee="team-b"), room=self.ROOM,
+                          descriptions={"team-b": "Борис — исследователь"})
+        self.assertEqual(row["agent_name"], "Борис")
+        self.assertEqual(row["agent_role"], "исполнитель")
+
+    def test_name_never_empty(self):
+        row = ar.agent_of(node(assignee="team-z"), room={})
+        self.assertEqual(row["agent_name"], "team-z", "техническое имя лучше пустой строки")
+        self.assertEqual(ar.agent_of(node(assignee=""))["agent_name"], "Свод задачи")
+
+    def test_role_uses_card_when_room_is_silent(self):
+        self.assertEqual(ar.agent_of(node(assignee="x", role="critic"), room={})["agent_role"],
+                         "критик")
+        self.assertEqual(ar.agent_of(node(assignee="x", role="worker"), room={})["agent_role"],
+                         "исполнитель")
+
+    def test_counts_list_people_for_the_filter(self):
+        nodes = [node(id="t_00000001", assignee="team-a"), node(id="t_00000002", assignee="team-a"),
+                 node(id="t_00000003", assignee="team-b")]
+        got = ar.build(nodes, room=self.ROOM, descriptions={"team-b": "Борис — исследователь"})
+        self.assertEqual(got["counts"]["people"], ["Анна", "Борис"])
+
+    def test_handler_passes_descriptions(self):
+        from server import routes_agent_results as mod
+
+        class Stub(mod.AgentResultsRoutes):
+            def __init__(self):
+                self.log = type("L", (), {"error": lambda *a: None, "warning": lambda *a: None})()
+
+            def _find_record(self, rid):
+                return {"id": "clean", "members": []}, {"root_id": rid}
+
+            def _detail(self, room, rid, extra=None, critic=None, answers=None):
+                return {"id": rid, "tree": [node(id="t_aa000001", assignee="team-b")]}
+
+            def _profile_descriptions(self):
+                return {"team-b": "Борис — исследователь"}
+
+            def _has_mod(self, name):
+                return True
+
+            def mod(self, name):
+                return ar
+
+        status, payload, _ = Stub().h_agent_results({}, None, "t_aa000001")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["agents"][0]["agent_name"], "Борис")
 
 
 class TestRoute(unittest.TestCase):

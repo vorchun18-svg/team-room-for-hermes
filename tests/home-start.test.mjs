@@ -43,7 +43,11 @@ const read = (rel) => readFileSync(path.join(ROOT, rel), 'utf8');
 
 const ROOMS = ['cafe', 'fn'];
 const TABS = ['composer', 'team', 'backlog'];
-const STORED = { hash: '#/room/cafe/backlog', scroll: {}, routes: {}, at: 1 };
+// W31-B1 (дефект 19): «последнее место» — это полный маршрут страницы задачи.
+// Вкладка комнаты из памяти больше не открывается: вход в комнату — «Задачи»
+// (проверяется отдельным случаем ниже).
+const STORED = { hash: '#/room/cafe/request/t_9f3c2a10', scroll: {}, routes: {}, at: 1 };
+const STORED_TAB = { hash: '#/room/cafe/backlog', scroll: {}, routes: {}, at: 1 };
 
 /** Поддельный документ: только события (для проверки клавиш). */
 function eventDoc() {
@@ -100,15 +104,23 @@ test('старт: пустой адрес — стартовая страниц�
   assert.equal(rooms.why, 'pref-rooms');
 
   const last = planStart({ urlHash: '', startPref: START_LAST, stored: STORED, roomIds: ROOMS, tabIds: TABS });
-  assert.equal(last.hash, '#/room/cafe/backlog', 'последнее место — полный маршрут');
+  assert.equal(last.hash, '#/room/cafe/request/t_9f3c2a10', 'последнее место — полный маршрут');
   assert.equal(last.why, 'pref-last');
+
+  // W31-B1 (дефект 19): «Последнее место» с вкладкой комнаты ведёт на доску
+  // «Задачи» — память не открывает комнату на старой вкладке.
+  const tab = planStart({ urlHash: '', startPref: START_LAST, stored: STORED_TAB, roomIds: ROOMS, tabIds: TABS });
+  assert.equal(tab.hash, '#/room/cafe/tasks', 'вход в комнату — всегда «Задачи»');
+  assert.equal(tab.why, 'pref-last');
 });
 
 test('старт: явный адрес в строке сильнее настройки (deep link)', () => {
   const plan = planStart({
     urlHash: '#/room/fn/composer', startPref: START_TODAY, stored: STORED, roomIds: ROOMS, tabIds: TABS,
   });
-  assert.equal(plan.hash, '#/room/fn/composer');
+  // W31-B1 (дефект 21): вкладки «Новая задача» нет — старый адрес ведёт на доску
+  // с фокусом на поле. Явный адрес по-прежнему сильнее стартовой страницы.
+  assert.equal(plan.hash, '#/room/fn/tasks?focus=input');
   assert.equal(plan.why, 'deep-link');
   // Настройка «Комнаты» тоже не перебивает ссылку на запрос.
   const deep = planStart({

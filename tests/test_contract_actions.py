@@ -232,7 +232,10 @@ class ActionNamesContractTest(unittest.TestCase):
                          "выбор варианта без option_id не отличить от своего ответа")
         joined = "\n".join(self.texts.values())
         for name in ("answer_option", "answer_custom", "explain_more", "postpone",
-                     "accept", "reopen_accepted"):
+                     "move"):
+            # W31: приём/возврат задачи в интерфейсе идут единым действием `move`
+            # (to: working|review|done); `accept`/`reopen_accepted` остались у сервера для
+            # старых клиентов и проверяются выше по ACTION_ALLOWED.
             self.assertIn("'%s'" % name, joined, "у действия «%s» нет кнопки в интерфейсе" % name)
 
     def test_exempt_table_does_not_rot(self):

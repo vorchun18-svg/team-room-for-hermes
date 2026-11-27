@@ -23,6 +23,8 @@ import { routeKeyOf, readFocusMap, writeFocus } from '../focus-mode.js';
 // что видна в меню приложения.
 import { undo } from '../undo.js';
 import { setBookmark } from '../recents.js';
+// W31-B2 (дефект 30): блок статуса задачи в шапке — тот же перенос, что у доски.
+import { buildStatusBlock } from './request-status.js';
 
 export function createHeader(R) {
   const { rid, ctx, state, render, runAction, cloneRequest, decompose } = R;
@@ -319,11 +321,46 @@ export function createHeader(R) {
     }, icon('archive', { size: 13 }), 'Не актуально');
   }
 
+  /**
+   * W31-B2 (дефект 27): «Разбить на задачи» — ЗАМЕТНОЙ кнопкой в шапке задачи,
+   * а не пунктом меню «Действия». Пункт в меню остаётся (привычка), кнопка
+   * делает то же самое: ставит карточку руководителю «подготовь план веток».
+   */
+  function splitButton() {
+    if (R.detail && R.detail.archived) return null;
+    return h('button', {
+      type: 'button', class: 'btn btn--secondary btn--sm req__split-btn',
+      title: 'Разбить задачу на подзадачи: руководитель подготовит план, вы решите по каждой ветке',
+      onclick: () => splitToTasks(),
+    }, icon('split-horizontal', { size: 13 }), h('span', { class: 'req__split-text' }, 'Разбить на задачи'));
+  }
+
+  /**
+   * W31-B2 (дефект 30): строка статуса с кнопками переноса — под названием.
+   * Кнопки строятся по `allowed_moves` сервера, поэтому «Принять» появляется
+   * только в «На проверке», а «Вернуть в работу» — только в «Готово».
+   */
+  function statusRow() {
+    if (!R.detail || R.detail.archived) return null;
+    return buildStatusBlock({
+      detail: R.detail,
+      requestId: rid,
+      onMove: typeof R.moveTask === 'function' ? R.moveTask : undefined,
+      toast: typeof ctx.toast === 'function' ? ctx.toast : null,
+    });
+  }
+
   function buildHeader() {
     const d = R.detail;
     const meta = h('div', { class: 'req__meta' });
-    // Статус в шапке — ровно один раз. Архив — тихая пометка, не второй чип.
-    const items = [statusChip(d.archived ? 'archived' : d.status)];
+    // W31-B2 (дефект 30): статус задачи теперь несёт блок статуса под названием
+    // (чип «В работе» / «На проверке» + кнопки переноса). Вторая подпись в мете
+    // не нужна — оставляем её только там, где она добавляет смысл: архив,
+    // ошибка, очередь (у них блок статуса молчит или говорит о колонке доски).
+    const items = [];
+    if (d.archived || d.status === 'failed' || d.status === 'queued') {
+      items.push(statusChip(d.archived ? 'archived' : d.status));
+    }
     if (d.archived) items.push(metaItem('archive', 'в архиве'));
     items.push(metaItem('clock', 'Создан ' + fmtDateTime(d.created_at)));
 
@@ -380,7 +417,8 @@ export function createHeader(R) {
             render();
           },
         }),
-        h('div', { class: 'req__headactions' }, archiveButton(), actionsMenu())),
+        h('div', { class: 'req__headactions' }, splitButton(), archiveButton(), actionsMenu())),
+      statusRow(),
       meta);
   }
 

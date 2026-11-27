@@ -460,9 +460,12 @@ function nodeRow(row, ctx, detail, onChanged, ui) {
   line.appendChild(chips);
 
   const rawAssignee = String(node.assignee || '');
+  // W31-B2 (дефект 31): имя агента участника комнаты (если сервер его прислал)
+  // важнее технического профиля — «Атлас», а не «Исполнитель-воркер».
+  const agentWho = String(node.agent_name || '').trim();
   const sub = h('div', { class: 'rp-node__sub small muted' },
     h('span', { class: 'rp-node__person', title: rawAssignee || null },
-      rawAssignee ? (profileName(rawAssignee, ctx && ctx.room) || rawAssignee) : 'не назначена'));
+      agentWho || (rawAssignee ? (profileName(rawAssignee, ctx && ctx.room) || rawAssignee) : 'не назначена')));
   const dur = nodeDuration(node);
   if (dur) sub.appendChild(h('span', { class: 'rp-node__dur tnum' }, dur));
   // Модель, на которой шла эта задача (WAVE10): мелко, только если сервер прислал.

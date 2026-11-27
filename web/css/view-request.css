@@ -63,6 +63,31 @@
   .req-side--pin > .section-header { position: static; }
 }
 
+/* ── W31-B2 (дефект 25): независимая прокрутка колонок ────────────────────────
+   Дефект: колесо над правой колонкой («От вас нужно») крутило левую — у правой
+   не было своей прокрутки, и колесо уходило на общий скролл страницы.
+   Теперь у КАЖДОЙ колонки свой `overflow` и `overscroll-behavior: contain`:
+   колесо и клавиши прокручивают колонку ПОД КУРСОРОМ, соседняя стоит; общая
+   полоса страницы двигает обе (колонки остаются в потоке и липнут при прокрутке).
+   Высота колонок — по окну; на узком виде (одна колонка) правило не работает и
+   страница прокручивается как обычно (683 px — без вложенного скролла).
+   Стоит ПОСЛЕ правил `.req__aside`, иначе `overflow: visible` из базового
+   правила перебивал бы вложенный скролл (на этом и держался дефект). */
+@container view (min-width: 1100px) {
+  .req__main,
+  .req__aside {
+    max-height: var(--req-cols-max-h, calc(100dvh - 112px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+    padding-right: var(--space-1);
+  }
+  .req__aside { position: sticky; top: 0; }
+  .req__main:focus-visible,
+  .req__aside:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+}
+
 /* ── Шапка ───────────────────────────────────────────────────────────────── */
 .req__crumb { display: flex; align-items: center; min-width: 0; }
 .req__crumb a {
@@ -110,6 +135,51 @@
 .req__meta-sep { width: 3px; height: 3px; flex: none; border-radius: var(--radius-full); background: var(--ui-text-quaternary); }
 .req__meta-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .req__meta .codicon { font-size: 11px; }
+
+/* ── W31-B2: блок статуса, «Разбить на задачи» и сворачиваемые блоки ──────────
+   Дефект 30: внутри задачи не было управления статусом — «Принять» жило только
+   на доске. Строка статуса стоит под названием: статус + кнопки по `allowed_moves`.
+   Дефект 27: «Разбить на задачи» — заметной кнопкой в шапке, не в меню «Действия».
+   Дефект 26: «Свод», «Разрешения агентам», «Проверка критика» — тот же заголовок
+   со стрелкой, что у остальных блоков; своя шапка блока при этом скрыта. */
+.req-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.req-status__label {
+  color: var(--muted-foreground);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.req-status__chip,
+.req-status__btn { flex: none; max-width: 100%; }
+.req-status__btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.req-status__hint { min-width: 0; }
+
+.req__split-btn { flex: none; }
+.req__split-text { white-space: nowrap; }
+
+.req-fold { min-width: 0; }
+.req-fold > .sec__head { margin: 0; }
+.req-fold > .sec__head .sec__toggle { padding: 0 0 var(--space-1); }
+.req-fold > .sec__body > *:first-child { margin-top: 0; }
+.req-fold > .sec__body > .card { margin: 0; }
+/* Своя шапка блока: у «Свода» — целиком (название и «старый формат» ушли в
+   общий заголовок), у «Разрешений» — только строка названия (объяснение
+   остаётся), у «Проверки критика» — заголовок с чипом состояния. */
+.req-fold[data-fold="svod"] .req-answer > .req-answer__head,
+.req-fold[data-fold="approvals"] .ap-block > .ap-block__head > .ap-block__title-row,
+.req-fold[data-fold="critic"] .rp-critic > .section-header { display: none; }
+
+@media (max-width: 720px) {
+  .req-status { gap: var(--space-1) var(--space-2); }
+  .req-status__btn { flex: 1 1 auto; justify-content: center; }
+  .req__headactions { flex-wrap: wrap; }
+}
 
 /* ── Меню действий ───────────────────────────────────────────────────────── */
 .req-menu { position: relative; }

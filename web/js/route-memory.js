@@ -235,6 +235,16 @@ export function chooseHash(opts = {}) {
     if (route.kind === 'request' && requestOk === false) {
       return buildRoomHash(route.roomId, defaultTab);
     }
+    // W31-B1 (дефект 19): вход в комнату ВСЕГДА на «Задачи». Память маршрута
+    // больше не переопределяет главный экран комнаты: если из памяти идёт
+    // вкладка (в том числе старая «Новая задача»), открываем доску. Явный
+    // адрес в строке (deep link) не трогаем — правило выше.
+    if (route.kind === 'room' && !explicit) return buildRoomHash(route.roomId, 'tasks');
+    // W31-B1 (дефект 21): старый адрес вкладки «Новая задача» — на доску с
+    // фокусом на поле «Задача команде» (тот же адрес строит router.js).
+    if (route.kind === 'room' && String(route.tab) === 'composer') {
+      return buildRoomHash(route.roomId, 'tasks') + '?focus=input';
+    }
     if (route.kind === 'room' && route.tab && tabs.size && !tabs.has(String(route.tab))) {
       return buildRoomHash(route.roomId, defaultTab);
     }

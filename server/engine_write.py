@@ -55,7 +55,10 @@ TENANT_PREFIX = "room:"
 
 
 _ACTIONS = ("dispatch", "comment", "answer", "unblock", "reassign", "rework", "retry",
-            "archive", "decompose", "create_card")
+            "archive", "decompose", "create_card",
+            # W31-A1: «Отправить на проверку» — карточка уходит в `review` штатной
+            # командой движка (`request-review`), а не правкой БД.
+            "request_review")
 
 
 # ---------------------------------------------------------------- служебное
@@ -1232,6 +1235,17 @@ def act(cfg, board: str, root_id: str, action: str, **kw) -> dict:
             if not steps:
                 raise EngineWriteError("conflict", "Не удалось вернуть карточку в работу.")
         return done("На доработку: " + ", ".join(steps) + ".", total, task_id=task_id)
+
+    if action == "request_review":
+        # W31-A1: «Отправить на проверку» — карточка уходит в `review` штатной
+        # командой движка. Проверяем принадлежность комнате, как у остальных.
+        task_id = assert_owned(cfg, board, root_id, kw.get("task_id") or root_id)
+        summary = " ".join(str(kw.get("text") or "").split())[:600]
+        args = ["request-review", task_id]
+        if summary:
+            args += ["--summary", summary]
+        _out, ms = _run(cfg, board, args)
+        return done("Отправлено на проверку.", ms, task_id=task_id, summary=summary)
 
     if action == "retry":
         task_id = assert_owned(cfg, board, root_id, kw.get("task_id") or root_id)

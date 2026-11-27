@@ -1,34 +1,82 @@
 # -*- coding: utf-8 -*-
-"""Демо доски «Задачи» комнаты для мок-сервера (W30-D2).
+"""Демо доски «Задачи» комнаты для мок-сервера (W31-B1: контракт четырёх колонок).
 
-Форма ответов — как у боевого сервера (контракт §3 волны 30, пакет D1):
-`GET /api/rooms/{room}/tasks` → `{tasks, columns, counts}`; действия `accept`
-и `reopen_accepted` идут обычной ручкой `/api/requests/{id}/actions`.
+Форма ответов — общий контракт волны 31:
+* ``GET /api/rooms/{room}/tasks`` → ``{tasks, columns, counts, updated_at}``,
+  у карточки есть ``column`` (``new|working|review|done``), ``waiting_you``,
+  ``waiting_count``, ``allowed_moves``; ``stage`` повторяет колонку для старых
+  читателей;
+* ``POST /api/requests/{id}/actions {action:'move', to, comment?, confirm?}`` —
+  ровно переходы контракта: ``review→done`` (принять), ``done→working``
+  (вернуть в работу), ``review→working`` (на доработку, комментарий),
+  ``working→review`` (на проверку). При открытых вопросах приёмка сначала
+  отвечает ``{needs_confirm:true, open_questions:N}``, повтор с ``confirm:true``
+  принимает и закрывает вопросы («закрыт: задача принята»);
+* ``GET /api/requests/{id}`` получает ``board_column`` и ``allowed_moves``.
+
+Старые действия ``accept`` / ``reopen_accepted`` поддерживаются как синонимы
+``move`` — старые клиенты и тесты продолжают работать.
 
 Данные вымышленные (кофейня, химчистка, грузоперевозки). Состояние меняется
 только в памяти демо-сервера и живёт до перезапуска; фикстура не перезаписывается.
 
-    python tools/mock_server.py --port 8858
+    python tools/mock_server.py --port 8861
     # → вкладка «Задачи» комнаты cafe
 """
 from __future__ import annotations
 
 import copy
 import json
+import re
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "fixtures" / "w30d_tasks.json"
 
-#: Порядок колонок — контракт §3 (подписи рисует клиент).
-COLUMNS = ["new", "working", "needs_you", "review", "done_system", "accepted"]
+#: Порядок колонок — контракт 31 (подписи рисует клиент).
+COLUMNS = ["new", "working", "review", "done"]
 
-#: Стадии, с которых сервер разрешает действие (`accept` — только из «Готово»).
-ACCEPT_FROM = "done_system"
-REOPEN_FROM = "accepted"
+#: Старая стадия → колонка (фикстура W30 писалась в старых стадиях).
+LEGACY = {
+    "new": "new",
+    "working": "working",
+    "needs_you": "working",
+    "review": "review",
+    "done_system": "review",
+    "accepted": "done",
+    "done": "done",
+    "archived": "archived",
+}
+
+#: Допустимые переносы контракта 31.
+MOVES = {
+    "new": [],
+    "working": ["review"],
+    "review": ["done", "working"],
+    "done": ["working"],
+    "archived": [],
+}
 
 _STATE: dict | None = None
+
+
+def _norm(task: dict) -> dict:
+    """Старая стадия → колонка; метка «Ждёт вас» — только у карточки в работе."""
+    raw = str(task.get("column") or task.get("stage") or "new")
+    column = LEGACY.get(raw, "new")
+    task["column"] = column
+    task["stage"] = column                      # совместимость со старыми читателями
+    needs = task.get("needs_you") if isinstance(task.get("needs_you"), dict) else {}
+    count = int(task.get("waiting_count") or needs.get("count") or 0)
+    if column in ("done", "new"):
+        count = 0                                # в «Готово» вопросов нет по контракту
+    task["waiting_count"] = max(0, count)
+    task["waiting_you"] = bool(count > 0)
+    task["needs_you"] = {"count": task["waiting_count"], "blocking": bool(needs.get("blocking"))}
+    task["accepted"] = column == "done"
+    task["allowed_moves"] = list(MOVES.get(column, []))
+    return task
 
 
 def _load() -> dict:
@@ -38,7 +86,11 @@ def _load() -> dict:
             raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             raw = {}
-        _STATE = copy.deepcopy(raw.get("rooms") or {})
+        rooms = copy.deepcopy(raw.get("rooms") or {})
+        for entry in rooms.values():
+            for task in entry.get("tasks") or []:
+                _norm(task)
+        _STATE = rooms
     return _STATE
 
 
@@ -51,9 +103,9 @@ def _room_tasks(room: str) -> list:
 def _counts(tasks: list) -> dict:
     out = {col: 0 for col in COLUMNS}
     for task in tasks:
-        stage = str(task.get("stage") or "new")
-        if stage in out:
-            out[stage] += 1
+        column = str(task.get("column") or "new")
+        if column in out:
+            out[column] += 1
     return out
 
 
@@ -74,19 +126,23 @@ def _register_pages(app, tasks: list) -> None:
         return
     for task in tasks:
         rid = str(task.get("id") or "")
-        if not rid or rid in known:
+        if not rid:
             continue
-        detail = copy.deepcopy(base)
-        detail.update({
-            "id": rid,
-            "room": task.get("room") or "cafe",
-            "title": task.get("title") or "Задача",
-            "title_short": task.get("title") or "Задача",
-            "status": "done" if task.get("stage") in ("done_system", "accepted") else "working",
-            "archived": task.get("stage") == "archived",
-            "accepted": bool(task.get("accepted")),
-        })
-        known[rid] = detail
+        detail = known.get(rid)
+        if not isinstance(detail, dict):
+            detail = copy.deepcopy(base)
+            detail.update({
+                "id": rid,
+                "room": task.get("room") or "cafe",
+                "title": task.get("title") or "Задача",
+                "title_short": task.get("title") or "Задача",
+                "archived": False,
+            })
+            known[rid] = detail
+        detail["board_column"] = task.get("column")
+        detail["allowed_moves"] = list(task.get("allowed_moves") or [])
+        detail["accepted"] = bool(task.get("accepted"))
+        detail["status"] = "done" if task.get("column") in ("review", "done") else "working"
 
 
 def listing(app, room: str) -> dict:
@@ -94,6 +150,7 @@ def listing(app, room: str) -> dict:
     tasks = copy.deepcopy(_room_tasks(room))
     for task in tasks:
         task.setdefault("room", str(room))
+        _norm(task)
     _register_pages(app, tasks)
     return {
         "tasks": tasks,
@@ -110,38 +167,72 @@ def _find(room: str, rid: str) -> dict | None:
     return None
 
 
-def act(app, rid: str, body: dict) -> dict:
-    """`accept` / `reopen_accepted` — по контракту §3, с идемпотентностью."""
-    action = str((body or {}).get("action") or "")
-    task = None
+def _any_task(rid: str) -> dict | None:
     for room in list(_load().keys()):
         task = _find(room, rid)
         if task is not None:
-            break
+            return task
+    return None
+
+
+def act(app, rid: str, body: dict) -> dict:
+    """`move` / `accept` / `reopen_accepted` — контракт 31, с идемпотентностью."""
+    body = body or {}
+    action = str(body.get("action") or "")
+    task = _any_task(rid)
     if task is None:
         return {"ok": False, "reason": "not_board_task"}
-    stage = str(task.get("stage") or "new")
+    _norm(task)
+    column = str(task.get("column") or "new")
+
     if action == "accept":
-        if stage == ACCEPT_FROM:
-            task["stage"] = "accepted"
-            task["accepted"] = True
-            task["updated_at"] = int(time.time())
-        elif stage == "accepted":
-            pass                                  # идемпотентно: уже принята
-        else:
-            return {"ok": False, "reason": "not_done",
-                    "message": "Принять можно только готовую задачу — работа ещё не дошла до «Готово»."}
+        body = {"action": "move", "to": "done", "confirm": body.get("confirm")}
+        action = "move"
     elif action == "reopen_accepted":
-        if stage == REOPEN_FROM:
-            task["stage"] = "working"
-            task["accepted"] = False
-            task["updated_at"] = int(time.time())
-        elif stage != REOPEN_FROM:
-            return {"ok": False, "reason": "not_accepted",
-                    "message": "Вернуть в работу можно только принятую задачу."}
-    else:
+        body = {"action": "move", "to": "working"}
+        action = "move"
+    if action != "move":
         return {"ok": False, "reason": "unknown_action"}
-    return {"ok": True, "task": copy.deepcopy(task), "action": action}
+
+    target = str(body.get("to") or "")
+    if target not in COLUMNS:
+        return {"ok": False, "reason": "bad_target",
+                "message": "Такой колонки нет на доске."}
+    if target == column:
+        return {"ok": True, "task": copy.deepcopy(task), "action": "move", "noop": True}
+    if target not in MOVES.get(column, []):
+        return {"ok": False, "reason": "not_allowed",
+                "message": "так перенести нельзя: из «%s» в «%s» доска не переставляет"
+                           % (column, target)}
+
+    # Приёмка при открытых вопросах — сначала подтверждение (контракт 31).
+    if target == "done" and int(task.get("waiting_count") or 0) > 0 and not body.get("confirm"):
+        return {"ok": False, "needs_confirm": True,
+                "open_questions": int(task.get("waiting_count") or 0),
+                "message": "У задачи %d открытых вопросов — при приёмке они закроются."
+                           % int(task.get("waiting_count") or 0)}
+
+    if target == "done":
+        # Все висящие вопросы закрываются («закрыт: задача принята»), обратимо.
+        task["_closed_questions"] = int(task.get("waiting_count") or 0)
+        task["waiting_count"] = 0
+        task["waiting_you"] = False
+        task["accepted"] = True
+    if target == "working" and column == "done":
+        closed = int(task.pop("_closed_questions", 0) or 0)
+        task["waiting_count"] = closed
+        task["waiting_you"] = closed > 0
+        task["accepted"] = False
+    if target == "working" and column == "review":
+        task["accepted"] = False
+    task["column"] = target
+    task["stage"] = target
+    task["allowed_moves"] = list(MOVES.get(target, []))
+    task["updated_at"] = int(time.time())
+    if body.get("comment"):
+        task["last_comment"] = str(body.get("comment"))[:500]
+    _register_pages(app, [task])
+    return {"ok": True, "task": copy.deepcopy(task), "action": "move", "to": target}
 
 
 def handle(app, method: str, path: str, query: dict, body: dict):
@@ -149,11 +240,10 @@ def handle(app, method: str, path: str, query: dict, body: dict):
 
     Возвращает `None`, если действие не наше — тогда работает обычный обработчик.
     """
-    import re
     if method != "POST":
         return None
     action = str((body or {}).get("action") or "")
-    if action not in ("accept", "reopen_accepted"):
+    if action not in ("move", "accept", "reopen_accepted"):
         return None
     m = re.fullmatch(r"/api/requests/(t_[0-9a-f]{8})/actions", str(path))
     if not m:
@@ -161,8 +251,19 @@ def handle(app, method: str, path: str, query: dict, body: dict):
     res = act(app, m.group(1), body or {})
     if res.get("reason") == "not_board_task":
         return None                               # обычный запрос — обычный обработчик
+    if res.get("needs_confirm"):
+        return 200, res
     if not res.get("ok"):
         from mock_core import ApiError
         raise ApiError(409, "conflict", res.get("message") or "Действие сейчас невозможно",
                        {"reason": res.get("reason")})
     return 200, res
+
+
+def detail(app, rid: str):
+    """Поля детали задачи для контракта 31 (`board_column`, `allowed_moves`)."""
+    task = _any_task(rid)
+    if task is None:
+        return None
+    _norm(task)
+    return {"board_column": task.get("column"), "allowed_moves": list(task.get("allowed_moves") or [])}

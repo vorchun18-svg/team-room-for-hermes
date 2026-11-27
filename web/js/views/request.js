@@ -41,6 +41,9 @@ import { withTimeout, locked, lockTimeout } from '../store.js';
 import { mountThread } from './request-thread.js';
 import { mountWorklog } from './request-worklog.js';
 import { createSection, sectionDefaults } from './section-collapse.js';
+// W31-B2 (дефекты 25, 30): независимая прокрутка колонок и блок статуса в шапке.
+import { installColumnScroll } from './column-scroll.js';
+import { buildStatusBlock, openQuestionsOf } from './request-status.js';
 import { isBrief, buildPlanCard } from './plan-req.js';
 import { briefCrumbItems, requestTitle } from '../scope.js';
 // W25-L1 (R5 §7.6): липкая панель действий свода — одна строка 40 px вверху.
@@ -378,8 +381,41 @@ export async function mount(el, ctx) {
     { label: 'Разбор задачи' });
   }
 
-  /* ── блоки страницы: шапка и меню, ответ, колонка «От вас нужно» ───────────── */
+  /**
+   * W31-B2 (дефект 30): смена статуса задачи из окна задачи.
+   *
+   * То же действие, что у доски и перетаскивания (контракт волны 31):
+   * `POST /api/requests/{id}/actions {action:'move', to, comment?, confirm?}`.
+   * При открытых вопросах сервер отвечает `{needs_confirm:true, open_questions:N}` —
+   * возвращаем ответ как есть, решение о подтверждении принимает блок статуса.
+   *
+   * @param {'new'|'working'|'review'|'done'} to
+   * @param {{comment?: string, confirm?: boolean}} [opts]
+   * @returns {Promise<object>} ответ сервера (`{ok}` / `{needs_confirm}`) или `{ok:false,message}`
+   */
+  async function moveTask(to, opts = {}) {
+    const o = opts || {};
+    const body = { action: 'move', to: String(to || '') };
+    if (o.comment) body.comment = String(o.comment);
+    if (o.confirm === true) body.confirm = true;
+    try {
+      const res = await withTimeout(
+        ctx.api.post(`/api/requests/${encodeURIComponent(rid)}/actions`, body),
+        lockTimeout(), 'Смена статуса задачи');
+      if (res && res.needs_confirm) return res;
+      const WORD = { working: 'Задача снова в работе', review: 'Задача на проверке', done: 'Задача принята' };
+      if (typeof ctx.toast === 'function') ctx.toast(WORD[to] || 'Статус задачи изменён', 'ok');
+      await refresh({ force: true });
+      return res || { ok: true };
+    } catch (err) {
+      const details = (err && (err.details || err.detail)) || null;
+      // 409 «есть открытые вопросы» — это не ошибка, а вопрос человеку.
+      if (details && details.needs_confirm) return details;
+      return { ok: false, message: (err && err.message) || 'Не удалось изменить статус задачи' };
+    }
+  }
 
+  /* ── блоки страницы: шапка и меню, ответ, колонка «От вас нужно» ───────────── */
   // Общий контекст для модулей request-header/answer/aside: изменяемые
   // detail / roomId / backlog читаются через геттеры, остальное — стабильные ссылки.
   // W26-D2: стор создаётся ДО мест, которые его показывают: и основной блок, и
@@ -395,7 +431,7 @@ export async function mount(el, ctx) {
     get roomId() { return roomId; },
     get detail() { return detail; },
     get backlog() { return backlog; },
-    refresh, render, runAction, cloneRequest, decompose,
+    refresh, render, runAction, cloneRequest, decompose, moveTask,
     // «Добавить сообщение руководителю» из меню «Действия» — фокус в поле диалога.
     focusThread() {
       try {
@@ -567,6 +603,77 @@ export async function mount(el, ctx) {
       h('div', { class: 'req-archived-banner__actions' }, btn, listBtn));
   }
 
+  /**
+   * W31-B2 (дефект 26): единое сворачивание ВСЕХ блоков задачи.
+   *
+   * «Свод», «Разрешения агентам» и «Проверка критика» собирались без стрелки
+   * (решение Михаила 11.11 «Свод всегда открыт» отменено дефектом 26). Здесь они
+   * получают ТОТ ЖЕ компонент, что «Диалог», «Ход работы», «Дерево работ» и
+   * «Файлы»: одна стрелка, `aria-expanded`, ленивая сборка и запоминание выбора
+   * на задачу (`request-tree-state.js`). «Хронологию» не трогаем — так решено.
+   *
+   * Свою шапку блока при этом прячем (CSS `[data-fold] …__head`): два заголовка
+   * «Свод» один под другим не нужны, а краткая суть (версия, счётчик, состояние
+   * критика) переезжает в чипы общего заголовка.
+   *
+   * @param {HTMLElement|null} child готовый блок страницы (`.card …`)
+   * @param {{key:string, title:string, hint?:string, summary?:Array, defaultOpen?:boolean,
+   *          className?:string}} opts
+   * @returns {HTMLElement|null}
+   */
+  function foldBlock(child, opts = {}) {
+    if (!child) return null;
+    const o = opts || {};
+    const key = String(o.key || 'block');
+    const defaults = sectionDefaults(detail, { layout: layoutMode() });
+    const sec = createSection({
+      key,
+      requestId: rid,
+      title: o.title || '',
+      hint: o.hint || null,
+      defaultOpen: o.defaultOpen === undefined ? defaults[key] === true : o.defaultOpen === true,
+      card: false,
+      className: 'req-fold req-fold--' + key + (o.className ? ' ' + o.className : ''),
+      attrs: { 'data-fold': key },
+      summary: o.summary || [],
+      content: () => [child],
+    });
+    sections.set(key, sec);
+    return sec.element;
+  }
+
+  /** Краткая суть «Проверки критика» одним чипом (состояние или вердикт). */
+  function criticChip(detail) {
+    const c = (detail && detail.critic && typeof detail.critic === 'object') ? detail.critic : null;
+    if (!c) return [];
+    const state = String(c.state || '');
+    const VERDICT = { approve: 'одобрено', revise: 'на доработке', rethink: 'переделать', ship: 'можно отдавать' };
+    const STATE = {
+      waiting: 'ждёт проверки', reviewing: 'проверяет', revising: 'идёт доработка',
+      approved: 'одобрено', issues: 'есть замечания', paused: 'на паузе',
+      stopped: 'остановлена', failed: 'ошибка', idle: 'ждёт', off: 'выключена',
+    };
+    const tag = String(c.verdict || '');
+    const text = STATE[state] || VERDICT[tag] || '';
+    if (!text) return [];
+    const tone = state === 'issues' || state === 'stopped' || state === 'failed' ? 'warn'
+      : (state === 'approved' || tag === 'approve') ? 'ok' : 'muted';
+    return [{ text, tone }];
+  }
+
+  /** Сколько разрешений ждёт решения — для чипа и умолчания блока. */
+  function approvalsWaiting(detail) {
+    const list = Array.isArray(detail && detail.approvals) ? detail.approvals : [];
+    let n = 0;
+    for (const a of list) {
+      if (!a || typeof a !== 'object') continue;
+      const state = String(a.state || 'pending');
+      if ((state === 'pending' || state === '') && Array.isArray(a.actions) && a.actions.length) n += 1;
+      else if ((state === 'pending' || state === '') && !a.actions) n += 1;
+    }
+    return n;
+  }
+
   function buildPage() {
     if (!rid) {
       return h('div', { class: 'req' }, requestErrorBanner(new Error('В адресе нет идентификатора задачи'), null));
@@ -623,7 +730,7 @@ export async function mount(el, ctx) {
     if (warnings) page.append(warnings);
 
    
-    const main = h('div', { class: 'req__main' });
+    const main = h('div', { class: 'req__main', 'data-scroll-key': 'request-main' });
     const ask = askBlock();
     if (ask) main.append(ask);
     // W30-C: «Часть проекта: <родитель>» — сначала где мы, потом решение.
@@ -648,7 +755,17 @@ export async function mount(el, ctx) {
     // Бриф: карта направлений сразу под запросом, до ответа руководителя.
     const planCard = planBlock();
     if (planCard) main.append(planCard);
-    main.append(buildAnswer());
+    // W31-B2 (дефект 26): «Свод» сворачивается тем же общим заголовком, что и
+    // остальные блоки. «Хронологию» не трогаем (решение в очереди).
+    const answerCard = buildAnswer();
+    const svodBlock = foldBlock(answerCard, {
+      key: 'svod',
+      title: 'Свод',
+      hint: 'Ответ команды: что сделано и что из этого следует',
+      defaultOpen: true,
+      summary: (synthesisOf(detail || {}).legacy ? [{ text: 'старый формат', tone: 'muted' }] : []),
+    });
+    if (svodBlock || answerCard) main.append(svodBlock || answerCard);
     // W30-E: «Результаты агентов» — сразу под «Сводом»: кто что изучил/сделал,
     // вывод 2–3 строки, файл с путём и «что осталось». Раньше это тонуло в ленте.
     // Раскрыто на широком виде; на узком — строка со счётчиками (выбор человека
@@ -666,7 +783,18 @@ export async function mount(el, ctx) {
       // W22-AP2: «Разрешения агентам» — сразу под ответом: участник упёрся в
       // запрет Hermes, и без решения человека работа стоит.
       const approvals = approvalsUI.buildRequestBlock();
-      if (approvals) main.append(approvals);
+      if (approvals) {
+        // W31-B2 (дефект 26): «Разрешения агентам» — тот же сворачиваемый заголовок.
+        const waiting = approvalsWaiting(detail);
+        const folded = foldBlock(approvals, {
+          key: 'approvals',
+          title: 'Разрешения агентам',
+          hint: 'Участник упёрся в запрет Hermes — без вашего решения работа стоит',
+          defaultOpen: waiting > 0,
+          summary: waiting ? [{ text: 'ждут решения: ' + waiting, tone: 'warn' }] : [],
+        });
+        main.append(folded || approvals);
+      }
       // W23-MG2: «Контроль моделей» — что сторож остановил или исправил по этой
       // карточке. Ставим сразу после разрешений: оба блока про вмешательство
       // приложения в работу команды, и оба видны до диалога.
@@ -686,7 +814,18 @@ export async function mount(el, ctx) {
 
    
     const critic = safePart('renderCritic', parts?.renderCritic, detail, ctx);
-    if (critic) main.append(critic);
+    if (critic) {
+      // W31-B2 (дефект 26): «Проверка критика» — сворачивается как остальные;
+      // состояние (или вердикт) остаётся видно в чипе заголовка.
+      const folded = foldBlock(critic, {
+        key: 'critic',
+        title: 'Проверка критика',
+        hint: 'Независимая проверка сводного ответа',
+        defaultOpen: false,
+        summary: criticChip(detail),
+      });
+      main.append(folded || critic);
+    }
     const report = safePart('renderReportEmbed', reportEmbed?.renderReportEmbed, detail, ctx);
     if (report) main.append(report);
     const tree = safePart('renderTree', parts?.renderTree, detail, ctx, { onChanged: () => refresh({ force: true }) });
@@ -837,6 +976,15 @@ export async function mount(el, ctx) {
   const onFocusOut = () => { if (pendingRender) scheduleDeferredRender(); };
   root.addEventListener('focusout', onFocusOut);
   listeners.push(() => { try { root.removeEventListener('focusout', onFocusOut); } catch { /* ignore */ } });
+
+  /* ── W31-B2 (дефект 25): независимая прокрутка колонок ─────────────────────
+   * Каждая колонка (`main` и «От вас нужно») прокручивается сама; колесо и
+   * PageUp/PageDown/Home/End/↑/↓ действуют на колонку под курсором, вторая стоит.
+   * Установка одна на страницу: узлы колонок перерисовываются, обработчики живут
+   * на корне и находят актуальную колонку по селектору.
+   */
+  const columns = installColumnScroll({ root, doc: document, isTyping: isTypingTarget });
+  listeners.push(() => { try { columns.destroy(); } catch { /* страница уже ушла */ } });
 
   /* ── старт ─────────────────────────────────────────────────── */
 

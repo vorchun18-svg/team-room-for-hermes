@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import copy
 import os
 import re
 import threading
@@ -25,6 +26,7 @@ try:  # пакетный и «плоский» импорт
     from .title_short import short_title as _short_title       # W17-B §4: короткое название
     from . import answers as _answers                          # W17-B §7: статус вопросов
     from . import reaction_notice as _reactions                # W20-U4: реакции руководителя
+    from . import read_cache as _read_cache                    # W31-A1: кэш по отпечатку доски
 except ImportError:  # pragma: no cover
     import config  # type: ignore
     import http_util  # type: ignore
@@ -37,6 +39,7 @@ except ImportError:  # pragma: no cover
     from title_short import short_title as _short_title  # type: ignore
     import answers as _answers  # type: ignore
     import reaction_notice as _reactions  # type: ignore
+    import read_cache as _read_cache  # type: ignore
 
 
 def _stt_flag(cfg) -> bool:
@@ -552,7 +555,21 @@ class ReadRoutes:
             raise err(400, "Неизвестный статус", statuses=bad, allowed=list(ROOM_STATUSES))
         needle = (query.get("q") or [""])[0].strip().lower()
         offset = decode_cursor((query.get("cursor") or [""])[0].strip()) if (query.get("cursor") or [""])[0].strip() else 0
-        records = sorted(self._records(room_id),
+        # W31-A1 (дефект 17): кэш по отпечатку доски. Вариант запроса (страница,
+        # фильтр, поиск) — часть ключа: разные представления не подменяют друг друга.
+        kind = "room_requests:%d:%s:%s:%d" % (limit, ",".join(sorted(statuses)), needle, offset)
+        rows_raw = self._records(room_id)
+        mark = ""
+        try:
+            mark = _read_cache.fingerprint(self.cfg, room, rows_raw, room.get("board"))
+        except Exception as exc:  # noqa: BLE001 - кэш вторичен, список важнее
+            self.log.warning("список задач %s: отпечаток недоступен: %s" % (room_id, exc))
+            mark = ""
+        if mark:
+            hit = _read_cache.lookup(kind, room_id, mark)
+            if hit is not None:
+                return 200, copy.deepcopy(hit), {}
+        records = sorted(rows_raw,
                          key=lambda rec: (bool(rec.get("pinned")),
                                           rec.get("created_at") or 0, rec.get("root_id") or ""),
                          reverse=True)
@@ -582,8 +599,11 @@ class ReadRoutes:
             items.append(summary)
         page = items[offset:offset + limit]
         has_more = offset + limit < len(items)
-        return 200, {"items": page, "next_cursor": encode_cursor(offset + limit) if has_more else None,
-                     "has_more": has_more}, {}
+        payload = {"items": page, "next_cursor": encode_cursor(offset + limit) if has_more else None,
+                   "has_more": has_more}
+        if mark:
+            _read_cache.store(kind, room_id, mark, payload)
+        return 200, payload, {}
 
     def h_candidates(self, query, body, room_id):
         room = self._room(room_id)

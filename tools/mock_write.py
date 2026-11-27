@@ -21,6 +21,7 @@ import mock_recipes      # W29B-Q1: рецепты комнаты
 import mock_w30c        # W30-C: варианты ответа, «свой ответ», решения по предложению
 import mock_w30f        # W30-F: скрепка (pick / attach-check / attach-open)
 import mock_w30d         # W30-D2: доска задач комнаты (accept / reopen_accepted)
+import mock_w31b2        # W31-B2: действие move по контракту волны 31
 import mock_paths
 import mock_plan
 import mock_stt
@@ -697,6 +698,9 @@ class MockWrite:
         hit = mock_w30d.handle(self, "POST", path, query, body or {})
         if hit is not None:                     # W30-D2: «Принять» / «Вернуть в работу»
             return hit
+        hit = mock_w31b2.handle(self, "POST", path, query, body or {})
+        if hit is not None:                     # W31-B2: move (new/working/review/done)
+            return hit
         hit = mock_batchb.handle(self, "POST", path, query, body or {})
         if hit is not None:                     # W29-AC2: итог дня, совместимость, уведомления
             return hit
@@ -727,6 +731,37 @@ class MockWrite:
                 return 200, mock_recipes.restore(m.group(2))
             except ValueError as exc:
                 raise ApiError(404, "not_found", str(exc), {}) from exc
+        # W31-C: разговор о рецепте и лёгкий разбор завершённых задач (демо, без моделей).
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/dialog", path)
+        if m:
+            try:
+                return 201, mock_recipes.dialog_start(body or {})
+            except ValueError as exc:
+                raise ApiError(400, "bad_request", str(exc), {}) from exc
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/dialog/[A-Za-z0-9_-]{1,64}/accept", path)
+        if m:
+            try:
+                return 201, mock_recipes.dialog_accept()
+            except ValueError as exc:
+                raise ApiError(400, "bad_request", str(exc), {}) from exc
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/dialog/[A-Za-z0-9_-]{1,64}/cancel", path)
+        if m:
+            return 200, mock_recipes.dialog_cancel()
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/analysis/settings", path)
+        if m:
+            try:
+                return 200, mock_recipes.analysis_settings(body or {})
+            except ValueError as exc:
+                raise ApiError(400, "bad_request", str(exc), {}) from exc
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/analysis/run", path)
+        if m:
+            return 202, mock_recipes.analysis_run()
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/analysis/later", path)
+        if m:
+            return 200, mock_recipes.analysis_later((body or {}).get("days"))
+        m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/analysis/sync", path)
+        if m:
+            return 200, mock_recipes.analysis_sync()
         m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/recipes/from-request", path)
         if m:
             try:

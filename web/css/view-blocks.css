@@ -40,8 +40,9 @@
 #app[data-focus="on"] .req-pinbar,
 #app[data-focus="on"] .req-sheet { display: none !important; }
 
-/* Все свёрнутые строки блоков уходят: в фокусе читают свод, а не оглавление. */
-#app[data-focus="on"] .req .sec.is-collapsed,
+/* Все свёрнутые строки блоков уходят: в фокусе читают свод, а не оглавление.
+   W31-B2: «Свод» теперь тоже сворачиваемый — в фокусе он остаётся всегда. */
+#app[data-focus="on"] .req .sec.is-collapsed:not(.req-fold--svod),
 #app[data-focus="on"] .req .req-pipe,
 #app[data-focus="on"] .req .rp-timeline,
 #app[data-focus="on"] .req-ask { display: none; }

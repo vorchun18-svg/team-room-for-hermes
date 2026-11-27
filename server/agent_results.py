@@ -142,7 +142,13 @@ def _item_text(item) -> str:
 
 
 def remaining_of(meta) -> str:
-    """«Что осталось» из метаданных карточки (первый непустой ключ, 2 пункта)."""
+    """«Что осталось» из метаданных карточки (первый непустой ключ, 2 пункта).
+
+    W31-A2: пункты из ``open_questions*`` — это те же машинные вопросы, что в
+    блоке задачи, поэтому они проходят те же правила переписывания
+    (:func:`questions.humanize`): иначе в «Результатах агентов» снова появлялись
+    «Q3. … А) … Б) …» и «D19 — …». Остальные пункты («Подписать») не трогаем.
+    """
     data = meta if isinstance(meta, dict) else {}
     for key in REMAINING_KEYS:
         if key not in data:
@@ -152,12 +158,26 @@ def remaining_of(meta) -> str:
         texts = [text for text in (_item_text(item) for item in items) if text]
         if not texts:
             continue
+        if str(key).startswith("open_questions") or key in ("open_for_pavel", "needs_human"):
+            texts = [_plain_question(text) for text in texts]
         head = "; ".join(texts[:2])
         extra = len(texts) - 2
         if extra > 0:
             head += "; и ещё %d" % extra
         return _clip(head, REMAINING_CHARS)
     return ""
+
+
+def _plain_question(text: str) -> str:
+    """Машинный вопрос → человеческая формулировка (те же правила, что в задачах)."""
+    try:
+        try:
+            from .questions import humanize
+        except ImportError:              # pragma: no cover — плоский импорт
+            from questions import humanize  # type: ignore
+        return humanize(text)["text"]
+    except Exception:                    # noqa: BLE001 — текст вторичен, блок важнее
+        return text
 
 
 # --- файлы -----------------------------------------------------------------
@@ -226,6 +246,105 @@ def files_of(meta) -> dict:
 
 # --- роль ------------------------------------------------------------------
 
+#: роль участника комнаты → слово для мелкой подписи
+_MEMBER_ROLE_RU = {"worker": "исполнитель", "critic": "критик", "observer": "наблюдатель"}
+
+
+def _name_of_label(label: str) -> str:
+    """Из подписи участника («Борис — исследователь») берём имя, а не должность."""
+    text = " ".join(str(label or "").split())
+    if not text:
+        return ""
+    for dash in ("\u2014", "\u2013", "\u2015", "\u2012", "\u2212", " -- ", " - "):
+        if dash in text:
+            head = text.split(dash, 1)[0].strip(" .,:;'\"«»")
+            return head if 0 < len(head) <= 60 and len(head.split()) <= 4 else ""
+    return text if len(text) <= 40 else ""
+
+
+def _member_labels(room) -> dict:
+    """Ручные подписи участников комнаты: ``{профиль: «Имя — должность»}``.
+
+    Руководитель и критик в ``members`` не лежат — их подпись в ``role_labels``.
+    """
+    data = room if isinstance(room, dict) else {}
+    out: dict = {}
+    for member in data.get("members") or []:
+        if isinstance(member, dict) and member.get("profile"):
+            label = str(member.get("label") or "").strip()
+            if label:
+                out[str(member["profile"])] = label
+    for profile, label in (data.get("role_labels") or {}).items():
+        if profile and label and str(profile) not in out:
+            out[str(profile)] = str(label)
+    return out
+
+
+def _description_name(profile: str, descriptions) -> str:
+    """Имя из описания профиля Hermes: «Борис — исследователь» → «Борис»."""
+    if not isinstance(descriptions, dict):
+        return ""
+    raw = descriptions.get(profile) or ""
+    if isinstance(raw, dict):
+        name = str(raw.get("name") or "").strip()
+        if name:
+            return name[:60]
+        raw = str(raw.get("description") or raw.get("job") or "")
+    text = " ".join(str(raw or "").split())
+    if not text:
+        return ""
+    try:                                  # разбор — чистая функция, CLI не нужен
+        from .profile_info import parse_description
+    except ImportError:                   # pragma: no cover
+        try:
+            from profile_info import parse_description  # type: ignore
+        except Exception:
+            return ""
+    try:
+        return str(parse_description(text).get("name") or "")[:60]
+    except Exception:                     # noqa: BLE001 — подпись вторична
+        return ""
+
+
+def agent_name(node: dict, room=None, descriptions=None) -> str:
+    """ИМЯ агента для «Результатов агентов» (дефект 31): человек, а не профиль.
+
+    Порядок источников: подпись участника в «Команде» комнаты → описание профиля
+    Hermes → техническое имя профиля (``team-cfo``). Пустым не бывает, если у
+    карточки есть исполнитель: лучше техническое имя, чем «Исполнитель-воркер»
+    у всех строк подряд.
+    """
+    node = node if isinstance(node, dict) else {}
+    profile = str(node.get("assignee") or "").strip()
+    if not profile:
+        return "Свод задачи"
+    label = _member_labels(room).get(profile) or ""
+    name = _name_of_label(label)
+    if name:
+        return name
+    name = _description_name(profile, descriptions)
+    if name:
+        return name
+    return profile
+
+
+def agent_role(node: dict, room=None) -> str:
+    """Роль агента мелким шрифтом: «руководитель» / «критик» / «исполнитель»."""
+    node = node if isinstance(node, dict) else {}
+    data = room if isinstance(room, dict) else {}
+    profile = str(node.get("assignee") or "").strip()
+    if profile and profile == str(data.get("orchestrator") or ""):
+        return "руководитель"
+    if profile and profile == str(data.get("critic") or ""):
+        return "критик"
+    for member in data.get("members") or []:
+        if isinstance(member, dict) and str(member.get("profile") or "") == profile:
+            role = str(member.get("role") or "worker")
+            return _MEMBER_ROLE_RU.get(role, "исполнитель")
+    raw = str(node.get("role") or "").strip().lower()
+    return _ROLE_RU.get(raw, "исполнитель")
+
+
 def _role_label(node: dict, room) -> str:
     """Человеческая роль исполнителя: подпись комнаты, иначе роль карточки."""
     data = room if isinstance(room, dict) else {}
@@ -255,7 +374,7 @@ def _verdict_tag(meta) -> str:
 
 # --- сборка ----------------------------------------------------------------
 
-def agent_of(node: dict, room=None) -> dict:
+def agent_of(node: dict, room=None, descriptions=None) -> dict:
     """Одна строка результата по карточке дерева (никогда не падает)."""
     node = node if isinstance(node, dict) else {}
     meta = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
@@ -266,6 +385,10 @@ def agent_of(node: dict, room=None) -> dict:
     status = str(node.get("status") or "")
     return {
         "agent": str(node.get("assignee") or ""),
+        # W31-A2 (дефект 31): имя человека и роль отдельно от подписи комнаты —
+        # раньше все строки подписывались «Исполнитель-воркер».
+        "agent_name": agent_name(node, room, descriptions),
+        "agent_role": agent_role(node, room),
         "role": _role_label(node, room),
         "role_raw": str(node.get("role") or ""),
         "title": str(node.get("title") or ""),
@@ -285,17 +408,19 @@ def agent_of(node: dict, room=None) -> dict:
     }
 
 
-def build(nodes, room=None) -> dict:
+def build(nodes, room=None, descriptions=None) -> dict:
     """``{"agents": [...], "counts": {...}}`` по дереву карточек задачи.
 
     Порядок — как в дереве (руководитель и свод сверху), без пересортировки:
-    человек читает тот же порядок, что и в «Дереве работ».
+    человек читает тот же порядок, что и в «Дереве работ». ``descriptions`` —
+    ``{профиль: описание из profile.yaml или {name, job}}``: имя агента берётся
+    из «Команды» комнаты, а если подписи там нет — из описания профиля.
     """
     items = [node for node in (nodes or []) if isinstance(node, dict) and node.get("id")]
     agents = []
     for node in items[:MAX_AGENTS]:
         try:
-            row = agent_of(node, room)
+            row = agent_of(node, room, descriptions)
         except Exception:                # noqa: BLE001 — одна карточка не рушит блок
             continue
         if row.get("card_id"):
@@ -304,24 +429,31 @@ def build(nodes, room=None) -> dict:
     with_remaining = sum(1 for row in agents if row.get("remaining"))
     with_files = sum(1 for row in agents if row.get("files"))
     done = sum(1 for row in agents if row.get("status") in ("done", "archived"))
+    people = []
+    for row in agents:
+        name = str(row.get("agent_name") or "")
+        if name and name not in people:
+            people.append(name)
     return {"agents": agents,
             "counts": {"agents": len(agents), "hidden_agents": max(0, len(items) - MAX_AGENTS),
                        "files": files_total, "agents_with_files": with_files,
-                       "remaining": with_remaining, "done": done},
+                       "remaining": with_remaining, "done": done,
+                       # для фильтра «по агенту» на клиенте (дефект 31)
+                       "people": people},
             "generated_at": None}
 
 
-def attach(detail, room=None) -> dict:
+def attach(detail, room=None, descriptions=None) -> dict:
     """Положить ``agent_results`` в деталь задачи и вернуть тот же блок.
 
     Ключ деталь-ответа и ручки — один и тот же объект (контракт §4: «то же»),
     чтобы клиент не собирал данные двумя путями.
     """
-    payload = build((detail or {}).get("tree"), room)
+    payload = build((detail or {}).get("tree"), room, descriptions)
     if isinstance(detail, dict):
         detail["agent_results"] = payload
     return payload
 
 
 __all__ = ["MAX_AGENTS", "MAX_FILES", "REMAINING_KEYS", "build", "attach", "agent_of",
-           "files_of", "remaining_of", "verdict_of", "plain"]
+           "agent_name", "agent_role", "files_of", "remaining_of", "verdict_of", "plain"]

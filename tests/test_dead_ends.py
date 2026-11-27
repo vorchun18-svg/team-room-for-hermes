@@ -576,5 +576,95 @@ class RegistryShapeTests(Case):
         self.assertEqual(reg["trusts"], [])
 
 
+class PostponedQuestionTests(unittest.TestCase):
+    """W31-FIX4 №1: «Отложить» — законное состояние вопроса, но не чёрная дыра.
+
+    На боевых данных проверка ругалась на `state: postponed` у вопроса задачи про
+    платформу: состояние добавлено в волне 30 («Отложить», `server/stale.py`), а
+    словарь §1 в проверке и в `docs/API.md` его не знал. Здесь — оба конца правила:
+    отложенный вопрос с «Вернуть» проходит, без «Вернуть» — тупик.
+    """
+
+    def detail(self, actions):
+        return {"id": CARD, "status": "working", "needs_you": False,
+                "needs_you_count": {"questions": 0, "decisions": 0, "approvals": 0,
+                                    "steps": 0, "blocked": 0, "total": 0},
+                "open_questions": [{"id": "q_1", "state": "postponed", "needs_you": False,
+                                    "blocking": False, "actions": actions,
+                                    "text": "Прайс на кофе с собой: 150 или 180 ₽?"}]}
+
+    def test_postponed_is_known_state(self) -> None:
+        self.assertIn("postponed", cde.QUESTION_STATES)
+        self.assertEqual(cde.check_detail(self.detail([{"id": "restore"}]), CARD), [])
+
+    def test_postponed_without_restore_is_dead_end(self) -> None:
+        found = cde.check_detail(self.detail([]), CARD)
+        # Два сообщения об одном: «пункт без действия» и «отложенный без Вернуть».
+        self.assertTrue([item for item in found if item["kind"] == "dead_end"], found)
+        self.assertIn("Вернуть", " ".join(item["why"] for item in found))
+
+    def test_postponed_is_not_allowed_for_decisions(self) -> None:
+        """`postponed` — только у вопросов: у решения такой кнопки нет."""
+        detail = {"id": CARD, "decisions": [{"id": "d_1", "state": "postponed",
+                                             "actions": [{"id": "restore"}]}]}
+        found = cde.check_detail(detail, CARD)
+        self.assertTrue([item for item in found if item["kind"] == "state"], found)
+
+
+class BlockedCardCounterTests(unittest.TestCase):
+    """W31-FIX4 №2: «нужен ваш ответ», счётчик и кнопки — один набор пунктов.
+
+    Боевой случай: у задачи про платформу все восемь вопросов отвечены, корневая
+    карточка стоит заблокированной. Статус говорил «нужен ваш ответ», «Сегодня» и
+    доска показывали один пункт, а `needs_you_count` — ноль; проверка объявляла
+    тупик, хотя у карточки есть рабочие кнопки «Продолжить» и «Дать указание».
+    """
+
+    def detail(self, counter, blocked=1):
+        card = {"id": CARD, "status": "blocked", "title": "Собрать меню на неделю",
+                "assignee": "ivan-petrov",
+                "actions": [{"id": "resume"}, {"id": "instruct"}, {"id": "dismiss"}]}
+        return {"id": CARD, "status": "needs_you", "needs_you": True,
+                "open_questions": [{"id": "q_1", "state": "answered", "needs_you": False,
+                                    "answer_state": "applied"},
+                                   {"id": "q_2", "state": "answered", "needs_you": False,
+                                    "answer_state": "replied_text"}],
+                "approvals": [{"id": "ap_1", "state": "closed", "card_state": "done",
+                               "closed_reason": "card_finished", "actions": []}],
+                "tree": [card],
+                "needs_you_count": counter,
+                "needs_you_blocked": blocked,
+                "blocked_waiting": ([{"id": CARD, "title": "Собрать меню на неделю",
+                                      "actions": [{"id": "resume"}]}] if blocked else [])}
+
+    def test_blocked_card_makes_status_honest(self) -> None:
+        counter = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0,
+                   "blocked": 1, "total": 1}
+        self.assertEqual(cde.check_detail(self.detail(counter), CARD), [])
+
+    def test_old_counter_that_skips_blocked_card_is_caught(self) -> None:
+        """Так отдавала сборка 1.8.0: статус «ждёт вас», счётчик 0."""
+        counter = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0, "total": 0}
+        found = cde.check_detail(self.detail(counter), CARD)
+        self.assertTrue([item for item in found if item["kind"] == "counter"], found)
+        self.assertIn("0", " ".join(item["why"] for item in found))
+
+    def test_status_without_any_point_is_still_a_dead_end(self) -> None:
+        counter = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0,
+                   "blocked": 0, "total": 0}
+        detail = self.detail(counter, blocked=0)
+        detail["tree"] = [{"id": CARD, "status": "done"}]
+        found = cde.check_detail(detail, CARD)
+        self.assertTrue([item for item in found if "решать нечего" in item["why"]], found)
+
+    def test_guarded_pause_is_not_a_point_for_human(self) -> None:
+        counter = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0, "total": 0}
+        detail = self.detail(counter, blocked=0)
+        detail["tree"] = [{"id": CARD, "status": "blocked", "hold": {"by": "guard", "auto": True},
+                           "actions": [{"id": "resume"}]}]
+        found = cde.check_detail(detail, CARD)
+        self.assertTrue([item for item in found if "решать нечего" in item["why"]], found)
+
+
 if __name__ == "__main__":
     unittest.main()

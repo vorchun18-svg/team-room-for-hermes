@@ -87,11 +87,18 @@ class PlainLanguageTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(any("9601-0/02" in item for item in issues), issues)
 
-    def test_missing_why_and_context_is_flagged(self):
+    def test_missing_why_and_context_is_soft(self):
+        """W31-A2: читаемый вопрос без «зачем»/«откуда» — понятный, но форма неполная.
+
+        Раньше отсутствие этих строк само давало ``plain_ok=false``: на живой задаче
+        Лето это красило 46 из 46 вопросов, хотя 32 из них не имели проблем с текстом.
+        """
         ok, issues = q_mod.plain_check("Ставим цену 210 за килограмм?", None, None)
-        self.assertFalse(ok)
+        self.assertTrue(ok, "текст понятен — «плохим» его делает только неполная форма")
+        self.assertFalse(q_mod.plain_form_ok(None, None))
         self.assertTrue(any("зачем" in item for item in issues), issues)
         self.assertTrue(any("откуда" in item for item in issues), issues)
+        self.assertTrue(q_mod.plain_form_ok(GOOD_WHY, GOOD_CONTEXT))
 
     def test_good_question_passes(self):
         text = "Ставим цену 210 за килограмм обычной стирки или 240?"
@@ -177,6 +184,98 @@ class TopicTests(unittest.TestCase):
         self.assertEqual(result["closed_topics"], 1)
         self.assertEqual(result["explained"], 1)
         self.assertEqual(result["postponed"], 1)
+
+
+class RewriteTests(unittest.TestCase):
+    """W31-A2 (дефект 24): машинный вопрос переписывается при показе, без моделей."""
+
+    def test_code_prefix_is_removed_and_nothing_else_invented(self):
+        got = q_mod.humanize("D19 — отправляете 5–10 сообщений вручную или готовым текстом")
+        self.assertEqual(got["text"], "Отправляете 5–10 сообщений вручную или готовым текстом?")
+        self.assertEqual(got["code"], "D19", "код сохраняется для отладки, но не показывается")
+        self.assertNotIn("D19", got["text"])
+        self.assertTrue(got["changed"])
+
+    def test_code_prefix_variants(self):
+        for raw in ("D19: отправляем 5–10 сообщений вручную по готовым текстам?",
+                    "D19. отправляем 5–10 сообщений вручную по готовым текстам?",
+                    "Q3) отправляем 5–10 сообщений вручную по готовым текстам?"):
+            got = q_mod.humanize(raw)
+            self.assertNotRegex(got["text"], r"\b[А-ЯЁA-Z]\d{1,3}\b", raw)
+            self.assertTrue(got["code"])
+
+    def test_mid_text_codes_do_not_reach_the_screen(self):
+        got = q_mod.humanize("Канал связи (V1 бот / V2 QR / V3 вручную) — один блокер на D19.")
+        self.assertNotRegex(got["text"], r"\b[А-ЯЁA-Z]\d{1,3}\b")
+        self.assertIn("бот / QR / вручную", got["text"])
+        self.assertIn("пункт плана", got["text"], "одиночный код заменяется словами, а не выдумкой")
+        self.assertEqual(sorted(got["codes"]), ["D19", "V1", "V2", "V3"])
+
+    def test_lettered_options_become_the_contract_options(self):
+        raw = ("Q5. Первые сообщения клиентам: А) мы готовим тексты, вы отправляете сами; "
+               "Б) через QR-код; В) через бота позже. Что выбираем? "
+               "Последствие: при Б клиенту нужен интернет.")
+        got = q_mod.humanize(raw)
+        self.assertEqual(got["text"], "Первые сообщения клиентам — что выбираем?")
+        self.assertEqual([item["label"] for item in got["options"]],
+                         ["мы готовим тексты, вы отправляете сами", "через QR-код",
+                          "через бота позже"])
+        self.assertIn("интернет", got["options"][1]["consequence"], "хвостовое «при Б» — к варианту Б")
+        self.assertNotIn("Q5", got["text"])
+
+    def test_known_abbreviation_is_explained_once(self):
+        got = q_mod.humanize("Оформлен ли VAT и счёт PJ?")
+        self.assertIn("VAT (налог на добавленную стоимость)", got["text"])
+        self.assertIn("PJ (юрлицо)", got["text"])
+        ok, issues = q_mod.plain_check(got["text"], GOOD_WHY, GOOD_CONTEXT)
+        self.assertTrue(ok, issues)
+
+    def test_brand_in_caps_is_not_a_plain_problem(self):
+        """Название знака капсом — не «сокращение без расшифровки» (ложное срабатывание)."""
+        ok, issues = q_mod.plain_check("Подаём знак PIXIE AMI сейчас или после партии?", GOOD_WHY, GOOD_CONTEXT)
+        self.assertTrue(ok, issues)
+        self.assertTrue(any("проверьте" in item.lower() for item in issues), issues)
+        self.assertFalse(any("без расшифровки" in item for item in issues), issues)
+
+    def test_rewrite_is_idempotent(self):
+        first = q_mod.humanize("D19 — отправляете 5–10 сообщений вручную или готовым текстом?")
+        second = q_mod.humanize(first["text"])
+        self.assertEqual(second["text"], first["text"])
+        self.assertFalse(second["changed"])
+        question = {"id": "q_1", "text": "D19 — отправляете 5–10 сообщений вручную?"}
+        once = q_mod.decorate(dict(question))
+        twice = q_mod.decorate(q_mod.decorate(dict(question)))
+        self.assertEqual(once["text"], twice["text"])
+        self.assertEqual(once["plain_source_ok"], twice["plain_source_ok"])
+
+    def test_rewritten_twins_still_count_as_one_topic(self):
+        left = {"id": "q_a", "text": "D19 — отправляете 5–10 сообщений вручную или готовым текстом?"}
+        right = {"id": "q_b", "text": "Отправляете 5–10 сообщений вручную или готовым текстом?"}
+        decorated = [q_mod.decorate(dict(item)) for item in (left, right)]
+        visible, hidden = q_mod.dedupe(decorated)
+        self.assertEqual(len(visible), 1, "дубль не должен всплыть из-за переписывания")
+        self.assertEqual(hidden[0]["duplicate_of"], visible[0]["id"])
+
+    def test_source_line_says_where_the_question_came_from(self):
+        self.assertEqual(q_mod.source_line("Партия пробной упаковки", "Котировки коробок"),
+                         "Из карточки «Котировки коробок» в задаче «Партия пробной упаковки».")
+        self.assertIn("исполнителя", q_mod.source_line("Партия пробной упаковки"))
+        self.assertIn("сообщения руководителя", q_mod.source_line("Партия", kind="comment"))
+
+    def test_summary_separates_text_from_form(self):
+        items = [q_mod.decorate({"id": "q_1", "text": "Ставим цену 210 за килограмм?"}),
+                 q_mod.decorate({"id": "q_2", "text": "D19 — отправляем сообщения?"}),
+                 q_mod.decorate({"id": "q_3", "text": "Ставим цену 240 за килограмм?",
+                                 "why": GOOD_WHY, "context": GOOD_CONTEXT})]
+        result = q_mod.summary(items)
+        self.assertEqual(result["plain_bad"], 0, "после переписывания текстовых проблем нет")
+        self.assertEqual(result["plain_incomplete"], 2, "у двух вопросов нет «зачем»/«откуда»")
+        self.assertEqual(result["rewritten"], 1)
+
+    def test_long_question_is_still_a_real_problem(self):
+        got = q_mod.humanize("Ставим цену? " + "очень длинное объяснение " * 20)
+        ok, _issues = q_mod.plain_check(got["text"], GOOD_WHY, GOOD_CONTEXT)
+        self.assertFalse(ok, "переписывание не прячет непомерный объём")
 
 
 class ClosedTopicsTests(unittest.TestCase):
@@ -300,9 +399,15 @@ class QuestionsApiTests(_Base):
         self.assertEqual(first["options"][1]["consequence"], "Плюс 3 000 в неделю на смену")
         self.assertTrue(first["plain_ok"], first["plain_issues"])
         self.assertTrue(first["topic_key"])
-        coded = next(item for item in questions if item["text"] == Q_CODE)
-        self.assertFalse(coded["plain_ok"])
-        self.assertTrue(coded["plain_issues"])
+        # W31-A2: машинная формулировка переписана при показе, исходник — в text_raw
+        coded = next(item for item in questions if item.get("text_raw") == Q_CODE)
+        self.assertNotIn("D19", coded["text"])
+        self.assertEqual(coded["code"], "D19")
+        self.assertEqual(coded["text"], "Отправляем 5–10 сообщений вручную по готовым текстам?")
+        self.assertNotIn("Внутренний код", coded["plain_issues"])
+        self.assertTrue(coded["plain_ok"], coded["plain_issues"])
+        self.assertFalse(coded["plain_source_ok"], "исходник руководителя остаётся помеченным")
+        self.assertTrue(coded["context"], "строка «откуда взялось» добавляется из происхождения")
 
     def test_blocking_is_capped_at_three(self):
         rid = self._request([self._ask(),

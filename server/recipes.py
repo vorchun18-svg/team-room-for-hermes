@@ -157,20 +157,27 @@ BUILTIN = [
 
 
 def builtin_for(room: dict) -> list[dict]:
-    """Встроенные рецепты для комнаты: по теме комнаты, иначе все три.
+    """Встроенные рецепты СВОЕЙ сферы комнаты (для первого заполнения).
 
     Тему узнаём по id/названию комнаты («химчистка», «грузоперевозки», «кофейня»).
-    Комнате без узнаваемой темы показываем все примеры: пустой экран хуже
-    лишнего примера, а выбор из трёх — это не шум.
+    Комнате без узнаваемой темы не сеем ничего: чужие примеры показываются отдельно
+    и с пометкой «образец» (``samples`` в листинге, W31-C), а не как свои рецепты —
+    иначе человек в реальной комнате видел «Меню на неделю» и думал, что это его.
     """
     text = " ".join([str((room or {}).get("id") or ""), str((room or {}).get("title") or ""),
                      str((room or {}).get("description") or "")]).lower()
     matched = [topic for topic, keys in TOPICS.items() if any(k in text for k in keys)]
     out = []
     for item in BUILTIN:
-        if not matched or item["topic"] in matched:
+        if item["topic"] in matched:
             out.append(_copy(item))
     return out
+
+
+def foreign_builtin_for(room: dict) -> list[dict]:
+    """Примеры ЧУЖИХ сфер: в комнату не сеются, показываются с пометкой «образец»."""
+    own = {str(item.get("id") or "") for item in builtin_for(room)}
+    return [_copy(item) for item in BUILTIN if str(item["id"]) not in own]
 
 
 def _copy(value):
@@ -429,6 +436,10 @@ def _public(item: dict, runs: list[dict]) -> dict:
     return {"id": rid, "name": item.get("name") or "", "description": item.get("description") or "",
             "fields": _copy(item.get("fields") or []), "steps": _copy(item.get("steps") or []),
             "topic": item.get("topic") or "any", "builtin": bool(item.get("builtin")),
+            # «образец» — встроенный пример, а не рецепт комнаты (W31-C, дефект 28)
+            "sample": bool(item.get("builtin")),
+            "sample_note": ("образец чужой сферы: посмотрите устройство, имя и шаги можно "
+                            "переделать под себя") if item.get("builtin") else "",
             "source": item.get("source") or "user",
             "created_at": item.get("created_at") or 0, "updated_at": item.get("updated_at") or 0,
             "runs": len(mine), "last_run": max((r.get("at") or 0 for r in mine), default=0)}
@@ -448,17 +459,37 @@ def _run_public(run: dict) -> dict:
 
 
 def listing(cfg, room) -> dict:
-    """Все рецепты комнаты, корзина, история запусков и роли — одним ответом."""
+    """Все рецепты комнаты, корзина, история запусков, роли и примеры — одним ответом.
+
+    ``samples`` — примеры чужих сфер: в комнату не сеются, в интерфейсе стоят за
+    отдельной строкой и помечены «образец» (дефект 28: человек принимал чужой пример
+    за рецепт своей комнаты).
+    """
     doc = _load_doc(cfg, room)
     runs = _load_runs(cfg, room).get("items") or []
     items = [_public(item, runs) for item in doc.get("items") or []]
     items.sort(key=lambda x: (-int(x["builtin"]), -int(x["last_run"] or 0), x["name"].lower()))
+    samples = []
+    for item in foreign_builtin_for(room):
+        item.update({"builtin": True, "source": "builtin", "fields": item.get("fields") or [],
+                     "steps": item.get("steps") or []})
+        samples.append(_public(item, []))
     return {"items": items,
+            "samples": samples,
             "trash": [_public(item, runs) for item in doc.get("trash") or []],
             "runs": [_run_public(r) for r in sorted(runs, key=lambda r: -(r.get("at") or 0))[:10]],
             "roles": room_roles(room),
             "field_kinds": [{"value": k, "label": FIELD_KIND_RU[k]} for k in FIELD_KINDS],
             "max_fields": MAX_FIELDS, "max_steps": MAX_STEPS}
+
+
+def check(data: dict, room) -> dict:
+    """Проверить рецепт из разговора/предложения и вернуть нормализованную форму.
+
+    Публичная обёртка над ``_check_recipe``: ею пользуется ``server.recipe_agent``,
+    чтобы алгоритм руководителя проверялся ТЕМИ ЖЕ правилами, что и ручной рецепт.
+    """
+    return _check_recipe(data, room)
 
 
 def get(cfg, room, recipe_id: str) -> dict:
@@ -472,11 +503,17 @@ def get(cfg, room, recipe_id: str) -> dict:
 
 # --------------------------------------------------------------- правка
 
-def save(cfg, room, data: dict, recipe_id: str | None = None, actor: str = "mikhail") -> dict:
-    """Создать рецепт или изменить свой; встроенный пример при правке становится копией."""
+def save(cfg, room, data: dict, recipe_id: str | None = None, actor: str = "mikhail",
+         *, source: str = "") -> dict:
+    """Создать рецепт или изменить свой; встроенный пример при правке становится копией.
+
+    ``source`` — откуда рецепт: ``dialog`` (разговор с руководителем), ``analysis``
+    (предложение по завершённым задачам), ``request`` (из задачи). Пусто — ``user``.
+    """
     clean = _check_recipe(data, room)
     doc = _load_doc(cfg, room)
     now = _now()
+    wanted = str(source or "").strip()
     if recipe_id:
         item, bucket = _find(doc, recipe_id)
         if item is None or bucket != "items":
@@ -484,15 +521,17 @@ def save(cfg, room, data: dict, recipe_id: str | None = None, actor: str = "mikh
                               "not_found", 404, {"recipe_id": str(recipe_id)})
         item.update(clean)
         item.update({"updated_at": now, "builtin": False,
-                     "source": item.get("source") if item.get("source") in ("user", "request")
-                     else "user"})
+                     "source": wanted if wanted in ("user", "request", "dialog", "analysis")
+                     else (item.get("source") if item.get("source") in ("user", "request", "dialog",
+                                                                        "analysis") else "user")})
         saved = item
     else:
         if len(doc.get("items") or []) >= MAX_RECIPES:
             raise RecipeError("Рецептов уже %d — сначала уберите лишние." % MAX_RECIPES,
                               "conflict", 409)
         saved = dict(clean)
-        saved.update({"id": _new_id(clean["name"]), "builtin": False, "source": "user",
+        saved.update({"id": _new_id(clean["name"]), "builtin": False,
+                      "source": wanted if wanted in ("request", "dialog", "analysis") else "user",
                       "created_at": now, "updated_at": now})
         doc.setdefault("items", []).append(saved)
     _save_doc(cfg, room, doc)

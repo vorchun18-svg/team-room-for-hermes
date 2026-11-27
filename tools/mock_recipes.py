@@ -39,17 +39,132 @@ def _load() -> dict:
 
 def _listing() -> dict:
     state = _load()
-    return {"items": copy.deepcopy(state.get("items") or []),
+    items = copy.deepcopy(state.get("items") or [])
+    for item in items:
+        item.setdefault("sample", bool(item.get("builtin")))
+        item.setdefault("sample_note", "образец чужой сферы" if item.get("builtin") else "")
+    return {"items": items,
+            "samples": copy.deepcopy(state.get("samples") or []),
             "trash": copy.deepcopy(state.get("trash") or []),
             "runs": sorted(copy.deepcopy(state.get("runs") or []),
                            key=lambda r: -(r.get("at") or 0))[:10],
             "roles": copy.deepcopy(state.get("roles") or []),
             "field_kinds": FIELD_KINDS,
-            "max_fields": MAX_FIELDS, "max_steps": MAX_STEPS}
+            "max_fields": MAX_FIELDS, "max_steps": MAX_STEPS,
+            "dialog": copy.deepcopy(_DIALOG.get("item")),
+            "analysis": copy.deepcopy(_ANALYSIS)}
 
 
 def listing() -> dict:
     return _listing()
+
+
+#: Разговор о рецепте и лёгкий разбор в демо живут в памяти (W31-C). Руководителя
+#: здесь играет сам мок: вопросов он не задаёт, а сразу присылает алгоритм.
+_DIALOG: dict = {"item": None}
+
+
+def _analysis_state() -> dict:
+    return {"settings": {"enabled": False, "every_days": 7, "min_tasks": 3, "only_propose": True,
+                         "model": {}, "lead_model": {"profile": "team-director", "provider": "ollama-cloud",
+                                                     "model": "demo-model", "label": "ollama-cloud · demo-model"},
+                         "model_label": "ollama-cloud · demo-model", "models": [], "warning": "",
+                         "last_run_at": 0, "next_run_at": 0},
+            "estimate": {"input_tokens": 4200, "output_tokens": 900, "chars": 900, "base_tokens": 0,
+                         "tasks": 0, "source": "оценка",
+                         "text": "≈ 4,2 тыс. токенов на входе и 900 на выходе — один лёгкий проход."},
+            "candidates": {"count": 0, "items": []},
+            # W31-FIX3: плашка «пора разобрать задачи» — только пометка сторожа,
+            # карточку ставит человек кнопкой «Запустить». В демо пометки нет.
+            "prompt": {"show": False, "text": "", "count": 0, "tokens": 0, "output_tokens": 0,
+                       "due_at": 0, "snoozed_until": 0},
+            "offers": [], "dismissed_count": 0, "last_run_at": 0, "waiting": False}
+
+
+_ANALYSIS = _analysis_state()
+
+
+def dialog_start(body: dict) -> dict:
+    text = str((body or {}).get("text") or "").strip()
+    if len(text) < 5:
+        raise ValueError("Опишите словами, какое дело повторяется.")
+    item = {"id": "dlg-mock01", "text": text, "at": int(time.time()), "updated_at": int(time.time()),
+            "stage": "draft", "stage_ru": "алгоритм готов — утвердите", "waiting": False,
+            "card_id": "t_mockdlg", "request_id": "", "source": "text", "questions": [],
+            "answers": "", "recipe_id": "", "problem": "",
+            "model": {"profile": "team-director", "provider": "ollama-cloud", "model": "demo-model",
+                      "label": "ollama-cloud · demo-model"},
+            "messages": [{"role": "human", "text": text, "at": int(time.time())},
+                         {"role": "draft", "text": "Готовый алгоритм (демо)", "at": int(time.time())}],
+            "draft": _clean({"name": (text.split(":")[0] or "Повторяющееся дело")[:70],
+                             "description": "Шаблон: " + text[:120],
+                             "fields": [{"id": "f1", "label": "Что за случай", "kind": "text",
+                                         "required": True, "hint": ""}],
+                             "steps": [{"id": "s1", "role": "руководитель", "assignee": "",
+                                        "title": "Разобрать случай", "instruction": "", "critic": False,
+                                        "depends_on": []},
+                                       {"id": "s2", "role": "руководитель", "assignee": "",
+                                        "title": "Свести итог", "instruction": "", "critic": True,
+                                        "depends_on": ["s1"]}]})}
+    _DIALOG["item"] = item
+    return {"ok": True, "dialog": copy.deepcopy(item)}
+
+
+def dialog_state() -> dict:
+    return {"ok": True, "dialog": copy.deepcopy(_DIALOG.get("item"))}
+
+
+def dialog_accept() -> dict:
+    item = _DIALOG.get("item")
+    if not item:
+        raise ValueError("Разговор не начат — начните с описания словами.")
+    recipe = create(dict(item["draft"], description=item["draft"].get("description") or ""))
+    recipe["source"] = "dialog"
+    item.update({"stage": "accepted", "stage_ru": "рецепт сохранён", "recipe_id": recipe["id"]})
+    return {"ok": True, "recipe": recipe, "dialog": copy.deepcopy(item)}
+
+
+def dialog_cancel() -> dict:
+    item = _DIALOG.get("item")
+    if item:
+        item.update({"stage": "closed", "stage_ru": "закрыт"})
+    return {"ok": True, "dialog": copy.deepcopy(item)}
+
+
+def analysis_view() -> dict:
+    return copy.deepcopy(_ANALYSIS)
+
+
+def analysis_run() -> dict:
+    return {"ok": True, "card_id": "t_mockanalysis", "tasks": 0,
+            "message": "Демо: разбор не ходит к модели."}
+
+
+def analysis_later(days=None) -> dict:
+    """«Позже» в демо: только откладывает напоминание, карточку не ставит."""
+    num = int(days or _ANALYSIS["settings"].get("every_days") or 7)
+    num = max(1, min(90, num))
+    _ANALYSIS["prompt"] = {"show": False, "text": "", "count": 0, "tokens": 0,
+                           "output_tokens": 0, "due_at": 0,
+                           "snoozed_until": int(time.time()) + num * 86400}
+    return {"ok": True, "days": num, "snoozed_until": _ANALYSIS["prompt"]["snoozed_until"],
+            "message": "Отложили на %d дней — напомним позже." % num}
+
+
+def analysis_sync() -> dict:
+    return {"ok": True, "added": 0, "suppressed": [], "offers": copy.deepcopy(_ANALYSIS["offers"])}
+
+
+def analysis_settings(body: dict) -> dict:
+    body = body if isinstance(body, dict) else {}
+    if body.get("every_days") is not None:
+        days = int(body["every_days"])
+        if not 1 <= days <= 90:
+            raise ValueError("«Раз в N дней» — от 1 до 90.")
+        _ANALYSIS["settings"]["every_days"] = days
+    if body.get("enabled") is not None:
+        _ANALYSIS["settings"]["enabled"] = bool(body["enabled"])
+    return {"ok": True, "settings": copy.deepcopy(_ANALYSIS["settings"])}
 
 
 def _find(rid: str) -> tuple[dict | None, str]:

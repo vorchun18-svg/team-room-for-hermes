@@ -37,6 +37,27 @@ class AgentResultsRoutes:
     def _agent_results_mod(self):
         return self.mod("agent_results")
 
+    def _agent_descriptions(self) -> dict:
+        """Описания профилей Hermes: имя агента, если в «Команде» подписи нет.
+
+        Дефект 31: строки «Результатов агентов» подписывались ролью
+        («Исполнитель-воркер») — по ним нельзя было понять, кто работал. Имя
+        берём из подписей комнаты (``members[].label``/``role_labels``), а если
+        подписи нет — из описания профиля, которое сервер уже читает для вкладки
+        «Команда» (``profile.yaml``, без обращения к CLI).
+        """
+        reader = getattr(self, "_profile_descriptions", None)
+        if not callable(reader):
+            return {}
+        try:
+            return reader() or {}
+        except Exception as exc:         # noqa: BLE001 — подпись вторична для блока
+            try:
+                self.log.warning("подписи агентов: %s" % exc)
+            except Exception:            # noqa: BLE001 — лог в тестах может быть заглушкой
+                pass
+            return {}
+
     def h_agent_results(self, query, body, rid):
         """GET /api/requests/{id}/agent-results — результаты исполнителей задачи."""
         room, rec = self._find_record(rid)
@@ -49,7 +70,8 @@ class AgentResultsRoutes:
             self.log.error("результаты агентов %s" % rid, exc)
             raise ApiError(502, "Движок не отдал дерево задачи — результаты недоступны",
                            detail={"rid": rid}) from exc
-        payload = self._agent_results_mod().attach(detail, room=room)
+        payload = self._agent_results_mod().attach(detail, room=room,
+                                                   descriptions=self._agent_descriptions())
         return 200, payload, {"Cache-Control": "no-cache"}
 
     def _agent_results_view(self, room, detail) -> None:
@@ -57,7 +79,8 @@ class AgentResultsRoutes:
         if not isinstance(detail, dict) or not self._has_mod("agent_results"):
             return
         try:
-            self.mod("agent_results").attach(detail, room=room)
+            self.mod("agent_results").attach(detail, room=room,
+                                             descriptions=self._agent_descriptions())
         except Exception as exc:         # noqa: BLE001 — блок вторичен для страницы
             self.log.warning("результаты агентов %s: %s" % (detail.get("id"), exc))
             detail.setdefault("agent_results", {"agents": [], "counts": {}})

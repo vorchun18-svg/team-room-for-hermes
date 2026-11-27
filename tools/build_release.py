@@ -150,7 +150,7 @@ COPY_TOOLS = (
     "mock_w30c.py",
     "mock_w30d.py",
     "mock_w30e.py",
-    "mock_w30f.py",
+    "mock_w30f.py", "mock_w31b2.py",
 )
 
 COPY_DOCS = (

@@ -212,7 +212,11 @@ async function loadRoom(roomId, todayNumbers) {
         if (!counts || typeof counts !== 'object') continue;
         const parts = [counts.questions, counts.decisions, counts.approvals].map(Number);
         if (parts.some((value) => !Number.isFinite(value) || value < 0)) continue;
-        total += parts.reduce((sum, value) => sum + value, 0);
+        // W31-FIX4: заблокированная карточка — такой же пункт «ждёт вас»: сервер
+        // считает её в `needs_you_count.blocked` (и в `total`), поэтому и запасной
+        // счёт меню обязан её включать, иначе число в меню меньше экрана.
+        const blockedN = Number.isFinite(Number(counts.blocked)) ? Number(counts.blocked) : 0;
+        total += parts.reduce((sum, value) => sum + value, 0) + blockedN;
         haveTotal = true;
       }
       if (haveTotal) {

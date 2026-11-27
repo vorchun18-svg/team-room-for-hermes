@@ -122,6 +122,12 @@ export async function mount(el, ctx) {
 
   const api = ctx.api;
   const toast = typeof ctx.toast === 'function' ? ctx.toast : () => {};
+  // W31-B1: блок «Задача команде» живёт во вкладке «Задачи» над доской. В этом
+  // случае композер монтируется без своего заголовка и без ленты запросов
+  // (лента — прошлые задачи, их место на доске), а после отправки не уводит
+  // со страницы: хозяин экрана сам перечитает доску (`ctx.onSent`).
+  const embedded = Boolean(ctx && ctx.embed);
+  const showHeading = !embedded && ctx.heading !== false;
   const roomId = String((ctx.room && ctx.room.id) || (ctx.params && ctx.params.roomId) || (ctx.route && ctx.route.roomId) || '');
   if (!roomId) {
     el.appendChild(h('div', { class: 'view__inner' },
@@ -160,7 +166,7 @@ export async function mount(el, ctx) {
 
   /* ─────────────────────────────────────────────────────────────── каркас */
 
-  const root = h('div', { class: 'view__inner cmp' });
+  const root = h('div', { class: embedded ? 'cmp cmp--embed' : 'view__inner cmp' });
 
   const heading = h('div', { class: 'cmp-head' },
     h('h2', { class: 'cmp-head__title' }, 'Задача команде'),
@@ -275,14 +281,18 @@ export async function mount(el, ctx) {
     field, attachList, briefWrap, longNote, dictNote, hint, ideasHost, draftNote, attachRow);
 
   const compose = h('section', { class: 'cmp-compose', 'aria-labelledby': 'cmp-input' },
-    heading, form, warnHost, errHost);
+    showHeading ? heading : null, form, warnHost, errHost);
 
   el.appendChild(root);
   root.appendChild(compose);
 
   /* ── лента и кандидаты — отдельный модуль ─────────────────────────────── */
 
-  const feed = createFeed({ api, roomId, toast, insertText });
+  // Встроенный вид (вкладка «Задачи») ленты не показывает: прошлые задачи уже
+  // на доске. Заглушка отвечает на все вопросы, которые задаёт экран.
+  const feed = embedded
+    ? { sections: [], load: async () => {}, count: () => 0, hasActive: () => false, destroy: () => {} }
+    : createFeed({ api, roomId, toast, insertText });
 
   /* ─────────────────────────────────────────────────────── поле запроса */
 
@@ -570,6 +580,11 @@ export async function mount(el, ctx) {
       updateCounter(); autosize(); renderDraftNote();
       toast('Задача принята', 'ok');
       if (pendingWarning) toast(plainTerms(pendingWarning.message || 'Движок не запущен — работа ждёт.'), 'warn');
+      if (typeof ctx.onSent === 'function') {
+        // Встроенный блок: остаёмся на доске, хозяин сам её перечитает.
+        try { ctx.onSent(rootId || null); } catch { /* хозяин решит сам */ }
+        return;
+      }
       if (rootId) {
         ctx.navigate('#/room/' + enc(roomId) + '/request/' + enc(rootId));
         return;
@@ -638,7 +653,7 @@ export async function mount(el, ctx) {
   }
 
   async function tick() {
-    if (stopped) return;
+    if (stopped || embedded) return;
     if (typeof document !== 'undefined' && document.hidden) { schedule(POLL_IDLE); return; }
     await feed.load();
     schedule(nextDelay());
@@ -699,11 +714,16 @@ export async function mount(el, ctx) {
   renderWarning();
   renderIdeas();
 
-  feed.load().then(applyBriefDefault);
-  loadIdeas();
-  schedule(nextDelay());
+  if (!embedded) {
+    feed.load().then(applyBriefDefault);
+    loadIdeas();
+    schedule(nextDelay());
+  }
 
   return {
+    focus() {
+      try { textarea.focus(); } catch { /* фокус не критичен */ }
+    },
     unmount() {
       stopped = true;
       clearTimeout(timer);

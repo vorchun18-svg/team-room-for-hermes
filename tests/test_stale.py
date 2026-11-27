@@ -149,13 +149,38 @@ class StaleContractTests(unittest.TestCase):
 
     def test_counter_counts_only_items_with_action(self):
         detail = stale.decorate(self._detail())
+        # W31-FIX4: `blocked` — заблокированные карточки, ждущие человека (здесь их нет).
         self.assertEqual(detail["needs_you_count"],
-                         {"questions": 1, "decisions": 1, "approvals": 1, "steps": 1, "total": 4})
+                         {"questions": 1, "decisions": 1, "approvals": 1, "steps": 1,
+                          "blocked": 0, "total": 4})
         self.assertGreater(detail["needs_you_count"]["total"], 0)
         # 6 закрытых пунктов не ждут человека, но и счётчик их не считает
         closed = [item for key in ("open_questions", "decisions", "next_steps", "approvals")
                   for item in detail[key] if not item["needs_you"]]
         self.assertEqual(len(closed), 5)
+
+    def test_blocked_card_waits_for_human_in_counter(self):
+        """W31-FIX4: заблокированная карточка — пункт «ждёт вас» и в счётчике задачи."""
+        detail = self._detail()
+        detail["tree"] = [{"id": "t_1", "status": "blocked", "title": "сверстать прайс",
+                           "actions": [{"id": "resume"}, {"id": "instruct"}]}]
+        decorated = stale.decorate(detail)
+        counter = decorated["needs_you_count"]
+        self.assertEqual(counter["blocked"], 1)
+        self.assertEqual(decorated["needs_you_blocked"], 1)
+        self.assertEqual(counter["total"], sum(counter[key] for key in
+                                               ("questions", "decisions", "approvals",
+                                                "steps", "blocked")))
+
+    def test_guarded_pause_is_not_counted_as_waiting(self):
+        """Системная пауза сторожа снимается сама — человеку там делать нечего."""
+        detail = self._detail()
+        detail["tree"] = [{"id": "t_1", "status": "blocked", "title": "проверить склад",
+                           "hold": {"by": "guard", "auto": True},
+                           "actions": [{"id": "resume"}]}]
+        decorated = stale.decorate(detail)
+        self.assertEqual(decorated["needs_you_count"]["blocked"], 0)
+        self.assertEqual(decorated["needs_you_count"]["total"], 4)
 
     def test_every_waiting_item_has_action_and_closed_ones_have_reason(self):
         detail = stale.decorate(self._detail())
@@ -338,10 +363,12 @@ class DetailCounterTests(_Base):
         detail = self.detail(rid)
         self.assertIn("needs_you_count", detail)
         counter = detail["needs_you_count"]
-        self.assertEqual(set(counter), {"questions", "decisions", "approvals", "steps", "total"})
+        self.assertEqual(set(counter), {"questions", "decisions", "approvals", "steps",
+                                        "blocked", "total"})
+        # W31-FIX4: `blocked` — заблокированные карточки; `total` — их сумма со всеми.
         self.assertEqual(counter["total"],
                          counter["questions"] + counter["decisions"]
-                         + counter["approvals"] + counter["steps"])
+                         + counter["approvals"] + counter["steps"] + counter["blocked"])
         self.assertGreaterEqual(counter["questions"], 1)
         self.assertGreaterEqual(counter["decisions"], 1)
         # у каждого пункта есть состояние словаря контракта

@@ -180,6 +180,33 @@ test('клавиши вкладок: Alt+←/→ переключают, Ctrl+W 
   off();
 });
 
+test('крестик вкладки закрывает её — обработчик не падает (W31-D, дефект 16)', () => {
+  const box = freshHost();
+  const went = [];
+  const tabs = createRequestTabs({ host: box, storage: storage(), navigate: (hash) => went.push(hash) });
+  tabs.sync({ name: 'request', roomId: 'cafe', id: 'r1' }, { title: 'Сверка накладных' });
+  tabs.sync({ name: 'request', roomId: 'cafe', id: 'r2' }, { title: 'Меню на неделю' });
+
+  // Живой щелчок по × : раньше локальная переменная в render() затеняла
+  // функцию close(), и обработчик падал с «close is not a function» —
+  // вкладка не закрывалась ни крестиком, ни Ctrl+W после него.
+  const items = box.querySelectorAll('.req-tabs__item');
+  assert.equal(items.length, 2);
+  const closer = items[1].querySelector('.req-tabs__close');
+  assert.ok(closer, 'у вкладки есть крестик');
+  closer.dispatch('click', { stopPropagation() {} });
+
+  assert.deepEqual(tabs.list().map((t) => t.id), ['r1'], 'вкладка закрыта крестиком');
+  assert.deepEqual(went, ['#/room/cafe/request/r1'], 'показали соседнюю вкладку');
+  assert.equal(box.querySelectorAll('.req-tabs__item').length, 1, 'полоса перерисована');
+
+  // Последняя вкладка: крестик уводит на страницу комнаты и прячет полосу.
+  const last = box.querySelectorAll('.req-tabs__item')[0].querySelector('.req-tabs__close');
+  last.dispatch('click', { stopPropagation() {} });
+  assert.equal(tabs.list().length, 0);
+  assert.equal(box.hidden, true, 'вкладок нет — полосы нет');
+});
+
 test('состояние вкладок переживает перезапуск', () => {
   const store = storage();
   const first = freshHost();

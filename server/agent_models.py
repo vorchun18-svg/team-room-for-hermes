@@ -50,6 +50,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -100,6 +101,15 @@ _new_set = set
 _CACHE: dict = {"key": None, "at": 0.0, "data": None, "ttl": CACHE_TTL}
 #: фактические модели сессий: (путь state.db, id сессии) → (время, {provider, model})
 _SESSION_CACHE: dict = {}
+#: потолок кэша сессий. Одна большая задача — это ~1000 разных сессий в дереве,
+#: поэтому потолок выше, а вытеснение — по одной САМОЙ СТАРОЙ записи: `clear()`
+#: на переполнении обнулял кэш посреди запроса и каждая попытка снова открывала
+#: `state.db` (замер W31-A1: /api/rooms/cafe/tasks 2,6 с, из них 1,8 с — эти чтения).
+SESSION_CACHE_MAX = 4000
+#: открытые read-only соединения с `state.db` — на поток (сервер многопоточный)
+_SESSION_CONNS = threading.local()
+#: колонки таблицы `sessions` по пути `state.db` (схема в пределах процесса не меняется)
+_SESSION_SCHEMA: dict = {}
 _PYTHON: dict = {}
 
 
@@ -1521,6 +1531,85 @@ def _session_id(value) -> str:
     return ""
 
 
+def _session_conn(path: Path):
+    """Открытое read-only соединение с `state.db` (одно на поток и путь).
+
+    Почему не новое на каждый вопрос: у большой задачи в дереве ~1000 разных
+    сессий, и открытие файла с `PRAGMA table_info` на каждую стоило дороже самого
+    чтения (W31-A1: 2 142 обращения = 1,8 с из 2,6 с ответа доски). Соединение
+    автокоммитное (`isolation_level=None`), поэтому каждый SELECT видит свежие
+    данные, а не снимок первого запроса.
+    """
+    name = str(path)
+    cache = getattr(_SESSION_CONNS, "by_path", None)
+    if not isinstance(cache, dict):                 # новый поток — своя таблица
+        cache = {}
+        _SESSION_CONNS.by_path = cache
+    con = cache.get(name)
+    if con is not None:
+        return con
+    if not path.exists():
+        return None
+    import sqlite3
+    con = sqlite3.connect("file:%s?mode=ro" % path.as_posix(), uri=True, timeout=5,
+                          check_same_thread=False)
+    con.row_factory = sqlite3.Row
+    con.isolation_level = None                      # автокоммит: без снимка и без блокировок
+    if len(cache) >= 24:                            # профилей на машине десятки, не тысячи
+        for key in [k for k in cache if k != name][:8]:
+            try:
+                cache.pop(key).close()
+            except Exception:                       # noqa: BLE001 - закрытие не важнее чтения
+                cache.pop(key, None)
+    cache[name] = con
+    return con
+
+
+def _drop_session_conn(path: Path) -> None:
+    """Забыть соединение: файл пересоздали (обновление Hermes) — открываем заново."""
+    cache = getattr(_SESSION_CONNS, "by_path", None)
+    if not isinstance(cache, dict):
+        return
+    con = cache.pop(str(path), None)
+    _SESSION_SCHEMA.pop(str(path), None)
+    if con is not None:
+        try:
+            con.close()
+        except Exception:                           # noqa: BLE001
+            pass
+
+
+def _session_columns(con, path: Path) -> list:
+    """Существующие колонки `sessions` (схема кэшируется на путь, а не читается каждый раз)."""
+    name = str(path)
+    cols = _SESSION_SCHEMA.get(name)
+    if isinstance(cols, list):
+        return cols
+    cols = []
+    try:
+        # `estimated_cost_usd` есть не во всех версиях Hermes — читаем только
+        # существующие колонки (W23: стоимость последнего запуска нужна «ушло на»)
+        found = {str(r[1]) for r in con.execute("PRAGMA table_info(sessions)")}
+        cols = [c for c in ("model", "billing_provider", "estimated_cost_usd", "api_call_count")
+                if c in found]
+    except Exception:                               # noqa: BLE001 - старая/битая схема
+        cols = []
+    if len(_SESSION_SCHEMA) > 64:
+        _SESSION_SCHEMA.clear()
+    _SESSION_SCHEMA[name] = cols
+    return cols
+
+
+def _remember_session(key, now: float, out: dict) -> None:
+    """Положить факт сессии в кэш, вытесняя по одной САМОЙ СТАРОЙ записи."""
+    while len(_SESSION_CACHE) >= SESSION_CACHE_MAX:
+        try:
+            _SESSION_CACHE.pop(next(iter(_SESSION_CACHE)))
+        except (StopIteration, KeyError):           # pragma: no cover - гонка потоков
+            break
+    _SESSION_CACHE[key] = (now, dict(out))
+
+
 def _session_model(cfg, profile, session_id) -> dict:
     """ФАКТИЧЕСКАЯ модель запуска: `sessions.model` + `billing_provider` в `state.db`.
 
@@ -1540,47 +1629,44 @@ def _session_model(cfg, profile, session_id) -> dict:
     if hit and now - float(hit[0] or 0) < 120:
         return dict(hit[1])
     out: dict = {}
-    try:
-        import sqlite3
-        if path.exists():
-            con = sqlite3.connect("file:%s?mode=ro" % path.as_posix(), uri=True, timeout=5)
-            try:
-                con.row_factory = sqlite3.Row
-                # `estimated_cost_usd` есть не во всех версиях Hermes — читаем только
-                # существующие колонки (W23: стоимость последнего запуска нужна «ушло на»)
-                cols = {str(r[1]) for r in con.execute("PRAGMA table_info(sessions)")}
-                wanted = [c for c in ("model", "billing_provider", "estimated_cost_usd", "api_call_count")
-                          if c in cols]
-                row = con.execute("SELECT %s FROM sessions WHERE id = ?"
-                                  % ", ".join(wanted), (sid,)).fetchone() if wanted else None
-                if row is not None:
-                    data = dict(row)
-                    out = {"model": str(data.get("model") or "").strip(),
-                           "provider": str(data.get("billing_provider") or "").strip()}
-                    # W28-C2: число вызовов модели в этой попытке — «вызовов 3».
-                    # 0 — законный ответ (попытку убили до первого запроса), отсутствие
-                    # колонки — «неизвестно» (None).
-                    if data.get("api_call_count") not in (None, ""):
-                        try:
-                            out["calls"] = int(data["api_call_count"])
-                        except (TypeError, ValueError):
-                            out["calls"] = None
-                    # Сессия есть, а стоимость не записана (локальная модель/старая
-                    # версия Hermes) — это 0, а не «неизвестно»: иначе интерфейс не
-                    # отличит «не запускалась» от «запускалась бесплатно».
-                    out["cost_usd"] = 0.0
-                    if data.get("estimated_cost_usd") not in (None, ""):
-                        try:
-                            out["cost_usd"] = round(float(data["estimated_cost_usd"]), 4)
-                        except (TypeError, ValueError):
-                            pass
-            finally:
-                con.close()
-    except Exception:  # noqa: BLE001 - нет файла/схемы: «неизвестно», а не падение
-        out = {}
-    if len(_SESSION_CACHE) > 400:
-        _SESSION_CACHE.clear()
-    _SESSION_CACHE[key] = (now, dict(out))
+    for attempt in (1, 2):
+        try:
+            con = _session_conn(path)
+            if con is None:
+                break
+            wanted = _session_columns(con, path)
+            row = con.execute("SELECT %s FROM sessions WHERE id = ?"
+                              % ", ".join(wanted), (sid,)).fetchone() if wanted else None
+            if row is not None:
+                data = dict(row)
+                out = {"model": str(data.get("model") or "").strip(),
+                       "provider": str(data.get("billing_provider") or "").strip()}
+                # W28-C2: число вызовов модели в этой попытке — «вызовов 3».
+                # 0 — законный ответ (попытку убили до первого запроса), отсутствие
+                # колонки — «неизвестно» (None).
+                if data.get("api_call_count") not in (None, ""):
+                    try:
+                        out["calls"] = int(data["api_call_count"])
+                    except (TypeError, ValueError):
+                        out["calls"] = None
+                # Сессия есть, а стоимость не записана (локальная модель/старая
+                # версия Hermes) — это 0, а не «неизвестно»: иначе интерфейс не
+                # отличит «не запускалась» от «запускалась бесплатно».
+                out["cost_usd"] = 0.0
+                if data.get("estimated_cost_usd") not in (None, ""):
+                    try:
+                        out["cost_usd"] = round(float(data["estimated_cost_usd"]), 4)
+                    except (TypeError, ValueError):
+                        pass
+            break
+        except Exception:  # noqa: BLE001 - нет файла/схемы: «неизвестно», а не падение
+            # Соединение могло умереть вместе с файлом (Hermes пересоздал `state.db`):
+            # забываем его и пробуем ещё раз новым — один раз, без петель.
+            _drop_session_conn(path)
+            out = {}
+            if attempt == 2:
+                break
+    _remember_session(key, now, out)
     return out
 
 

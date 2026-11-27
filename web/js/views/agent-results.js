@@ -66,14 +66,29 @@ const FILTERS = [
 ];
 
 function agentName(row, room) {
+  // W31-B2 (дефект 31): сервер (A2) присылает имя агента участника комнаты и его
+  // роль — их и показываем; подпись из справочника остаётся запасным путём.
+  const direct = String((row && (row.agent_name || row.agent_label)) || '').trim();
   try {
     const label = participantLabel(row.agent || '', { room: room || null });
     if (label && (label.name || label.title)) {
-      return { text: label.name || label.title, hint: [label.title, label.sub].filter(Boolean).join(' · ') };
+      return {
+        text: direct || label.name || label.title,
+        hint: [direct ? (label.name || label.title) : '', label.title, label.sub].filter(Boolean).join(' · '),
+      };
     }
   } catch { /* подпись вторична */ }
-  const raw = String((row && row.agent) || '').trim();
-  return { text: raw || 'Исполнитель', hint: raw };
+  const raw = String((row && (row.agent || row.agent_name)) || '').trim();
+  return { text: direct || raw || 'Исполнитель', hint: raw };
+}
+
+/** Роль агента по-русски: из `agent_role` сервера, иначе из подписи карточки. */
+function agentRole(row, name) {
+  const direct = String((row && (row.agent_role || row.role_label)) || '').trim();
+  if (direct) return direct;
+  const role = String((row && row.role) || '').trim();
+  if (role && role !== name) return role;
+  return '';
 }
 
 function btn(label, opts = {}) {
@@ -149,7 +164,7 @@ function agentRow(row, ctx, room, roomId, requestId) {
   const statusLabel = String(row.status_label || STATUS_RU[status] || status || '');
   const tag = String(row.verdict_tag || '').trim();
   const name = agentName(row, room);
-  const roleText = String(row.role || '');
+  const roleText = agentRole(row, name.text);
   const head = h('div', { class: 'agr__head' },
     h('span', { class: 'agr__person', title: name.hint || name.text }, icon('person', { size: 12 }),
       h('span', { class: 'agr__person-name' }, name.text)),
@@ -195,8 +210,11 @@ function agentRow(row, ctx, room, roomId, requestId) {
     }
   }
 
-  const art = h('article', { class: 'agr__row', 'data-card': row.card_id || '', dataset: { state: status } },
-    head, body, files.length ? fileList : null);
+  const art = h('article', {
+    class: 'agr__row', 'data-card': row.card_id || '',
+    'data-agent': String(row.agent || row.agent_name || ''),
+    dataset: { state: status },
+  }, head, body, files.length ? fileList : null);
   return art;
 }
 
@@ -304,11 +322,25 @@ export function renderAgentResults(detail, ctx, opts = {}) {
   if (leftCount > 0) chips.push({ text: 'что осталось: ' + leftCount, tone: 'info' });
 
   let filter = 'all';
+  // W31-B2 (дефект 31): фильтр по агенту — «кто из команды что сделал».
+  let agentFilter = '';
+  const agentOptions = [];
+  {
+    const seen = new Map();
+    for (const row of agents) {
+      const key = String(row.agent || row.agent_name || '');
+      if (!key || seen.has(key)) continue;
+      const label = agentName(row, room);
+      seen.set(key, label.text);
+      agentOptions.push({ key, label: label.text });
+    }
+  }
   const list = h('div', { class: 'agr__list' });
   const filterBar = h('div', { class: 'agr__filters', role: 'group', 'aria-label': 'Какие результаты показывать' });
   const filterButtons = new Map();
 
   function matches(row) {
+    if (agentFilter && String(row.agent || row.agent_name || '') !== agentFilter) return false;
     if (filter === 'files') return Array.isArray(row.files) && row.files.length > 0;
     if (filter === 'left') return Boolean(row.remaining);
     return true;
@@ -344,6 +376,23 @@ export function renderAgentResults(detail, ctx, opts = {}) {
     filterBar.appendChild(button);
   }
 
+  // Фильтр по агенту: «кто из команды что сделал». Только если агентов больше
+  // одного — один агент в списке фильтровать незачем.
+  const agentSelect = agentOptions.length > 1
+    ? (() => {
+      const sel = h('select', {
+        class: 'select agr__agent-filter', 'aria-label': 'Показывать результаты одного агента',
+        title: 'Показывать результаты выбранного агента',
+      }, h('option', { value: '' }, 'Все агенты'),
+      ...agentOptions.map((opt) => h('option', { value: opt.key }, opt.label)));
+      sel.addEventListener('change', () => {
+        agentFilter = String(sel.value || '');
+        fill();
+      });
+      return sel;
+    })()
+    : null;
+
   function buildContent() {
     const wrap = h('div', { class: 'agr' });
     const project = projectBlock(detail, ctx, roomId);
@@ -353,6 +402,7 @@ export function renderAgentResults(detail, ctx, opts = {}) {
       return wrap;
     }
     if (agents.length > 2) wrap.appendChild(filterBar);
+    if (agentSelect) wrap.appendChild(h('div', { class: 'agr__agent-row' }, agentSelect));
     fill();
     wrap.appendChild(list);
     return wrap;

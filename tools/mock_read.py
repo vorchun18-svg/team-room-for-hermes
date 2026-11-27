@@ -25,6 +25,7 @@ import mock_w30c         # W30-C: вопросы по-человечески и 
 import mock_w30f        # W30-F: окно выбора файлов, «Запросы без дела»
 import mock_w30d         # W30-D2: доска задач комнаты (канбан)
 import mock_w30e         # W30-E: результаты агентов (блок в задаче)
+import mock_w31b2        # W31-B2: board_column / allowed_moves / agent_name (контракт волны 31)
 from mock_write import collapse_approvals   # W22-ST: строки-группы разрешений (одно правило)
 
 _LABEL_DASH = re.compile("\\s*[\u2014\u2013\u2015\u2012\u2212-]{1,2}\\s*")
@@ -78,9 +79,10 @@ def needs_you_count(detail: dict) -> dict:
         if state != "open" or s.get("dismissed"):
             continue
         steps += 1
-    total = questions + decisions + approvals + steps
+    blocked = 0   # заблокированные карточки (W31-FIX4): в мок-данных таких нет
+    total = questions + decisions + approvals + steps + blocked
     return {"questions": questions, "decisions": decisions, "approvals": approvals,
-            "steps": steps, "total": total}
+            "steps": steps, "blocked": blocked, "total": total}
 
 
 def phase_rules():
@@ -209,6 +211,11 @@ class MockRead:
         # W29B-Q1: рецепты комнаты — список, корзина, история запусков, роли.
         if re.fullmatch(r"/api/rooms/[a-z][a-z0-9_-]{1,31}/recipes", path):
             return 200, mock_recipes.listing()
+        # W31-C: разговор о рецепте и лёгкий разбор — тем же ответом, что у сервера.
+        if re.fullmatch(r"/api/rooms/[a-z][a-z0-9_-]{1,31}/recipes/dialog/[A-Za-z0-9_-]{1,64}", path):
+            return 200, mock_recipes.dialog_state()
+        if re.fullmatch(r"/api/rooms/[a-z][a-z0-9_-]{1,31}/recipes/analysis", path):
+            return 200, mock_recipes.analysis_view()
         # W30-D2: доска «Задачи» комнаты — задачи по стадиям (контракт §3).
         m = re.fullmatch(r"/api/rooms/([a-z][a-z0-9_-]{1,31})/tasks", path)
         if m:
@@ -637,6 +644,8 @@ class MockRead:
         detail.pop("questions", None)
         # W30-E: «Результаты агентов» — как на сервере, из дерева и метаданных.
         mock_w30e.attach(self, detail)
+        # W31-B2: колонка доски, допустимые переносы и имена агентов (контракт волны 31).
+        mock_w31b2.attach(self, detail)
         # W17-B §7 (B7-3): служебный вопрос «сколько раундов критика» задан настройками
         # комнаты — не показываем его и не держим на нём «ждёт тебя» (как сервер).
         questions = detail.get("open_questions")

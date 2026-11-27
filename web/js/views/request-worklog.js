@@ -107,6 +107,9 @@ export function normalizeItem(raw) {
     card_id: raw.card_id ? String(raw.card_id) : '',
     profile,
     label: String(raw.label || ''),
+    // W31-B2 (дефект 31): имя агента участника комнаты от сервера (A2).
+    agent_name: String(raw.agent_name || ''),
+    agent_role: String(raw.agent_role || ''),
     role: String(raw.role || ''),
     tool: String(raw.tool || ''),
     ok: raw.ok === true ? true : (raw.ok === false ? false : null),
@@ -139,7 +142,9 @@ export function mergeItems(current, incoming, limit = MAX_ITEMS) {
 
 /** Подпись участника: готовая с сервера, иначе профиль. */
 export function whoOf(row) {
-  return String((row && (row.label || row.profile)) || 'участник');
+  // W31-B2 (дефект 31): имя агента важнее профиля — иначе у всех строк
+  // «Исполнитель-воркер» и непонятно, КТО делал.
+  return String((row && (row.label || row.agent_name || row.profile)) || 'участник');
 }
 
 /**

@@ -38,11 +38,12 @@ import server.engine_cli as cli                             # noqa: E402
 import server.engine_write as ew                            # noqa: E402
 import server.kanban_atomic as atomic                       # noqa: E402
 import server.model_guard as mg                             # noqa: E402
+import server.recipe_agent as recipe_agent                  # noqa: E402
 import server.svod_live as svod                             # noqa: E402
 import server.watcher as watcher_mod                        # noqa: E402
 import kb_bridge                                            # noqa: E402
 from server.engine_cli import EngineWriteError               # noqa: E402
-from tests.helpers import _outside_hermes_base              # noqa: E402
+from tests.helpers import _is_under, _outside_hermes_base    # noqa: E402
 
 ENV_KEYS = ("HERMES_HOME", "HERMES_KANBAN_HOME", "TEAMROOM_HERMES_HOME", "TEAMROOM_DATA",
             "TEAMROOM_VAULT_DIR", "TEAMROOM_SANDBOX", guard.ALLOW_ENV, "TEAMROOM_TEST_TMP")
@@ -238,6 +239,28 @@ class SandboxRealBoardTest(unittest.TestCase):
             report = critic_mod.run_step(cfg, room, {"root_id": CARD},
                                          {"tree": [], "root_id": CARD})
             self.assertEqual([r.get("reason") for r in report], ["sandbox_real_board"])
+
+    # --- W31-FIX3: инцидент 27.11.2026 (три карточки «Анализ задач» на живой доске) ---
+    def test_temp_data_dir_alone_is_not_a_sandbox_sign(self):
+        """Временные данные без явной пометки — НЕ песочница (решение 22.11 сохранено).
+
+        Тесты, читающие реальную доску (`test_e2e.RealBoardAdoptTest`), работают во
+        временных данных; признак «временный каталог» блокировал им запись зеркал.
+        Инцидент 27.11 (карточки «Анализ задач») закрыт у источника: разбор выключен по
+        умолчанию и сам карточек не создаёт (tests/test_recipe_agent.py).
+        """
+        import shutil
+        temp_base = Path(tempfile.gettempdir())
+        if _is_under(temp_base, self.real):
+            self.skipTest("системный temp внутри «реального» дома Hermes")
+        data = Path(tempfile.mkdtemp(prefix="w31f3-", dir=str(temp_base)))
+        try:
+            with _Env(HERMES_HOME=self.real, HERMES_KANBAN_HOME=self.real,
+                      TEAMROOM_DATA=data, TEAMROOM_VAULT_DIR="off"):
+                cfg = self.cfg()
+                self.assertIsNone(guard.check(cfg, BOARD))
+        finally:
+            shutil.rmtree(data, ignore_errors=True)
 
 
 class AllowedCasesTest(unittest.TestCase):

@@ -158,7 +158,7 @@ function createNavItem(room) {
   }, icon('pin', { size: 12 }));
   const node = h('a', {
     class: 'nav-item',
-    href: buildHash({ roomId: room.id, tab: 'composer' }),
+    href: buildHash({ roomId: room.id, tab: 'tasks' }),
     dataset: { room: room.id },
     // W21-R1: в полосе значков подписи скрыты — имя комнаты живёт в подсказке
     // и в aria-label (иначе значок комнаты не читается ни мышью, ни скринридером).
@@ -194,7 +194,7 @@ function createNavItem(room) {
 
 function updateNavItem(item, room) {
   item.room = room;
-  item.node.href = buildHash({ roomId: room.id, tab: 'composer' });
+  item.node.href = buildHash({ roomId: room.id, tab: 'tasks' });
   const c = room.counts || {};
   // W26-D7: число у комнаты — это ждущие ДЕЛА из общего склада (вопросы,
   // решения, блокировки, разрешения), а не `counts.needs_you` сервера: там

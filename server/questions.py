@@ -8,8 +8,13 @@
 Здесь три вещи, все — БЕЗ вызова моделей (правила и ключевые слова):
 
 * :func:`plain_check` — прошёл ли вопрос проверку «понятно неспециалисту»:
-  нет голых внутренних кодов и сокращений без расшифровки в скобках, есть
-  «зачем» и «откуда взялось», объём в норме;
+  нет голых внутренних кодов и сокращений без расшифровки в скобках, объём в
+  норме (W31-A2: полнота формы «зачем»/«откуда» — отдельный признак, иначе
+  проверка красила в «плохие» читаемые вопросы, у которых просто нет этих строк);
+* :func:`humanize` — переписать машинный вопрос для ПОКАЗА, без вызова моделей:
+  снять код-префикс («D19 — », «Q3. »), убрать внутренние коды из середины
+  текста, развернуть частые сокращения, разложить «А) … Б) …» в варианты с
+  последствиями, дописать знак вопроса и строку «откуда взялось»;
 * :func:`topic_key` и :func:`dedupe` — устойчивая тема вопроса и схлопывание
   смысловых дублей (ключевые слова/идентификаторы/числа). Дубль не попадает в
   основной список: у него ``duplicate_of`` и он считается в ``hidden_duplicates``;
@@ -100,6 +105,34 @@ def clip(text, limit: int) -> str:
 
 # ------------------------------------------------------------ понятный язык ---
 
+#: частые сокращения сферы документов → человеческое пояснение (первое упоминание)
+#: в вопросе. Список нарочно короткий: только то, в чём нельзя сомневаться.
+#: Неизвестное сокращение (бренд, ник, термин комнаты) НЕ делает вопрос плохим —
+#: оно уходит в мягкое замечание «проверьте, не название ли это».
+GLOSSARY = {
+    "ИП": "микро-предприниматель",
+    "ИНН": "номер юрлица",
+    "CPF": "номер физлица",
+    "ОКВЭД": "классификатор видов деятельности",
+    "PJ": "юрлицо",
+    "PF": "физлицо",
+    "ISIC": "классификатор видов деятельности",
+    "VAT": "налог на добавленную стоимость",
+}
+
+#: код в НАЧАЛЕ вопроса: «D19 — », «Q3. », «G1) », «V2: »
+_CODE_HEAD = re.compile(r"^\s*(?P<code>[A-ZА-ЯЁ]\d{1,3})\s*(?:[—–\-:.\)]|\s)\s*")
+#: метка варианта внутри текста: «А) …», «Б) …», «A) …»
+_OPTION_MARK = re.compile(r"(?:(?<=\s)|^)(?P<letter>[А-ЕA-E])\)\s*")
+#: «Последствие: …» — что будет, если выбрать этот вариант
+_CONSEQ = re.compile(r"\bПоследствие\s*:\s*", re.IGNORECASE)
+#: «Что выбираем?» / «Что выбрать?» — служебный хвост машинной формулировки
+_CHOOSE = re.compile(r"\bЧто\s+(?:выбираем|выберем|выбрать|берём|берем|делаем)\s*\?", re.IGNORECASE)
+#: признаки вопроса в утвердительной формулировке (для знака «?»)
+_QUESTION_CUE = re.compile(r"\b(?:или|ли|да\s*/\s*нет|сколько|какой|какая|какие|каком|кто|где|когда|"
+                           r"зачем|почему|хватает|подходит|принимает|запрещает|оформлен)\b", re.IGNORECASE)
+
+
 def _expanded(text: str, match) -> bool:
     """Сокращение расшифровано рядом: ``VAT (микро-предприниматель)`` или ``(VAT)``."""
     before = text[max(0, match.start() - 120): match.start()]
@@ -113,8 +146,32 @@ def _expanded(text: str, match) -> bool:
     return False
 
 
+def _class_expanded(text: str, match) -> bool:
+    """Номер классификатора пояснён сразу за номером: ``56.10 (код вида деятельности)``."""
+    return bool(_PAREN_AFTER.match(text[match.end(): match.end() + 140]))
+
+
+def _dedupe(items) -> list:
+    seen, out = set(), []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def _glossary_mentioned(text: str, abbr: str) -> bool:
+    """Сокращение расшифровано в этом же тексте: ``ИП (микро-предприниматель)``.
+
+    Одного раза достаточно: человек прочитал расшифровку выше, повторять её у
+    каждого упоминания — шум.
+    """
+    return bool(re.search(r"(?<![\w\-])" + re.escape(abbr) + r"\s*\([^()]{2,80}\)", text)
+                or re.search(r"\([^()]{0,40}" + re.escape(abbr) + r"[^()]{0,40}\)", text))
+
+
 def code_issues(text) -> list[str]:
-    """Голые внутренние коды и сокращения без расшифровки — причины, по-русски."""
+    """Жёсткие причины «человек не поймёт»: голые коды, известные сокращения, классификатор."""
     value = norm(text)
     out: list[str] = []
     if not value:
@@ -122,51 +179,301 @@ def code_issues(text) -> list[str]:
     for match in _CODE_RE.finditer(value):
         out.append("Внутренний код «%s» — человек не знает, что это" % match.group(1))
     for match in _CLASS_RE.finditer(value):
+        if _class_expanded(value, match):
+            continue
         out.append("Номер классификатора «%s» без пояснения" % match.group(1))
     for match in _ABBR_RE.finditer(value):
         abbr = match.group(1)
-        if len(abbr) < 2 or abbr in ("OK", "ID", "RU", "EN"):
+        if len(abbr) < 2 or abbr in ("OK", "ID", "RU", "EN") or abbr.lower() in _LATIN_SKIP:
             continue
-        if _expanded(value, match):
+        if abbr in GLOSSARY and not _expanded(value, match) and not _glossary_mentioned(value, abbr):
+            out.append("Сокращение «%s» без расшифровки в скобках" % abbr)
+    return _dedupe(out)
+
+
+def soft_issues(text) -> list[str]:
+    """Мягкие замечания: незнакомое сокращение может быть названием — проверить, не гасить.
+
+    W31-A2: раньше ЛЮБОЕ слово капсом (``PIXIE``, ``AMI``, ``VEG``, ``городе``) считалось
+    «сокращением без расшифровки» и красило вопрос в «непонятные». На живой задаче
+    Лето это давало ложные срабатывания на названиях знака и бренда: человек видел
+    «проверка простоты не пройдена» там, где всё понятно.
+    """
+    value = norm(text)
+    out: list[str] = []
+    for match in _ABBR_RE.finditer(value):
+        abbr = match.group(1)
+        if len(abbr) < 2 or abbr in ("OK", "ID", "RU", "EN") or abbr.lower() in _LATIN_SKIP:
             continue
-        out.append("Сокращение «%s» без расшифровки в скобках" % abbr)
-    seen, unique = set(), []
-    for item in out:
-        if item not in seen:
-            seen.add(item)
-            unique.append(item)
-    return unique
+        if abbr in GLOSSARY or _expanded(value, match):
+            continue
+        out.append("Сокращение «%s» — проверьте: если это не название, расшифруйте" % abbr)
+    return _dedupe(out)
+
+
+def plain_form_ok(why=None, context=None) -> bool:
+    """Заполнена ли форма вопроса: есть «зачем» и «откуда взялось» (контракт §1)."""
+    return bool(norm(why)) and bool(norm(context))
 
 
 def plain_check(text, why=None, context=None, options=None) -> tuple[bool, list[str]]:
-    """(понятно ли человеку, причины). ``plain_ok`` контракта §1.
+    """(понятен ли человеку САМ ТЕКСТ вопроса, причины).
 
-    Норма — вопрос до 300 знаков, «зачем» до 300, «откуда взялось» до 600, не
-    больше четырёх вариантов, без голых кодов. Причины перечисляются словами:
-    это подпись для отладки и для руководителя, а не код ошибки.
+    W31-A2: проверка разделена на два разных вопроса — раньше они были смешаны
+    и мерили не то. Замер 27.11 на живой задаче Лето: 41 из 41 вопроса помечены
+    «плохими», а на экране половина читается нормально — потому что отсутствие
+    строк «зачем»/«откуда» само по себе давало ``plain_ok=false``. Из 46 вопросов
+    копии 24 не имели НИ ОДНОЙ текстовой проблемы.
+
+    * ``plain_ok`` — понятен ли текст: нет голых внутренних кодов, известных
+      сокращений без расшифровки, номера классификатора без пояснения; объём в
+      норме; вариантов не больше четырёх. Это то, что человек видит;
+    * полнота формы (``why``/``context``) — отдельный признак
+      :func:`plain_form_ok` и мягкие замечания в списке. Они не делают понятный
+      вопрос «непонятным», но остаются в ``plain_issues`` для руководителя.
     """
     value = norm(text)
-    issues = code_issues(value)
+    hard: list[str] = []
+    soft: list[str] = []
+    hard.extend(code_issues(value))
     if not value:
-        issues.append("Пустой вопрос")
+        hard.append("Пустой вопрос")
     elif len(value) > MAX_TEXT:
-        issues.append("Слишком длинный вопрос: %d знаков (норма — до %d)" % (len(value), MAX_TEXT))
-    if not norm(why):
-        issues.append("Нет строки «зачем этот вопрос» (why)")
-    elif len(norm(why)) > MAX_WHY:
-        issues.append("«Зачем» длиннее %d знаков" % MAX_WHY)
-    if not norm(context):
-        issues.append("Нет строки «откуда взялось» (context)")
-    elif len(norm(context)) > MAX_CONTEXT:
-        issues.append("«Откуда взялось» длиннее %d знаков" % MAX_CONTEXT)
+        hard.append("Слишком длинный вопрос: %d знаков (норма — до %d)" % (len(value), MAX_TEXT))
     if isinstance(options, list) and len(options) > MAX_OPTIONS:
-        issues.append("Вариантов больше %d — человек не выберет" % MAX_OPTIONS)
-    # «понятно» = нет кодов и есть объяснение (why или context); остальное — мягкие замечания
-    hard = [item for item in issues
-            if item.startswith(("Внутренний код", "Номер классификатора", "Сокращение", "Слишком длинный",
-                                "Пустой вопрос", "Вариантов больше"))]
-    plain_ok = bool(value) and not hard and bool(norm(why) or norm(context))
-    return plain_ok, issues
+        hard.append("Вариантов больше %d — человек не выберет" % MAX_OPTIONS)
+    soft.extend(soft_issues(value))
+    if not norm(why):
+        soft.append("Нет строки «зачем этот вопрос» (why)")
+    elif len(norm(why)) > MAX_WHY:
+        soft.append("«Зачем» длиннее %d знаков" % MAX_WHY)
+    if not norm(context):
+        soft.append("Нет строки «откуда взялось» (context)")
+    elif len(norm(context)) > MAX_CONTEXT:
+        soft.append("«Откуда взялось» длиннее %d знаков" % MAX_CONTEXT)
+    plain_ok = bool(value) and not hard
+    return plain_ok, _dedupe(hard + soft)
+
+
+# ------------------------------------------------- переписывание при показе ---
+
+def _tidy(text: str) -> str:
+    """Убрать следы вырезанных кодов: двойные пробелы, пробелы перед знаками, пустые «/»."""
+    value = re.sub(r"\s{2,}", " ", text)
+    value = re.sub(r"\s+([,;:.!?])", r"\1", value)
+    value = re.sub(r"([(])\s+", r"\1", value)
+    value = re.sub(r"\(\s*\)", "", value)
+    value = re.sub(r"(?:\s*/\s*){2,}", " / ", value)
+    value = re.sub(r"^\s*/\s*", "", value)
+    value = re.sub(r"\s*/\s*$", "", value)
+    return value.strip(" ,;—-")
+
+
+def _is_list_label(text: str, match) -> bool:
+    """Код подписывает пункт перечисления: ``V1 бот / V2 QR``, ``G1,``, ``(G2)``."""
+    before = text[:match.start()]
+    after = text[match.end():]
+    word_then_sep = bool(re.match(r"\s+[^\s/(),;]+[\s]*[/,]", after))
+    if word_then_sep:
+        return True
+    return bool(re.search(r"[(/,]\s*$", before)
+                and re.match(r"\s+[^\s/(),;]+[\s]*[/,)]", after))
+
+
+def _strip_codes(text: str) -> tuple[str, list]:
+    """Убрать внутренние коды из середины текста: ``(D19)`` → «пункт плана».
+
+    Код, который подписывает пункт перечисления (``V1 бот / V2 QR / V3 вручную``)
+    или стоит один в скобках (``(G1)``), вырезается целиком: человеку нужны слова
+    «бот / QR / вручную», а не номера пунктов. Одиночный код заменяется на
+    «пункт плана»: выдумывать, что именно значит ``D19``, нельзя — расшифровки у
+    сервера нет.
+    """
+    matches = list(_CODE_RE.finditer(text))
+    if not matches:
+        return text, []
+    codes = _dedupe([match.group(1) for match in matches])
+    out = text
+    for match in sorted(matches, key=lambda item: item.start(), reverse=True):
+        start, end = match.start(), match.end()
+        bare_paren = start > 0 and end < len(text) and text[start - 1] == "(" and text[end] == ")"
+        if bare_paren:
+            start, end, repl = start - 1, end + 1, ""
+        elif _is_list_label(text, match):
+            repl = ""
+        else:
+            repl = "пункт плана"
+        out = out[:start] + repl + out[end:]
+    return _tidy(out), codes
+
+
+def _expand_glossary(text: str) -> str:
+    """Развернуть ПЕРВОЕ упоминание частого сокращения: «ИП (микро-предприниматель)»."""
+    out = text
+    for abbr in sorted(GLOSSARY, key=len, reverse=True):
+        if abbr not in out:
+            continue
+        match = re.search(r"(?<![\w\-])(" + re.escape(abbr) + r")(?![\w])", out)
+        if match is None or _expanded(out, match):
+            continue
+        out = out[:match.end()] + " (%s)" % GLOSSARY[abbr] + out[match.end():]
+    return out
+
+
+def _label_classifiers(text: str) -> str:
+    """Пояснить номер классификатора: ``56.10`` → ``56.10 (код вида деятельности)``.
+
+    Расшифровки конкретного кода у сервера нет, но ЧТО это за номер — известно
+    из формы записи, и это уже снимает вопрос «а что такое 56.10».
+    """
+    out = text
+    for match in reversed(list(_CLASS_RE.finditer(text))):
+        if _class_expanded(text, match):
+            continue
+        out = out[:match.end()] + " (код вида деятельности)" + out[match.end():]
+    return out
+
+
+def _ensure_question(text: str) -> str:
+    """Дописать «?», если машинная формулировка потеряла знак вопроса.
+
+    Только для короткой формулировки без тире-вставки: у длинного текста с
+    «— пояснением» знак вопроса в конце приклеивался к пояснению и читался как
+    ошибка («…— без этого нельзя планировать публикации?»).
+    """
+    value = text.strip()
+    if not value or value.endswith(("?", "!", "…", ".", ":")):
+        return value
+    if len(value) > 200 or "—" in value:
+        return value
+    first = re.match(r"^[А-Яа-яЁёA-Za-z]+", value)
+    if first and (first.group(0).lower().endswith(("ть", "ться"))):
+        return value                      # «Позвонить…», «Проверить…» — поручение, не вопрос
+    return value + "?" if _QUESTION_CUE.search(value) else value
+
+
+def _option_index(letter: str, count: int) -> int:
+    """«А»/«Б»/«В» (и латиница) → номер варианта, иначе -1."""
+    letter = str(letter or "").upper()
+    for alphabet in ("АБВГДЕ", "ABCDEF"):
+        if letter in alphabet:
+            index = alphabet.index(letter)
+            return index if index < count else -1
+    return -1
+
+
+def _parse_options(text: str):
+    """Разложить машинное «А) … Б) … Что выбираем? Последствие: …» в вопрос + варианты.
+
+    Правило простое и обратимое: подписи вариантов — то, что стоит между «А)»,
+    «Б)», «В)»; «Последствие:» внутри варианта становится его последствием, а
+    хвостовое «Последствие: при Б …» приписывается тому варианту, который назван.
+    Если разметки нет или она неполная — возвращаем ``None``: текст не трогаем.
+    """
+    marks = list(_OPTION_MARK.finditer(text))
+    if len(marks) < 2:
+        return None
+    stem = text[:marks[0].start()].strip(" ,;:—-")
+    if len(stem) < 6:
+        return None
+    bodies = []
+    for index, mark in enumerate(marks):
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
+        bodies.append(text[mark.end():end].strip(" ,;"))
+    note = ""
+    last = bodies[-1]
+    choose = _CHOOSE.search(last)
+    if choose:
+        tail = last[choose.end():].strip(" ,;")
+        bodies[-1] = last[:choose.start()].strip(" ,;")
+        if tail:
+            consequence = _CONSEQ.search(tail)
+            note = _CONSEQ.sub("", tail, count=1).strip(" .,;") if consequence else tail.strip(" .,;")
+    options = []
+    for index, body in enumerate(bodies):
+        consequence = ""
+        found = _CONSEQ.search(body)
+        if found:
+            consequence = body[found.end():].strip(" .,;")
+            body = body[:found.start()].strip(" ,;")
+        body = body.strip(" .,;")
+        options.append({"id": "o%d" % (index + 1), "label": clip(body, 120),
+                        "consequence": clip(consequence, MAX_CONSEQUENCE)})
+    if note:
+        letters = re.findall(r"\bпри\s+([А-ЕA-E])\b", note)
+        index = _option_index(letters[0], len(options)) if len(letters) == 1 else -1
+        if index >= 0:
+            options[index]["consequence"] = clip(
+                (options[index]["consequence"] + " " + note).strip(), MAX_CONSEQUENCE)
+            note = ""
+    if not stem.endswith("?"):
+        stem = stem.rstrip(" .,;:—-") + " — что выбираем?"
+    return {"text": stem, "options": options[:MAX_OPTIONS], "note": note}
+
+
+def humanize(text, options=None) -> dict:
+    """Переписать машинный вопрос для показа человеку — без вызова моделей.
+
+    Что делают правила (дефект 24):
+
+    * «D19 — отправляете 5–10 сообщений вручную или готовым текстом» → «Отправляете
+      5–10 сообщений вручную или готовым текстом?»: код-префикс снимается и
+      остаётся в поле ``code`` (для отладки), в видимом тексте кодов нет;
+    * «Q1. Доставка: А) …; Б) … Что выбираем?» → вопрос + варианты (``options``);
+    * «Канал связи (V1 бот / V2 QR / V3 вручную)» → «Канал связи (бот / QR / вручную)»;
+    * «Оформлен ли ИП/ИНН…» → «Оформлен ли ИП (микро-предприниматель) / ИНН
+      (номер юрлица)…» — только первое упоминание, только известные сокращения;
+    * потерянный «?» возвращается, если формулировка вопросительная.
+
+    Возвращает ``{raw, text, code, codes, options, note, changed}``. Функция чистая
+    и идемпотентная: на уже переписанном тексте ничего не меняет.
+    """
+    raw = norm(text)
+    out = {"raw": raw, "text": raw, "code": "", "codes": [], "options": [], "note": "",
+           "changed": False}
+    if not raw:
+        return out
+    value = raw
+    code = ""
+    head = _CODE_HEAD.match(value)
+    if head and not re.match(r"^\s*[A-ZА-ЯЁ]\d{1,3}[А-Яа-яA-Za-z]", value):
+        code = head.group("code")
+        value = value[head.end():].strip()
+    value, mid_codes = _strip_codes(value)
+    value = _expand_glossary(value)
+    value = _label_classifiers(value)
+    parsed = _parse_options(value) if not (isinstance(options, list) and options) else None
+    note, new_options = "", []
+    if parsed:
+        value = parsed["text"]
+        new_options = parsed["options"]
+        note = parsed["note"]
+    value = _ensure_question(value)
+    if value and value[0].islower():
+        value = value[0].upper() + value[1:]
+    out.update(text=value or raw, code=code, codes=mid_codes or ([code] if code else []),
+               options=new_options, note=note, changed=bool(value and value != raw))
+    return out
+
+
+def source_line(task_title="", card_title="", kind="card") -> str:
+    """Строка «откуда вопрос» для человека: задача + карточка (дефект 24).
+
+    Правило контракта §1 — у вопроса есть «откуда взялось». Старые вопросы этой
+    строки не имеют, и придумывать мотив нельзя; зато известно происхождение:
+    карточка исполнителя в задаче (или сообщение руководителя в ленте).
+    """
+    task = clip(task_title, 100)
+    card = clip(card_title, 70)
+    where = "Из сообщения руководителя" if str(kind) == "comment" else "Из карточки"
+    if card and task:
+        return "%s «%s» в задаче «%s»." % (where, card, task)
+    if card:
+        return "%s «%s»." % (where, card)
+    if task:
+        return ("%s исполнителя в задаче «%s»." % (where, task) if str(kind) != "comment"
+                else "%s в задаче «%s»." % (where, task))
+    return ""
 
 
 # ------------------------------------------------------------------- тема ---
@@ -319,6 +626,13 @@ def _is_waiting(question: dict) -> bool:
                          "dismissed", "postponed")
 
 
+def raw_text(question) -> str:
+    """Текст вопроса, который написал руководитель (до переписывания при показе)."""
+    if not isinstance(question, dict):
+        return ""
+    return str(question.get("text_raw") or question.get("text") or "")
+
+
 def dedupe(questions, closed_topics=None) -> tuple[list, list]:
     """Схлопнуть смысловые дубли: ``(видимые, скрытые)``.
 
@@ -339,7 +653,7 @@ def dedupe(questions, closed_topics=None) -> tuple[list, list]:
     for question in questions or []:
         if not isinstance(question, dict):
             continue
-        text = str(question.get("text") or "")
+        text = raw_text(question)
         key = topic_key(text)
         own_id = str(question.get("id") or "")
         waiting = _is_waiting(question)
@@ -365,7 +679,7 @@ def dedupe(questions, closed_topics=None) -> tuple[list, list]:
             for kept in visible:
                 if waiting and not _is_waiting(kept):
                     continue          # отвеченный близнец не прячет живой вопрос
-                if is_same_topic(text, str(kept.get("text") or "")):
+                if is_same_topic(text, raw_text(kept)):
                     found = (str(kept.get("id") or ""), "duplicate",
                              str(kept.get("topic_key") or key))
                     break
@@ -456,7 +770,12 @@ def summary(questions, hidden=None, closed_topics=None) -> dict:
             "explained": states.get("explained", 0),
             "postponed": states.get("postponed", 0),
             "dismissed": states.get("dismissed", 0),
-            "plain_bad": len([item for item in visible if item.get("plain_ok") is False])}
+            # W31-A2: `plain_bad` — только реальные проблемы ТЕКСТА (коды, известные
+            # сокращения, объём). Отсутствие «зачем»/«откуда» считается отдельно:
+            # раньше именно оно красило в «плохие» читаемые вопросы (41 из 41 в Лето).
+            "plain_bad": len([item for item in visible if item.get("plain_ok") is False]),
+            "plain_incomplete": len([item for item in visible if item.get("plain_form_ok") is False]),
+            "rewritten": len([item for item in visible if item.get("text_rewritten")])}
 
 
 # ------------------------------------------------------------ закрытые темы ---
@@ -560,31 +879,109 @@ def _norm_options(raw) -> list[dict]:
     return out[:MAX_OPTIONS]
 
 
-def decorate(question, closed_topics=None) -> dict:
-    """Проставить вопросу поля контракта §1 (``why/context/options/blocking/…``)."""
+def decorate(question, closed_topics=None, source=None) -> dict:
+    """Проставить вопросу поля контракта §1 (``why/context/options/blocking/…``).
+
+    W31-A2: перед проверкой текст переписывается для человека (:func:`humanize`),
+    исходник остаётся в ``text_raw`` — по нему считаются тема и дубли, и он же
+    уходит в ``plain_source_*``, чтобы руководитель видел свою формулировку.
+    ``source`` — ``{"task": …, "card": …, "kind": "card"|"comment"}``: из него
+    собирается строка «откуда взялось», если её не заполнил руководитель.
+    """
     question = question if isinstance(question, dict) else {}
-    text = str(question.get("text") or "")
+    stored_raw = norm(question.get("text_raw") or "")
+    current = str(question.get("text") or "")
+    human = {"code": str(question.get("code") or ""), "codes": [], "options": [], "note": ""}
+    if stored_raw:
+        raw_text, text = stored_raw, current          # уже переписан раньше
+    else:
+        raw_text = norm(current)
+        human = humanize(raw_text, question.get("options"))
+        text = human["text"]
+        if text and text != raw_text:
+            question["text_raw"] = raw_text
+            question["text_rewritten"] = True
+            question["text"] = text
+        if human.get("code") and not question.get("code"):
+            question["code"] = human["code"]
     why = clip(question.get("why"), MAX_WHY)
     context = clip(question.get("context"), MAX_CONTEXT)
     options = _norm_options(question.get("options"))
+    if not options and human.get("options"):
+        options = _norm_options(human["options"])
+    if not context and isinstance(source, dict):
+        auto = source_line(source.get("task") or "", source.get("card") or "",
+                           source.get("kind") or "card")
+        if auto:
+            context = auto
+            question["context_source"] = "provenance"
     plain_ok, issues = plain_check(text, why, context, options)
     question["why"] = why or None
     question["context"] = context or None
     question["options"] = options
     question["blocking"] = bool(question.get("blocking"))
-    question.setdefault("topic_key", topic_key(text) or ("q_" + str(question.get("id") or "")))
+    question.setdefault("topic_key", topic_key(raw_text or text) or ("q_" + str(question.get("id") or "")))
     question["plain_ok"] = plain_ok
     question["plain_issues"] = issues
+    question["plain_form_ok"] = plain_form_ok(why, context)
+    if raw_text and raw_text != text:
+        src_ok, src_issues = plain_check(raw_text, why, context, options)
+        question["plain_source_ok"] = src_ok
+        question["plain_source_issues"] = src_issues
+    if human.get("note"):
+        question["consequence_note"] = clip(human["note"], MAX_CONSEQUENCE)
     question.setdefault("explanation", None)
     question.pop("duplicate_of", None)
     return question
 
 
+def _tree_titles(detail: dict) -> list:
+    """Заголовки карточек дерева задачи — для строки «откуда вопрос» (W31-A2).
+
+    Корневую карточку (её заголовок — сама задача) пропускаем: приписать вопрос
+    задаче, из которой он и так пришёл, значит не сказать ничего.
+    """
+    out: list = []
+    task_title = norm((detail or {}).get("title") or (detail or {}).get("title_short") or "")
+
+    def walk(nodes):
+        for node in nodes or []:
+            if not isinstance(node, dict):
+                continue
+            title = norm(node.get("title"))
+            if (title and title != task_title and len(title) <= 90
+                    and str(node.get("role") or "") not in ("root", "lead", "dir")):
+                out.append((title, stems(title)))
+            walk(node.get("children"))
+
+    walk((detail or {}).get("tree"))
+    return out
+
+
+def card_title_of(text, titles) -> str:
+    """Карточка, из которой пришёл вопрос: заголовок с максимумом общих слов.
+
+    Связи «вопрос → карточка» в ответе движка нет (у вопросов только ``source:
+    card``), поэтому сопоставляем по значимым словам и требуем минимум два общих:
+    одно общее слово — это совпадение темы комнаты, а не происхождение, и
+    приписывать вопрос чужой карточке нельзя.
+    """
+    words = stems(text)
+    best, score = "", 0
+    for title, title_stems in titles or []:
+        shared = len(words & title_stems)
+        if shared > score:
+            best, score = title, shared
+    return best if score >= 2 else ""
+
+
 def shape(detail: dict, room_id: str = "", cfg=None, stored=None) -> dict:
     """Довести вопросы запроса до контракта W30 §1 (одно место для всех чтений).
 
-    Делает: поля формы у каждого вопроса, скрытие смысловых дублей и вопросов
-    закрытых тем, потолок блокирующих (3), ``questions_summary`` и ``stage_hint``.
+    Делает: переписывание машинных формулировок для показа (:func:`humanize`),
+    строку «откуда взялось» из происхождения вопроса, поля формы у каждого
+    вопроса, скрытие смысловых дублей и вопросов закрытых тем, потолок
+    блокирующих (3), ``questions_summary`` и ``stage_hint``.
     Ничего не пишет (кроме чтения реестра тем) и не вызывает моделей; повторный
     вызов на уже обработанной детали не ломает её, а пересчитывает то же самое.
     """
@@ -596,11 +993,17 @@ def shape(detail: dict, room_id: str = "", cfg=None, stored=None) -> dict:
         detail["stage_hint"] = ""
         return detail
     topics = read_topics(cfg, room_id) if (cfg is not None and room_id) else {}
+    task_title = detail.get("title_short") or detail.get("title") or ""
+    titles = _tree_titles(detail)
     decorated = []
     for question in questions:
         item = dict(question)
         item.setdefault("request_id", detail.get("id"))
-        decorated.append(decorate(item, topics))
+        kind = str(item.get("source") or "card")
+        source = {"task": task_title,
+                  "card": card_title_of(raw_text(item), titles) if kind == "card" else "",
+                  "kind": kind}
+        decorated.append(decorate(item, topics, source))
     visible, hidden = dedupe(decorated, topics)
     cap_blocking(visible)
     detail["open_questions"] = visible
@@ -629,9 +1032,10 @@ def option_answer(question: dict, option_id) -> str:
 
 
 __all__ = ["MAX_BLOCKING", "MAX_TEXT", "MAX_WHY", "MAX_CONTEXT", "MAX_CONSEQUENCE", "MAX_OPTIONS",
-           "SIM_MIN", "TOPICS_FILE", "CLOSED_LINE_MAX",
-           "norm", "clip", "code_issues", "plain_check", "stems", "stems_in_order", "ids",
-           "signature",
+           "SIM_MIN", "TOPICS_FILE", "CLOSED_LINE_MAX", "GLOSSARY",
+           "norm", "clip", "code_issues", "soft_issues", "plain_check", "plain_form_ok",
+           "stems", "stems_in_order", "ids",
+           "signature", "humanize", "source_line", "raw_text", "card_title_of",
            "topic_key", "similarity", "is_same_topic", "dedupe", "cap_blocking",
            "blocking_count", "open_count", "summary", "decorate", "shape", "option_answer",
            "topics_path", "read_topics", "close_topic", "reopen_topic", "closed_line"]

@@ -273,8 +273,17 @@ def _apply(kind: str, item: dict, close: bool, archived: bool = False,
 
 
 def counts(detail: dict) -> dict:
-    """Счётчик «нужно от вас» по разделам запроса (``needs_you_count`` контракта §1)."""
-    out = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0, "total": 0}
+    """Счётчик «нужно от вас» по разделам запроса (``needs_you_count`` контракта §1).
+
+    W31-FIX4: кроме разделов считает ``blocked`` — заблокированные карточки, которые
+    правда ждут человека (:func:`blocked_waiting`, тот же список, что в правой колонке
+    задачи и на доске комнаты). Без них число расходилось с флагом «нужен ваш ответ»:
+    у задачи, где все вопросы уже отвечены, а корневая карточка стоит заблокированной,
+    статус говорил «ждёт вас», «Сегодня» и доска показывали один пункт, а счётчик
+    запроса — ноль. Один набор пунктов на статус, счётчик, доску и «Сегодня».
+    """
+    out = {"questions": 0, "decisions": 0, "approvals": 0, "steps": 0, "blocked": 0,
+           "total": 0}
     seen: set = set()
     for key, kind, id_field in SECTIONS:
         for item in (detail or {}).get(key) or []:
@@ -291,7 +300,9 @@ def counts(detail: dict) -> dict:
     for item in (detail or {}).get("approvals") or []:
         if isinstance(item, dict) and item.get("needs_you"):
             out["approvals"] += 1
-    out["total"] = out["questions"] + out["decisions"] + out["approvals"] + out["steps"]
+    out["blocked"] = len(blocked_waiting(detail))
+    out["total"] = (out["questions"] + out["decisions"] + out["approvals"]
+                    + out["steps"] + out["blocked"])
     return out
 
 
@@ -400,9 +411,10 @@ def decorate(detail: dict, request_status=None, auto_close=None) -> dict:
                 auto_closed += 1
     counter = counts(detail)
     detail["needs_you_count"] = counter
-    # W29-P2 п.5: число и список заблокированных карточек — один источник. В счётчик
-    # `needs_you_count` их не кладём (его ключи закреплены контрактом §1), но отдельным
-    # полем отдаём и число, и список с кнопками: интерфейс не считает их сам, а
+    # W29-P2 п.5 / W31-FIX4: число и список заблокированных карточек — один источник.
+    # В счётчике они идут своим ключом `blocked` (и входят в `total`), потому что
+    # статус «нужен ваш ответ» и «Сегодня» их считают; отдельными полями отдаём
+    # число и список с кнопками — интерфейс не считает их сам, а
     # `tools/check_dead_ends.py` сверяет число со списком.
     waiting_cards = blocked_waiting(detail)
     detail["needs_you_blocked"] = len(waiting_cards)

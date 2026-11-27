@@ -173,10 +173,11 @@ export function needsYouCount(detail) {
   const decisions = num(raw.decisions);
   const approvals = num(raw.approvals);
   const steps = num(raw.steps);
+  const blocked = num(raw.blocked);
   const total = Number.isFinite(Number(raw.total)) && Number(raw.total) >= 0
     ? Math.trunc(Number(raw.total))
-    : questions + decisions + approvals + steps;
-  return { questions, decisions, approvals, steps, total, fromServer: true };
+    : questions + decisions + approvals + steps + blocked;
+  return { questions, decisions, approvals, steps, blocked, total, fromServer: true };
 }
 
 /** Запрос уже закончен (массовое закрытие неактуальных имеет смысл). */

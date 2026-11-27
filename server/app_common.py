@@ -76,7 +76,11 @@ ACTION_ALLOWED = ("dispatch", "comment", "answer", "unblock", "reassign", "rewor
                   "answer_option", "answer_custom", "explain_more", "postpone",
                   # W30-B §2: «Разбить на задачи» — карточка руководителю с просьбой
                   # предложить ветки подзадач (ничего не создаётся без его ответа).
-                  "split_to_tasks")
+                  "split_to_tasks",
+                  # W31-A1: перемещение карточки по доске — «принять» в «Готово»,
+                  # «вернуть на доработку» в «В работе», «отправить на проверку».
+                  # Тело: {action:"move", to:"working"|"review"|"done", comment?, confirm?}
+                  "move")
 ACTION_REQUIRED = {"answer": ("question_id",), "reassign": ("task_id", "profile"),
                    "answer_remind": ("question_id",), "step_drop": ("step_id",),
                    "step_agree": ("step_id",), "step_comment": ("step_id",),

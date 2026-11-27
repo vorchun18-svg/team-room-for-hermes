@@ -264,11 +264,13 @@ export function createRequestTabs(opts) {
         'aria-label': (tab.pinned ? 'Открепить' : 'Закрепить') + ' вкладку «' + title + '»',
         onclick: (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); togglePin(tab.id); },
       }, icon('pin', { size: 12 }));
-      const close = h('button', {
+      const closeBtn = h('button', {
         type: 'button',
         class: 'req-tabs__close',
         title: 'Закрыть вкладку (Ctrl+W)',
         'aria-label': 'Закрыть вкладку «' + title + '»',
+        // W31-D: локальная переменная раньше называлась `close` и затеняла
+        // функцию close() — крестик падал с «close is not a function».
         onclick: (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); close(tab.id); },
       }, icon('close', { size: 12 }));
       const link = h('a', {
@@ -289,7 +291,7 @@ export function createRequestTabs(opts) {
       nav.appendChild(h('div', {
         class: 'req-tabs__item' + (on ? ' is-active' : '') + (tab.pinned ? ' is-pinned' : ''),
         role: 'listitem',
-      }, link, pin, close));
+      }, link, pin, closeBtn));
     }
     // Кнопка «закрыть все» — только когда вкладок и правда много: одна вкладка
     // не повод показывать ещё одну кнопку.

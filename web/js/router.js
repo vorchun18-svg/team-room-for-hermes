@@ -23,9 +23,10 @@ import { TAB_TITLES } from './text-ru.js';
 // Дальше переименована в «От вас нужно»: там вопросы и решения, которые ждут человека.
 export const TABS = [
   // W30-D2: «Задачи» — первая вкладка комнаты: комната = проект, единица
-  // работы — задача. Вкладка «Запрос» (композер) остаётся на месте.
+  // работы — задача. W31-B1: вкладки «Новая задача» больше нет — блок «Задача
+  // команде» стоит внутри «Задач» над доской, а старый адрес
+  // `#/room/<id>/composer` ведёт сюда с фокусом на поле.
   { id: 'tasks', title: TAB_TITLES.tasks, icon: 'project' },
-  { id: 'composer', title: TAB_TITLES.composer, icon: 'comment-discussion' },
   { id: 'team', title: TAB_TITLES.team, icon: 'organization' },
   { id: 'roadmap', title: TAB_TITLES.roadmap, icon: 'map' },
   { id: 'backlog', title: TAB_TITLES.backlog, icon: 'arrow-circle-right' },
@@ -97,7 +98,17 @@ export function parseHash(hash) {
       hash: '#' + pathPart,
     };
     if (tab === 'request' && segments[3]) { route.name = 'request'; route.view = 'request'; }
-    else route.view = TAB_IDS.includes(tab) ? tab : 'composer';
+    else route.view = TAB_IDS.includes(tab) ? tab : 'tasks-board';
+    // W31-B1 (дефект 21): вкладка «Новая задача» убрана. Старый адрес
+    // `#/room/<id>/composer` (ссылки, закладки, хоткей) переадресуем на доску
+    // с фокусом на поле «Задача команде» — без «страницы не найдено».
+    if (tab === 'composer') {
+      route.view = 'tasks-board';
+      route.tab = 'tasks';
+      route.params.tab = 'tasks';
+      route.query = Object.assign({}, query, { focus: 'input' });
+      route.redirect = '#/room/' + encodeURIComponent(segments[1]) + '/tasks?focus=input';
+    }
     // W26-D6: вкладка комнаты называется «delos», файл вида — views/delo.js
     // (один вид на список и карточку: различие — параметры маршрута).
     if (route.view === 'delos') route.view = 'delo';
@@ -296,6 +307,12 @@ export function createRouter(deps) {
   async function render() {
     const my = ++token;
     route = parseHash();
+    // W31-B1: старый адрес вкладки «Новая задача» — на доску, без лишней записи
+    // истории (replaceState): «Назад» вернёт туда, откуда пришли.
+    if (route && route.redirect) {
+      try { history.replaceState(null, '', route.redirect); } catch { /* старый браузер */ }
+      route = parseHash();
+    }
     if (current && typeof current.unmount === 'function') {
       try { current.unmount(); } catch (err) { console.warn('[router] unmount failed', err); }
     }

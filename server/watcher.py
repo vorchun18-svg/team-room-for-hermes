@@ -74,18 +74,21 @@ def _module_missing(exc: BaseException) -> bool:
     return isinstance(exc, (KeyError, AttributeError)) or getattr(exc, "status", None) == 501
 
 
-def board_block_reason(cfg) -> str:
+def board_block_reason(cfg, board: str | None = None) -> str:
     """W29-I1: почему проходы сторожа не должны писать в доску (пусто — можно).
 
     Песочница с реальной доской Hermes — это не «прочитать и поправить», это чужие
     карточки: 21.11.2026 такой проход снял пины и паузы у восьми боевых карточек.
+
+    W31-FIX3: принимает доску комнаты — у комнат бывают разные доски, и решает не
+    «доска сервера», а та, в которую пойдёт запись.
     """
     try:
         try:
             from . import board_guard as guard
         except ImportError:                               # pragma: no cover
             import board_guard as guard                   # type: ignore
-        found = guard.check(cfg, getattr(cfg, "board", None))
+        found = guard.check(cfg, board or getattr(cfg, "board", None))
     except Exception:                                     # noqa: BLE001 - защита вторична
         return ""
     return str((found or {}).get("message") or "")
@@ -696,13 +699,33 @@ class Watcher:
                     self._fail("карта проекта %s" % room_id, exc)
             # 4.5) W29B-Q1: рецепты — шаги, которые ждали предшественника, создаются,
             #      когда тот готов. Без запусков в работе ничего не делает.
-            try:
-                stats["recipe_cards"] = int(stats.get("recipe_cards") or 0) + int(
-                    (self.app.fn("recipes", "tick")(self.cfg, room) or {}).get("created") or 0)
-            except Exception as exc:  # noqa: BLE001 - рецепты не должны ронять тик
-                if not _module_missing(exc):
-                    stats["errors"] += 1
-                    self._fail("рецепты %s" % room_id, exc)
+            # 4.6) W31-C/W31-FIX3: лёгкий разбор завершённых задач — сторож только
+            #      ПОМЕЧАЕТ «пора» (due); карточку создаёт человек кнопкой «Запустить».
+            #      W29-I1: если доска не своя (песочница/тест), оба блока не идут вовсе —
+            #      раньше проверки здесь не было, и 27.11 три карточки «Анализ задач»
+            #      ушли на живую доску `team`.
+            blocked_board = self._board_blocked(str(room.get("board") or ""))
+            if blocked_board:
+                stats["board_skipped"] = int(stats.get("board_skipped") or 0) + 1
+                stats["board_blocked"] = blocked_board[:200]
+            else:
+                try:
+                    stats["recipe_cards"] = int(stats.get("recipe_cards") or 0) + int(
+                        (self.app.fn("recipes", "tick")(self.cfg, room) or {}).get("created") or 0)
+                except Exception as exc:  # noqa: BLE001 - рецепты не должны ронять тик
+                    if not _module_missing(exc):
+                        stats["errors"] += 1
+                        self._fail("рецепты %s" % room_id, exc)
+                try:
+                    res = self.app.fn("recipe_agent", "tick")(self.cfg, room) or {}
+                    if res.get("due"):
+                        # Только пометка для вкладки «Рецепты»: карточку не ставим и
+                        # токены не тратим — это делает человек кнопкой «Запустить».
+                        stats["recipe_due"] = int(stats.get("recipe_due") or 0) + 1
+                except Exception as exc:  # noqa: BLE001 - анализ вторичен для тика
+                    if not _module_missing(exc):
+                        stats["errors"] += 1
+                        self._fail("анализ рецептов %s" % room_id, exc)
             self.cache[room_id] = {"counters": counters, "phase": phase, "updated_at": now}
         # W29B-Q6: ОДИН вызов уведомлений за проход (правила, тихие часы, дедупликация,
         # канал — server/notify.py). Ошибка канала не валит тик и не мешает счётчикам.
@@ -735,6 +758,23 @@ class Watcher:
                                  "skipped": dict(res.get("skipped") or {})}
 
     # --- шаги ---
+    def _board_blocked(self, board: str = "") -> str:
+        """W31-FIX3: причина, по которой блоку нельзя писать в доску комнаты (кэш).
+
+        Проверка не бесплатна (ищет дома Hermes), комнат и проходов много — результат
+        запоминаем на доску: за один проход он не меняется.
+        """
+        key = str(board or "")
+        cache = getattr(self, "_block_cache", None)
+        if cache is None:
+            cache = self._block_cache = {}
+        if key not in cache:
+            try:
+                cache[key] = board_block_reason(self.cfg, key or None)
+            except Exception:                 # noqa: BLE001 - защита вторична
+                cache[key] = ""
+        return cache[key]
+
     def _deadline(self, seconds: float):
         """Бюджет времени на одно чтение движка (D6): есть у App, у заглушек — нет."""
         factory = getattr(self.app, "_engine_deadline", None)

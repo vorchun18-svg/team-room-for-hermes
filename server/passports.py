@@ -389,6 +389,18 @@ def decorate_detail(cfg, room, detail: dict) -> dict:
             archived=bool(detail.get("archived")))
     except Exception:  # noqa: BLE001 - стадия вторична
         detail["board_stage"] = None
+    # W31-A1: колонка доски и допустимые перемещения — клиент строит кнопки
+    # «Принять / Вернуть на доработку / Вернуть в работу» по ним, без догадок.
+    try:
+        detail["board_column"] = board_mod.column_for(
+            cfg, room, root_id, status=detail.get("status"),
+            accepted=bool(detail["accepted"]), archived=bool(detail.get("archived")))
+    except Exception:  # noqa: BLE001 - колонка вторична
+        detail["board_column"] = detail.get("board_stage")
+    try:
+        detail["allowed_moves"] = board_mod.allowed_moves(detail.get("board_column"))
+    except Exception:  # noqa: BLE001
+        detail["allowed_moves"] = []
     return detail
 
 

@@ -18,15 +18,18 @@
 """
 from __future__ import annotations
 
+import copy
 import re as _re
 import time
 
 try:  # пакетный и «плоский» импорт
     from . import passports as passports_mod
+    from . import read_cache as cache_mod
     from . import tasks_board as board_mod
     from .app_common import err
 except ImportError:  # pragma: no cover
     import passports as passports_mod        # type: ignore
+    import read_cache as cache_mod           # type: ignore
     import tasks_board as board_mod          # type: ignore
     from app_common import err               # type: ignore
 
@@ -68,7 +71,15 @@ class TasksRoutes:
             return {}
 
     def h_room_tasks(self, query, body, room_id):
-        """``GET /api/rooms/{room}/tasks`` — доска задач комнаты (контракт §3)."""
+        """``GET /api/rooms/{room}/tasks`` — доска задач комнаты (контракт §3).
+
+        W31-A1 (дефекты 17/20): ответ кэшируется по отпечатку доски
+        (``server/read_cache.py``). Пока на доске не появилось ни одного события
+        (кроме heartbeat), ни комментария, ни нового прогона и файлы состояния
+        комнаты не менялись — отдаём собранный ранее ответ. Любое изменение
+        статуса, ответ на вопрос или новая задача меняют отпечаток, поэтому
+        устаревшее не отдаётся.
+        """
         room_id = str(room_id or "")
         if not room_id:
             raise err(400, "Не передана комната", field="room")
@@ -76,6 +87,16 @@ class TasksRoutes:
         board = room.get("board") or self.board
         records = [rec for rec in self._records(room_id)
                    if isinstance(rec, dict) and rec.get("root_id")]
+        try:
+            mark = cache_mod.fingerprint(self.cfg, room, records, board)
+        except Exception as exc:  # noqa: BLE001 - кэш вторичен, доска важнее
+            self.log.warning("доска задач %s: отпечаток недоступен: %s" % (room_id, exc))
+            mark = ""
+        if mark:
+            hit = cache_mod.lookup("room_tasks", room_id, mark)
+            if hit is not None:
+                # Копия: обработчики/тесты не должны менять закэшированный ответ.
+                return 200, copy.deepcopy(hit), {"Cache-Control": "no-store"}
         root_ids = [str(rec["root_id"]) for rec in records]
         states: dict = {}
         if root_ids:
@@ -94,8 +115,14 @@ class TasksRoutes:
         rows = board_mod.build_rows(
             records, states=states, accepted=accepted, waiting=waiting,
             links_map=board_mod.links(self.cfg, room_id),
+            work_marks_map=board_mod.work_marks(self.cfg, room_id),
             summary_of=lambda rec: self._tasks_summary(room, rec))
-        return 200, board_mod.payload(room_id, rows), {"Cache-Control": "no-store"}
+        payload = board_mod.payload(room_id, rows)
+        if mark:
+            # Отпечаток считается ДО сборки: событие, пришедшее во время сборки,
+            # попадёт в следующую проверку и запись не «залипнет» устаревшей.
+            cache_mod.store("room_tasks", room_id, mark, payload)
+        return 200, payload, {"Cache-Control": "no-store"}
 
 
 def install_tasks_routes(app_cls, routes: list) -> None:

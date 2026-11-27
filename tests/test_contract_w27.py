@@ -147,7 +147,7 @@ class StateMirrorTest(unittest.TestCase):
         counter = stale.counts({"open_questions": [], "decisions": [], "approvals": [],
                                 "next_steps": []})
         self.assertEqual(set(counter),
-                         {"questions", "decisions", "approvals", "steps", "total"})
+                         {"questions", "decisions", "approvals", "steps", "blocked", "total"})
         # …обязаны читаться интерфейсом: клиент показывает число сервера, а не своё.
         body = re.search(r"export function needsYouCount\(detail\) \{(.*?)\n\}", self.stale_model, re.S)
         self.assertIsNotNone(body, "в stale-model.js пропал needsYouCount")
@@ -203,7 +203,7 @@ class CounterParityTest(unittest.TestCase):
         from mock_read import needs_you_count as mock_count       # noqa: WPS433 — мок плоский
         expected = stale.counts(self.DETAIL)
         self.assertEqual(expected, {"questions": 1, "decisions": 1, "approvals": 1,
-                                    "steps": 1, "total": 4})
+                                    "steps": 1, "blocked": 0, "total": 4})
         got = mock_count(self.DETAIL)
         self.assertEqual(set(got), set(expected), "форма счётчика мока ≠ серверной")
         self.assertEqual(got, expected, "мок считает «ждёт вас» иначе, чем сервер")
@@ -211,7 +211,8 @@ class CounterParityTest(unittest.TestCase):
     def test_total_is_the_sum(self):
         counter = stale.counts(self.DETAIL)
         self.assertEqual(counter["total"], counter["questions"] + counter["decisions"]
-                         + counter["approvals"] + counter["steps"])
+                         + counter["approvals"] + counter["steps"]
+                         + counter["blocked"])
 
 
 class AutonomyFieldsTest(unittest.TestCase):
@@ -312,9 +313,11 @@ class LiveShapesTest(SandboxAppCase):
         detail = self._detail(self.rid())
         counter = detail.get("needs_you_count")
         self.assertIsInstance(counter, dict)
-        self.assertEqual(set(counter), {"questions", "decisions", "approvals", "steps", "total"})
+        self.assertEqual(set(counter), {"questions", "decisions", "approvals", "steps", "blocked",
+                                        "total"})
         self.assertEqual(counter["total"], sum(counter[k] for k in
-                                               ("questions", "decisions", "approvals", "steps")))
+                                               ("questions", "decisions", "approvals", "steps",
+                                                "blocked")))
         for item in detail.get("open_questions") or []:
             self.assertIn(item.get("state"), stale.ITEM_STATES)
             if item.get("needs_you"):
